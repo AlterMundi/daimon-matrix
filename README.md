@@ -11,10 +11,10 @@ relationships (`/tribe`).
 
 ## Status
 
-V0 is in planning and concurrent-work review. This repository currently
-contains specifications and an implementation backlog only. Runtime
-implementation must not begin until the
-**Concurrent work relevance audit** issue is closed.
+V0 planning and the concurrent-work audit are complete. This repository
+contains specifications and a dependency-ordered implementation backlog.
+DM-003 and DM-010 are the first released cards; later work remains blocked by
+its listed dependencies.
 
 ## Canonical documents
 
@@ -24,6 +24,8 @@ implementation must not begin until the
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
 - [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work
   already active in another session.
+- [CONCURRENT-WORK-AUDIT.md](CONCURRENT-WORK-AUDIT.md) — evidence, reuse
+  classifications, deployed state, and released-card decisions.
 - [Foundation snapshot](docs/foundation/daimon-matrix.md) — preserved source.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — claim leases and contribution workflow.
 
