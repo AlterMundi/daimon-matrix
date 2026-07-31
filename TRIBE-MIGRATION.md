@@ -12,13 +12,17 @@ an adapter despite being controlled by the same project.
 
 ## Reusable work
 
-The current project provides useful starting points:
+The current project provides useful starting points from both v0 and the
+audited draft v1 branches:
 
-- SSH-signed envelopes;
+- canonical signed JSON and negative parsing vectors;
+- Ed25519 signing and X25519/HPKE recipient wrapping;
+- governance-signed directories with rollback protection;
 - direct delivery with hub fallback;
 - offline inboxes;
 - stable logical message IDs;
 - local/hub deduplication;
+- durable outboxes, delivery leases, acknowledgements, and backups;
 - optional human-facing gateway mirroring.
 
 These behaviors will be imported behind a transport interface so they can be
@@ -45,19 +49,28 @@ opaque ciphertext and cannot expand its readership.
 The SSH signing roster may be accepted during migration for authentication,
 but it must never be used as encryption key material.
 
-## Repository and history
+## Repository and legacy history
 
 - Import Git history when it is straightforward and preserves authorship.
 - If history import would materially delay the planning or implementation,
   import the code with explicit commit and repository provenance.
-- Preserve current messages as read-only legacy records only when migration is
-  straightforward.
-- Never promote legacy conversation records into personal memory
-  automatically.
+- Do not migrate, import, dual-write, back up, or preserve v0 messages for the
+  Daimon transport. New stores start empty.
 - Treat legacy ciphertext as potentially non-confidential.
 - Archive the old repository after the replacement transport passes its
-  migration and compatibility gates.
+  replacement and provenance gates.
 - Add an archive notice pointing to `AlterMundi/daimon-matrix`.
+
+Repository provenance is retained; wire compatibility and conversation history
+are not.
+
+## Transitional containment
+
+The live v0 service may be hardened while replacement implementation remains
+dependency-blocked. Bind it to loopback or an explicit anyVPN address whenever
+possible; a wildcard bind requires a verified source-allowlisted firewall.
+Containment changes must not extend v0 lifetime, add compatibility layers, or
+turn v0 storage into a migration source.
 
 ## Target layers
 
@@ -72,15 +85,15 @@ but it must never be used as encryption key material.
 Gateways are edge adapters. They do not define identity, tribe membership,
 memory, or canonical message state.
 
-## Compatibility gates
+## Replacement gates
 
-- Existing text clients can send and receive during a documented transition.
+- V1/DM stores start empty and reject v0 envelopes or downgrade negotiation.
 - Typed payloads carry protocol version, logical ID, thread ID, scope,
   operation, and recipient information.
 - Stable ascending cursors cannot lose bursts exceeding 100 messages or
   multiple messages within one second.
 - Duplicate direct and hub deliveries produce one logical ingestion.
 - Transport acknowledgement and semantic recipient receipt remain distinct.
-- Old and new signature verification have negative tampering tests.
+- Imported signing and recipient-encryption behavior has negative tampering
+  tests against the Daimon contracts.
 - No confidential V0 payload uses the legacy group-key mechanism.
-

@@ -31,8 +31,8 @@ custom bodies without making any harness authoritative.
 - The canonical personal state is an append-only event ledger; HMK, Wiki,
   collective-memory, and harness state are projections or external sources.
 - The CompAII Librarian uses `deepseek-v4-pro` through provider `deepseek`.
-- Implementation is blocked until concurrent work is audited against this
-  plan.
+- The concurrent-work audit is recorded in `CONCURRENT-WORK-AUDIT.md`.
+  Implementation follows the dependencies and released-card decisions there.
 
 ## Architecture
 
@@ -44,6 +44,8 @@ a new `/me`, new keys, empty autobiographical memory, and a signed relationship
 to its parent, source, species release, and inherited tribal grants.
 
 The newborn generates and retains its own root key at first awakening.
+The protocol must define root-key custody, offline recovery, rotation,
+compromise, and irrecoverable-loss behavior before the keystore is implemented.
 
 ### Species and capability evolution
 
@@ -76,9 +78,11 @@ attempt replies. Integration of replies is an optional local policy.
 
 ### State and memory
 
-The local daemon is the single writer for an append-only SQLite ledger using
-WAL. Events carry protocol version, ID, `/me`, incarnation, logical time,
-causal parents, type, payload, hash, and signature.
+The local daemon is the single writer for an append-only SQLite ledger. WAL is
+enabled only on a runtime containing the applicable WAL-reset corruption fix;
+otherwise the daemon uses rollback journal `DELETE` with full durability or
+fails closed. Events carry protocol version, ID, `/me`, incarnation, logical
+time, causal parents, type, payload, hash, and signature.
 
 Rebuildable projections include:
 
@@ -112,8 +116,14 @@ The communications subsystem has separate layers for:
 7. optional human-facing gateways.
 
 The current Tribe Bridge code is migrated as a starting implementation.
-Its encryption is replaced because the existing key is derivable from public
-roster material.
+Legacy v0 encryption is replaced because its key is derivable from public
+roster material. Draft Tribe v1 recipient encryption, signing, replay,
+delivery, and recovery tests are adapted to Daimon identity and event
+contracts rather than discarded or promoted unchanged.
+
+GitHub Issues, pull requests, and the Project own work coordination. They are
+not `/tribe` membership or message authorization. Claim principals eventually
+bind `/me` and incarnation identity to the GitHub-authenticated event.
 
 ### Harness integration
 
@@ -183,7 +193,7 @@ Implement identity, ledger, projections, daemon, CLI, MCP, and invariant tests.
 ### 3. Librarian and projections
 
 Implement policy, DeepSeek worker, human review, HMK, Wiki/compaii-state, and
-collective-memory adapters.
+separate collective-memory source and reviewed-publication adapters.
 
 ### 4. CompAII incarnations
 
@@ -223,4 +233,3 @@ and V0.1.0 release.
 - No secret or private CompAII memory appears in the public repository or CI.
 - Every implementation issue is dependency-aware, independently claimable,
   and backed by a verifiable PR.
-

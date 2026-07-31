@@ -3,8 +3,9 @@
 All logical IDs are retained in GitHub issue titles. GitHub issue numbers are
 assigned at publication time.
 
-Except for completed planning cards, every issue is initially blocked by
-DM-000, the concurrent-work relevance audit.
+The DM-000 audit is complete and recorded in `CONCURRENT-WORK-AUDIT.md`.
+DM-003 and DM-010 are the only immediately released cards; every other open
+card retains the direct blockers shown below.
 
 ## Coordination
 
@@ -51,7 +52,7 @@ DM-000, the concurrent-work relevance audit.
 | DM-033 | Implement the human review queue | DM-025, DM-030 |
 | DM-034 | Implement the HMK personal-memory projection | DM-018, DM-023, DM-030 |
 | DM-035 | Implement the Wiki and compaii-state publisher | DM-018, DM-023 |
-| DM-036 | Implement the collective-memory source adapter | DM-015, DM-018, DM-023 |
+| DM-036 | Implement collective-memory source and reviewed-publication adapters | DM-015, DM-018, DM-023 |
 
 ## Harness incarnations
 
@@ -70,7 +71,7 @@ DM-000, the concurrent-work relevance audit.
 | DM-052 | Implement typed messages, threads, fan-out, receipts, and stable cursors | DM-012, DM-023, DM-050 |
 | DM-053 | Implement local, direct, hub, and optional gateway routes | DM-051, DM-052 |
 | DM-054 | Implement `/we`, `/tribe`, `/source`, and topology scope routing | DM-012, DM-016, DM-042, DM-053 |
-| DM-055 | Migrate optional legacy history and archive Tribe Bridge | DM-053, DM-054 |
+| DM-055 | Archive Tribe Bridge without migrating legacy history | DM-053, DM-054 |
 
 ## Birth and evolution
 
@@ -103,3 +104,6 @@ Every implementation card must include:
 - a concurrent-work reuse section;
 - one expected PR.
 
+Reuse sections must link `CONCURRENT-WORK-AUDIT.md` and name the exact source
+commit. Source components with changes requested by the independent review are
+not import-ready until their findings are fixed and re-reviewed.

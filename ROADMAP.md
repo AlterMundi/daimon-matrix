@@ -1,9 +1,9 @@
 # V0 Roadmap
 
-All implementation work is blocked until the concurrent-work relevance audit
-is closed.
+The concurrent-work relevance audit is complete. Work is released only when
+all direct blockers are closed.
 
-## Wave 0 — Reconcile work already in flight
+## Wave 0 — Reconcile work already in flight — complete
 
 Inventory every active session, branch, worktree, issue, and uncommitted change
 related to Tribe Bridge, CompAII continuity, HMK, rebirth sync, Wiki,
@@ -14,8 +14,8 @@ collective-memory, and harness incarnation. Classify each item as:
 - superseded but worth preserving;
 - safe to stop.
 
-No implementation card becomes `status:ready` before this audit updates its
-dependencies and reuse notes.
+The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-003 and DM-010 are the
+first released cards.
 
 ## Wave 1 — Freeze semantics
 
@@ -30,8 +30,8 @@ and deterministic failure tests.
 ## Wave 3 — Add memory governance
 
 Implement the Librarian policy engine, exclusive lease, DeepSeek worker,
-review queue, HMK projection, Wiki publisher, and collective-memory source
-adapter.
+review queue, HMK projection, Wiki publisher, and separate collective-memory
+source and reviewed-publication adapters.
 
 ## Wave 4 — Incarnate CompAII
 
@@ -56,4 +56,3 @@ claiming that Agent 0 has already been born.
 
 Run local and remote CompAII canaries, perform adversarial review and recovery
 tests, archive Tribe Bridge after its gate, and publish V0.1.0.
-
