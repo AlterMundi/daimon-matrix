@@ -14,7 +14,9 @@ relationships (`/tribe`).
 V0 planning and the concurrent-work audit are complete. This repository
 contains specifications and a dependency-ordered implementation backlog.
 DM-003 and DM-010 are the first released cards; later work remains blocked by
-its listed dependencies.
+its listed dependencies. The reviewed pre-Daimon HMK, Wiki, compaii-state, and
+Tribe v1 stack is the reversible transitional runtime used while this
+implementation is built; it is not itself the Daimon Matrix runtime.
 
 ## Canonical documents
 

@@ -10,7 +10,8 @@ collective-memory, compaii-state, Wiki, and CompAII deployment work.
 
 - Continue Daimon Matrix as the canonical architecture and repository.
 - Absorb useful Tribe Bridge v1 behavior behind Daimon Matrix protocol and
-  transport boundaries; do not perform an independent Tribe v1 cutover.
+  transport boundaries. Before that replacement exists, deploy and exercise
+  Tribe v1 as the reversible transitional runtime.
 - Treat the Daimon ledger as the authority for personal continuity. HMK, Wiki,
   collective-memory, and compaii-state remain projections, publishers, or
   attributed external sources according to artifact class.
@@ -33,14 +34,14 @@ before the independent CompAII review described below.
 | `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-7` | `runtime/v1-broker-7` / `2516978416a1ec7383e45a3b55f4b5fc0fe1d356` (PR 15) | Reusable after adaptation | DM-022, DM-050, DM-052, DM-073 |
 | `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-8` | `clients/v1-cutover-8` / `4ed63514b7d003624314957203672633ef57ecb3` (PR 16) | Reusable after adaptation | DM-050 through DM-053 |
 | `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-ci-fixture-18` | `ci/v1-http-fixture-18` / `1147cebd4fd6d788de107c9ed56e10d3d263a8f4` (PR 19) | Reusable after adaptation | DM-050 through DM-053 and DM-073 |
-| Independent Tribe v1 production cutover | Planned promotion to the v0 port | Safe to stop | Superseded by absorption into Daimon Matrix |
+| Tribe v1 transitional production cutover | Reversible promotion from the v0 port while Daimon Matrix is implemented | Reusable after adaptation | Operate and test now; later replace its identity and semantic layers through DM-050 through DM-054 |
 | `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-9` | `coordination/github-leases-9` / `7e1cd907abde69f111f45121ad2eaafbfad3e61d` (PR 17) | Reusable after adaptation | DM-003; retarget Project 8 to Project 9 and separate work ownership from `/tribe` |
 | `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-12` | `architecture/daimon-manifest-12` / `38313628ef7a0c4b04c6642ba826ed680ff1ed49` (PR 20) | Reusable after adaptation | DM-010, DM-012, DM-018, DM-040, DM-041, DM-054 |
 | `hermes-memory-kit`, `/home/nicolas/sandbox/hermes-memory-kit-issue-1` | `memory/canonical-contract-1` / `892998cfae639a0bcb7f43f06cbfc14aa945a7f9` (PR 2) | Reusable after adaptation | DM-017, DM-034, DM-035 |
 | `hermes-memory-kit`, `/home/nicolas/sandbox/hermes-memory-kit-collective-3` | `memory/collective-publication-3` / `350c61a103d186fe82447dcfc39da45b699279bd` (PR 4) | Reusable after adaptation | Outbound publication half of DM-036 |
 | `compaii-state`, `/home/nicolas/sandbox/compaii-state-issue-5` | `safety/stage-restore-5` / `87cbc7b32e65aa0e7c875db363f95ef9f3da62f9` (PR 1) | Reusable after adaptation | DM-018, DM-035, DM-073 |
 | `compaii-state`, `/home/nicolas/sandbox/compaii-state-issue-2` | `memory/external-hmk-dependency-2` / `533e5478201dece985faf3ba730be515fff25d23` (PR 3) | Directly reusable | Keep one pinned external HMK implementation |
-| `compaii-state`, `/home/nicolas/sandbox/compaii-state-daimon-4` | `identity/daimon-binding-4` / `0f762eab84fa29836051c4300c8f908608c15e52` (PR 5) | Superseded but preserve | Recast its hash-pinned binding as a ledger projection/publication receipt, not identity authority |
+| `compaii-state`, `/home/nicolas/sandbox/compaii-state-daimon-4` | `identity/daimon-binding-4` / `0f762eab84fa29836051c4300c8f908608c15e52` (PR 5) | Reusable after adaptation | Use as a transitional provenance binding now; later recast it as a ledger projection/publication receipt rather than identity authority |
 | `compaii-state`, `/home/nicolas/sandbox/compaii-state-wiki-gate-10` | `wiki/project-bootstrap-gate-10` / `43c43b63c14d5f622237bad2e37716af0a38d2d6` (PR 6) | Reusable after adaptation | DM-035 and DM-073 |
 | `compaii-state/identity/profiles/mccompaii` | Intentional DaemonCraft/Minecraft profile | Reusable after adaptation | Body/incarnation state for DM-041/DM-042; bundled memory is not canonical personal continuity |
 
@@ -124,14 +125,16 @@ transactionally reliable.
   five deliveries, five acknowledgements, zero pending rows, integrity
   verification, and a verified backup.
 - The canary is transport evidence for DM-050 through DM-053 and DM-073. It is
-  not DM-072 evidence because `compaii` and `codex@localhost` are independent
-  v1 agent IDs, not certified incarnations of one `/me`.
+  also the staging environment for the transitional Tribe v1 runtime. It is
+  not yet DM-072 evidence because `compaii` and `codex@localhost` are
+  independent v1 agent IDs, not certified incarnations of one `/me`.
 - The local Python runtime uses SQLite 3.46.1. The canary correctly refused WAL
   and selected rollback journal `DELETE` with `synchronous=FULL`.
 - The live HMK plugin matches PR 2 source, its doctor is clean, and 89 tests
   passed. The Wiki gate matches PR 6 behavior and its focused tests passed.
-- The dated Wiki architecture evidence is preserved as a transitional record.
-  A later note must supersede, not rewrite, its pre-DM-000 authority model.
+- The dated Wiki architecture evidence remains the current transitional
+  architecture record while Daimon Matrix has no runtime. A later Daimon note
+  must supersede, not rewrite, it.
 
 No deployed key, secret, database, message history, or private Wiki content is
 an import candidate.
@@ -154,9 +157,10 @@ CompAII ran the relevant suites in clean worktrees and reported:
   ignored by selection, and a “reviewed” state commit is only proven to exist
   locally rather than on a reviewed remote ref.
 
-These verdicts govern source reuse. “Approve” does not make the old repository
-or its authority model canonical, and “changes requested” blocks importing the
-affected component until the named fix is verified.
+These verdicts govern both transitional deployment and later source reuse.
+“Approve” does not make the old repository or its authority model canonical,
+and “changes requested” blocks merge or deployment of the affected component
+until the named fix is verified.
 
 ## Plan corrections produced by the audit
 
@@ -167,7 +171,9 @@ affected component until the named fix is verified.
    reviewed publication contracts.
 4. Personal memory authority moves from HMK to the ledger; non-Daimon
    HMK-native artifact classes may retain their existing authority.
-5. The existing v1 canary is transport evidence only, never DM-072 continuity.
+5. The existing v1 canary becomes the staging and rollback environment for the
+   transitional runtime; it is not DM-072 continuity until identities are
+   certified incarnations of one `/me`.
 6. Security containment of the live v0 service is allowed during the
    dependency freeze.
 7. Root-key custody, compromise, rotation, and recovery are protocol
@@ -182,3 +188,18 @@ With DM-001 and DM-002 already complete, closing DM-000 releases only:
   from the manifest work without inheriting its identity model.
 
 Every other V0 card retains at least one unresolved direct blocker.
+
+## Transitional runtime execution
+
+The audit does not require Daimon Matrix runtime code to exist before the
+reviewed work above is useful. The intended sequence is:
+
+1. fix and re-review the changes requested on HMK PR 4 and Tribe Bridge PR 20;
+2. merge the approved stacks in dependency order;
+3. deploy the HMK, compaii-state, Wiki, collective-publication, manifest, and
+   Tribe v1 components as a reversible transitional system;
+4. perform a clean v0-to-v1 Tribe cutover with empty v1 stores and no
+   compatibility or history migration;
+5. keep that system running and collect operational evidence while the Daimon
+   Matrix cards replace its identity, continuity, memory, and communication
+   layers incrementally.

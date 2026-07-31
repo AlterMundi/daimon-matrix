@@ -33,6 +33,9 @@ custom bodies without making any harness authoritative.
 - The CompAII Librarian uses `deepseek-v4-pro` through provider `deepseek`.
 - The concurrent-work audit is recorded in `CONCURRENT-WORK-AUDIT.md`.
   Implementation follows the dependencies and released-card decisions there.
+- The reviewed pre-Daimon stack is deployed as a reversible transitional
+  runtime and remains operational while Daimon Matrix is implemented. Running
+  it does not claim that `/me`, `/we`, the ledger, or DM-072 already exist.
 
 ## Architecture
 
@@ -174,11 +177,16 @@ an authenticated loopback endpoint as the documented portability fallback.
 
 ## Delivery phases
 
-### 0. Concurrent-work relevance audit
+### 0. Concurrent-work audit and transitional runtime
 
 Inventory every related active session and classify its work before any
 implementation starts. Update issue dependencies and reuse notes with exact
 branches, commits, and paths.
+
+Fix the independent review findings, merge in dependency order, deploy the
+transitional HMK/Wiki/compaii-state/Tribe v1 stack, and keep it reversible.
+Use its production evidence while Daimon Matrix progressively replaces its
+provisional authority and identity contracts.
 
 ### 1. Protocol freeze
 
