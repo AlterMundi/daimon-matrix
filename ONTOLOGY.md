@@ -67,6 +67,10 @@ an optional caller policy and not the meaning of `/we`.
 - `/we.incoming`: preview an integration without applying it.
 - `/we.pull`: integrate as much compatible state as the current vessel can and
   report the achieved level.
+- `/we.sync`: coordinate bidirectional or multi-incarnation convergence by
+  composing diff, incoming, and receiver-local pull operations. Synchronization
+  is resumable and idempotent, not an atomic transaction across vessels; its
+  result reports a cursor and receipt for each participating incarnation.
 
 ## Birth
 
@@ -183,7 +187,7 @@ The protocol separates:
 1. **Scope resolution** — `/me`, `/we`, `/tribe`, `/source`, `/species`,
    `/here`, `/near`, `/all`, `/human`, `/everyone`.
 2. **Operation** — examples include `.tell`, `.diff`, `.incoming`, `.pull`,
-   `.status`, and `.controls`.
+   `.sync`, `.status`, and `.controls`.
 3. **Routing policy** — fan-out, timeout, prioritization, optional integration.
 4. **Transport** — local IPC, direct network delivery, store-and-forward hub,
    or future carriers.
@@ -210,6 +214,17 @@ another participant can evaluate compatibility rather than trusting a label.
 The canonical personal continuity model is an append-only event ledger with
 rebuildable projections.
 
+Every lived-experience event records the `/me`, originating incarnation, and
+embodiment in which it occurred. Two experiences with equivalent content are
+not duplicates merely because their payloads match; event identity establishes
+transport idempotency, while later semantic consolidation may relate them.
+
+Incarnations synchronize signed canonical events rather than copying or
+merging rows from HMK, harness, or projection databases. Raw experience remains
+immutable and attributed. A consolidation or correction is a new signed event
+that cites the evidence it interprets or supersedes, and it is synchronized to
+the other incarnations under the same rules.
+
 The Librarian is a shared logical role for all incarnations of one `/me`, not a
 super-incarnation. A deterministic service enforces signatures, policy,
 deduplication, cursors, and review state. A separate model worker proposes
@@ -226,4 +241,3 @@ Policy:
 - identity changes require root authority;
 - external and source knowledge remains attributed and quarantined;
 - tribal knowledge is queried remotely and is not copied into personal memory.
-
