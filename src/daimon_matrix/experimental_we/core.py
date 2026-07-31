@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import sqlite3
 import subprocess
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +54,10 @@ def _b64(data: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    try:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (binascii.Error, TypeError, ValueError) as exc:
+        raise SpikeError("invalid base64 encoding") from exc
 
 
 def public_key_text(key: Ed25519PublicKey) -> str:
@@ -71,7 +76,10 @@ def load_config(state_dir: Path) -> dict[str, Any]:
     path = state_config_path(state_dir)
     if not path.is_file():
         raise SpikeError(f"experimental state is not initialized: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpikeError(f"cannot read experimental config: {path}") from exc
     if data.get("protocol") != PROTOCOL:
         raise SpikeError(f"unsupported config protocol in {path}")
     return data
@@ -149,7 +157,10 @@ def trust_incarnation(
     remote_python: str | None = None,
     remote_state_dir: str | None = None,
 ) -> dict[str, Any]:
-    Ed25519PublicKey.from_public_bytes(_unb64(public_key))
+    try:
+        Ed25519PublicKey.from_public_bytes(_unb64(public_key))
+    except ValueError as exc:
+        raise SpikeError("invalid Ed25519 public key") from exc
     config = load_config(state_dir)
     config.setdefault("trusted_incarnations", {})[incarnation_id] = public_key
     if peer_id:
@@ -175,7 +186,10 @@ def _private_key(state_dir: Path) -> Ed25519PrivateKey:
     mode = path.stat().st_mode & 0o777
     if mode & 0o077:
         raise SpikeError(f"private key permissions are too broad: {oct(mode)}")
-    return Ed25519PrivateKey.from_private_bytes(path.read_bytes())
+    try:
+        return Ed25519PrivateKey.from_private_bytes(path.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise SpikeError("invalid incarnation private key") from exc
 
 
 def event_core(
@@ -271,7 +285,7 @@ def validate_event(event: dict[str, Any], config: dict[str, Any]) -> None:
         Ed25519PublicKey.from_public_bytes(_unb64(public_text)).verify(
             _unb64(event["signature"]), bytes.fromhex(digest)
         )
-    except InvalidSignature as exc:
+    except (InvalidSignature, ValueError) as exc:
         raise SpikeError("event signature verification failed") from exc
 
 
@@ -288,9 +302,17 @@ class Ledger:
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
+    @contextmanager
+    def operation(self, action: str):
+        try:
+            with self.connect() as connection:
+                yield connection
+        except sqlite3.Error as exc:
+            raise SpikeError(f"cannot {action} experimental ledger") from exc
+
     def initialize(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.connect() as connection:
+        with self.operation("initialize") as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS events (
@@ -324,7 +346,7 @@ class Ledger:
         os.chmod(self.path, 0o600)
 
     def local_sequence(self, incarnation_id: str) -> tuple[int, str | None]:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             row = connection.execute(
                 "SELECT sequence, event_id FROM events WHERE origin_incarnation=? "
                 "ORDER BY sequence DESC LIMIT 1",
@@ -333,22 +355,63 @@ class Ledger:
         return (int(row["sequence"]), str(row["event_id"])) if row else (0, None)
 
     def envelopes(self) -> list[dict[str, Any]]:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             rows = connection.execute(
                 "SELECT envelope_json FROM events ORDER BY origin_incarnation, sequence"
             ).fetchall()
         return [json.loads(row["envelope_json"]) for row in rows]
 
     def event_ids(self) -> set[str]:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             return {str(row[0]) for row in connection.execute("SELECT event_id FROM events")}
 
     def event_hashes(self) -> dict[str, str]:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             return {
                 str(row["event_id"]): str(row["content_hash"])
                 for row in connection.execute("SELECT event_id, content_hash FROM events")
             }
+
+    def precheck_batch(self, events: Iterable[dict[str, Any]]) -> None:
+        """Reject identity and sequence conflicts before the first append."""
+        with self.operation("inspect") as connection:
+            rows = connection.execute(
+                "SELECT event_id, content_hash, origin_incarnation, sequence FROM events"
+            ).fetchall()
+
+        by_id = {str(row["event_id"]): str(row["content_hash"]) for row in rows}
+        by_hash = {str(row["content_hash"]): str(row["event_id"]) for row in rows}
+        by_sequence = {
+            (str(row["origin_incarnation"]), int(row["sequence"])): (
+                str(row["event_id"]),
+                str(row["content_hash"]),
+            )
+            for row in rows
+        }
+        for event in events:
+            event_id = event["event_id"]
+            content_hash = event["content_hash"]
+            sequence_key = (event["origin_incarnation"], event["sequence"])
+
+            existing_hash = by_id.get(event_id)
+            if existing_hash is not None and existing_hash != content_hash:
+                raise SpikeError("event identity collision")
+            existing_id = by_hash.get(content_hash)
+            if existing_id is not None and existing_id != event_id:
+                raise SpikeError("event content hash collision")
+            existing_sequence = by_sequence.get(sequence_key)
+            if existing_sequence is not None and existing_sequence != (
+                event_id,
+                content_hash,
+            ):
+                raise SpikeError(
+                    "forked incarnation sequence: "
+                    f"{event['origin_incarnation']}#{event['sequence']}"
+                )
+
+            by_id[event_id] = content_hash
+            by_hash[content_hash] = event_id
+            by_sequence[sequence_key] = (event_id, content_hash)
 
     def append(self, event: dict[str, Any], *, imported_from: str) -> str:
         envelope = canonical_bytes(event).decode("utf-8")
@@ -376,7 +439,7 @@ class Ledger:
                 )
             return "inserted"
         except sqlite3.IntegrityError as exc:
-            with self.connect() as connection:
+            with self.operation("inspect") as connection:
                 by_id = connection.execute(
                     "SELECT content_hash FROM events WHERE event_id=?",
                     (event["event_id"],),
@@ -394,15 +457,17 @@ class Ledger:
                     f"{event['origin_incarnation']}#{event['sequence']}"
                 ) from exc
             raise SpikeError("event identity collision") from exc
+        except sqlite3.Error as exc:
+            raise SpikeError("cannot append to experimental ledger") from exc
 
     def projection(self, event_id: str) -> sqlite3.Row | None:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             return connection.execute(
                 "SELECT * FROM projections WHERE event_id=?", (event_id,)
             ).fetchone()
 
     def record_projection(self, event_id: str, provider: str, external_id: str) -> None:
-        with self.connect() as connection:
+        with self.operation("record projection in") as connection:
             connection.execute(
                 "INSERT OR IGNORE INTO projections(event_id, provider, external_id, projected_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -413,7 +478,7 @@ class Ledger:
         receipt_id = hashlib.sha256(
             f"{event_id}\0{receiver}\0{status}".encode("utf-8")
         ).hexdigest()
-        with self.connect() as connection:
+        with self.operation("record receipt in") as connection:
             connection.execute(
                 "INSERT OR IGNORE INTO receipts(receipt_id, event_id, receiver_incarnation, status, recorded_at) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -422,7 +487,7 @@ class Ledger:
         return receipt_id
 
     def status(self) -> dict[str, Any]:
-        with self.connect() as connection:
+        with self.operation("read") as connection:
             total = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
             projected = int(
                 connection.execute("SELECT COUNT(*) FROM projections").fetchone()[0]
@@ -487,31 +552,36 @@ class HmkProjector:
         environment["HMK_AGENT_MEMORY_BASE"] = hmk["base"]
         if hmk.get("hermes_home"):
             environment["HERMES_HOME"] = hmk["hermes_home"]
-        result = subprocess.run(
-            [
-                hmk["wrapper"],
-                "memoryctl.py",
-                "add-text",
-                "--shelf",
-                hmk.get("shelf", "episodes"),
-                "--title",
-                title,
-                "--raw",
-                provenance + payload["content"],
-                "--tags",
-                ",".join(tags),
-                "--importance",
-                "0.8",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=environment,
-            timeout=30,
-        )
-        response = json.loads(result.stdout)
-        if not response.get("ok"):
+        try:
+            result = subprocess.run(
+                [
+                    hmk["wrapper"],
+                    "memoryctl.py",
+                    "add-text",
+                    "--shelf",
+                    hmk.get("shelf", "episodes"),
+                    "--title",
+                    title,
+                    "--raw",
+                    provenance + payload["content"],
+                    "--tags",
+                    ",".join(tags),
+                    "--importance",
+                    "0.8",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=30,
+            )
+            response = json.loads(result.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            raise SpikeError("HMK projection failed") from exc
+        if not isinstance(response, dict) or not response.get("ok"):
             raise SpikeError("HMK rejected the experimental projection")
+        if "chapter_id" not in response:
+            raise SpikeError("HMK projection response lacks a chapter ID")
         return str(response["chapter_id"])
 
 
@@ -520,8 +590,10 @@ def project_event(ledger: Ledger, config: dict[str, Any], event: dict[str, Any])
     if existing:
         return "duplicate"
     projector = HmkProjector(config)
+    if not projector.enabled:
+        return "pending"
     external_id = projector.project(event)
-    ledger.record_projection(event["event_id"], "hmk" if projector.enabled else "none", external_id)
+    ledger.record_projection(event["event_id"], "hmk", external_id)
     return "projected"
 
 
@@ -606,6 +678,7 @@ def ingest(
     # batch. Projection remains receiver-local and resumable after acceptance.
     for event in event_list:
         validate_event(event, config)
+    ledger.precheck_batch(event_list)
     inserted = 0
     duplicates = 0
     projected = 0
@@ -652,37 +725,47 @@ class SshPeer:
             operation,
         ]
 
+    def _invoke(
+        self,
+        operation: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        timeout: int = 30,
+    ) -> dict[str, Any]:
+        try:
+            result = subprocess.run(
+                self._command(operation),
+                input=json.dumps(payload) if payload is not None else None,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            response = json.loads(result.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            raise SpikeError(
+                f"peer {self.peer_id} operation failed: {operation}"
+            ) from exc
+        if not isinstance(response, dict):
+            raise SpikeError(f"peer {self.peer_id} returned an invalid response")
+        return response
+
     def export(self) -> list[dict[str, Any]]:
-        result = subprocess.run(
-            self._command("export"),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return json.loads(result.stdout)["events"]
+        response = self._invoke("export")
+        events = response.get("events")
+        if not isinstance(events, list):
+            raise SpikeError(f"peer {self.peer_id} export lacks an events list")
+        return events
 
     def preview(self, events: list[dict[str, Any]]) -> dict[str, Any]:
-        result = subprocess.run(
-            self._command("preview-stdin"),
-            input=json.dumps({"events": events}),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return json.loads(result.stdout)
+        return self._invoke("preview-stdin", payload={"events": events})
 
     def ingest(self, events: list[dict[str, Any]]) -> dict[str, Any]:
-        result = subprocess.run(
-            self._command("ingest-stdin"),
-            input=json.dumps({"events": events, "source": self.peer_id}),
-            check=True,
-            capture_output=True,
-            text=True,
+        return self._invoke(
+            "ingest-stdin",
+            payload={"events": events, "source": self.peer_id},
             timeout=60,
         )
-        return json.loads(result.stdout)
 
 
 def incoming_from_peer(state_dir: Path, peer_id: str) -> dict[str, Any]:

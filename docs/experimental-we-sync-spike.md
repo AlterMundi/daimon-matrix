@@ -41,6 +41,24 @@ add-text` command and tags every chapter with the canonical experimental event
 ID and originating incarnation, host, and harness. It never opens HMK SQLite
 for writes.
 
+## Known limitations
+
+- Every exchange transfers the full ledger (`O(N)`) rather than bounded deltas
+  selected by cursors. This will not scale and does not detect retained gaps.
+- Batch validation pre-checks identity and sequence conflicts before the first
+  append, but the append loop is not a general cross-process transaction.
+- HMK projection is receiver-local and resumable, but it is not crash-atomic
+  with ledger acceptance. Disabled HMK leaves an event pending; a crash after
+  successful `add-text` and before its receipt can still duplicate a chapter.
+- The ledger is a single-writer experiment. Concurrent local `observe` calls
+  can race while assigning the next per-incarnation sequence.
+- Event batches and payload fields have no production size limits, so a trusted
+  but faulty peer can exhaust memory or exceed the SSH timeout.
+
+The canonical implementation must replace these shortcuts with bounded
+cursor/delta exchange and gap detection, transactional sequence allocation,
+idempotent projection, explicit payload limits, and structured RPC errors.
+
 ## Rollback
 
 Stop using the CLI, remove the permission-restricted experimental state

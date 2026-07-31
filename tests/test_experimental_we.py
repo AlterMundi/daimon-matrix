@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from daimon_matrix.experimental_we.core import (
     sync_with_peer,
     trust_incarnation,
     validate_event,
+    write_config,
 )
 
 
@@ -66,7 +68,7 @@ def test_preview_does_not_mutate_and_ingest_is_idempotent(tmp_path: Path) -> Non
     first = ingest(left, Ledger(right).envelopes(), imported_from="test")
     second = ingest(left, Ledger(right).envelopes(), imported_from="test")
     assert first["inserted"] == 1
-    assert first["projected"] == 1
+    assert first["projected"] == 0
     assert second["inserted"] == 0
     assert second["projected"] == 0
     assert second["duplicates"] == 1
@@ -155,6 +157,97 @@ def test_invalid_batch_does_not_partially_mutate(tmp_path: Path) -> None:
     with pytest.raises(SpikeError):
         ingest(left, [valid, tampered], imported_from="right")
     assert Ledger(left).status()["events"] == 0
+
+
+def test_validly_signed_sequence_fork_rejects_whole_batch(tmp_path: Path) -> None:
+    left, right = initialized_pair(tmp_path)
+    observe(right, title="Original", content="one", tags=[])
+    original = Ledger(right).envelopes()[0]
+    config = load_config(right)
+    forks = [
+        sign_event(
+            right,
+            event_core(
+                config,
+                event_id=event_id,
+                sequence=2,
+                previous_event_id=original["event_id"],
+                title=title,
+                content=title,
+                tags=[],
+            ),
+        )
+        for event_id, title in (
+            ("a331ef26-a386-4c50-b93a-fc636ca4b036", "First fork"),
+            ("42704ec8-7c68-4c84-8bb2-7f423d80ee4b", "Second fork"),
+        )
+    ]
+
+    with pytest.raises(SpikeError, match="forked incarnation sequence"):
+        ingest(left, [original, *forks], imported_from="right")
+    assert Ledger(left).status()["events"] == 0
+
+
+def test_disabled_hmk_projection_remains_retryable(tmp_path: Path, monkeypatch) -> None:
+    state = tmp_path / "state"
+    init_state(
+        state,
+        me_id="compaii",
+        incarnation_id="codex-compaii@legion",
+        host="legion",
+        harness="codex",
+    )
+    observed = observe(state, title="Pending", content="project me later", tags=[])
+    event = Ledger(state).envelopes()[0]
+
+    assert observed["projection"] == "pending"
+    assert Ledger(state).projection(event["event_id"]) is None
+    assert Ledger(state).status()["projected"] == 0
+
+    config = load_config(state)
+    config["hmk"].update(
+        {"wrapper": "/opt/hmk", "base": "/memory", "hermes_home": "/hermes"}
+    )
+    write_config(state, config)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command, 0, stdout='{"ok": true, "chapter_id": 43}\n', stderr=""
+        )
+
+    monkeypatch.setattr("daimon_matrix.experimental_we.core.subprocess.run", fake_run)
+    retried = ingest(state, [event], imported_from="retry")
+
+    assert retried["inserted"] == 0
+    assert retried["projected"] == 1
+    assert len(calls) == 1
+    assert Ledger(state).projection(event["event_id"])["provider"] == "hmk"
+
+
+def test_low_level_encoding_and_sqlite_errors_are_structured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    state = tmp_path / "state"
+    init_state(
+        state,
+        me_id="compaii",
+        incarnation_id="codex-compaii@legion",
+        host="legion",
+        harness="codex",
+    )
+    with pytest.raises(SpikeError, match="invalid (base64|Ed25519 public key)"):
+        trust_incarnation(state, incarnation_id="broken", public_key="not-a-key")
+
+    ledger = Ledger(state)
+
+    def broken_connect():
+        raise sqlite3.OperationalError("synthetic database failure")
+
+    monkeypatch.setattr(ledger, "connect", broken_connect)
+    with pytest.raises(SpikeError, match="cannot read experimental ledger"):
+        ledger.status()
 
 
 def test_hmk_projection_uses_public_interface_once(tmp_path: Path, monkeypatch) -> None:
