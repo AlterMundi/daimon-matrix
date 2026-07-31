@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daimon-matrix"
+version = "0.0.0"
+description = "Experimental Daimon Matrix walking skeleton"
+requires-python = ">=3.11"
+dependencies = ["cryptography>=42"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+daimon-we-spike = "daimon_matrix.experimental_we.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
