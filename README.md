@@ -22,6 +22,8 @@ implementation must not begin until the
 - [ONTOLOGY.md](ONTOLOGY.md) — normative namespace and identity model.
 - [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) — integration of Tribe Bridge.
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
+- [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work
+  already active in another session.
 - [Foundation snapshot](docs/foundation/daimon-matrix.md) — preserved source.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — claim leases and contribution workflow.
 
@@ -32,4 +34,3 @@ implementation must not begin until the
 - Current milestone: `V0`
 - License: MIT
 - Working language: English
-
