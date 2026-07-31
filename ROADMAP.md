@@ -17,6 +17,11 @@ collective-memory, and harness incarnation. Classify each item as:
 The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-003 and DM-010 are the
 first released cards.
 
+The reviewed Tribe v1, HMK, Wiki, collective-publication, compaii-state, and
+manifest work is also completed and deployed as a reversible transitional
+runtime. It remains in service and under test while later waves replace its
+provisional identity, memory-authority, and communication semantics.
+
 ## Wave 1 — Freeze semantics
 
 Finalize identity, birth, species, source, tribe, scope resolution, operation
