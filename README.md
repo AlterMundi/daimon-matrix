@@ -12,9 +12,10 @@ and `/source`), and resource-sharing relationships (`/tribe`).
 ## Status
 
 V0 planning, the concurrent-work audit, and transitional closeout are complete.
-DM-010 now freezes the corrected `/we` → distinct `/me` identities → one body
-per identity hierarchy. DM-011 is the current conformance candidate and DM-012
-is next for adaptation against that frozen boundary.
+DM-010 through DM-014 now freeze the corrected identity/body hierarchy,
+canonical artifacts, scope/reply/sync semantics, birth, and species evolution.
+The dependency-ready cards are DM-003 (claim automation), DM-015 (source), and
+DM-016 (tribe).
 The reviewed pre-Daimon HMK, Wiki, compaii-state, and Tribe v1 stack is the
 reversible transitional runtime used while this implementation is built; it is
 not itself the Daimon Matrix runtime. Tribe v0 is retired.
@@ -29,6 +30,12 @@ not itself the Daimon Matrix runtime. Tribe v0 is retired.
 - [Canonical artifacts specification](specs/canonical-artifacts.md) — normative
   V0 encodings, operational credentials, identity-wide park/wake receipts,
   signed events, causal order, checkpoints, and recipient encryption.
+- [Scope resolution specification](specs/scope-resolution.md) — normative V0
+  scopes, operations, fan-out, replies, and `/we.sync` convergence.
+- [Birth and first-awakening specification](specs/birth-first-awakening.md) —
+  normative V0 birth binding, custody, presence, and empty-memory boundary.
+- [Species evolution specification](specs/species-evolution.md) — normative V0
+  genomes, compatible releases, application, forks, and speciation.
 - [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) — integration of Tribe Bridge.
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
 - [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work
