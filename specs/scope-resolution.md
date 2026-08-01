@@ -328,6 +328,16 @@ they are signed by the claimant (ONTOLOGY `/source`). Resolution MUST record
 which claims were admitted, which are quarantined, and which were rejected,
 using the exclusion-reason vocabulary of Section 9.
 
+DM-015 freezes the exact evidence boundary. Every operation carries a signed
+selector containing one exact content-derived `source_id` and source-core hash;
+V0 has no unqualified network-wide source query. One claimant contributes one
+recipient even when it asserts multiple relations. Eligibility requires the
+claimant's current unforked, unexpired assertion, the resolver's current
+receiver-authored admitted assessment of that exact head, and current DM-010
+identity/presence evidence. Search indexes, routes, aliases, semantic
+similarity, remote assessments, and collective-memory nodes may discover
+candidate bytes but cannot add a recipient.
+
 ### 4.5 `/species`
 
 Resolves to daimons known to the resolver as carrying a compatible species
@@ -391,17 +401,20 @@ disable `/everyone` entirely.
 - **`.diff`** — request the differences between the caller's named state
   cursor and each resolved recipient's corresponding state. "Corresponding
   state" is typed per scope: for `/we`, the member identity's ledger
-  cursor; for `/source`, the recipient's ancestry claim set cursor; for
+  cursor; for `/source`, the recipient's DM-015 content-bound claim and
+  publication snapshot cursor for the exact selector; for
   `/species`, the recipient's DM-014 combined release-registry, evidence,
   application-head, and effective-release snapshot cursor. Replies are
   ordinary independent reply messages (Section 7).
 - **`.incoming`** — preview an integration against a recipient's state
   without applying it: what would be admitted, what would conflict, what
-  would be quarantined. MUST NOT mutate receiver state.
+  would be quarantined. MUST NOT mutate receiver state. For `/source`, it also
+  MUST NOT fetch, render, execute, index, acknowledge, or advance a cursor.
 - **`.pull`** — integrate as much compatible state as the pulling vessel
   accepts and report the achieved level per recipient. `.pull` is always
   receiver-side: the puller's policy decides admission; a recipient cannot
-  force integration.
+  force integration. DM-015 requires every newly pulled source publication to
+  enter quarantine; promotion is a later separate local event.
 - **`.sync`** — coordinate resumable convergence among the eligible identities
   of one resolved `/we`. It freezes the resolution and membership high-water
   for the attempt, exchanges per-identity ledger cursors, composes `.diff`,

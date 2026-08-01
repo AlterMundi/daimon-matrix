@@ -35,6 +35,11 @@ custom bodies without making any harness authoritative.
   one awake body. A same-identity clone is split-brain and fails closed.
 - `/tribe` is a resource-sharing relationship scope.
 - `/source` represents shared ancestry claims.
+- A `/source` signature proves only that one `/me` asserted its own relation to
+  one exact content-derived source. Resolver-local assessment controls scope
+  admission. Pulled publications retain authorship and derivation and enter
+  quarantine before a separate policy/evidence-bound promotion; the normative
+  contract is `specs/source-ancestry.md`.
 - `/species` represents compatible reproductive lineage, not current `/we`
   membership.
 - Tribe Bridge v1 is the active reversible transitional communications

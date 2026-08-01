@@ -36,6 +36,8 @@ not itself the Daimon Matrix runtime. Tribe v0 is retired.
   normative V0 birth binding, custody, presence, and empty-memory boundary.
 - [Species evolution specification](specs/species-evolution.md) — normative V0
   genomes, compatible releases, application, forks, and speciation.
+- [Source ancestry specification](specs/source-ancestry.md) — normative V0
+  self-claims, evidence, discovery, provenance, pull, and local quarantine.
 - [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) — integration of Tribe Bridge.
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
 - [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work

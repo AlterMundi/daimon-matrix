@@ -140,6 +140,14 @@ daimon/species-release/v0
 daimon/species-observed-positions/v0
 daimon/species-evidence-closure/v0
 daimon/species-incoming-snapshot/v0
+daimon/source-id/v0
+daimon/source-claim-series/v0
+daimon/source-claim-binding/v0
+daimon/source-assessment-series/v0
+daimon/source-publication-id/v0
+daimon/source-publication-binding/v0
+daimon/source-import-decision-series/v0
+daimon/source-cursor-snapshot/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -681,7 +689,10 @@ payload = type-defined JSON value
 ```
 
 An `event_type` is 1 through 128 ASCII bytes and matches
-`^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$`. A certificate prefix is 1 through 128
+`^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$`. DM-015 registers
+`matrix/source-claim`, `matrix/source-assessment`,
+`matrix/source-publication`, `matrix/source-cursor`, and
+`matrix/source-import-decision`. A certificate prefix is 1 through 128
 ASCII bytes, matches `^[a-z][a-z0-9./-]*$`, and is compared as a byte-exact
 prefix of the complete event type. Empty prefixes, consecutive separators in
 an event type, and unregistered bare names are rejected. DM-012 registers its
