@@ -90,7 +90,11 @@ membership. Membership evidence categories:
   local discovery signals are legitimate;
 - **adapter signals** — reachability, rosters, process tables, sessions.
   Adapter signals are never membership evidence; they are routing inputs
-  (Section 8), except where a scope explicitly declares embodiment evidence.
+  (Section 8). Exactly two scopes declared in this document are sanctioned
+  exceptions: `/here`, which uses embodiment evidence (Section 4.6), and
+  `/everyone`, which is by definition the weakest reachability scope
+  (Section 4.10). No other scope, present or future, may use adapter
+  signals as membership evidence.
 
 ### 4.1 `/me`
 
@@ -125,7 +129,10 @@ Membership rules:
   pending resolution (DM-010).
 
 `/we` excludes the resolving incarnation itself only by local policy; by
-default the resolving incarnation is a member when it is eligible.
+default the resolving incarnation is a member when it is eligible. Self
+inclusion is not assumed: the resolving incarnation's own eligibility is
+evaluated against the same DM-010 Section 10 predicate, including the
+validity of its own latest lease.
 
 ### 4.3 `/tribe`
 
@@ -142,11 +149,13 @@ receive; they do not change membership.
 
 ### 4.4 `/source`
 
-Resolves to entities that publish signed shared-ancestry claims recognizable
-by local policy. Claims are discoverable but not authoritative merely because
-they are signed by the claimant; imported knowledge enters quarantine until
-promoted by local policy (ONTOLOGY `/source`). Resolution MUST record which
-claims were admitted, which are quarantined, and which were rejected.
+Resolves to entities whose signed shared-ancestry claims the resolver has
+ingested. The signed claims are the membership evidence; local policy
+classifies each ingested claim as admitted, quarantined, or rejected, and
+only admitted claims resolve. Claims are not authoritative merely because
+they are signed by the claimant (ONTOLOGY `/source`). Resolution MUST record
+which claims were admitted, which are quarantined, and which were rejected,
+using the exclusion-reason vocabulary of Section 9.
 
 ### 4.5 `/species`
 
@@ -175,9 +184,11 @@ substituting network proximity.
 ### 4.8 `/all`
 
 Resolves to daimons listening in the current embodiment cluster: the union
-of `/here` surfaces the cluster coordinator knows, per cluster policy. V0
-leaves cluster formation to deployments; `/all` MUST NOT silently expand to
-`/everyone`.
+of `/here` surfaces the cluster coordinator knows, per cluster policy.
+Cluster membership evidence MUST be embodiment or presence evidence per
+cluster policy; a hub, broker, or adapter roster MUST NOT define `/all`
+membership. V0 leaves cluster formation to deployments; `/all` MUST NOT
+silently expand to `/everyone`.
 
 ### 4.9 `/human`
 
@@ -201,8 +212,11 @@ disable `/everyone` entirely.
   recipient. Produces one receipt per recipient (Section 6). `.tell` does
   not request, require, or await replies.
 - **`.diff`** — request the differences between the caller's named state
-  cursor and each resolved recipient's corresponding state. Replies are
-  ordinary independent reply messages (Section 7).
+  cursor and each resolved recipient's corresponding state. "Corresponding
+  state" is typed per scope: for `/we`, the recipient incarnation's ledger
+  cursor; for `/source`, the recipient's ancestry claim set cursor; for
+  `/species`, the recipient's release registry cursor. Replies are ordinary
+  independent reply messages (Section 7).
 - **`.incoming`** — preview an integration against a recipient's state
   without applying it: what would be admitted, what would conflict, what
   would be quarantined. MUST NOT mutate receiver state.
@@ -226,9 +240,10 @@ disable `/everyone` entirely.
 
 `—` means the operation is not valid for the scope in V0 and MUST fail closed
 with `operation_not_valid_for_scope`. "local note" records to the caller's
-own ledger without fan-out. Other registered operations (`.sync`, `.controls`,
-realm operations) follow ONTOLOGY and their own cards; this table governs
-only the five operations named here.
+own ledger without fan-out; `/me.tell` therefore produces a local ledger
+record, not a Section 6.3 receipt vector. Other registered operations
+(`.sync`, `.controls`, realm operations) follow ONTOLOGY and their own cards;
+this table governs only the five operations named here.
 
 ### 5.3 Authorization and classification
 
@@ -248,6 +263,9 @@ recipient yields a `refused:policy` receipt, not a silent drop.
 - An extension MUST NOT make any adapter, harness, host, or name into
   membership authority. A proposed extension that needs that is a protocol
   fork, not an extension.
+- An extension MUST NOT define new reachability-based scopes (beyond the two
+  sanctioned exceptions declared in Section 4) without a protocol version
+  change.
 
 ## 6. Message identity and fan-out
 
@@ -269,35 +287,56 @@ alter the logical message.
 
 Fan-out MUST be idempotent at the logical layer: re-processing the same
 `message_id` for the same recipient MUST NOT produce a duplicate accepted
-delivery. Delivery deduplication keys on `(message_id, recipient)`.
+delivery. The deduplication key's recipient component is typed per scope
+class: for `/we`, `(message_id, incarnation_id)`; for relationship scopes,
+`(message_id, relationship principal identifier)`. Route references,
+certificate generations, and key rotations MUST NOT be part of the
+deduplication key, so a renewed certificate cannot cause a duplicate and
+distinct incarnations of one `/me` are never wrongly deduplicated.
 
 ### 6.3 Receipts
 
-Every resolved recipient produces exactly one terminal receipt per fan-out
-attempt:
+A delivery has one non-terminal pending state and exactly one terminal
+receipt per `(message_id, recipient)`:
 
-- `resolved:unroutable` — admitted by evidence, no usable route;
-- `accepted` — a route accepted the delivery;
-- `delivered` — the recipient acknowledged intake;
-- `failed:transport` — routing or transport error after acceptance;
-- `refused:policy` — excluded by classification or grant policy;
-- `expired` — the delivery or its evidence expired before intake.
+- `accepted` — NON-TERMINAL pending state: a route accepted the delivery but
+  no terminal outcome is known yet. It MUST progress to exactly one terminal
+  receipt and MUST NOT be counted as a result.
+- Terminal receipts:
+  - `delivered` — the recipient acknowledged intake;
+  - `failed:transport` — no intake acknowledgment within the delivery
+    deadline, or a routing/transport error after acceptance;
+  - `refused:policy` — excluded by classification or grant policy;
+  - `expired` — the delivery's evidence or TTL expired, as known locally,
+    before intake;
+  - `resolved:unroutable` — admitted by evidence, no usable route.
 
-A receipt records the recipient identity, the route reference used, the
-adapter, and the evidence cursor at resolution. The operation result is the
-complete receipt vector. Callers MUST NOT collapse the vector into a boolean;
-"a receipt is missing" and "a recipient refused" are different facts.
+The timeout rule is exact: absence of an intake acknowledgment within the
+delivery deadline is `failed:transport`; a locally known evidence or TTL
+expiry before intake is `expired`. An implementation MUST classify the same
+event the same way.
 
-Timeouts mark receipts `failed:transport` or `expired`; they MUST NOT be
-retried into duplicates (Section 6.2) and MUST NOT be reported as delivered.
+A receipt records the recipient identity, the terminal (or pending) state,
+and the evidence cursor at resolution. The route reference and adapter are
+recorded when a route was selected and are null on `resolved:unroutable` and
+`refused:policy` receipts. The operation result is the complete receipt
+vector of terminal receipts. Callers MUST NOT collapse the vector into a
+boolean; "a receipt is missing" and "a recipient refused" are different
+facts.
 
 ## 7. Replies
 
 A reply is a new logical message: fresh `message_id`, the original
 `thread_id`, and `reply_to` naming the original `message_id`. Each resolved
-recipient decides independently whether and how to reply. Replies are
-ordinary messages and resolve their own scope (usually `/me`-addressed back
-to the original sender through the sender's published routes).
+recipient decides independently whether and how to reply. A reply is
+addressed to a concrete recipient identity carried by the original message:
+the sender's `me_id`, plus, when the original was resolved through `/we`,
+the originating `incarnation_id`, so the reply reaches the body that sent it.
+Routing uses the sender's published route references. `/me` is never the
+reply address for a remote sender: `/me` remains local-only (Section 4.1),
+and a cross-being reply MUST address the sender's identity and routes, not
+the `/we` or `/me` scopes. Replies are ordinary messages and follow the
+same fan-out and receipt rules (Section 6).
 
 The protocol MUST NOT:
 
@@ -350,7 +389,7 @@ Every resolution produces a resolution receipt containing:
   `policy`, `no_evidence`, `undefined_metric`);
 - the resolver's evidence cursor: identity-control checkpoint and revocation
   high-water state as defined by DM-010 Section 11, plus the freshness of
-  relationship/adaptor inputs used.
+  relationship and adapter inputs used.
 
 A resolution is always relative to its cursor. During partition, a resolver
 MUST NOT claim global absence of newer evidence; it reports the cursor it
@@ -361,9 +400,9 @@ the cursor is older than its configured freshness bound.
 
 | Parameter | V0 value |
 |---|---|
-| receipt taxonomy | exactly the six terminal values of Section 6.3 |
+| receipt taxonomy | one pending state (`accepted`) plus exactly the five terminal values of Section 6.3 |
 | parse failure behavior | fail closed, no alias guessing |
-| duplicate delivery rule | deduplicate on `(message_id, recipient)` |
+| duplicate delivery rule | deduplicate on `(message_id, recipient)` with the recipient component typed per Section 6.2 |
 | reply synthesis | caller-local only, labeled, attributed |
 | `/we` evidence source | DM-010 Section 10 only |
 | `/everyone` | disabled unless explicitly enabled; public classifications only |
@@ -404,6 +443,12 @@ DM-011 vectors and later implementation tests MUST cover at least:
 | recipient admitted by evidence but unroutable | `resolved:unroutable` receipt; other recipients unaffected |
 | adapter accepted delivery then transport failed | `failed:transport`; never reported as delivered |
 | timeout retry produces second delivery for one recipient | reject/deduplicate |
+| `accepted` reported as the terminal state of a delivery | reject unless the transport defines acceptance as intake; pending must progress to one terminal receipt |
+| timeout classified inconsistently between `failed:transport` and `expired` | reject; deadline-without-ack is `failed:transport`, locally known TTL/evidence expiry is `expired` |
+| cluster coordinator derives `/all` from a transport hub or broker roster | reject; cluster membership needs embodiment or presence evidence |
+| dedup key includes route reference or certificate generation | reject; renewals must not duplicate, incarnations must not collide |
+| reply addressed to `/me` for a remote sender | reject; replies address the sender's identity and routes, never the local-only `/me` scope |
+| extension defines a new reachability-based scope without a protocol version change | reject |
 | result reported as one collapsed boolean | reject; per-recipient vector required |
 | reply aggregated into the original message or its receipts | reject |
 | missing reply treated as negative answer | reject |
