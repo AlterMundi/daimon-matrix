@@ -129,7 +129,7 @@ parent_me_id
 parent_identity_control_position = {recovery_generation, control_sequence,
                                     control_hash}
 species_release_id = DM-014 species release ID
-source_references = sorted unique [reference string]
+source_references = sorted unique [DM-015 source-claim event ID]
 tribal_commitments = sorted unique [commitment object]
 issued_at_ms
 expires_at_ms
@@ -154,9 +154,10 @@ The event-level `intent` field MUST be null: an offer is not a DM-012
 communication and resolves no scope audience. `parent_me_id` MUST equal the
 event's `me_id`, and `parent_identity_control_position` MUST name an accepted
 position on the parent's identity-control chain at which the signing
-certificate validates. Reference strings (`species_release_id` excepted) are
-printable ASCII of 1 through 512 bytes; DM-015 and DM-016 freeze their exact
-grammars and resolution semantics. `species_release_id` matches exactly
+certificate validates. Tribal commitment reference strings are printable
+ASCII of 1 through 512 bytes; DM-016 freezes their exact grammars and
+resolution semantics. DM-015 freezes `source_references` as source-claim event
+IDs. `species_release_id` matches exactly
 `dm:species-release:v0:<32-byte-canonical-base64url>` and is the exact string
 the newborn genesis statement MUST carry verbatim. Operation strings are
 printable ASCII of 1 through 128 bytes.
@@ -265,7 +266,7 @@ core = {
   parent_identity_control_position = {recovery_generation, control_sequence,
                                       control_hash},
   species_release_id = DM-014 species release ID,
-  source_references = sorted unique [reference string],
+  source_references = sorted unique [DM-015 source-claim event ID],
   tribal_commitments = sorted unique [commitment object],
   accepted_at_ms
 }
@@ -607,8 +608,11 @@ bytes, base64url, safe-integer, and half-open interval rules unchanged.
 Closed bodies reject unknown properties; omitted optionals and explicit nulls
 are different encodings.
 
-- `source_references` sorts by ASCII bytes, is duplicate-free, and contains 0
-  through 64 entries.
+- `source_references` sorts by ASCII bytes, is duplicate-free, contains 0
+  through 64 exact `dm:event:v0:<32-byte-canonical-base64url>` IDs, and every
+  available referent MUST validate as a current `matrix/source-claim` assertion
+  authored by `parent_me_id` at offer issuance under DM-015. A reference is
+  contextual evidence, not source admission.
 - `tribal_commitments` sorts by canonical JCS bytes, is duplicate-free, and
   contains 0 through 64 entries; within one commitment, `resource_refs` and
   `operations` each sort by ASCII bytes, are duplicate-free, and contain 0
@@ -744,9 +748,10 @@ DM-060 and later implementation tests MUST cover at least:
   `species_release_id` is the enrollment point of one exact release into one
   new identity, and birth alone never branches a species.
 - DM-015 freezes `/source` claim grammars, evidence, and quarantine. DM-013
-  `source_references` resolve to DM-015 claims; they remain attributed and
-  quarantined until local policy promotes them, and signing an offer never
-  makes a claim authoritative.
+  `source_references` are exact source-claim event IDs authored by the parent
+  and current at offer issuance; they remain attributed and quarantined until
+  local policy admits/promotes them, and signing an offer never makes a claim
+  authoritative.
 - DM-016 freezes `/tribe` relationship and delegation artifacts. For every
   accepted commitment it MUST issue fresh grants bound to newborn keys,
   attenuated to or equal with the committed terms, within the parent's

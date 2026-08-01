@@ -196,13 +196,27 @@ Accidental drift does not create a species.
 
 ## `/source`
 
-`/source` expresses shared ancestry claims. In V0, a daimon may publish a
-signed self-claim with evidence. The claim is discoverable but not
-authoritative merely because it is signed by the claimant.
+`/source` expresses shared ancestry claims, not objective ancestry. One exact
+content-derived `source_id` names a byte-exact source core; aliases, names,
+semantic similarity, indexes, transports, and hosts never merge source IDs or
+grant membership. A daimon may publish only a signed self-claim. Its signature
+proves who asserted it, not that the assertion is true or that another identity
+shares the source.
 
-`/source.pull` is best-effort access to entities that consider themselves
-inheritors of the same source. Imported knowledge retains authorship and enters
-quarantine until promoted by local policy.
+Every valid assertion begins in receiver-local quarantine. An exact local
+policy and evidence snapshot must produce an attributed assessment before the
+claimant resolves through `/source`. Retraction and forks remain durable
+evidence; no arrival-order or popularity rule chooses a winner.
+
+`/source.diff` and `/source.incoming` are read-only discovery/preview surfaces.
+`/source.pull` is receiver-local, resumable intake from entities claiming the
+same exact source. Pulled publications preserve publisher, claimed authors,
+immutable source URI, content digest, derivation graph, consent, license,
+claim, and tombstone history, and always enter quarantine. Promotion is a
+later explicit local decision under immutable policy and evidence; it never
+rewrites authorship or makes external knowledge autobiographical. The
+normative V0 contract is
+[`specs/source-ancestry.md`](specs/source-ancestry.md).
 
 ## `/tribe`
 
