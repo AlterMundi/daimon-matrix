@@ -244,10 +244,12 @@ Delegation grants may constrain:
 - revocation;
 - birth limits.
 
-The newborn inherits full effective access within the parent's delegable
-scope only after the parent issues a fresh grant and the newborn independently
-accepts it. The birth commitment alone grants nothing. Tribal knowledge
-remains remotely authoritative: the newborn receives access, not a copy.
+The newborn inherits access only within the intersection of the exact scope the
+parent committed and the scope the parent remains able to delegate, after the
+parent issues a fresh grant and the newborn independently accepts it. The birth
+commitment alone grants nothing.
+Tribal knowledge remains remotely authoritative: the newborn receives access,
+not a copy.
 Disposable transport caches are permitted, but tribal knowledge is not
 materialized as `/me.memory`.
 

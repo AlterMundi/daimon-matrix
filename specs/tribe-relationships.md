@@ -9,7 +9,7 @@ limits, newborn grant issuance, human-contact evidence, and the boundary
 between remote tribal knowledge and personal memory.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
-and **MAY** are normative.
+and **MAY** are interpreted as described by RFC 2119 and RFC 8174.
 
 ## 1. Security goals and non-goals
 
@@ -129,6 +129,14 @@ continuity of one relationship key. A local display name, legal identity,
 email address, GitHub account, Telegram account, or provider login is not
 included in the identifier and MUST NOT be inferred as verified.
 
+Human-contact key rotation creates a new `human_contact_id`; V0 defines no
+continuity or authority transfer from the old contact principal. Compromise
+remediation is explicit: either participant closes each affected relationship,
+each exact grantor revokes its own grants, and receiver-local policy MAY
+quarantine statements from the compromised key at a cited evidence cursor.
+Such policy MUST NOT claim a portable or global compromise fact, silently
+retarget a relationship or grant to the replacement key, or invent a `/me`.
+
 Principal references sort by `(kind, principal_id)` and reject duplicates.
 All relationship and grant comparisons use the exact reference, never a
 display alias.
@@ -238,6 +246,15 @@ Sequence zero has a null predecessor. Every successor increments by one and
 names the exact accepted predecessor. Cards expire after at most 30 days.
 They are advertisements, not membership or grants. Key or route rotation
 creates a successor card; it does not rewrite a handshake or grant.
+
+Card currency is required when a handshake, grant issuance, or grant acceptance
+uses that card. After a grant is accepted, card expiry or temporary absence
+makes the principal unroutable and forbids new delivery until a current
+successor card is resolved; it does not revoke the relationship, invalidate the
+accepted grant, or terminate stable Daimon/contact identity evidence. Grant
+effectiveness therefore tests current identity/control or contact-key evidence,
+not continuous card availability. Revocation and compromise remain Section 8
+events or explicit receiver-local quarantine, never inferred from card lapse.
 
 Routes use the DM-011 route grammar and carry no endpoint secret. A route ID
 selects locally configured endpoint material. Endpoint credentials, cookies,
@@ -371,8 +388,11 @@ A proposed grant is closed:
 
 Grantor and subject MUST be the two handshake principals in either direction.
 Proposals are inert commitments to consider exact upper bounds. They are not
-grants, cannot authorize disclosure, and need not all be issued. An issued
-initial grant MUST be equal to or narrower than one accepted proposal.
+grants, cannot authorize disclosure, and need not all be issued. Every root
+grant (`parent_grant = null`) issued under this relationship MUST be equal to or
+narrower than one accepted proposal with the same grantor and subject. Wider or
+new root authority requires a fresh bilateral handshake and relationship ID;
+waiting or issuing another grant nonce cannot evade the accepted upper bound.
 
 Offer expiry is greater than issuance, at most 7 days later, and within the
 authorizing certificate/card interval. The offer's event `intent` is null.
@@ -533,9 +553,9 @@ retargeting a grant.
 
 With `parent_grant = null`, every resource controller MUST equal the grantor.
 With a parent, Section 6.4 attenuation applies. A grant may have exactly one
-parent; combining authorities requires separate grants. Proposed handshake
-terms are an additional upper bound for initial grants but never the source of
-authority.
+parent; combining authorities requires separate grants. The accepted handshake
+proposals are an additional upper bound for every root grant under the
+relationship but never the source of authority.
 
 ### 6.3 Subject acceptance
 
@@ -554,9 +574,12 @@ accepted_at_ms
 ```
 
 The author equals `subject`. Every copied field matches the grant. Acceptance
-occurs while the grant, relationship, subject identity/contact card, and all
-parent grants are current. Before acceptance the grant is `offered` and grants
-no access. A human subject signs the same payload using Section 4.3.
+occurs while the grant, subject identity/contact card, and all parent grants are
+current. The ordinary relationship MUST also be current, except for a Section 7
+newborn grant: its complete birth and parent-grant evidence replaces the
+ordinary handshake, and this acceptance atomically activates the derived
+relationship. Before acceptance the grant is `offered` and grants no access. A
+human subject signs the same payload using Section 4.3.
 
 The same subject may accept an exact replay idempotently. Two distinct
 acceptances for one immutable grant are redundant if their payload is equal;
@@ -613,8 +636,9 @@ these rules:
    Cartesian resource/operation set and of the active parent permissions;
 5. each child permission's delegation flag and depth are equal to or narrower
    than both the commitment and parent permission;
-6. expiry is no later than the non-null commitment expiry, parent grant expiry,
-   and 365-day grant ceiling;
+6. expiry is no later than the parent grant expiry and 365-day grant ceiling
+   and, when the commitment `expires_at_ms` is non-null, no later than that
+   commitment expiry;
 7. the subject binding names the newborn's exact genesis ID/hash; no parent or
    bootstrap key appears;
 8. the newborn independently authors the grant acceptance after it has an
@@ -639,10 +663,17 @@ broader social terms but cannot widen the birth grant.
 For each parent permission, `birth_limit` is the maximum number of distinct
 DM-013 birth acceptance IDs that may consume that permission through accepted
 direct child grants. One newborn using several permissions counts once against
-each permission it receives. Retries for the exact same birth acceptance and
-grant are idempotent. A second grant for the same commitment is valid only if
-it is strictly narrower and the earlier grant was never accepted; otherwise
-the commitment allocation is forked and neither new grant is effective.
+each permission it receives. The canonical allocation attempt for one
+commitment is the first grant in the complete predecessor-linked delegation
+lane that cites its exact offer, acceptance, index, and commitment hash. Exact
+replay of that grant is idempotent. Every later distinct grant citing the same
+commitment is intrinsically invalid, whether narrower, unaccepted, accepted,
+expired, or observed before the canonical attempt; it cannot fork, revoke, or
+otherwise deactivate the canonical grant. If the canonical attempt is never
+accepted or expires, V0 records the promise as unfulfilled and does not permit
+re-issue under that single-use commitment. A collision at the canonical
+delegation position remains the Section 6.4 lane fork and fails closed because
+there is then no unique first grant.
 
 Allocations are counted from the complete predecessor-linked delegation lane,
 not a local mutable counter. Missing predecessors yield `incomplete`; a count
@@ -673,10 +704,12 @@ parent_state_refs = sorted unique [action_ref]
 revoked_at_ms
 ```
 
-`revoke` is authored by the grantor; `relinquish` is authored by the subject.
-No third party, tribe directory governor, transport broker, parent of the
-subject, or resource adapter may revoke unless it is the exact grantor through
-a valid delegation chain. Signed time cannot backdate revocation.
+`revoke` is authored only by the exact grantor of the cited grant;
+`relinquish` is authored only by its exact subject. No third party, tribe
+directory governor, transport broker, ancestor grantor, parent of the subject,
+or resource adapter may directly revoke that grant. An ancestor grantor affects
+descendants exclusively by revoking its own grant, after which the cascade
+below makes them ineffective. Signed time cannot backdate revocation.
 
 Once a valid revocation is observed, the grant and all descendants are
 ineffective at that receiver. The events remain immutable. Descendants cannot
@@ -713,11 +746,16 @@ For local resolver principal `P` and exact `tribe_ref` selector:
 
 ```text
 members_R(tribe_ref, C) = counterpart principals from
-  active ordinary relationships involving P
-  union newborn subjects of active derived relationships authorized by P
-  union root resource controllers of active derived relationships held by P
+  active ordinary relationships in which P is an exact participant
+  union active derived relationships in which P is an exact participant
   minus quarantined or invalid principal evidence
 ```
+
+Derived resolution is symmetric over its two exact participants: the newborn
+resolves the root resource controller and that controller resolves the newborn.
+The attributable parent grantor resolves neither merely for authorizing the
+grant nor for being an ancestor; it resolves the newborn only when it is also
+the root controller or has a separate active relationship.
 
 An unqualified `/tribe` MAY resolve the union of locally selected tribe refs
 only when local configuration names that closed selector set. A received alias
@@ -850,6 +888,8 @@ Conformance vectors and implementation tests MUST cover at least:
 | Daimon card signed by another `me_id` | reject |
 | human card ID does not derive from signing key | reject |
 | human contact treated as legal identity or `/me` | reject boundary crossing |
+| human contact rotates its signing key | create a new contact principal; transfer no relationship or grant |
+| cited contact-key compromise evidence | receiver-local quarantine at exact cursor; no global fact or silent retargeting |
 | contact, transport, encryption, harness, or root key used in wrong role | reject |
 | card sequence gap, wrong predecessor, or fork | quarantine card series |
 | card key binding cites another `me_id` or inactive certificate | reject/incomplete |
@@ -865,9 +905,11 @@ Conformance vectors and implementation tests MUST cover at least:
 | unilateral directory insertion | no relationship |
 | active relationship with no grant | member for status; no resource access |
 | relationship member has no route | resolve as unroutable, retain membership |
+| current card expires after an accepted grant | relationship/grant remain; delivery unroutable until current successor card |
 | either participant closes exact relationship | terminal; all its grants ineffective |
 | re-pair after closure reuses relationship ID | reject; fresh nonce/ID required |
 | exact controller issues and subject accepts root grant | active within interval and policy |
+| root grant is not equal to or narrower than an accepted proposal | reject, including later grants under the relationship |
 | subject does not accept grant | offered only; no access |
 | grant binds another genesis/contact key | reject |
 | encryption-key rotation with same principal/current card | grant identity remains; delivery uses new current key |
@@ -886,6 +928,7 @@ Conformance vectors and implementation tests MUST cover at least:
 | upstream grant expires, closes, revokes, relinquishes, or forks | every descendant ineffective |
 | downstream grant tries to outlive ancestor | reject at issuance |
 | revoker is neither grantor nor subject | reject |
+| ancestor grantor directly revokes a child grant | reject; it may revoke only its own ancestor grant |
 | grantor revokes | revoke and cascade; retain history |
 | subject relinquishes | deactivate and cascade its descendants |
 | revocation replay | idempotent |
@@ -901,12 +944,15 @@ Conformance vectors and implementation tests MUST cover at least:
 | newborn grant uses parent credential, grant ID, private key, session, or route secret | reject/compromise evidence |
 | newborn grant is within commitment and active parent scope | offered to exact newborn |
 | newborn independently accepts fresh grant | activate derived relationship/access |
+| newborn acceptance has no prior active derived relationship | accept atomically when all birth/ancestry evidence is valid |
 | parent signs acceptance for newborn | reject |
 | commitment permission exceeds parent scope | grant invalid; newborn identity unaffected |
 | grant narrows commitment or parent scope | accept narrower effective access |
 | one birth consumes several permissions | count once against each used permission |
 | same accepted grant is retried | no additional birth-budget consumption |
-| second accepted grant for same commitment | fork allocation; fail closed |
+| later distinct grant cites same commitment | reject later grant; canonical first allocation remains unchanged |
+| canonical commitment grant is never accepted or expires | record unfulfilled; no V0 re-issue for that commitment |
+| two distinct grants collide at canonical delegation position | quarantine lane under Section 6.4; no unique allocation |
 | birth limit reached exactly | accept otherwise valid last allocation |
 | birth limit plus one | reject before effect |
 | revocation refunds birth count | reject; allocation remains consumed |
@@ -916,6 +962,8 @@ Conformance vectors and implementation tests MUST cover at least:
 | birth grant automatically joins parent `/we` | reject |
 | relationship or grant used as source/species/identity authority | reject |
 | `/tribe` resolution uses exact active relationships | include counterpart with authority refs |
+| root controller resolves newborn in its derived relationship | include newborn symmetrically with exact relationship evidence |
+| attributable parent is not the root controller | authorizing the birth grant alone adds no resolved member |
 | transport audience adds a recipient | reject; adapter is route input only |
 | grant changes relationship membership | reject; authorization is separate |
 | resource delivery lacks exact active grant and policy | refuse before sealing |
