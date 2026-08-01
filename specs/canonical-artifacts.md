@@ -55,16 +55,19 @@ Type-defined event payload objects MAY define their own keys, but every value
 still obeys this data model. Every conforming implementation MUST support a
 nesting depth through 64 levels and MUST reject a deeper value. Before parsing
 or performing cryptography it MUST reject a complete wire artifact larger than
-its V0 ceiling: 262144 bytes for a genesis, control, certificate, acceptance,
-lease, lease-head receipt, or checkpoint wrapper; 1048576 bytes for an event
-wrapper; and 2097152 bytes for a sealed-delivery wrapper. It MUST NOT configure
+its V0 ceiling: 262144 bytes for a genesis, control, certificate, acceptance
+(operational or birth), lease, lease-head receipt, or checkpoint wrapper;
+1048576 bytes for an event wrapper; and 2097152 bytes for a sealed-delivery
+wrapper. It MUST NOT configure
 a smaller ceiling and still claim V0 interoperability.
 
 Resource-bearing arrays are bounded before cryptographic evaluation: at most
 32 keys per threshold set, 128 detached signatures per wrapper, 256 embedded
 revocations per recovery transition, 1024 high-water entries per control
-artifact, 64 routes or certificate event-type prefixes, 64 causal parents, and
-256 sealed-delivery recipients. Subject to the complete-wire ceiling,
+artifact, 64 each of routes, certificate event-type prefixes, birth-offer
+source references, tribal commitments, and commitment resource/operation
+entries, 64 causal parents, and 256 sealed-delivery recipients. Subject to the
+complete-wire ceiling,
 implementations MUST accept values through those bounds when every other
 requirement is met and MUST reject larger arrays.
 
@@ -112,11 +115,13 @@ DM0_HPKE_X25519_HKDF_SHA256_CHACHA20POLY1305_ED25519_JCS
 ```
 
 It uses SHA-256, RFC 8032 Ed25519, RFC 9180 HPKE base mode with
-DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and ChaCha20-Poly1305. Algorithms are
-not negotiated. A different suite requires new protocol/domain versions and
-MUST NOT reinterpret V0 bytes.
+DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and ChaCha20-Poly1305. DM-013 also
+uses a fresh Ed25519 capability key for its publicly verifiable one-use
+awakening proof; that key is never identity authority. Algorithms are not
+negotiated. A different suite requires new protocol/domain versions and MUST
+NOT reinterpret V0 bytes.
 
-The DM-010 domains are preserved exactly and V0 adds event/delivery domains:
+The registered V0 cryptographic and protocol-separation labels are:
 
 ```text
 daimon/genesis/v0
@@ -125,6 +130,8 @@ daimon/recovery-transition/v0
 daimon/recovery-policy/v0
 daimon/operational-certificate/v0
 daimon/operational-acceptance/v0
+daimon/birth-acceptance/v0
+daimon/birth-awakening-challenge/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -231,8 +238,9 @@ body/ID but different endorsement subsets represent one artifact; wrapper bytes
 with a different body for the same ID are a content conflict. Events,
 operational subject acceptances, leases, checkpoints, and sealed deliveries
 require exactly one artifact-specific signer and do not use endorsement
-merging. DM-012 collective membership acceptances are threshold artifacts and
-therefore use the mergeable-endorsement rule above.
+merging. DM-012 collective membership acceptances and DM-013 birth acceptances
+are threshold artifacts and therefore use the mergeable-endorsement rule
+above.
 
 ### 4.3 Timestamps
 
@@ -282,6 +290,10 @@ birth_offer_id = string or null
 recovery_generation = 0
 control_sequence = 0
 ```
+
+A non-null `birth_offer_id` names the exact DM-013 `matrix/birth-offer` event
+ID whose newborn root-threshold acceptance completes this genesis's lineage
+binding. It is signed personal provenance and grants no identity authority.
 
 The wrapper uses `artifact_id = dm:ctl:v0:<artifact-hash>` and
 `root-authorization` signatures under the genesis domain. When recovery mode is

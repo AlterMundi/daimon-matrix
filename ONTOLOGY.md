@@ -138,7 +138,10 @@ A birth creates a new identity, not a body move or a new `/we` member alias:
   provenance.
 
 The birth offer references a species release and the parent. The birth
-acceptance binds the newborn's public key to that offer.
+acceptance binds the newborn's self-certifying genesis to that offer. The
+normative V0 offer, acceptance, first-awakening, empty-memory, and
+lineage-quarantine contract is defined in
+[`specs/birth-first-awakening.md`](specs/birth-first-awakening.md).
 
 ## Species
 
