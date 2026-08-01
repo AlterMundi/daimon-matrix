@@ -1270,8 +1270,10 @@ DM-061 and later implementation tests MUST cover at least:
 
 ## 15. Downstream contracts
 
-- DM-018 registers canonical body adapters and capability implementations; an
-  adapter never becomes species or identity authority.
+- DM-018 registers canonical body adapters and capability implementations.
+  Such an adapter may execute an exact pinned suite and return measured output,
+  but Matrix validates the content manifest, compatibility report and
+  application receipt; the adapter never becomes species or identity authority.
 - DM-023 persists release/branch cursors, occupied positions, evidence closure,
   and idempotent application receipts; it does not invent their semantics.
 - DM-032 may let a model propose bundles or deltas, but only the deterministic

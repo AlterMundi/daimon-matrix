@@ -160,6 +160,15 @@ daimon/tribe-resource-id/v0
 daimon/tribe-relationship-id/v0
 daimon/tribe-grant-series/v0
 daimon/memory-id/v0
+daimon/adapter-manifest/v0
+daimon/adapter-result/v0
+daimon/capability-species-evaluation/v0
+daimon/body-realization/v0
+daimon/activation-bundle/v0
+daimon/park-evidence/v0
+daimon/wake-evidence/v0
+daimon/deployment-fence/v0
+daimon/adapter-migration-receipt/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -1172,7 +1181,10 @@ V0 explicitly rejects or leaves behind:
   a Daimon event or identity artifact. DM-017's closed category registry,
   personal-memory correction lanes, and incarnation-handoff rules are defined
   in [`memory-boundaries.md`](memory-boundaries.md).
-- DM-018 freezes the canonical body-description body and adapter bindings.
+- DM-018 freezes the canonical body-description body, adapter bindings,
+  content-derived adapter/exchange domains, exact version negotiation,
+  migration receipts, and the deployment fence that remains distinct from a
+  Matrix presence lease.
 - DM-021 implements identity artifact validation and key custody.
 - DM-022 stores canonical event bytes and intrinsic replay/fork evidence without
   rewriting.

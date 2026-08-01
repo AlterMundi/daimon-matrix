@@ -175,6 +175,14 @@ stops or moves the body. Wake verifies that evidence and creates a fresh NOW;
 an HMK, volume, database, container, or cluster snapshot may accelerate a
 projection rebuild but can never lower a high-water or become `/me` authority.
 
+All providers cross the DM-018 harness-neutral narrow waist through closed,
+exactly versioned records and content references, never implementation
+databases or secret material. Matrix presence and a deployment controller's
+execution fence are distinct authority lanes. When a controller is configured,
+delivery and effects require both current gates; park, wake, restore and
+rollback consume monotonic successor positions in both lanes rather than
+restoring old bytes.
+
 Tribal knowledge remains remotely authoritative. After birth, a parent may
 issue fresh grants to the newborn, equal to or narrower than the committed and
 currently delegable parent scope; the newborn must independently accept them.
