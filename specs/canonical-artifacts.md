@@ -125,6 +125,11 @@ daimon/recovery-transition/v0
 daimon/recovery-policy/v0
 daimon/operational-certificate/v0
 daimon/operational-acceptance/v0
+daimon/we-membership-genesis/v0
+daimon/we-membership-transition/v0
+daimon/we-membership-acceptance/v0
+daimon/sync-leg/v0
+daimon/member-ledger-cursor/v0
 daimon/revocation/v0
 daimon/presence-lease/v0
 daimon/lease-head-receipt/v0
@@ -224,8 +229,10 @@ Verifiers union valid authorized `(role,kid,value)` endorsements, sort the union
 and evaluate thresholds over distinct public keys. Wrapper bytes with the same
 body/ID but different endorsement subsets represent one artifact; wrapper bytes
 with a different body for the same ID are a content conflict. Events,
-acceptances, leases, checkpoints, and sealed deliveries require exactly one
-artifact-specific signer and do not use endorsement merging.
+operational subject acceptances, leases, checkpoints, and sealed deliveries
+require exactly one artifact-specific signer and do not use endorsement
+merging. DM-012 collective membership acceptances are threshold artifacts and
+therefore use the mergeable-endorsement rule above.
 
 ### 4.3 Timestamps
 
@@ -657,10 +664,10 @@ An `event_type` is 1 through 128 ASCII bytes and matches
 `^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$`. A certificate prefix is 1 through 128
 ASCII bytes, matches `^[a-z][a-z0-9./-]*$`, and is compared as a byte-exact
 prefix of the complete event type. Empty prefixes, consecutive separators in
-an event type, and unregistered bare names are rejected. The initial closed V0
-registry is empty; DM-013 through DM-017 register protocol names, while names
-beginning `x/` are extensions and remain subject to certificate constraints and
-local semantic policy.
+an event type, and unregistered bare names are rejected. DM-012 registers its
+closed `matrix/` communication and convergence names; DM-013 through DM-017
+register additional protocol names. Names beginning `x/` are extensions and
+remain subject to certificate constraints and local semantic policy.
 
 The event digest and ID are:
 
@@ -691,9 +698,10 @@ retain it; a thread ID is never derived from or substituted for a message ID.
 At this layer `scope` and `operation` are inert signed strings. Cryptographic
 acceptance MUST NOT be interpreted as scope validity, audience resolution,
 sender authorization, operation execution, reply acceptance, semantic receipt,
-or memory admission. DM-012 expresses a reply by retaining `thread_id` and
-citing every directly replied-to message event in `causal_parents`; it MUST NOT
-add an unsigned reply identifier in the delivery layer.
+or memory admission. DM-012 binds a direct reply target and the exact replied
+message subset in its signed `matrix/reply` payload, retains `thread_id`, and
+also cites those messages in `causal_parents`; it MUST NOT add an unsigned reply
+identifier in the delivery layer.
 
 `body_hash` identifies the exact canonical body-description body
 claimed by the author:
