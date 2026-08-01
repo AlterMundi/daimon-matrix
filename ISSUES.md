@@ -3,10 +3,10 @@
 All logical IDs are retained in GitHub issue titles. GitHub issue numbers are
 assigned at publication time.
 
-DM-000 through DM-004 and DM-010 through DM-012 are complete. The corrected
+DM-000 through DM-004 and DM-010 through DM-013 are complete. The corrected
 `/we -> distinct /me identities -> one active body per /me` foundation is
-merged. DM-003, DM-013, and DM-015 are dependency-ready; later cards retain
-the direct blockers below and are released only when all of them close.
+merged. DM-003, DM-014, DM-015, and DM-016 are dependency-ready; later cards
+retain the direct blockers below and are released only when all of them close.
 
 ## Coordination
 

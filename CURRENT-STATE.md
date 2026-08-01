@@ -6,14 +6,14 @@ This document is the operational handoff between completed planning and V0
 implementation. `PLAN.md`, `ONTOLOGY.md`, `TRIBE-MIGRATION.md`, and
 `ISSUES.md` remain canonical for architecture and dependencies.
 
-Project 9 contains 50 cards: 10 Done, 1 In Progress, and 39 Todo. The sole
-in-progress card is the independent Eko Tribe onboarding card. DM-003, DM-013,
-and DM-015 are dependency-ready. These counts replace the original 44-card
-planning snapshot.
+After this reconciliation merges, Project 9 contains 51 cards: 12 Done, 1 In
+Progress, and 38 Todo. The sole in-progress card is the independent Eko Tribe
+onboarding card. DM-003, DM-014, DM-015, and DM-016 are dependency-ready. These
+counts replace the original 44-card planning snapshot.
 
 ## Completed foundation and evidence
 
-- DM-000 through DM-004 and DM-010 through DM-012 are complete.
+- DM-000 through DM-004 and DM-010 through DM-013 are complete.
 - The initial `/we.sync` refinement merged in PR 47; the closed canonical
   scope, reply, cursor, outcome, and receipt contracts merged with DM-012 in
   PR 53.
@@ -23,6 +23,11 @@ planning snapshot.
   exchange, and experimental storage do not become V0 runtime code.
 - The spike findings are recorded on DM-011, DM-022, DM-023, DM-034, and
   DM-070.
+- DM-013 merged in PR 58. Birth now has a reviewed V0 offer, public
+  invitation-capability proof, newborn root-threshold acceptance,
+  first-awakening ceremony, empty autobiographical-memory boundary, and
+  lineage-only quarantine contract. It does not claim that a live Agent 0 has
+  been born.
 
 ## Transitional runtime
 
@@ -79,8 +84,9 @@ into DM-004 or DM-010.
 
 The corrected hierarchy is merged: `/we` collective → distinct root-bearing
 `/me` identities → at most one awake body per identity. DM-010 freezes
-identity and presence, DM-011 freezes canonical artifacts and vectors, and
-DM-012 freezes scope, reply, and `/we.sync` semantics. DM-013 (birth) and
-DM-015 (source) are the next dependency-ready protocol cards. DM-003 remains a
-separate dependency-ready coordination card; all proceed only through the
-documented GitHub claim protocol.
+identity and presence, DM-011 freezes canonical artifacts and vectors, DM-012
+freezes scope, reply, and `/we.sync` semantics, and DM-013 freezes birth and
+first awakening. DM-014 (species), DM-015 (source), and DM-016 (tribe) are the
+next dependency-ready protocol cards. DM-003 remains a separate
+dependency-ready coordination card; all proceed only through the documented
+GitHub claim protocol.
