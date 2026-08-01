@@ -26,8 +26,9 @@ custom bodies without making any harness authoritative.
 - `/source` represents shared ancestry claims.
 - `/species` represents compatible reproductive lineage, not current
   incarnation membership.
-- Tribe Bridge becomes the first internal communications transport and its old
-  repository is archived after migration.
+- Tribe Bridge v1 is the active reversible transitional communications
+  transport. Its v0 protocol, services, parsers, and compatibility surface are
+  retired; the repository is archived only after Daimon replacement gates pass.
 - The canonical personal state is an append-only event ledger; HMK, Wiki,
   collective-memory, and harness state are projections or external sources.
 - The CompAII Librarian uses `deepseek-v4-pro` through provider `deepseek`.
@@ -36,6 +37,13 @@ custom bodies without making any harness authoritative.
 - The reviewed pre-Daimon stack is deployed as a reversible transitional
   runtime and remains operational while Daimon Matrix is implemented. Running
   it does not claim that `/me`, `/we`, the ledger, or DM-072 already exist.
+- Transitional principals ending in `@localhost` are embodiment-local. They
+  cannot address remote or mixed audiences, and remote recipients cannot
+  decrypt their local-only envelopes. Client identity is explicit; no harness,
+  including Codex or Hermes, is a protocol-wide default.
+- One pinned external HMK implementation is operational per deployment. HMK
+  databases remain host-local projections and are never merged or copied as
+  synchronization units.
 
 ## Architecture
 
@@ -133,11 +141,12 @@ The communications subsystem has separate layers for:
 6. local, direct, and hub routes;
 7. optional human-facing gateways.
 
-The current Tribe Bridge code is migrated as a starting implementation.
-Legacy v0 encryption is replaced because its key is derivable from public
-roster material. Draft Tribe v1 recipient encryption, signing, replay,
-delivery, and recovery tests are adapted to Daimon identity and event
-contracts rather than discarded or promoted unchanged.
+The current Tribe Bridge v1 code is migrated as a starting implementation.
+Legacy v0 has been retired without history migration. V1 recipient encryption,
+signing, replay, delivery, directory rollback protection, and recovery tests
+are adapted to Daimon identity and event contracts rather than discarded or
+promoted unchanged. The governance directory is a transitional roster, not
+the future `/me` identity authority.
 
 GitHub Issues, pull requests, and the Project own work coordination. They are
 not `/tribe` membership or message authorization. Claim principals eventually

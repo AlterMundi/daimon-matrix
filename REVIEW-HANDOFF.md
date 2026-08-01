@@ -1,5 +1,10 @@
 # Concurrent Session Review Handoff
 
+> Historical gate: DM-000 completed on 2026-07-31. Do not ask an existing
+> session to repeat that audit. Use this procedure only for newly discovered
+> concurrent work, then record its disposition on the owning open card. The
+> current operational baseline is in [`CURRENT-STATE.md`](CURRENT-STATE.md).
+
 Use this document to decide whether work already in progress remains relevant
 to Daimon Matrix V0.
 
@@ -41,9 +46,9 @@ For every classification, cite the relevant Daimon Matrix issue and provide
 line-, commit-, or deployment-level evidence. Do not recommend stopping work
 based only on architectural resemblance.
 
-Post the result on DM-000 or return it to the coordinating session so that
-issue dependencies and reuse notes can be updated before implementation cards
-are released.
+Post the result on the owning open issue (and link DM-000 as historical
+context) or return it to the coordinating session so dependencies and reuse
+notes can be updated before implementation continues.
 
 ## Current critical corrections
 
@@ -54,8 +59,9 @@ The reviewer must account for these decisions:
   species or mandatory answer integrator.
 - `/tribe` is a resource-sharing relationship scope, not the transport.
 - Tribe Bridge is planned for absorption as the first transport implementation.
-- Its existing public-roster-derived encryption does not provide
-  confidentiality and must be replaced.
+- Tribe v0 public-roster-derived encryption did not provide confidentiality;
+  v0 is retired. Deployed v1 recipient encryption is transitional evidence,
+  not Daimon identity authority.
 - A birth creates a new `/me` with new keys and empty autobiographical memory.
 - Species is compatible reproductive lineage: root `/me` definition plus
   capability contracts.
@@ -63,4 +69,3 @@ The reviewer must account for these decisions:
   knowledge remains remotely authoritative.
 - Agent 0 and actual species evolution have not yet occurred; synthetic tests
   must not claim otherwise.
-

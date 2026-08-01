@@ -3,9 +3,10 @@
 All logical IDs are retained in GitHub issue titles. GitHub issue numbers are
 assigned at publication time.
 
-The DM-000 audit is complete and recorded in `CONCURRENT-WORK-AUDIT.md`.
-DM-003 and DM-010 are the only immediately released cards; every other open
-card retains the direct blockers shown below.
+DM-000 through DM-002 are complete and recorded in the canonical documents.
+DM-004 is the finite transitional closeout before implementation. DM-003 and
+DM-010 remain dependency-ready; DM-010 is the selected first V0 implementation
+card after DM-004 closes. Every other open card retains the blockers below.
 
 ## Coordination
 
@@ -14,6 +15,7 @@ card retains the direct blockers shown below.
 | DM-000 | Audit concurrent work for relevance and overlap | — |
 | DM-001 | Publish the maintained foundation and V0 ontology | — |
 | DM-002 | Configure Project governance, milestone, labels, and claim protocol | DM-001 |
+| DM-004 | Close transitional runtime loose ends before V0 implementation | DM-000, DM-001, DM-002 |
 | DM-003 | Automate claim leases, heartbeats, release, and expiration | DM-000, DM-002 |
 
 ## Protocol
