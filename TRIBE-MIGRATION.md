@@ -77,7 +77,7 @@ are not.
 - Require an explicit per-agent client environment; an absent host default
   fails closed instead of impersonating a convenient harness.
 - Principals ending in `@localhost` may address only audiences wholly local to
-  the same embodiment. Their content keys are not wrapped for remote members.
+  the same body. Their content keys are not wrapped for remote members.
 - Directory epochs advance through the governance-signed hash chain. Clients
   and brokers never downgrade an anti-rollback state.
 - A new host seeded directly at an epoch greater than one needs the matching

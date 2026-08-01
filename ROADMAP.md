@@ -7,16 +7,16 @@ all direct blockers are closed.
 
 Inventory every active session, branch, worktree, issue, and uncommitted change
 related to Tribe Bridge, CompAII continuity, HMK, rebirth sync, Wiki,
-collective-memory, and harness embodiment. Classify each item as:
+collective-memory, and harness bodies. Classify each item as:
 
 - directly reusable;
 - reusable after protocol adaptation;
 - superseded but worth preserving;
 - safe to stop.
 
-The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-004 is closed. DM-010
-is reopened for the corrected identity/body boundary; DM-011 and DM-012 remain
-preserved but held for adaptation until that correction is reviewed.
+The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-004 is closed. The
+corrected DM-010 identity/body boundary, DM-011 canonical artifacts and
+vectors, and DM-012 scope/reply/sync contracts are reviewed and merged.
 
 The reviewed Tribe v1, HMK, Wiki, collective-publication, compaii-state, and
 manifest work is also completed and deployed as a reversible transitional
@@ -31,6 +31,11 @@ evidence rather than imported as V0 runtime code.
 
 Finalize identity, birth, species, source, tribe, scope resolution, operation
 grammar, event envelope, cryptographic vectors, and compatibility rules.
+
+Current state: DM-010 through DM-012 are complete. DM-013 (birth) and DM-015
+(source) are dependency-ready, alongside the independent coordination card
+DM-003. Species, tribe, memory-boundary, and adapter contracts remain blocked
+in the dependency order recorded in `ISSUES.md`.
 
 ## Wave 2 — Build the local narrow waist
 

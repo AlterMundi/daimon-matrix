@@ -6,15 +6,17 @@ This document is the operational handoff between completed planning and V0
 implementation. `PLAN.md`, `ONTOLOGY.md`, `TRIBE-MIGRATION.md`, and
 `ISSUES.md` remain canonical for architecture and dependencies.
 
-Project 9 contains 50 cards: 7 Done, 4 In Progress, and 39 Todo. The active
-cards are corrected DM-010, held-for-adaptation DM-011 and DM-012, and the
-independent Eko Tribe onboarding card. These counts replace the original
-44-card planning snapshot.
+Project 9 contains 50 cards: 10 Done, 1 In Progress, and 39 Todo. The sole
+in-progress card is the independent Eko Tribe onboarding card. DM-003, DM-013,
+and DM-015 are dependency-ready. These counts replace the original 44-card
+planning snapshot.
 
 ## Completed foundation and evidence
 
-- DM-000, DM-001, and DM-002 are complete.
-- Canonical `/we.sync` semantics merged in PR 47.
+- DM-000 through DM-004 and DM-010 through DM-012 are complete.
+- The initial `/we.sync` refinement merged in PR 47; the closed canonical
+  scope, reply, cursor, outcome, and receipt contracts merged with DM-012 in
+  PR 53.
 - The disposable two-host `/we.incoming`/`pull`/`sync` spike completed its live
   acceptance and is preserved at commits `8c3b92f` and `027b83d`. Its PR was
   closed without merge so manual key pinning, SSH transport, full-history
@@ -25,7 +27,7 @@ independent Eko Tribe onboarding card. These counts replace the original
 ## Transitional runtime
 
 - Tribe Bridge v1 is active; v0 is fully retired. The live signed directory is
-  epoch 3. `@localhost` principals and ciphertext stay on the local embodiment,
+  epoch 3. `@localhost` principals and ciphertext stay on the local body,
   and clients select identity explicitly.
 - Hermes commit `0db1912911fafa384aa5ee0145929658a9d1dd33` runs on Legion
   and `daimonmatrix`. Kimi K3 256k is primary; cheaper auxiliaries perform
@@ -75,9 +77,10 @@ into DM-004 or DM-010.
 
 ## Current protocol lane
 
-DM-010 was reopened after review established the corrected hierarchy: `/we`
-collective → distinct root-bearing `/me` identities → one awake body per
-identity. DM-011 and DM-012 preserve useful work but are held for adaptation
-until DM-010 is corrected and independently reviewed. DM-003 remains
-dependency-ready and may proceed concurrently only through the documented
-GitHub claim protocol.
+The corrected hierarchy is merged: `/we` collective → distinct root-bearing
+`/me` identities → at most one awake body per identity. DM-010 freezes
+identity and presence, DM-011 freezes canonical artifacts and vectors, and
+DM-012 freezes scope, reply, and `/we.sync` semantics. DM-013 (birth) and
+DM-015 (source) are the next dependency-ready protocol cards. DM-003 remains a
+separate dependency-ready coordination card; all proceed only through the
+documented GitHub claim protocol.
