@@ -37,7 +37,7 @@ card retains the direct blockers shown below.
 | DM-020 | Scaffold the Python package and public CI | DM-000, DM-018 |
 | DM-021 | Implement identity, certificates, and secure keystore | DM-020, DM-010 |
 | DM-022 | Implement the append-only SQLite event ledger | DM-020, DM-011 |
-| DM-023 | Implement deterministic projections and synchronization cursors | DM-021, DM-022 |
+| DM-023 | Implement deterministic projections, synchronization cursors, and idempotent `/we.sync` convergence | DM-021, DM-022 |
 | DM-024 | Implement the local daemon and authenticated RPC | DM-023 |
 | DM-025 | Implement the `daimon` CLI and minimal MCP surface | DM-024, DM-012 |
 | DM-026 | Add concurrency, crash, causal-order, and rebuild invariants | DM-021–DM-025 |
@@ -84,7 +84,7 @@ card retains the direct blockers shown below.
 
 | ID | Title | Direct blockers |
 |---|---|---|
-| DM-070 | Validate remote incarnations of one `/me` | DM-054, DM-061 |
+| DM-070 | Validate remote incarnations of one `/me`, including provenance-preserving bidirectional memory convergence | DM-054, DM-061 |
 | DM-071 | Validate consented cross-daimon tribe and source exchange | DM-015, DM-016, DM-054 |
 | DM-072 | Activate the reversible CompAII Codex and Hermes canary | DM-042, DM-070 |
 | DM-073 | Perform adversarial security, revocation, and recovery review | DM-055, DM-061, DM-071, DM-072 |
@@ -103,6 +103,14 @@ Every implementation card must include:
 - security and rollback notes;
 - a concurrent-work reuse section;
 - one expected PR.
+
+DM-070 must additionally prove that two remote incarnations seeded from one
+consistent personal-memory snapshot can independently append distinct
+experience events, preview both incoming sets, converge in both directions via
+`/we.sync`, preserve the originating incarnation and embodiment in both local
+projections, repeat synchronization without duplicates, and resume after an
+interrupted partial exchange. The test must not share an HMK, harness, or
+ledger SQLite file between hosts.
 
 Reuse sections must link `CONCURRENT-WORK-AUDIT.md` and name the exact source
 commit. Source components with changes requested by the independent review are

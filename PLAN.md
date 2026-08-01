@@ -72,20 +72,29 @@ Scopes resolve audiences or resources independently from operations:
 - topology: `/here`, `/near`, `/all`, `/realm`;
 - machine interfaces: `/perceptors`, `/actuators`, `/integrators`.
 
-Operations include `.tell`, `.diff`, `.incoming`, `.pull`, `.status`, and
-`.controls`. V0 will define an extensible operation registry rather than
+Operations include `.tell`, `.diff`, `.incoming`, `.pull`, `.sync`, `.status`,
+and `.controls`. V0 will define an extensible operation registry rather than
 hard-coding every scope/operation pair.
 
 `/we.tell` fans out to active leased incarnations. Recipients independently
 attempt replies. Integration of replies is an optional local policy.
+
+`/we.sync` coordinates resumable convergence among active incarnations of one
+`/me`. It exchanges signed ledger heads or cursors, previews each receiver's
+compatible incoming events, and causes each participant to pull the missing
+events it accepts. It composes `/we.diff`, `/we.incoming`, and `/we.pull`; it
+does not create an atomic distributed transaction. A partial run reports a
+per-incarnation cursor and receipt so a later run can continue idempotently.
 
 ### State and memory
 
 The local daemon is the single writer for an append-only SQLite ledger. WAL is
 enabled only on a runtime containing the applicable WAL-reset corruption fix;
 otherwise the daemon uses rollback journal `DELETE` with full durability or
-fails closed. Events carry protocol version, ID, `/me`, incarnation, logical
-time, causal parents, type, payload, hash, and signature.
+fails closed. Events carry protocol version, ID, `/me`, originating
+incarnation and embodiment, logical time, causal parents, type, payload, hash,
+and signature. Synchronization exchanges canonical events, never private rows
+from an HMK or harness implementation database.
 
 Rebuildable projections include:
 
@@ -101,6 +110,12 @@ Rebuildable projections include:
 The Librarian combines deterministic policy with a replaceable model worker.
 The model produces schema-validated proposals; only the deterministic service
 may append canonical decisions.
+
+Raw lived-experience events remain immutable and retain their originating
+incarnation and embodiment after synchronization. Consolidation is itself a
+signed event that cites its evidence. It is distributed to every incarnation
+like any other compatible event, so all deterministic projections converge
+without erasing where an experience occurred.
 
 Tribal knowledge remains remotely authoritative. A newborn inherits access and
 full delegable tribal membership from its parent, but does not copy tribe
@@ -206,7 +221,9 @@ separate collective-memory source and reviewed-publication adapters.
 ### 4. CompAII incarnations
 
 Implement Codex and Hermes adapters and validate local convergence without
-sharing implementation databases.
+sharing implementation databases. Seed a new incarnation from a consistent
+personal-memory snapshot, then synchronize subsequent canonical events rather
+than copying live SQLite files.
 
 ### 5. Communications
 
@@ -228,6 +245,13 @@ and V0.1.0 release.
 - Codex and Hermes embody the same `/me` with separate incarnation keys.
 - `/we` includes only active signed presence leases and routes one logical
   message without conflating replies.
+- Two incarnations seeded from one consistent memory snapshot can each append
+  a distinct lived-experience event, preview both directions with
+  `/we.incoming`, converge through `/we.sync`, and retain the correct
+  originating incarnation and embodiment in both projections.
+- Repeating `/we.sync` after convergence is idempotent, creates no duplicate
+  memories, and reports matching synchronization cursors. An interrupted run
+  resumes to the same result without requiring shared implementation databases.
 - The ledger reconstructs every projection deterministically.
 - No model can write canonical state directly.
 - A newborn starts a distinct life with no parent autobiographical memory.
