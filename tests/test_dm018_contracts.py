@@ -100,6 +100,14 @@ def check_manifest(record):
         assert_sorted_unique(row["versions"], "contract versions")
 
 
+def check_negotiation(record):
+    check_manifest(record)
+    local_allowlist = {"v0"}
+    if not any(local_allowlist.intersection(row["versions"])
+               for row in record["contracts"]):
+        raise Reject("no mutually supported exact contract version")
+
+
 def check_migration(records):
     prior, candidate = records
     if candidate["migration_sequence"] != prior["migration_sequence"] + 1:
@@ -170,6 +178,7 @@ CHECKS = {
     "dual-gate": check_dual_gate,
     "fence-monotonic": check_fence,
     "migration-monotonic": check_migration,
+    "negotiation": check_negotiation,
 }
 
 
@@ -247,6 +256,40 @@ class DM018ContractsTest(unittest.TestCase):
             record, signature="A" + record["signature"][1:])
         with self.assertRaises(Reject):
             check_deployment_fence_crypto(modified_signature)
+
+    def test_private_key_fixture_is_otherwise_valid_activation(self):
+        record = strict_load(os.path.join(
+            VECTOR_ROOT, "negative/private-key-field.json"))
+        self.assertTrue(list(self.validator.iter_errors(record)))
+        without_secret = dict(record)
+        del without_secret["private_key"]
+        self.assertFalse(list(self.validator.iter_errors(without_secret)))
+
+    def test_nominal_ids_reject_cross_authority_substitution(self):
+        fence = strict_load(os.path.join(
+            VECTOR_ROOT, "valid/deployment-fence-active.json"))
+        self.assertFalse(list(self.validator.iter_errors(fence)))
+        wrong_subject = dict(
+            fence,
+            me_id="dm:adapter:v0:" + fence["me_id"].rsplit(":", 1)[1],
+        )
+        self.assertTrue(list(self.validator.iter_errors(wrong_subject)))
+
+        activation = strict_load(os.path.join(
+            VECTOR_ROOT, "valid/activation-bundle.json"))
+        wrong_position = dict(activation["predecessor_deployment_fence"])
+        wrong_position["fence_id"] = (
+            "dm:presence-lease:v0:" + wrong_position["fence_id"].rsplit(":", 1)[1])
+        wrong_activation = dict(
+            activation, predecessor_deployment_fence=wrong_position)
+        self.assertTrue(list(self.validator.iter_errors(wrong_activation)))
+
+    def test_real_matrix_presence_cannot_validate_as_deployment_fence(self):
+        presence = strict_load(os.path.join(
+            ROOT, "vectors", "v0", "me1", "lease-op1-1.json"))
+        self.assertEqual(presence["body"]["schema"],
+                         "daimon-presence-lease/v0")
+        self.assertTrue(list(self.validator.iter_errors(presence)))
 
     def test_exact_version_negotiation_uses_local_preference(self):
         local = ["v2", "v0", "v1"]

@@ -4,7 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "activation_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/activation_id"
         },
         "body_description": {
           "$ref": "#/$defs/artifact_ref"
@@ -23,7 +23,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "me_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/me_id"
         },
         "operational_acceptance": {
           "$ref": "#/$defs/artifact_ref"
@@ -111,7 +111,7 @@
       "additionalProperties": false,
       "properties": {
         "adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "context": {
           "additionalProperties": false,
@@ -203,7 +203,7 @@
       "additionalProperties": false,
       "properties": {
         "adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "authority": {
           "$ref": "#/$defs/authority_denial"
@@ -299,7 +299,7 @@
       ],
       "properties": {
         "adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "effects": {
           "items": {
@@ -328,7 +328,7 @@
           "type": "string"
         },
         "result_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_result_id"
         },
         "schema": {
           "const": "daimon-adapter-result/v0"
@@ -422,7 +422,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "deployment_adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "durable_volume": {
           "$ref": "#/$defs/artifact_ref"
@@ -438,7 +438,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "realization_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/realization_id"
         },
         "resources": {
           "additionalProperties": false,
@@ -484,7 +484,7 @@
       "additionalProperties": false,
       "properties": {
         "adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "application_receipt": {
           "type": "null"
@@ -499,7 +499,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "evaluation_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/capability_evaluation_id"
         },
         "genome": {
           "$ref": "#/$defs/artifact_ref"
@@ -547,7 +547,7 @@
       "properties": {
         "active_fence_ids": {
           "items": {
-            "$ref": "#/$defs/content_id"
+            "$ref": "#/$defs/deployment_fence_id"
           },
           "maxItems": 16,
           "type": "array",
@@ -555,7 +555,7 @@
         },
         "active_presence_ids": {
           "items": {
-            "$ref": "#/$defs/content_id"
+            "$ref": "#/$defs/presence_lease_id"
           },
           "maxItems": 16,
           "type": "array",
@@ -583,7 +583,7 @@
         },
         "me_ids": {
           "items": {
-            "$ref": "#/$defs/content_id"
+            "$ref": "#/$defs/me_id"
           },
           "maxItems": 16,
           "minItems": 1,
@@ -609,6 +609,58 @@
       "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
       "type": "string"
     },
+    "activation_id": {
+      "pattern": "^dm:activation:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "adapter_id": {
+      "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "adapter_result_id": {
+      "pattern": "^dm:adapter-result:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "capability_evaluation_id": {
+      "pattern": "^dm:capability-evaluation:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "deployment_fence_id": {
+      "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "deployment_key_id": {
+      "pattern": "^dm:key:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "me_id": {
+      "pattern": "^dm:me:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "migration_receipt_id": {
+      "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "park_id": {
+      "pattern": "^dm:park:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "presence_lease_id": {
+      "pattern": "^dm:presence-lease:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "realization_id": {
+      "pattern": "^dm:realization:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "volume_id": {
+      "pattern": "^dm:volume:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "wake_id": {
+      "pattern": "^dm:wake:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
     "contract_name": {
       "enum": [
         "activation",
@@ -632,9 +684,7 @@
         },
         "versions": {
           "items": {
-            "enum": [
-              "v0"
-            ],
+            "pattern": "^v(?:0|[1-9][0-9]{0,5})$",
             "type": "string"
           },
           "maxItems": 16,
@@ -653,10 +703,10 @@
       "additionalProperties": false,
       "properties": {
         "deployment_adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "fence_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/deployment_fence_id"
         },
         "fencing_token": {
           "minimum": 0,
@@ -671,24 +721,24 @@
           "type": "string"
         },
         "issuer_key_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/deployment_key_id"
         },
         "issuer_public_key": {
           "pattern": "^[A-Za-z0-9_-]{43}$",
           "type": "string"
         },
         "me_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/me_id"
         },
         "predecessor_fence_id": {
-          "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
+          "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
           "type": [
             "string",
             "null"
           ]
         },
         "realization_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/realization_id"
         },
         "schema": {
           "const": "daimon-deployment-fence/v0"
@@ -707,7 +757,7 @@
           "type": "string"
         },
         "volume_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/volume_id"
         }
       },
       "required": [
@@ -736,7 +786,7 @@
       "additionalProperties": false,
       "properties": {
         "fence_id": {
-          "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
+          "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
           "type": [
             "string",
             "null"
@@ -815,7 +865,7 @@
       "additionalProperties": false,
       "properties": {
         "adapter_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/adapter_id"
         },
         "contract": {
           "$ref": "#/$defs/contract_name"
@@ -835,7 +885,7 @@
           "type": "string"
         },
         "predecessor_receipt_id": {
-          "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
+          "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
           "type": [
             "string",
             "null"
@@ -845,10 +895,10 @@
           "$ref": "#/$defs/provider_kind"
         },
         "receipt_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/migration_receipt_id"
         },
         "rollback_of_receipt_id": {
-          "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
+          "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
           "type": [
             "string",
             "null"
@@ -923,10 +973,10 @@
           ]
         },
         "me_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/me_id"
         },
         "park_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/park_id"
         },
         "presence_lease": {
           "$ref": "#/$defs/artifact_ref"
@@ -971,10 +1021,10 @@
       "additionalProperties": false,
       "properties": {
         "me_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/me_id"
         },
         "presence_lease_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/presence_lease_id"
         }
       },
       "required": [
@@ -1006,7 +1056,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "me_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/me_id"
         },
         "new_deployment_fence": {
           "$ref": "#/$defs/fence_position"
@@ -1021,7 +1071,7 @@
           "$ref": "#/$defs/artifact_ref"
         },
         "predecessor_park_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/park_id"
         },
         "projection_manifest": {
           "$ref": "#/$defs/artifact_ref"
@@ -1030,10 +1080,10 @@
           "const": "daimon-wake-evidence/v0"
         },
         "target_realization_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/realization_id"
         },
         "wake_id": {
-          "$ref": "#/$defs/content_id"
+          "$ref": "#/$defs/wake_id"
         }
       },
       "required": [

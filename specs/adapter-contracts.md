@@ -98,6 +98,12 @@ recompute `sha256`, and validate the artifact's own schema and content-derived
 ID before use. The reference is not proof that bytes exist, are authorized, or
 are current.
 
+Named ID fields are nominally typed: `me_id`, adapter, result, realization,
+activation, park, wake, deployment-fence, presence-lease, volume, deployment
+key and migration-receipt fields accept only their exact registered prefix.
+A syntactically valid ID from another domain is rejected before lookup; no
+cross-authority substitution is resolved by inspecting the referenced bytes.
+
 An `adapter_manifest` has schema `daimon-adapter-manifest/v0`, a
 content-derived `adapter_id`, exactly one `provider_kind`, sorted unique
 `contracts`, sorted unique descriptive `capabilities`, bounded integer
@@ -126,6 +132,12 @@ The caller begins with a locally configured, ordered allowlist of exact
 contract versions. It intersects that allowlist with the provider manifest and
 selects the first local preference present in the intersection. Selection MUST
 NOT be derived from lexical or numeric “highest version” ordering.
+
+The V0 manifest parser accepts bounded, well-formed exact version labels so it
+can inspect a future provider offer without interpreting that contract. A
+provider offering only versions absent from the caller's allowlist yields an
+empty intersection and a safe pre-effect refusal. Parsing an advertised label
+does not mean the caller supports or may invoke that version.
 
 An endpoint MUST reject before effects when:
 
