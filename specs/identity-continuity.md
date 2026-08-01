@@ -56,6 +56,7 @@ Private keys MUST NOT be reused across these roles:
 - recovery authorization;
 - operational signing;
 - operational recipient encryption;
+- species maintainer authorization;
 - transport- or gateway-specific authentication.
 
 Root keys sign only typed identity-control artifacts, operational certificates,
@@ -69,8 +70,9 @@ directories, arbitrary bytes, or encryption material. A collective signature
 is still attributable to member roots; `/we` never owns or shares a private
 root.
 
-Every signed artifact MUST use a DM-011 canonical encoding and a distinct
-domain-separation label:
+Every identity, custody, presence, and membership artifact defined in this
+document MUST use a DM-011 canonical encoding and its distinct label below;
+later protocol artifacts use the additional labels registered by DM-011:
 
 ```text
 daimon/genesis/v0
@@ -647,6 +649,11 @@ DM-011 vectors and later implementation tests MUST cover at least:
   expiry, fork, and quarantine behavior. It consumes the genesis
   `birth_offer_id` reference and the identity, custody, and presence
   machinery defined here without changing identity authority.
+- DM-014 defines species genesis, release, maintainer rotation, compatibility,
+  local application, and deliberate branching. A genesis
+  `species_release_id` is immutable enrollment provenance excluded from
+  `me_id`; later compatible application never rewrites it or grants identity
+  authority.
 - DM-012 defines the content-bound `we_id`, membership genesis, ordered
   threshold-authorized admission/removal/governance transitions, member
   acceptance, freshness/high-water rules, and capability-aware `/we` fan-out

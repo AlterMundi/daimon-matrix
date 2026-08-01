@@ -30,7 +30,7 @@ retain the direct blockers below and are released only when all of them close.
 | DM-015 | Specify `/source` ancestry claims and quarantine | DM-000, DM-011 |
 | DM-016 | Specify `/tribe` relationships and descendant delegation | DM-000, DM-011, DM-013 |
 | DM-017 | Specify personal, tribal, and external memory boundaries | DM-000, DM-015, DM-016 |
-| DM-018 | Specify adapter contracts, versioning, and migration rules | DM-000, DM-011, DM-012, DM-017 |
+| DM-018 | Specify adapter contracts, versioning, and migration rules | DM-000, DM-011, DM-012, DM-014, DM-017 |
 
 ## Local core
 

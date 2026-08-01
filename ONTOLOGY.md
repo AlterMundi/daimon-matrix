@@ -167,15 +167,25 @@ It does not contain:
 `species_id` identifies the genesis lineage.
 `species_release_id` identifies one canonical, signed release.
 
-Species releases are signed by a threshold maintainer set declared by the
-previous accepted release. Compatible releases may apply automatically because
-they cannot rewrite identity or autobiographical memory.
+The normative V0 artifact, compatibility, application, incoming-preview, and
+speciation contract is defined in
+[`specs/species-evolution.md`](specs/species-evolution.md).
+
+Species genesis and release zero are signed by the initial threshold
+maintainer set; every later release is signed by the set declared by its exact
+accepted predecessor. A compatible release is eligible for automatic local
+application only after complete deterministic verification, explicit local
+opt-in, and sandbox/capability checks; it can never rewrite identity or
+autobiographical memory.
 
 `/species.incoming` previews available compatible releases. A daimon may be:
 
 - `current`;
 - `compatible-behind`;
-- `diverged`.
+- `diverged`;
+- `incomplete`, while required release or compatibility evidence is missing;
+- `quarantined`, while selected evidence is invalid or a valid fork or accepted
+  evidence contradiction is known.
 
 A new species requires both:
 

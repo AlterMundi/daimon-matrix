@@ -55,8 +55,10 @@ Type-defined event payload objects MAY define their own keys, but every value
 still obeys this data model. Every conforming implementation MUST support a
 nesting depth through 64 levels and MUST reject a deeper value. Before parsing
 or performing cryptography it MUST reject a complete wire artifact larger than
-its V0 ceiling: 262144 bytes for a genesis, control, certificate, acceptance
-(operational or birth), lease, lease-head receipt, or checkpoint wrapper;
+its V0 ceiling: 262144 bytes for an identity or species genesis, control,
+certificate, acceptance (operational or birth), species release (including a
+branch declaration or fork resolution),
+lease, lease-head receipt, or checkpoint wrapper;
 1048576 bytes for an event wrapper; and 2097152 bytes for a sealed-delivery
 wrapper. It MUST NOT configure
 a smaller ceiling and still claim V0 interoperability.
@@ -132,6 +134,12 @@ daimon/operational-certificate/v0
 daimon/operational-acceptance/v0
 daimon/birth-acceptance/v0
 daimon/birth-awakening-challenge/v0
+daimon/species-id/v0
+daimon/species-genesis/v0
+daimon/species-release/v0
+daimon/species-observed-positions/v0
+daimon/species-evidence-closure/v0
+daimon/species-incoming-snapshot/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -238,9 +246,9 @@ body/ID but different endorsement subsets represent one artifact; wrapper bytes
 with a different body for the same ID are a content conflict. Events,
 operational subject acceptances, leases, checkpoints, and sealed deliveries
 require exactly one artifact-specific signer and do not use endorsement
-merging. DM-012 collective membership acceptances and DM-013 birth acceptances
-are threshold artifacts and therefore use the mergeable-endorsement rule
-above.
+merging. DM-012 collective membership acceptances, DM-013 birth acceptances,
+and DM-014 species genesis plus every species release kind are threshold
+artifacts and therefore use the mergeable-endorsement rule above.
 
 ### 4.3 Timestamps
 

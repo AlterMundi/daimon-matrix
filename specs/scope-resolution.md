@@ -331,11 +331,17 @@ using the exclusion-reason vocabulary of Section 9.
 ### 4.5 `/species`
 
 Resolves to daimons known to the resolver as carrying a compatible species
-release lineage. Membership evidence is the species release registry and
-signed release chain; compatibility state is `current`,
-`compatible-behind`, or `diverged` (ONTOLOGY `/species`). Local policy
-decides which compatibility states are communicable. A shared species MUST
-NOT be inferred from shared transport, harness, or memory similarity.
+release lineage. Evidence is the DM-014 release registry and signed release
+chain plus the subject identity's ordered operationally signed species
+application chain; the registry alone cannot prove which release a daimon
+carries. Compatibility/intake state is `current`, `compatible-behind`,
+`diverged`, `incomplete`, or `quarantined` (ONTOLOGY `/species`). Only
+evidence-complete locally communicable `current` or `compatible-behind`
+subjects resolve. `diverged` MAY be reported as an excluded diagnostic but,
+like `incomplete` and `quarantined`, never resolves as a `/species` recipient.
+This application chain is carriage evidence completing the DM-014 placeholder,
+not new release or scope authority. A shared species MUST NOT be
+inferred from shared transport, harness, memory similarity, or package names.
 
 ### 4.6 `/here`
 
@@ -386,8 +392,9 @@ disable `/everyone` entirely.
   cursor and each resolved recipient's corresponding state. "Corresponding
   state" is typed per scope: for `/we`, the member identity's ledger
   cursor; for `/source`, the recipient's ancestry claim set cursor; for
-  `/species`, the recipient's release registry cursor. Replies are ordinary
-  independent reply messages (Section 7).
+  `/species`, the recipient's DM-014 combined release-registry, evidence,
+  application-head, and effective-release snapshot cursor. Replies are
+  ordinary independent reply messages (Section 7).
 - **`.incoming`** — preview an integration against a recipient's state
   without applying it: what would be admitted, what would conflict, what
   would be quarantined. MUST NOT mutate receiver state.
