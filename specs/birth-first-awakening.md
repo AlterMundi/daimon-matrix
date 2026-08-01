@@ -467,9 +467,9 @@ enforced by authorship and classification, not by inspection of content:
   implementations, never autobiography), `/source` claims (attributed and
   quarantined under DM-015 until promoted by local policy), and tribal
   knowledge (remotely authoritative; accessed, never materialized into
-  `/me.memory`; disposable transport caches excepted). DM-017 owns the full
-  memory-category registry; this section fixes only the birth-time initial
-  state and the forbidden crossings.
+  `/me.memory`; disposable transport caches excepted). DM-017's full closed
+  registry is [`memory-boundaries.md`](memory-boundaries.md); this section
+  fixes only the birth-time initial state and the forbidden crossings.
 
 ## 10. Lineage state machine and validation order
 
@@ -765,10 +765,11 @@ DM-060 and later implementation tests MUST cover at least:
   The newborn MUST independently accept each grant. The grant establishes only
   its exact derived relationship and MUST NOT copy parent credentials, grants,
   sessions, routes, caches, or keys to the newborn.
-- DM-017 freezes memory categories. It MUST preserve this document's
-  birth-time invariant: personal categories start empty, the Section 9
-  forbidden crossings stay forbidden, and species/source/tribal artifacts
-  remain attributed non-personal inputs.
+- DM-017 freezes memory categories in
+  [`memory-boundaries.md`](memory-boundaries.md). It MUST preserve this
+  document's birth-time invariant: personal categories start empty, the
+  Section 9 forbidden crossings stay forbidden, and species/source/tribal
+  artifacts remain attributed non-personal inputs.
 - DM-021 implements newborn key generation, custody, and acceptance/ceremony
   validation; DM-022 and DM-023 store and project birth artifacts without
   rewriting IDs or authorship.

@@ -552,7 +552,7 @@ source_claim_event_ids = sorted non-empty unique event IDs
 policy_ref = content_ref
 evidence_snapshot_ref = content_ref
 decision = "quarantined" or "promoted" or "rejected"
-target_memory_category = registered DM-017 category or null
+target_memory_category = "external-reference" or null
 reason_codes = sorted non-empty unique registered ASCII codes
 decided_at_ms
 ```
@@ -563,8 +563,9 @@ JCS object `{"publication_id": publication_id,
 "receiver_me_id": receiver_me_id}` using the Section 3.1 construction and
 prefix `dm:source-import-series:v0:`. Sequences are predecessor-linked and
 fork-safe. The initial
-decision for imported content is `quarantined`, with null target. Promotion is
-a later, separate successor and requires:
+decision for imported content is `quarantined`, with null target. Every
+`quarantined` or `rejected` successor also has null target. Promotion is a
+later, separate successor and requires:
 
 1. the exact current publication and provenance chain remain valid and not
    tombstoned or forked;
@@ -573,7 +574,9 @@ a later, separate successor and requires:
    the exact target category, classification, consent, and license;
 4. content has passed local safety/review requirements, including review of the
    final rendered bytes when a projection will render them; and
-5. DM-017 permits that category and preserves external authorship.
+5. the target is exactly DM-017 `external-reference`, preserving external
+   authorship. A later personal insight/skill requires a separate
+   same-identity `matrix/memory-record` citing this decision and publication.
 
 Promotion creates a derived projection/reference; it never rewrites the
 publication event, creates receiver authorship, or turns external knowledge
@@ -778,9 +781,11 @@ Conformance vectors and implementation tests MUST cover at least:
   contextual; it never changes newborn identity validity.
 - DM-012 uses Section 6 membership and selector rules. `/source.diff`,
   `.incoming`, and `.pull` use Section 8; `.sync` remains invalid for `/source`.
-- DM-017 defines memory categories but MUST preserve Section 9 quarantine,
-  provenance, separate promotion, and the prohibition on external content as
-  lived experience.
+- DM-017 defines the closed categories in
+  [`memory-boundaries.md`](memory-boundaries.md). Promotion may target only
+  `external-reference`; personal insight/skill requires a later cited
+  same-identity memory record. Section 9 quarantine and provenance remain
+  unchanged, and external content can never become lived experience.
 - DM-018 freezes adapters without granting them source or policy authority.
 - DM-023 persists cursors, forks, blobs, transaction journals, and receipts
   without changing event IDs or intrinsic/local-state separation.

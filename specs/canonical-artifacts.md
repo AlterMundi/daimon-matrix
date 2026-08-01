@@ -69,8 +69,10 @@ revocations per recovery transition, 1024 high-water entries per control
 artifact, 64 each of routes, certificate event-type prefixes, birth-offer
 source references, tribal commitments, commitment resource/operation entries,
 DM-016 card encryption bindings/routes/capabilities/resources, handshake roles
-and proposed grants, grant permissions and parent-state references, 64 causal
-parents, and 256 sealed-delivery recipients. Subject to the
+and proposed grants, grant permissions and parent-state references, DM-017
+projection cursors, 64 causal parents, and 256 DM-017 memory evidence or
+unresolved-work references and sealed-delivery recipients. DM-017 incarnation
+handoffs additionally permit at most 4096 active memory heads. Subject to the
 complete-wire ceiling,
 implementations MUST accept values through those bounds when every other
 requirement is met and MUST reject larger arrays.
@@ -157,6 +159,7 @@ daimon/tribe-card-series/v0
 daimon/tribe-resource-id/v0
 daimon/tribe-relationship-id/v0
 daimon/tribe-grant-series/v0
+daimon/memory-id/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -706,6 +709,8 @@ An `event_type` is 1 through 128 ASCII bytes and matches
 `matrix/tribe-handshake-offer`, `matrix/tribe-handshake-acceptance`,
 `matrix/tribe-relationship-close`, `matrix/tribe-grant`,
 `matrix/tribe-grant-acceptance`, and `matrix/tribe-grant-revocation`. A
+DM-017 registers `matrix/memory-record` and
+`matrix/incarnation-handoff`. A
 certificate prefix is 1 through 128
 ASCII bytes, matches `^[a-z][a-z0-9./-]*$`, and is compared as a byte-exact
 prefix of the complete event type. Empty prefixes, consecutive separators in
@@ -1164,7 +1169,9 @@ V0 explicitly rejects or leaves behind:
   tribe, and memory-boundary events and decide which accepted events represent
   lived experience, consolidation, or another semantic class. DM-016 also
   defines its specialized external human-contact statement wrapper; it is not
-  a Daimon event or identity artifact.
+  a Daimon event or identity artifact. DM-017's closed category registry,
+  personal-memory correction lanes, and incarnation-handoff rules are defined
+  in [`memory-boundaries.md`](memory-boundaries.md).
 - DM-018 freezes the canonical body-description body and adapter bindings.
 - DM-021 implements identity artifact validation and key custody.
 - DM-022 stores canonical event bytes and intrinsic replay/fork evidence without

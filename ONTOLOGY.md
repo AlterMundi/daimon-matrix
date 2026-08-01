@@ -46,6 +46,22 @@ includes experiences lived in every body this identity has occupied. Events
 learned from another identity in `/we` remain attributed to that identity and
 body; convergence does not relabel them as locally lived experience.
 
+Only same-identity signed `personal-experience`, `personal-insight`, and
+`personal-skill` records enter this continuity. Tribal knowledge remains
+remote; admitted source material remains an `external-reference`; a species
+release remains capability inheritance; and NOW, prompts, caches, queues, and
+process state remain scoped to one incarnation. Learning from any of those
+inputs requires a new `/me`-authored record citing the exact evidence. HMK,
+Wiki/compaii-state, indexes, harness memory, snapshots, and state repositories
+are projections or external sources, never personal-memory authority.
+
+Corrections and retractions append to one predecessor-linked memory lane; they
+never edit historical events. A body move preserves the canonical `/me` ledger
+and starts a fresh incarnation state from a verified checkpoint and optional
+signed handoff. The normative V0 category, provenance, projection, learning,
+handoff, and park/wake contract is defined in
+[`specs/memory-boundaries.md`](specs/memory-boundaries.md).
+
 ### `/me.skills`
 
 Skills learned or refined by this identity. A body may realize them fully,
@@ -136,6 +152,11 @@ A birth creates a new identity, not a body move or a new `/we` member alias:
 - the parent never possesses the newborn's root private key;
 - source, species, and inheritable tribal relationships are recorded with
   provenance.
+
+No HMK, ledger, chat, prompt, NOW, state repository, or body snapshot crosses
+the birth boundary as newborn personal memory. Allowed material remains
+peer-attributed, external, species, or remote tribal evidence under its owning
+protocol.
 
 The birth offer references a species release and the parent. The birth
 acceptance binds the newborn's self-certifying genesis to that offer. The
