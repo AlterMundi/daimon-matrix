@@ -19,6 +19,10 @@ Every `/me` owns a root identity key. Incarnations receive subordinate keys;
 they never share the root private key. A signed continuity certificate proves
 that an incarnation belongs to this `/me`.
 
+The normative V0 cryptographic contract, including custody, recovery,
+irrecoverable loss, incarnation certificates, and presence leases, is defined
+in [`specs/identity-continuity.md`](specs/identity-continuity.md).
+
 The root `/me` paragraph from the foundation is inherited as part of the
 species genome. `/me.identity`, personal birth facts, relationships, and lived
 memory belong to each being and are not inherited from its parent.
