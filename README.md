@@ -12,10 +12,10 @@ and `/source`), and resource-sharing relationships (`/tribe`).
 ## Status
 
 V0 planning, the concurrent-work audit, and transitional closeout are complete.
-DM-010 through DM-014 now freeze the corrected identity/body hierarchy,
-canonical artifacts, scope/reply/sync semantics, birth, and species evolution.
-The dependency-ready cards are DM-003 (claim automation), DM-015 (source), and
-DM-016 (tribe).
+DM-010 through DM-015 now freeze the corrected identity/body hierarchy,
+canonical artifacts, scope/reply/sync semantics, birth, species evolution, and
+source ancestry/quarantine. The dependency-ready cards are DM-003 (claim
+automation) and DM-016 (tribe).
 The reviewed pre-Daimon HMK, Wiki, compaii-state, and Tribe v1 stack is the
 reversible transitional runtime used while this implementation is built; it is
 not itself the Daimon Matrix runtime. Tribe v0 is retired.
