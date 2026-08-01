@@ -14,18 +14,22 @@ An issue is claimable only when:
 - no active lease exists;
 - its acceptance criteria are complete.
 
-Claim with:
+Claims are processed by the signed GitHub coordination protocol in
+[`docs/github-coordination.md`](docs/github-coordination.md). Generate and post
+the complete signed comment; its visible first line is:
 
 ```text
-/claim agent=<agent/session identity> lease=6h branch=issue-<number>-<slug>
+/claim
 ```
 
-The claim receipt records the claimant, branch or worktree, start time, and UTC
-expiration. Renew with `/heartbeat lease=<duration>` up to 24 hours. Release
-with `/release`.
-
-Until automation is implemented, a human- or agent-posted receipt using the
-same format is authoritative.
+The automation verifies the explicit enabled coordination principal, GitHub
+login, detached per-session attestation, exact issue/resources, branch, and
+current receipt head. Its content-bound receipt records the session, branch,
+start, resources, and UTC expiration. Renew with a signed `/heartbeat` for at
+most 24 hours, enter review with signed `/review`, and relinquish with signed
+`/release`. Expired leases are released automatically with an auditable
+receipt. A plain slash line or old manual receipt grants no post-DM-003
+ownership.
 
 Use `issue-<number>-<slug>` branches. A PR must identify its primary issue and
 include `Closes #N`. Do not combine unrelated issues or silently expand scope.
@@ -51,4 +55,3 @@ Before beginning implementation:
 Security, identity, cryptography, migrations, and persistent-state changes
 require an independent review. Tests must assert behavioral invariants and
 real I/O paths, not only mocked snapshots.
-
