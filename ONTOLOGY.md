@@ -54,7 +54,7 @@ capability implementations, not autobiographical memory.
 
 ### `/me.body`
 
-The one currently leased embodiment surface, if the identity is awake:
+The one currently leased body surface, if the identity is awake:
 
 - `/me.body.sensors`
 - `/me.body.actuators`
@@ -221,10 +221,10 @@ knowledge is not materialized as `/me.memory`.
 
 ## Other scopes
 
-- `/here`: daimons sharing the current body's embodiment surface; local
+- `/here`: daimons sharing the current body surface; local
   discovery belongs here.
 - `/near`: daimons within a domain-specific distance threshold.
-- `/all`: daimons listening in the current embodiment cluster.
+- `/all`: daimons listening in the current body cluster.
 - `/realm`: the dimensional space where the current body exists.
 - `/realm.status`: realm state.
 - `/realm.controls`: permitted realm modifications.

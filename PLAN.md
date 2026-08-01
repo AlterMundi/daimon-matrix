@@ -48,7 +48,7 @@ custom bodies without making any harness authoritative.
 - The reviewed pre-Daimon stack is deployed as a reversible transitional
   runtime and remains operational while Daimon Matrix is implemented. Running
   it does not claim that `/me`, `/we`, the ledger, or DM-072 already exist.
-- Transitional principals ending in `@localhost` are embodiment-local. They
+- Transitional principals ending in `@localhost` are body-local. They
   cannot address remote or mixed audiences, and remote recipients cannot
   decrypt their local-only envelopes. Client identity is explicit; no harness,
   including Codex or Hermes, is a protocol-wide default.
