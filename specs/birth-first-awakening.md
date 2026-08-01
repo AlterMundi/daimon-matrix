@@ -154,10 +154,12 @@ The event-level `intent` field MUST be null: an offer is not a DM-012
 communication and resolves no scope audience. `parent_me_id` MUST equal the
 event's `me_id`, and `parent_identity_control_position` MUST name an accepted
 position on the parent's identity-control chain at which the signing
-certificate validates. Tribal commitment reference strings are printable
-ASCII of 1 through 512 bytes; DM-016 freezes their exact grammars and
-resolution semantics. DM-015 freezes `source_references` as source-claim event
-IDs. `species_release_id` matches exactly
+certificate validates. DM-016 freezes `tribe_ref` as an exact
+`dm:tribe:v0:<digest>` ID, `resource_refs` as exact
+`dm:tribe-resource:v0:<digest>` IDs, operation names under its byte-exact
+registered-operation grammar, and every commitment's resolution semantics.
+DM-015 freezes `source_references` as source-claim event IDs.
+`species_release_id` matches exactly
 `dm:species-release:v0:<32-byte-canonical-base64url>` and is the exact string
 the newborn genesis statement MUST carry verbatim. Operation strings are
 printable ASCII of 1 through 128 bytes.
@@ -616,7 +618,11 @@ are different encodings.
 - `tribal_commitments` sorts by canonical JCS bytes, is duplicate-free, and
   contains 0 through 64 entries; within one commitment, `resource_refs` and
   `operations` each sort by ASCII bytes, are duplicate-free, and contain 0
-  through 64 entries.
+  through 64 entries. `tribe_ref` matches
+  `dm:tribe:v0:<32-byte-canonical-base64url>`, every resource reference matches
+  `dm:tribe-resource:v0:<32-byte-canonical-base64url>`, and operation strings
+  are 1 through 128 ASCII bytes under the DM-016 registered-operation grammar.
+  Empty resource or operation arrays mean zero access, never a wildcard.
 - A commitment `expires_at_ms` is null or a safe integer greater than the
   enclosing offer's `issued_at_ms`.
 - The canonical JCS encoding of `{species_release_id, source_references,
@@ -756,7 +762,9 @@ DM-060 and later implementation tests MUST cover at least:
   accepted commitment it MUST issue fresh grants bound to newborn keys,
   attenuated to or equal with the committed terms, within the parent's
   delegable scope, enforcing depth, expiry, revocation, and birth limits.
-  It MUST NOT copy parent credentials, grants, or sessions to the newborn.
+  The newborn MUST independently accept each grant. The grant establishes only
+  its exact derived relationship and MUST NOT copy parent credentials, grants,
+  sessions, routes, caches, or keys to the newborn.
 - DM-017 freezes memory categories. It MUST preserve this document's
   birth-time invariant: personal categories start empty, the Section 9
   forbidden crossings stay forbidden, and species/source/tribal artifacts

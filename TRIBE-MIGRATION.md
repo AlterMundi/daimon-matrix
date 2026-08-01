@@ -6,6 +6,11 @@ The Tribe Bridge implementation will be absorbed into `daimon-matrix` as the
 first communications transport. `/tribe` remains a semantic relationship and
 audience scope above that transport.
 
+The normative V0 relationship, handshake, grant, descendant-delegation,
+revocation, birth-limit, and remote-knowledge contract is
+[`specs/tribe-relationships.md`](specs/tribe-relationships.md). This document
+owns transport migration only and cannot widen that authority model.
+
 Maintaining two independent projects would create duplicate identity,
 encryption, cursor, receipt, routing, and storage models that would then need
 an adapter despite being controlled by the same project.

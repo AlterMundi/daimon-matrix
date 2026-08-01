@@ -308,15 +308,22 @@ make an impossible threshold policy valid.
 ### 4.3 `/tribe`
 
 Resolves to humans and daimons with whom `/me` holds a relationship record:
-signed pairing, handshake, or grant artifacts from the relationship
-protocols. A transport directory (including the transitional Tribe bridge
-directory) is a cache of route hints for some tribal relationships, never
-the membership authority: membership follows the relationship records, and a
-relationship without a current route resolves but reports unroutable
-recipients honestly.
+the exact active bilateral handshake or newborn-derived relationship defined
+by DM-016. A unilateral card, offered or unaccepted grant, resource descriptor,
+route, capability, or transport directory is not membership. A transport
+directory (including the transitional Tribe bridge directory) is a cache of
+route hints for some tribal relationships, never the membership authority:
+membership follows the relationship records, and a relationship without a
+current route resolves but reports unroutable recipients honestly.
 
 Grants and delegations constrain what operations a resolved recipient may
-receive; they do not change membership.
+receive; they do not change membership. Resource-bearing or non-public
+delivery requires an exact active DM-016 grant for the recipient, resource,
+operation, classification, and complete unforked delegation ancestry.
+Relationship and revocation evidence is observer-relative; the resolution
+receipt records its exact card, relationship, grant, delegation, closure, and
+revocation refs/high-waters and never claims global freshness during a
+partition.
 
 ### 4.4 `/source`
 
@@ -639,6 +646,12 @@ Before fan-out, local policy MUST evaluate: the operation's validity for the
 scope, the payload classification against per-scope and per-recipient
 constraints, and any grant constraints from relationship records. A refused
 recipient yields a `refused:policy` receipt, not a silent drop.
+
+For `/tribe`, DM-016 relationship membership is evaluated before grant
+authorization. A member without a usable resource grant may remain in the
+resolution but MUST be refused for the unauthorized delivery. An unaccepted,
+expired, closed, revoked, relinquished, forked, over-depth, over-birth-limit,
+or stale-sensitive-operation grant authorizes nothing.
 
 Authorization also precedes disclosure of resolution membership. A remote
 caller denied `.status`, `.diff`, `.incoming`, `.pull`, or `.sync` receives a
@@ -1038,6 +1051,14 @@ Conformance vectors and implementation tests MUST cover at least:
 | stale membership or identity cursor is used for presence-dependent operation | refuse per local policy |
 | unauthorized remote `.status` or convergence call distinguishes membership, exclusions, routes, or cursor state | reject as membership oracle |
 | transitional principal without `me_id` + accepted membership + committed lease is addressed through `/we` | exclude; explicit adapter-name route may be marked `transitional` |
+| Tribe directory, audience, route, capability card, or offered grant is used as `/tribe` membership | reject; require exact active DM-016 relationship evidence |
+| active relationship has no route | resolve recipient as unroutable; do not erase membership |
+| active relationship has no grant for requested resource/operation | retain membership; `refused:policy` for that delivery |
+| grant is expired, closed, revoked, relinquished, forked, stale beyond policy, or has incomplete ancestry | exclude authorization and report exact evidence cursor locally |
+| adapter expands a DM-016 relationship/grant resolution | reject delivery authorization |
+| human contact key is treated as `/me`, legal identity, or transport-directory authority | reject boundary crossing |
+| newborn is resolved through the parent's relationship/grant instead of its fresh accepted DM-016 grant | reject |
+| tribal knowledge is projected as `/me.memory` by scope resolution or delivery | reject; DM-016/017 external-memory boundary |
 
 ## 13. Downstream contracts
 
@@ -1047,6 +1068,10 @@ Conformance vectors and implementation tests MUST cover at least:
   delivery, JCS, key, signature, and identity-wide lease-receipt rules reused
   here. Section 4.2 owns collective membership semantics and logical bodies;
   implementations MUST apply those shared canonical primitives exactly.
+- DM-016 supplies exact tribe namespaces, principal cards, human-contact
+  evidence, bilateral/newborn-derived relationships, grants, attenuation,
+  expiry, closure, revocation, and birth limits. `/tribe` resolution and
+  disclosure MUST use those artifacts without promoting adapter state.
 - DM-018 freezes adapter contracts without granting them membership authority.
 - DM-023 records resolutions, deliveries, receipts, and resumable sync cursors
   as projections rebuildable from signed events.

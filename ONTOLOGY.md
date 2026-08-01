@@ -226,6 +226,9 @@ transport protocol and not a lineage.
 
 Initial relationships may be created by a handshake exchanging signed identity
 cards, endpoints, capabilities, resource grants, and encryption keys.
+The exact V0 principal, card, namespace, handshake, resource, grant,
+attenuation, expiry, revocation, and human-contact contract is defined in
+[`specs/tribe-relationships.md`](specs/tribe-relationships.md).
 
 At birth, the parent decides which tribal affiliations and delegable access
 the newborn inherits. The newborn receives fresh grants bound to its new key,
@@ -241,10 +244,14 @@ Delegation grants may constrain:
 - revocation;
 - birth limits.
 
-The newborn inherits full effective access within the parent's delegable
-scope. Tribal knowledge remains remotely authoritative: the newborn inherits
-access, not a copy. Disposable transport caches are permitted, but tribal
-knowledge is not materialized as `/me.memory`.
+The newborn inherits access only within the intersection of the exact scope the
+parent committed and the scope the parent remains able to delegate, after the
+parent issues a fresh grant and the newborn independently accepts it. The birth
+commitment alone grants nothing.
+Tribal knowledge remains remotely authoritative: the newborn receives access,
+not a copy.
+Disposable transport caches are permitted, but tribal knowledge is not
+materialized as `/me.memory`.
 
 ## Other scopes
 
