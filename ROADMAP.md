@@ -7,16 +7,16 @@ all direct blockers are closed.
 
 Inventory every active session, branch, worktree, issue, and uncommitted change
 related to Tribe Bridge, CompAII continuity, HMK, rebirth sync, Wiki,
-collective-memory, and harness incarnation. Classify each item as:
+collective-memory, and harness embodiment. Classify each item as:
 
 - directly reusable;
 - reusable after protocol adaptation;
 - superseded but worth preserving;
 - safe to stop.
 
-The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-003 and DM-010 are
-dependency-ready; after the finite DM-004 closeout, DM-010 is the selected
-first V0 implementation card.
+The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-004 is closed. DM-010
+is reopened for the corrected identity/body boundary; DM-011 and DM-012 remain
+preserved but held for adaptation until that correction is reviewed.
 
 The reviewed Tribe v1, HMK, Wiki, collective-publication, compaii-state, and
 manifest work is also completed and deployed as a reversible transitional
@@ -43,11 +43,13 @@ Implement the Librarian policy engine, exclusive lease, DeepSeek worker,
 review queue, HMK projection, Wiki publisher, and separate collective-memory
 source and reviewed-publication adapters.
 
-## Wave 4 — Incarnate CompAII
+## Wave 4 — Embody CompAII identities
 
 Implement independent Codex and Hermes adapters without modifying the Hermes
-core. Validate that two active incarnations share `/me` continuity while
-preserving incarnation-specific NOW and body capabilities.
+core. Validate that two distinct active `/me` identities belong to one signed
+CompAII `/we`, preserve identity/body-specific NOW and capabilities, and
+converge additively without sharing keys or writable databases. Separately
+prove one `/me` cannot hold two simultaneous body leases.
 
 ## Wave 5 — Communications and social scopes
 

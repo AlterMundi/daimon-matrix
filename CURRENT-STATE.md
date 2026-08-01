@@ -1,16 +1,15 @@
 # Current pre-V0 state
 
-Status date: 2026-07-31 (America/Argentina/Cordoba).
+Status date: 2026-08-01 (America/Argentina/Cordoba).
 
 This document is the operational handoff between completed planning and V0
 implementation. `PLAN.md`, `ONTOLOGY.md`, `TRIBE-MIGRATION.md`, and
 `ISSUES.md` remain canonical for architecture and dependencies.
 
-At the DM-004 pre-merge checkpoint, Project 9 contains 50 cards: 6 Done,
-2 In Progress (DM-004 and Eko onboarding), and 42 Todo. DM-003 and DM-010 are
-dependency-ready even though Project workflow status is tracked separately
-from dependency labels. These counts replace the original 44-card planning
-snapshot.
+Project 9 contains 50 cards: 7 Done, 4 In Progress, and 39 Todo. The active
+cards are corrected DM-010, held-for-adaptation DM-011 and DM-012, and the
+independent Eko Tribe onboarding card. These counts replace the original
+44-card planning snapshot.
 
 ## Completed foundation and evidence
 
@@ -39,14 +38,12 @@ snapshot.
 
 None of these components is `/me` authority or proof that DM-072 is complete.
 
-## Finite closeout
+## Finite closeout — complete
 
-DM-004 owns the remaining pre-implementation reconciliation:
-
-1. merge the focused compaii-state deployment receipt and sync-safety change;
-2. register `eko@amapola` in Tribe v1 epoch 4 once the existing offline
-   governance-root custody procedure is recovered;
-3. publish this status update and close DM-004.
+DM-004 closed on 2026-08-01. The focused compaii-state deployment receipt and
+sync-safety change were integrated and the status baseline was published.
+`eko@amapola` onboarding remains an independent Tribe Bridge card and does not
+reopen or block the Daimon protocol lane.
 
 The unsigned Eko directory candidate changes no live state and contains only
 public keys. Root reprovisioning is not part of onboarding: if the existing
@@ -59,13 +56,14 @@ into DM-004 or DM-010.
 
 ## Explicit V0 ownership
 
-- DM-010: `/me` root custody, loss, rotation, recovery, incarnation
-  certificates, and presence leases. The current Tribe root-custody gap is a
+- DM-010: `/me` root custody, loss, rotation, recovery, operational credentials, and
+  single-awake-body presence leases. The current Tribe root-custody gap is a
   direct fixture.
 - DM-003: signed per-agent GitHub claim attestations. A shared GitHub login does
   not prove which local agent acted.
-- DM-012 and DM-054: dynamic `/we` membership and remote CompAII audience
-  resolution. Static Tribe directory IDs are not the semantic scope.
+- DM-012 and DM-054: signed `/we` membership among distinct `/me` identities
+  and remote CompAII audience resolution. Static Tribe directory IDs are not
+  the semantic scope.
 - DM-023: stable deltas/cursors, bounded batches, crash-safe idempotent
   projection, and resumable convergence.
 - DM-034: HMK projection by canonical event ID; never synchronize HMK rows or
@@ -75,8 +73,11 @@ into DM-004 or DM-010.
 - DM-053 and DM-073: structured internal locality rejection without turning
   public errors into a membership oracle.
 
-## Next card
+## Current protocol lane
 
-DM-010 is the selected first V0 implementation card after DM-004 closes.
-DM-003 remains dependency-ready and may proceed concurrently only through the
-documented GitHub claim protocol.
+DM-010 was reopened after review established the corrected hierarchy: `/we`
+collective → distinct root-bearing `/me` identities → one awake body per
+identity. DM-011 and DM-012 preserve useful work but are held for adaptation
+until DM-010 is corrected and independently reviewed. DM-003 remains
+dependency-ready and may proceed concurrently only through the documented
+GitHub claim protocol.

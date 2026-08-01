@@ -2,6 +2,15 @@
 
 Status: complete for the work observed on 2026-07-31.
 
+> Semantic correction, 2026-08-01: references below to several simultaneous
+> CompAII principals as “incarnations of one `/me`” are historical audit
+> language and are superseded. They are candidate distinct `/me` identities in
+> one `/we`; each identity may have at most one awake body. The reuse evidence
+> remains valid under that corrected boundary. Other uses of “incarnation” in
+> credential, body-resource, or adaptation guidance below likewise map to
+> operational credentials, identities, or bodies according to context and are
+> not current normative terminology.
+
 This audit is the evidence record for DM-000. It applies the classifications
 defined in `REVIEW-HANDOFF.md` to the active Tribe Bridge, HMK,
 collective-memory, compaii-state, Wiki, and CompAII deployment work.
@@ -179,7 +188,8 @@ until the named fix is verified.
 4. Personal memory authority moves from HMK to the ledger; non-Daimon
    HMK-native artifact classes may retain their existing authority.
 5. The production v1 transitional runtime is not DM-072 continuity until its
-   identities are certified incarnations of one `/me`.
+   distinct identities have independent `/me` roots, signed `/we` membership,
+   and single-body presence evidence.
 6. Tribe v0 is retired; rollback repairs v1 and never recreates v0.
 7. Root-key custody, compromise, rotation, and recovery are protocol
    requirements before keystore implementation.
@@ -189,8 +199,9 @@ until the named fix is verified.
 With DM-001 and DM-002 already complete, closing DM-000 releases only:
 
 - DM-003, GitHub claim-lease automation adapted from Tribe Bridge PR 17;
-- DM-010, `/me` continuity and incarnation certificate specification adapted
-  from the manifest work without inheriting its identity model.
+- DM-010, `/me` continuity, operational certificate, and single-body presence
+  specification adapted from the manifest work without inheriting its identity
+  model.
 
 Every other V0 card retains at least one unresolved direct blocker.
 
