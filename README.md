@@ -22,6 +22,9 @@ the Daimon Matrix runtime. Tribe v0 is retired.
 
 - [PLAN.md](PLAN.md) — V0 architecture, delivery plan, and acceptance criteria.
 - [ONTOLOGY.md](ONTOLOGY.md) — normative namespace and identity model.
+- [Identity continuity specification](specs/identity-continuity.md) — normative
+  V0 `/me` roots, incarnation certificates, recovery, and `/we` presence
+  evidence.
 - [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) — integration of Tribe Bridge.
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
 - [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work
