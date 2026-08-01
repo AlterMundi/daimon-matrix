@@ -1,1 +1,1 @@
-{"base":"me1/certificate-inc1-gen1.json","check":"certificate-wrapper","note":"modified certificate body is rejected","ops":[{"op":"json-set","path":["body","purposes","encryption"],"value":[]}],"schema":"x/test-tamper-descriptor/v0"}
+{"base":"me1/certificate-op1-gen1.json","check":"certificate-wrapper","note":"modified certificate body is rejected","ops":[{"op":"json-set","path":["body","purposes","encryption"],"value":[]}],"schema":"x/test-tamper-descriptor/v0"}

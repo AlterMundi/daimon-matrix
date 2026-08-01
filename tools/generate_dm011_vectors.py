@@ -48,18 +48,19 @@ DOM_GENESIS = "daimon/genesis/v0"
 DOM_ROOT_TRANSITION = "daimon/root-transition/v0"
 DOM_RECOVERY_TRANSITION = "daimon/recovery-transition/v0"
 DOM_RECOVERY_POLICY = "daimon/recovery-policy/v0"
-DOM_CERTIFICATE = "daimon/incarnation-certificate/v0"
-DOM_ACCEPTANCE = "daimon/incarnation-acceptance/v0"
+DOM_CERTIFICATE = "daimon/operational-certificate/v0"
+DOM_ACCEPTANCE = "daimon/operational-acceptance/v0"
 DOM_REVOCATION = "daimon/revocation/v0"
 DOM_LEASE = "daimon/presence-lease/v0"
+DOM_LEASE_RECEIPT = "daimon/lease-head-receipt/v0"
 DOM_EVENT = "daimon/event/v0"
 DOM_CHECKPOINT = "daimon/event-checkpoint/v0"
 DOM_SEALED = "daimon/sealed-event/v0"
 DOM_SEALED_AAD = "daimon/sealed-event/payload-aad/v0"
 DOM_SEALED_CEK = "daimon/sealed-event/cek-wrap/v0"
-DOM_INCARNATION_ID = "daimon/incarnation-id/v0"
+DOM_OPERATIONAL_ID = "daimon/operational-id/v0"
 
-CEILING_CONTROL = 262144      # genesis/control/certificate/acceptance/lease/checkpoint
+CEILING_CONTROL = 262144      # control/cert/acceptance/lease/receipt/checkpoint
 CEILING_EVENT = 1048576       # event wrapper
 CEILING_SEALED = 2097152      # sealed delivery wrapper
 
@@ -201,24 +202,25 @@ KEY_SPECS = [
     ("rec-b", "me1 recovery (genesis)", "Ed25519"),
     ("rec2-a", "me1 recovery (policy 0,2)", "Ed25519"),
     ("rec2-b", "me1 recovery (policy 0,2)", "Ed25519"),
-    ("inc1-sign", "me1 incarnation 1 signing", "Ed25519"),
-    ("inc1-enc", "me1 incarnation 1 encryption", "X25519"),
-    ("inc2-sign", "me1 incarnation 2 (witness) signing", "Ed25519"),
-    ("inc2-enc", "me1 incarnation 2 (witness) encryption", "X25519"),
-    ("inc3-sign", "me1 incarnation 3 (revoked) signing", "Ed25519"),
-    ("inc3-enc", "me1 incarnation 3 (revoked) encryption", "X25519"),
+    ("op1-sign", "me1 operational 1 signing", "Ed25519"),
+    ("op1-enc", "me1 operational 1 encryption", "X25519"),
+    ("op2-sign", "me1 operational 2 (witness) signing", "Ed25519"),
+    ("op2-enc", "me1 operational 2 (witness) encryption", "X25519"),
+    ("op3-sign", "me1 operational 3 (revoked) signing", "Ed25519"),
+    ("op3-enc", "me1 operational 3 (revoked) encryption", "X25519"),
     ("xroot-a", "me2 root (genesis)", "Ed25519"),
-    ("xm1-sign", "me2 incarnation xm1 signing", "Ed25519"),
-    ("xm1-enc", "me2 incarnation xm1 encryption", "X25519"),
-    ("inc2-enc2", "me1 incarnation 2 rotated encryption", "X25519"),
+    ("opx-sign", "me2 operational opx signing", "Ed25519"),
+    ("opx-enc", "me2 operational opx encryption", "X25519"),
+    ("op2-enc2", "me1 operational 2 rotated encryption", "X25519"),
     ("branchroot-a", "scenario superseded-branch root", "Ed25519"),
     ("branchroot-b", "scenario superseded-branch root", "Ed25519"),
     ("sroot-a", "scenario post-recovery root", "Ed25519"),
     ("sroot-b", "scenario post-recovery root", "Ed25519"),
-    ("incf-sign", "scenario branch incarnation signing", "Ed25519"),
-    ("incf-enc", "scenario branch incarnation encryption", "X25519"),
-    ("incp-sign", "boundary-fixture incarnation signing", "Ed25519"),
-    ("incp-enc", "boundary-fixture incarnation encryption", "X25519"),
+    ("opf-sign", "scenario branch operational signing", "Ed25519"),
+    ("opf-enc", "scenario branch operational encryption", "X25519"),
+    ("opp-sign", "boundary-fixture operational signing", "Ed25519"),
+    ("opp-enc", "boundary-fixture operational encryption", "X25519"),
+    ("transport-gov-sign", "untrusted transport governance signing", "Ed25519"),
 ]
 
 # Structural boundary vectors need 129 distinct, syntactically valid signature
@@ -441,7 +443,8 @@ def build_recovery_policy(prev_wrapper, replacement_recovery,
              for k in recovery_possession_signers]
     return wrap_control(DOM_RECOVERY_POLICY, body, sigs)
 
-def revocation_entry(reason, target, high_waters=None,
+def revocation_entry(reason, target, event_high_waters=None,
+                     lease_high_water=None,
                      replacement_artifact_id=None,
                      effective_mode="on_acceptance", prior_control_position=None):
     return {
@@ -451,7 +454,8 @@ def revocation_entry(reason, target, high_waters=None,
             "mode": effective_mode,
             "prior_control_position": prior_control_position,
         },
-        "high_waters": high_waters or [],
+        "event_high_waters": event_high_waters or [],
+        "lease_high_water": lease_high_water,
         "replacement_artifact_id": replacement_artifact_id,
     }
 
@@ -501,29 +505,29 @@ def build_standalone_revocation(prev_wrapper, entry, root_signers):
     sigs = [sig_record(k, "root-authorization", pre) for k in root_signers]
     return wrap_control(DOM_REVOCATION, body, sigs)
 
-def incarnation_id_of(me_id, incarnation_nonce_b64, signing_desc):
-    pre = (DOM_INCARNATION_ID.encode("utf-8") + b"\x00" + jcs({
-        "incarnation_nonce": incarnation_nonce_b64,
+def operational_id_of(me_id, operational_nonce_b64, signing_desc):
+    pre = (DOM_OPERATIONAL_ID.encode("utf-8") + b"\x00" + jcs({
+        "operational_nonce": operational_nonce_b64,
         "me_id": me_id,
         "signing_key": signing_desc,
     }))
-    return "dm:inc:v0:" + b64(sha256(pre))
+    return "dm:op:v0:" + b64(sha256(pre))
 
-def build_certificate(me_id, inc_nonce_label, cert_nonce_label, generation,
+def build_certificate(me_id, operational_nonce_label, cert_nonce_label, generation,
                       previous_certificate_id, sign_key, enc_key,
                       issuing_control_position, issuing_root_descs,
                       issued_at_ms, not_before_ms, expires_at_ms,
-                      purposes, constraints, initial_embodiment_hash,
+                      purposes, constraints, initial_body_hash,
                       root_signers, signing_desc_override=None,
                       enc_desc_override=None):
     signing_desc = signing_desc_override or key_desc(sign_key)
     enc_desc = enc_desc_override or key_desc(enc_key)
-    inc_nonce = b64(det(inc_nonce_label))
+    operational_nonce = b64(det(operational_nonce_label))
     body = {
-        "schema": "daimon-incarnation-certificate/v0",
+        "schema": "daimon-operational-certificate/v0",
         "me_id": me_id,
-        "incarnation_id": incarnation_id_of(me_id, inc_nonce, signing_desc),
-        "incarnation_nonce": inc_nonce,
+        "operational_id": operational_id_of(me_id, operational_nonce, signing_desc),
+        "operational_nonce": operational_nonce,
         "certificate_nonce": b64(det(cert_nonce_label)),
         "certificate_generation": generation,
         "previous_certificate_id": previous_certificate_id,
@@ -536,7 +540,7 @@ def build_certificate(me_id, inc_nonce_label, cert_nonce_label, generation,
         "expires_at_ms": expires_at_ms,
         "purposes": purposes,
         "constraints": constraints,
-        "initial_embodiment_hash": initial_embodiment_hash,
+        "initial_body_hash": initial_body_hash,
     }
     # Certificate IDs deliberately follow DM-010: no domain prefix in the hash.
     digest = sha256(jcs(body))
@@ -551,12 +555,12 @@ def build_certificate(me_id, inc_nonce_label, cert_nonce_label, generation,
     }
     return wrapper
 
-def build_acceptance(me_id, incarnation_id, cert_wrapper, sign_key,
+def build_acceptance(me_id, operational_id, cert_wrapper, sign_key,
                      cert_id_override=None, cert_hash_override=None):
     body = {
-        "schema": "daimon-incarnation-acceptance/v0",
+        "schema": "daimon-operational-acceptance/v0",
         "me_id": me_id,
-        "incarnation_id": incarnation_id,
+        "operational_id": operational_id,
         "certificate_id": cert_id_override or cert_wrapper["certificate_id"],
         "certificate_hash": cert_hash_override or cert_wrapper["certificate_hash"],
     }
@@ -565,45 +569,80 @@ def build_acceptance(me_id, incarnation_id, cert_wrapper, sign_key,
     return wrap_special(DOM_ACCEPTANCE, body, "dm:accept:v0:",
                         "artifact_hash", "artifact_id", [sig])
 
-def build_lease(me_id, incarnation_id, cert_wrapper, sign_key, session_label,
+def build_lease(me_id, operational_id, cert_wrapper, sign_key, session_label,
                 lease_sequence, previous_lease_hash, supersedes_session_id,
-                issued_at_ms, expires_at_ms, embodiment_hash, capability_hash,
-                routes):
+                issued_at_ms, expires_at_ms, body_hash, capability_hash,
+                routes, previous_lease_receipt_id=None,
+                supersedes_operational_id=None,
+                superseded_event_cutoff=None):
     body = {
         "schema": "daimon-presence-lease/v0",
         "me_id": me_id,
-        "incarnation_id": incarnation_id,
+        "operational_id": operational_id,
         "certificate_id": cert_wrapper["certificate_id"],
         "session_id": b64(det(session_label)),
         "lease_sequence": lease_sequence,
         "previous_lease_hash": previous_lease_hash,
+        "previous_lease_receipt_id": previous_lease_receipt_id,
         "supersedes_session_id": supersedes_session_id,
+        "supersedes_operational_id": supersedes_operational_id,
+        "superseded_event_cutoff": superseded_event_cutoff,
         "issued_at_ms": issued_at_ms,
         "expires_at_ms": expires_at_ms,
-        "embodiment_hash": embodiment_hash,
+        "body_hash": body_hash,
         "capability_hash": capability_hash,
         "routes": sorted(routes, key=lambda r: (r["kind"], r["route_id"])),
     }
     pre = artifact_preimage(DOM_LEASE, body)
-    sig = sig_record(sign_key, "incarnation-authorization", pre)
+    sig = sig_record(sign_key, "operational-authorization", pre)
     return wrap_special(DOM_LEASE, body, "dm:lease:v0:",
                         "artifact_hash", "artifact_id", [sig])
 
-def build_event(me_id, incarnation_id, cert_wrapper, sign_key, nonce_label,
+
+def build_lease_receipt(lease_wrapper, event_cutoff,
+                        subject_control_position, witness_me_id,
+                        witness_operational_id, witness_cert_wrapper,
+                        witness_control_position, accepted_at_ms,
+                        witness_sign_key):
+    lease = lease_wrapper["body"]
+    body = {
+        "schema": "daimon-lease-head-receipt/v0",
+        "subject_me_id": lease["me_id"],
+        "lease_id": lease_wrapper["artifact_id"],
+        "lease_hash": lease_wrapper["artifact_hash"],
+        "lease_sequence": lease["lease_sequence"],
+        "session_id": lease["session_id"],
+        "operational_id": lease["operational_id"],
+        "certificate_id": lease["certificate_id"],
+        "body_hash": lease["body_hash"],
+        "event_cutoff": event_cutoff,
+        "subject_identity_control_position": subject_control_position,
+        "witness_me_id": witness_me_id,
+        "witness_operational_id": witness_operational_id,
+        "witness_certificate_id": witness_cert_wrapper["certificate_id"],
+        "witness_identity_control_position": witness_control_position,
+        "accepted_at_ms": accepted_at_ms,
+    }
+    pre = artifact_preimage(DOM_LEASE_RECEIPT, body)
+    sig = sig_record(witness_sign_key, "witness-authorization", pre)
+    return wrap_special(DOM_LEASE_RECEIPT, body, "dm:lease-receipt:v0:",
+                        "artifact_hash", "artifact_id", [sig])
+
+def build_event(me_id, operational_id, cert_wrapper, sign_key, nonce_label,
                 event_sequence, previous_event_id, logical_time,
-                causal_parents, embodiment_hash, event_type, intent, payload,
+                causal_parents, body_hash, event_type, intent, payload,
                 cert_id_override=None, signer_override=None):
     body = {
         "schema": "daimon-event/v0",
         "event_nonce": b64(det(nonce_label)),
         "me_id": me_id,
-        "incarnation_id": incarnation_id,
+        "operational_id": operational_id,
         "certificate_id": cert_id_override or cert_wrapper["certificate_id"],
         "event_sequence": event_sequence,
         "previous_event_id": previous_event_id,
         "logical_time": logical_time,
         "causal_parents": causal_parents,
-        "embodiment_hash": embodiment_hash,
+        "body_hash": body_hash,
         "event_type": event_type,
         "intent": intent,
         "payload": payload,
@@ -611,7 +650,7 @@ def build_event(me_id, incarnation_id, cert_wrapper, sign_key, nonce_label,
     pre = artifact_preimage(DOM_EVENT, body)
     digest = sha256(pre)
     signer = signer_override or sign_key
-    sig = sig_record(signer, "incarnation-authorization", pre)
+    sig = sig_record(signer, "operational-authorization", pre)
     return {
         "body": body,
         "event_hash": b64(digest),
@@ -619,22 +658,22 @@ def build_event(me_id, incarnation_id, cert_wrapper, sign_key, nonce_label,
         "signature": sig,
     }
 
-def build_checkpoint(subject_me_id, subject_incarnation_id, subject_cert_id,
+def build_checkpoint(subject_me_id, subject_operational_id, subject_cert_id,
                      high_water_sequence, high_water_event_id,
                      high_water_event_hash, subject_control_position,
-                     witness_me_id, witness_incarnation_id, witness_cert_id,
+                     witness_me_id, witness_operational_id, witness_cert_id,
                      witness_control_position, accepted_at_ms, witness_sign_key):
     body = {
         "schema": "daimon-event-checkpoint/v0",
         "subject_me_id": subject_me_id,
-        "subject_incarnation_id": subject_incarnation_id,
+        "subject_operational_id": subject_operational_id,
         "subject_certificate_id": subject_cert_id,
         "high_water_sequence": high_water_sequence,
         "high_water_event_id": high_water_event_id,
         "high_water_event_hash": high_water_event_hash,
         "subject_identity_control_position": subject_control_position,
         "witness_me_id": witness_me_id,
-        "witness_incarnation_id": witness_incarnation_id,
+        "witness_operational_id": witness_operational_id,
         "witness_certificate_id": witness_cert_id,
         "witness_identity_control_position": witness_control_position,
         "accepted_at_ms": accepted_at_ms,
@@ -651,18 +690,18 @@ def build_checkpoint(subject_me_id, subject_incarnation_id, subject_cert_id,
 def reduced_recipient(entry):
     return {
         "me_id": entry["me_id"],
-        "incarnation_id": entry["incarnation_id"],
+        "operational_id": entry["operational_id"],
         "certificate_id": entry["certificate_id"],
         "encryption_kid": entry["encryption_kid"],
     }
 
 def recipient_sort_key(entry):
-    return (entry["me_id"], entry["incarnation_id"], entry["encryption_kid"])
+    return (entry["me_id"], entry["operational_id"], entry["encryption_kid"])
 
 def build_sealed(delivery_label, inner_event_wrapper, sender, auth_id,
                  issued_at_ms, expires_at_ms, recipients,
                  cek_label=None, nonce_label=None, tampered_recipients=None):
-    """recipients: list of dicts with me_id/incarnation_id/certificate_id/
+    """recipients: list of dicts with me_id/operational_id/certificate_id/
     encryption_kid and the TestKey's public key under 'public'."""
     inner_bytes = jcs(inner_event_wrapper)
     wire_sender = {k: v for k, v in sender.items() if not k.startswith("_")}
@@ -698,7 +737,7 @@ def build_sealed(delivery_label, inner_event_wrapper, sender, auth_id,
         enc, wrapped = hpke_seal(r["public"], eph, info, cek)
         full_recipients.append({
             "me_id": r["me_id"],
-            "incarnation_id": r["incarnation_id"],
+            "operational_id": r["operational_id"],
             "certificate_id": r["certificate_id"],
             "encryption_kid": r["encryption_kid"],
             "enc": b64(enc),
@@ -736,15 +775,17 @@ def write_bytes(root, rel, data):
 # Fixture construction
 # ---------------------------------------------------------------------------
 
-EMBODIMENT_BODY = {
-    "schema": "x/test-embodiment-description/v0",
+BODY_DESCRIPTION = {
+    "schema": "x/test-body-description/v0",
     "note": "Synthetic DM-011 placeholder body; DM-018 freezes the normative "
-            "closed embodiment-description body.",
+            "closed body-description body.",
     "harness": "x/test-harness",
     "model": "x/test-model",
     "provider": "x/test-provider",
     "tools": ["x/test-tool-a", "x/test-tool-b"],
 }
+
+BODY_DESCRIPTION_B = dict(BODY_DESCRIPTION, body_label="x/test-body-b")
 
 CAPABILITY_BODY = {
     "schema": "x/test-capability-description/v0",
@@ -754,11 +795,12 @@ CAPABILITY_BODY = {
     "scopes": ["x/test-scope"],
 }
 
-EMBODIMENT_HASH = b64(sha256(jcs(EMBODIMENT_BODY)))
+BODY_HASH = b64(sha256(jcs(BODY_DESCRIPTION)))
+BODY_B_HASH = b64(sha256(jcs(BODY_DESCRIPTION_B)))
 CAPABILITY_HASH = b64(sha256(jcs(CAPABILITY_BODY)))
 
-FULL_SIGNING_PURPOSES = ["event", "event-checkpoint", "presence-lease",
-                         "sealed-delivery"]
+FULL_SIGNING_PURPOSES = ["event", "event-checkpoint", "lease-head-receipt",
+                         "presence-lease", "sealed-delivery"]
 
 
 def control_position(wrapper):
@@ -802,6 +844,34 @@ def build_universe():
     add("me1/genesis.json", genesis)
     me1 = genesis["body"]["me_id"]
 
+    # Self-contained positive carry-forward branch. The certificate exists
+    # before the rotation and its exact ID is committed by that transition.
+    pre_rotation_cert = build_certificate(
+        me1, "operational-nonce-pre-rotation",
+        "certificate-nonce-pre-rotation", 0, None,
+        K["opp-sign"], K["opp-enc"], control_position(genesis),
+        [key_desc(K["root-a"]), key_desc(K["root-b"]),
+         key_desc(K["root-c"])], T0 + 50, T0 + 50,
+        T0 + 50 + 7 * 24 * 3600 * 1000,
+        {"signing": ["event"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT,
+         "event_type_prefixes": ["x/"]},
+        BODY_HASH, root_signers=[K["root-a"], K["root-b"]])
+    pre_rotation_op = pre_rotation_cert["body"]["operational_id"]
+    pre_rotation_acceptance = build_acceptance(
+        me1, pre_rotation_op, pre_rotation_cert, K["opp-sign"])
+    carry_forward_transition = build_root_transition(
+        genesis, [K["newroot-a"], K["newroot-b"], K["newroot-c"]], 2,
+        {"mode": "carry_forward",
+         "carried_forward_certificate_ids": [
+             pre_rotation_cert["certificate_id"]]},
+        auth_signers=[K["root-b"], K["root-c"]],
+        possession_signers=[K["newroot-a"], K["newroot-b"]])
+    add("carry-forward/certificate-pre-rotation.json", pre_rotation_cert)
+    add("carry-forward/acceptance-pre-rotation.json",
+        pre_rotation_acceptance)
+    add("carry-forward/root-transition.json", carry_forward_transition)
+
     root_transition = build_root_transition(
         genesis,
         [K["newroot-a"], K["newroot-b"], K["newroot-c"]], 2,
@@ -834,7 +904,7 @@ def build_universe():
         recovery_policy,
         [K["proot-a"], K["proot-b"]], 2,
         {"mode": "none", "control_cutoff": None,
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         [rev_root_a, rev_root_b],
         recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
         root_possession_signers=[K["proot-a"], K["proot-b"]])
@@ -847,39 +917,39 @@ def build_universe():
     # me1 certificates
     # ------------------------------------------------------------------
     cert_lifetime = 7 * 24 * 3600 * 1000  # 7 days, within the 30-day ceiling
-    cert_inc1_gen0 = build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-gen0",
-        0, None, K["inc1-sign"], K["inc1-enc"],
+    cert_op1_gen0 = build_certificate(
+        me1, "operational-nonce-op1", "certificate-nonce-op1-gen0",
+        0, None, K["op1-sign"], K["op1-enc"],
         issuing_10, post_root_descs,
         T0 + 100, T0 + 100, T0 + 100 + cert_lifetime,
         {"signing": FULL_SIGNING_PURPOSES,
          "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
-    add("me1/certificate-inc1-gen0.json", cert_inc1_gen0)
-    inc1 = cert_inc1_gen0["body"]["incarnation_id"]
-    acc_inc1_gen0 = build_acceptance(me1, inc1, cert_inc1_gen0, K["inc1-sign"])
-    add("me1/acceptance-inc1-gen0.json", acc_inc1_gen0)
+    add("me1/certificate-op1-gen0.json", cert_op1_gen0)
+    op1 = cert_op1_gen0["body"]["operational_id"]
+    acc_op1_gen0 = build_acceptance(me1, op1, cert_op1_gen0, K["op1-sign"])
+    add("me1/acceptance-op1-gen0.json", acc_op1_gen0)
 
-    cert_inc2_gen0 = build_certificate(
-        me1, "incarnation-nonce-inc2", "certificate-nonce-inc2-gen0",
-        0, None, K["inc2-sign"], K["inc2-enc"],
+    cert_op2_gen0 = build_certificate(
+        me1, "operational-nonce-op2", "certificate-nonce-op2-gen0",
+        0, None, K["op2-sign"], K["op2-enc"],
         issuing_10, post_root_descs,
         T0 + 110, T0 + 110, T0 + 110 + cert_lifetime,
-        {"signing": ["event", "event-checkpoint"],
+        {"signing": ["event", "event-checkpoint", "presence-lease"],
          "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
-    add("me1/certificate-inc2-gen0.json", cert_inc2_gen0)
-    inc2 = cert_inc2_gen0["body"]["incarnation_id"]
-    acc_inc2_gen0 = build_acceptance(me1, inc2, cert_inc2_gen0, K["inc2-sign"])
-    add("me1/acceptance-inc2-gen0.json", acc_inc2_gen0)
+    add("me1/certificate-op2-gen0.json", cert_op2_gen0)
+    op2 = cert_op2_gen0["body"]["operational_id"]
+    acc_op2_gen0 = build_acceptance(me1, op2, cert_op2_gen0, K["op2-sign"])
+    add("me1/acceptance-op2-gen0.json", acc_op2_gen0)
 
-    cert_inc3_gen0 = build_certificate(
-        me1, "incarnation-nonce-inc3", "certificate-nonce-inc3-gen0",
-        0, None, K["inc3-sign"], K["inc3-enc"],
+    cert_op3_gen0 = build_certificate(
+        me1, "operational-nonce-op3", "certificate-nonce-op3-gen0",
+        0, None, K["op3-sign"], K["op3-enc"],
         issuing_10, post_root_descs,
         T0 + 120, T0 + 120, T0 + 120 + cert_lifetime,
         {"signing": ["event", "sealed-delivery"],
@@ -887,58 +957,58 @@ def build_universe():
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
         None,
         root_signers=[K["proot-a"], K["proot-b"]])
-    add("me1/certificate-inc3-gen0.json", cert_inc3_gen0)
-    inc3 = cert_inc3_gen0["body"]["incarnation_id"]
-    acc_inc3_gen0 = build_acceptance(
-        me1, inc3, cert_inc3_gen0, K["inc3-sign"])
-    add("me1/acceptance-inc3-gen0.json", acc_inc3_gen0)
+    add("me1/certificate-op3-gen0.json", cert_op3_gen0)
+    op3 = cert_op3_gen0["body"]["operational_id"]
+    acc_op3_gen0 = build_acceptance(
+        me1, op3, cert_op3_gen0, K["op3-sign"])
+    add("me1/acceptance-op3-gen0.json", acc_op3_gen0)
 
-    # Standalone revocation at (1,1): retires the inc3 certificate.
-    rev_inc3 = revocation_entry(
+    # Standalone revocation at (1,1): retires the op3 certificate.
+    rev_op3 = revocation_entry(
         "key-retired",
-        {"kind": "certificate", "id": cert_inc3_gen0["certificate_id"],
+        {"kind": "certificate", "id": cert_op3_gen0["certificate_id"],
          "kid": None})
     standalone_revocation = build_standalone_revocation(
-        recovery_transition, rev_inc3, [K["proot-a"], K["proot-b"]])
+        recovery_transition, rev_op3, [K["proot-a"], K["proot-b"]])
     add("me1/standalone-revocation.json", standalone_revocation)
 
-    # Generation-1 exact renewal of inc1: same keys, same incarnation nonce,
+    # Generation-1 exact renewal of op1: same keys, same operational nonce,
     # fresh certificate nonce, generation exactly +1, names gen0.
     issuing_11 = control_position(standalone_revocation)
-    cert_inc1_gen1 = build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-gen1",
-        1, cert_inc1_gen0["certificate_id"], K["inc1-sign"], K["inc1-enc"],
+    cert_op1_gen1 = build_certificate(
+        me1, "operational-nonce-op1", "certificate-nonce-op1-gen1",
+        1, cert_op1_gen0["certificate_id"], K["op1-sign"], K["op1-enc"],
         issuing_11, post_root_descs,
         T0 + 200, T0 + 200, T0 + 200 + cert_lifetime,
         {"signing": FULL_SIGNING_PURPOSES,
          "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
-    add("me1/certificate-inc1-gen1.json", cert_inc1_gen1)
-    assert cert_inc1_gen1["body"]["incarnation_id"] == inc1
-    acc_inc1_gen1 = build_acceptance(me1, inc1, cert_inc1_gen1, K["inc1-sign"])
-    add("me1/acceptance-inc1-gen1.json", acc_inc1_gen1)
+    add("me1/certificate-op1-gen1.json", cert_op1_gen1)
+    assert cert_op1_gen1["body"]["operational_id"] == op1
+    acc_op1_gen1 = build_acceptance(me1, op1, cert_op1_gen1, K["op1-sign"])
+    add("me1/acceptance-op1-gen1.json", acc_op1_gen1)
 
-    # inc2 encryption-key rotation renewal: same signing key and incarnation
+    # op2 encryption-key rotation renewal: same signing key and operational
     # nonce, generation exactly +1, new X25519 key.  The expiry is
     # deliberately short (12 hours after the rotation delivery's issuance)
     # so per-recipient effective expiry can be exercised.
     rotation_delivery_issued = T0 + 20000
-    cert_inc2_gen1 = build_certificate(
-        me1, "incarnation-nonce-inc2", "certificate-nonce-inc2-gen1",
-        1, cert_inc2_gen0["certificate_id"], K["inc2-sign"], K["inc2-enc2"],
+    cert_op2_gen1 = build_certificate(
+        me1, "operational-nonce-op2", "certificate-nonce-op2-gen1",
+        1, cert_op2_gen0["certificate_id"], K["op2-sign"], K["op2-enc2"],
         issuing_11, post_root_descs,
         T0 + 300, T0 + 300, rotation_delivery_issued + 12 * 3600 * 1000,
-        {"signing": ["event", "event-checkpoint"],
+        {"signing": ["event", "event-checkpoint", "presence-lease"],
          "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
-    add("me1/certificate-inc2-gen1.json", cert_inc2_gen1)
-    assert cert_inc2_gen1["body"]["incarnation_id"] == inc2
-    acc_inc2_gen1 = build_acceptance(me1, inc2, cert_inc2_gen1, K["inc2-sign"])
-    add("me1/acceptance-inc2-gen1.json", acc_inc2_gen1)
+    add("me1/certificate-op2-gen1.json", cert_op2_gen1)
+    assert cert_op2_gen1["body"]["operational_id"] == op2
+    acc_op2_gen1 = build_acceptance(me1, op2, cert_op2_gen1, K["op2-sign"])
+    add("me1/acceptance-op2-gen1.json", acc_op2_gen1)
 
     # ------------------------------------------------------------------
     # me2 universe (cross-/me causal parent, second sealed recipient)
@@ -955,31 +1025,32 @@ def build_universe():
     add("me2/genesis.json", me2_genesis)
     me2 = me2_genesis["body"]["me_id"]
 
-    cert_xm1_gen0 = build_certificate(
-        me2, "incarnation-nonce-xm1", "certificate-nonce-xm1-gen0",
-        0, None, K["xm1-sign"], K["xm1-enc"],
+    cert_opx_gen0 = build_certificate(
+        me2, "operational-nonce-opx", "certificate-nonce-opx-gen0",
+        0, None, K["opx-sign"], K["opx-enc"],
         control_position(me2_genesis), [key_desc(K["xroot-a"])],
         T0 + 150, T0 + 150, T0 + 150 + cert_lifetime,
-        {"signing": ["event"], "encryption": ["sealed-event-recipient"]},
+        {"signing": ["event", "event-checkpoint", "lease-head-receipt"],
+         "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
         None,
         root_signers=[K["xroot-a"]])
-    add("me2/certificate-xm1-gen0.json", cert_xm1_gen0)
-    xm1 = cert_xm1_gen0["body"]["incarnation_id"]
-    acc_xm1_gen0 = build_acceptance(me2, xm1, cert_xm1_gen0, K["xm1-sign"])
-    add("me2/acceptance-xm1-gen0.json", acc_xm1_gen0)
+    add("me2/certificate-opx-gen0.json", cert_opx_gen0)
+    opx = cert_opx_gen0["body"]["operational_id"]
+    acc_opx_gen0 = build_acceptance(me2, opx, cert_opx_gen0, K["opx-sign"])
+    add("me2/acceptance-opx-gen0.json", acc_opx_gen0)
 
     # ------------------------------------------------------------------
-    # Presence lease (inc1, generation-1 certificate)
+    # Presence lease (op1, generation-1 certificate)
     # ------------------------------------------------------------------
     lease0 = build_lease(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "session-inc1-a",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "session-op1-a",
         0, None, None,
         T0 + 9000, T0 + 9000 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        BODY_HASH, CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-local"))}])
-    add("me1/lease-inc1-0.json", lease0)
+          "route_id": "dm:route:v0:" + b64(det("route-op1-local"))}])
+    add("me1/lease-op1-0.json", lease0)
 
     # ------------------------------------------------------------------
     # Events
@@ -988,43 +1059,43 @@ def build_universe():
     intent0 = {"thread_id": thread_id, "scope": "x/test-scope",
                "operation": "x/test-op"}
     e0 = build_event(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "event-nonce-e0",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "event-nonce-e0",
         0, None, {"physical_ms": T0 + 1000, "counter": 0}, [],
-        EMBODIMENT_HASH, "x/test-event", intent0,
+        BODY_HASH, "x/test-event", intent0,
         {"schema": "x/test-payload/v0", "text": "hello /we",
          "note": "synthetic DM-011 conformance payload"})
-    add("me1/event-inc1-0.json", e0)
+    add("me1/event-op1-0.json", e0)
 
-    # Cross-/me parent authored by xm1 under me2, with its own proof fixtures.
-    xm1e0 = build_event(
-        me2, xm1, cert_xm1_gen0, K["xm1-sign"], "event-nonce-xm1e0",
+    # Cross-/me parent authored by opx under me2, with its own proof fixtures.
+    opxe0 = build_event(
+        me2, opx, cert_opx_gen0, K["opx-sign"], "event-nonce-opxe0",
         0, None, {"physical_ms": T0 + 5000, "counter": 3}, [],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "cross-me cause"})
-    add("me2/event-xm1-0.json", xm1e0)
+    add("me2/event-opx-0.json", opxe0)
 
     # Successor: physical component inherited from the cross-/me parent, so
     # the HLC counter advances to 4.
     e1 = build_event(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "event-nonce-e1",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "event-nonce-e1",
         1, e0["event_id"],
         {"physical_ms": T0 + 5000, "counter": 4},
-        sorted([e0["event_id"], xm1e0["event_id"]]),
-        EMBODIMENT_HASH, "x/test-event", intent0,
+        sorted([e0["event_id"], opxe0["event_id"]]),
+        BODY_HASH, "x/test-event", intent0,
         {"schema": "x/test-payload/v0",
          "text": "reply with cross-me cause"})
-    add("me1/event-inc1-1.json", e1)
+    add("me1/event-op1-1.json", e1)
 
     # x/test disclosure authorization event: binds the exact sealed event,
     # sender certificate/key, and concrete recipient certificate/key set.
     # This is a DM-011 test fixture, NOT a DM-012 normative schema.
     recipients_desc = sorted([
-        {"me_id": me1, "incarnation_id": inc2,
-         "certificate_id": cert_inc2_gen0["certificate_id"],
-         "encryption_kid": K["inc2-enc"].kid},
-        {"me_id": me2, "incarnation_id": xm1,
-         "certificate_id": cert_xm1_gen0["certificate_id"],
-         "encryption_kid": K["xm1-enc"].kid},
+        {"me_id": me1, "operational_id": op2,
+         "certificate_id": cert_op2_gen0["certificate_id"],
+         "encryption_kid": K["op2-enc"].kid},
+        {"me_id": me2, "operational_id": opx,
+         "certificate_id": cert_opx_gen0["certificate_id"],
+         "encryption_kid": K["opx-enc"].kid},
     ], key=recipient_sort_key)
     disclosure_payload = {
         "schema": "x/test-disclosure-authorization/v0",
@@ -1032,175 +1103,196 @@ def build_universe():
                 "conformance vectors only; NOT a DM-012 normative schema.",
         "event_id": e1["event_id"],
         "event_hash": e1["event_hash"],
-        "sender": {"me_id": me1, "incarnation_id": inc1,
-                   "certificate_id": cert_inc1_gen1["certificate_id"],
-                   "signing_kid": K["inc1-sign"].kid},
+        "sender": {"me_id": me1, "operational_id": op1,
+                   "certificate_id": cert_op1_gen1["certificate_id"],
+                   "signing_kid": K["op1-sign"].kid},
         "recipients": recipients_desc,
     }
     e2 = build_event(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "event-nonce-e2",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "event-nonce-e2",
         2, e1["event_id"],
         {"physical_ms": T0 + 6000, "counter": 0},
         [e1["event_id"]],
-        EMBODIMENT_HASH, "x/test-disclosure-authorization", None,
+        BODY_HASH, "x/test-disclosure-authorization", None,
         disclosure_payload)
-    add("me1/event-inc1-2-disclosure.json", e2)
+    add("me1/event-op1-2-disclosure.json", e2)
 
     # Withheld predecessor: e3 is computed (its ID is on the wire in e4) but
     # its bytes are deliberately not shipped, making e4 'incomplete'.
     e3 = build_event(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "event-nonce-e3",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "event-nonce-e3",
         3, e2["event_id"],
         {"physical_ms": T0 + 7000, "counter": 0},
         [e2["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "withheld predecessor"})
     e4 = build_event(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "event-nonce-e4",
+        me1, op1, cert_op1_gen1, K["op1-sign"], "event-nonce-e4",
         4, e3["event_id"],
         {"physical_ms": T0 + 8000, "counter": 0},
         [e3["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "out-of-order arrival; predecessor bytes withheld"})
-    add("me1/event-inc1-4-out-of-order.json", e4)
+    add("me1/event-op1-4-out-of-order.json", e4)
 
     # x/test recipient sets used below by disclosure-authorization fixtures.
     rotation_recipients_desc = sorted([
-        {"me_id": me1, "incarnation_id": inc2,
-         "certificate_id": cert_inc2_gen1["certificate_id"],
-         "encryption_kid": K["inc2-enc2"].kid},
-        {"me_id": me2, "incarnation_id": xm1,
-         "certificate_id": cert_xm1_gen0["certificate_id"],
-         "encryption_kid": K["xm1-enc"].kid},
+        {"me_id": me1, "operational_id": op2,
+         "certificate_id": cert_op2_gen1["certificate_id"],
+         "encryption_kid": K["op2-enc2"].kid},
+        {"me_id": me2, "operational_id": opx,
+         "certificate_id": cert_opx_gen0["certificate_id"],
+         "encryption_kid": K["opx-enc"].kid},
     ], key=recipient_sort_key)
     # x/test disclosure authorization binding a recipient set that includes
-    # the revoked inc3 certificate (for the revoked-recipient delivery).
+    # the revoked op3 certificate (for the revoked-recipient delivery).
     revoked_recipients_desc = sorted([
-        {"me_id": me1, "incarnation_id": inc2,
-         "certificate_id": cert_inc2_gen0["certificate_id"],
-         "encryption_kid": K["inc2-enc"].kid},
-        {"me_id": me1, "incarnation_id": inc3,
-         "certificate_id": cert_inc3_gen0["certificate_id"],
-         "encryption_kid": K["inc3-enc"].kid},
+        {"me_id": me1, "operational_id": op2,
+         "certificate_id": cert_op2_gen0["certificate_id"],
+         "encryption_kid": K["op2-enc"].kid},
+        {"me_id": me1, "operational_id": op3,
+         "certificate_id": cert_op3_gen0["certificate_id"],
+         "encryption_kid": K["op3-enc"].kid},
     ], key=recipient_sort_key)
-    # Contextually valid inc2 event chain (seq 0 -> 1 -> 2 -> 3 -> 4) under the
+    # Contextually valid op2 event chain (seq 0 -> 1 -> 2 -> 3 -> 4) under the
     # rotated generation-1 certificate: distinct nonces with an identical
     # payload (e0/e1), an NFC payload (e2), the safe-integer HLC counter at a
     # fixed physical millisecond (e3), then the mandated counter reset at a
     # strictly larger physical millisecond (e4).
-    inc2e0 = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"], "event-nonce-inc2e0",
+    op2e0 = build_event(
+        me1, op2, cert_op2_gen1, K["op2-sign"], "event-nonce-op2e0",
         0, None, {"physical_ms": T0 + 2000, "counter": 0}, [],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "repeated observation"})
-    add("me1/event-inc2-0.json", inc2e0)
-    inc2e1 = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"], "event-nonce-inc2e1",
-        1, inc2e0["event_id"], {"physical_ms": T0 + 3000, "counter": 0},
-        [inc2e0["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+    add("me1/event-op2-0.json", op2e0)
+    op2e1 = build_event(
+        me1, op2, cert_op2_gen1, K["op2-sign"], "event-nonce-op2e1",
+        1, op2e0["event_id"], {"physical_ms": T0 + 3000, "counter": 0},
+        [op2e0["event_id"]],
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "repeated observation"})
-    add("me1/event-inc2-1.json", inc2e1)
-    inc2e2 = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"], "event-nonce-inc2e2",
-        2, inc2e1["event_id"], {"physical_ms": T0 + 4000, "counter": 0},
-        [inc2e1["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+    add("me1/event-op2-1.json", op2e1)
+    op2e2 = build_event(
+        me1, op2, cert_op2_gen1, K["op2-sign"], "event-nonce-op2e2",
+        2, op2e1["event_id"], {"physical_ms": T0 + 4000, "counter": 0},
+        [op2e1["event_id"]],
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "caf\u00e9"})
-    add("me1/event-inc2-2-nfc.json", inc2e2)
-    inc2e3 = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"], "event-nonce-inc2e3",
-        3, inc2e2["event_id"],
+    add("me1/event-op2-2-nfc.json", op2e2)
+    op2e3 = build_event(
+        me1, op2, cert_op2_gen1, K["op2-sign"], "event-nonce-op2e3",
+        3, op2e2["event_id"],
         {"physical_ms": T0 + 5000, "counter": SAFE_INT_MAX},
-        [inc2e2["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+        [op2e2["event_id"]],
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "HLC counter at the safe-integer maximum"})
-    add("me1/event-inc2-3-hlc-max-counter.json", inc2e3)
-    inc2e4 = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"], "event-nonce-inc2e4",
-        4, inc2e3["event_id"],
+    add("me1/event-op2-3-hlc-max-counter.json", op2e3)
+    op2e4 = build_event(
+        me1, op2, cert_op2_gen1, K["op2-sign"], "event-nonce-op2e4",
+        4, op2e3["event_id"],
         {"physical_ms": T0 + 5001, "counter": 0},
-        [inc2e3["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+        [op2e3["event_id"]],
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "HLC counter reset after physical time advances"})
-    add("me1/event-inc2-4-hlc-reset.json", inc2e4)
+    add("me1/event-op2-4-hlc-reset.json", op2e4)
 
-    # The disclosure events extend the complete inc2 chain.  No positive
-    # delivery fixture depends on the deliberately incomplete inc1 suffix.
+    # The disclosure events extend the complete op2 chain.  No positive
+    # delivery fixture depends on the deliberately incomplete op1 suffix.
     rotation_auth = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"],
-        "event-nonce-inc2-rotation-auth", 5, inc2e4["event_id"],
-        {"physical_ms": T0 + 9100, "counter": 0}, [inc2e4["event_id"]],
-        EMBODIMENT_HASH, "x/test-disclosure-authorization", None,
+        me1, op2, cert_op2_gen1, K["op2-sign"],
+        "event-nonce-op2-rotation-auth", 5, op2e4["event_id"],
+        {"physical_ms": T0 + 9100, "counter": 0}, [op2e4["event_id"]],
+        BODY_HASH, "x/test-disclosure-authorization", None,
         {"schema": "x/test-disclosure-authorization/v0",
          "note": "Synthetic x/test disclosure authorization for the "
                  "post-rotation delivery; NOT a DM-012 normative schema.",
          "event_id": e1["event_id"],
          "event_hash": e1["event_hash"],
-         "sender": {"me_id": me1, "incarnation_id": inc1,
-                    "certificate_id": cert_inc1_gen1["certificate_id"],
-                    "signing_kid": K["inc1-sign"].kid},
+         "sender": {"me_id": me1, "operational_id": op1,
+                    "certificate_id": cert_op1_gen1["certificate_id"],
+                    "signing_kid": K["op1-sign"].kid},
          "recipients": rotation_recipients_desc})
-    add("me1/event-inc2-5-disclosure-rotation.json", rotation_auth)
+    add("me1/event-op2-5-disclosure-rotation.json", rotation_auth)
     revoked_recipient_auth = build_event(
-        me1, inc2, cert_inc2_gen1, K["inc2-sign"],
-        "event-nonce-inc2-revoked-recipient-auth", 6,
+        me1, op2, cert_op2_gen1, K["op2-sign"],
+        "event-nonce-op2-revoked-recipient-auth", 6,
         rotation_auth["event_id"],
         {"physical_ms": T0 + 9200, "counter": 0},
         [rotation_auth["event_id"]],
-        EMBODIMENT_HASH, "x/test-disclosure-authorization", None,
+        BODY_HASH, "x/test-disclosure-authorization", None,
         {"schema": "x/test-disclosure-authorization/v0",
          "note": "Synthetic x/test disclosure authorization binding a "
                  "since-revoked recipient; NOT a DM-012 normative schema.",
          "event_id": e1["event_id"],
          "event_hash": e1["event_hash"],
-         "sender": {"me_id": me1, "incarnation_id": inc1,
-                    "certificate_id": cert_inc1_gen1["certificate_id"],
-                    "signing_kid": K["inc1-sign"].kid},
+         "sender": {"me_id": me1, "operational_id": op1,
+                    "certificate_id": cert_op1_gen1["certificate_id"],
+                    "signing_kid": K["op1-sign"].kid},
          "recipients": revoked_recipients_desc})
-    add("me1/event-inc2-6-disclosure-revoked-recipient.json",
+    add("me1/event-op2-6-disclosure-revoked-recipient.json",
         revoked_recipient_auth)
 
     # NFD counterpart on the me2 chain (seq 1), contextually valid there.
-    xm1e1 = build_event(
-        me2, xm1, cert_xm1_gen0, K["xm1-sign"], "event-nonce-xm1e1",
-        1, xm1e0["event_id"], {"physical_ms": T0 + 5500, "counter": 0},
-        [xm1e0["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+    opxe1 = build_event(
+        me2, opx, cert_opx_gen0, K["opx-sign"], "event-nonce-opxe1",
+        1, opxe0["event_id"], {"physical_ms": T0 + 5500, "counter": 0},
+        [opxe0["event_id"]],
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "cafe\u0301"})
-    add("me2/event-xm1-1-nfd.json", xm1e1)
+    add("me2/event-opx-1-nfd.json", opxe1)
 
     # ------------------------------------------------------------------
-    # Separate-witness checkpoint: witness inc2 attests the inc1 prefix
-    # through event 1, bound to the exact subject certificate and control
+    # Separate-/me witness checkpoint: me2/opx attests the op1 prefix
+    # through event 2, bound to the exact subject certificate and control
     # positions.
     # ------------------------------------------------------------------
     checkpoint = build_checkpoint(
-        me1, inc1, cert_inc1_gen1["certificate_id"],
-        1, e1["event_id"], e1["event_hash"],
+        me1, op1, cert_op1_gen1["certificate_id"],
+        2, e2["event_id"], e2["event_hash"],
         issuing_11,
-        me1, inc2, cert_inc2_gen0["certificate_id"],
-        issuing_10,
-        T0 + 9500, K["inc2-sign"])
-    add("me1/checkpoint-inc2-witness.json", checkpoint)
+        me2, opx, cert_opx_gen0["certificate_id"],
+        control_position(me2_genesis),
+        T0 + 9500, K["opx-sign"])
+    add("me1/checkpoint-opx-witness.json", checkpoint)
+
+    cutoff0 = {
+        "operational_id": op1,
+        "certificate_id": cert_op1_gen1["certificate_id"],
+        "event_sequence": e2["body"]["event_sequence"],
+        "event_id": e2["event_id"],
+        "event_hash": e2["event_hash"],
+        "checkpoint_id": checkpoint["artifact_id"],
+    }
+    receipt0 = build_lease_receipt(
+        lease0, cutoff0, issuing_11, me2, opx, cert_opx_gen0,
+        control_position(me2_genesis), T0 + 9600, K["opx-sign"])
+    add("me1/lease-receipt-0.json", receipt0)
+    receipt0_alt = build_lease_receipt(
+        lease0, cutoff0, issuing_11, me2, opx, cert_opx_gen0,
+        control_position(me2_genesis), T0 + 9650, K["opx-sign"])
+    add("me1/lease-receipt-0-alt.json", receipt0_alt)
+    receipt0_no_events = build_lease_receipt(
+        lease0, None, issuing_11, me2, opx, cert_opx_gen0,
+        control_position(me2_genesis), T0 + 9550, K["opx-sign"])
+    add("me1/lease-receipt-0-no-events.json", receipt0_no_events)
 
     # ------------------------------------------------------------------
     # Sealed deliveries (fixed multi-recipient, deterministic HPKE)
     # ------------------------------------------------------------------
-    sender_desc = {"me_id": me1, "incarnation_id": inc1,
-                   "certificate_id": cert_inc1_gen1["certificate_id"],
-                   "signing_kid": K["inc1-sign"].kid,
-                   "_key": K["inc1-sign"]}
+    sender_desc = {"me_id": me1, "operational_id": op1,
+                   "certificate_id": cert_op1_gen1["certificate_id"],
+                   "signing_kid": K["op1-sign"].kid,
+                   "_key": K["op1-sign"]}
     recipient_fixtures = [
-        {"me_id": me1, "incarnation_id": inc2,
-         "certificate_id": cert_inc2_gen0["certificate_id"],
-         "encryption_kid": K["inc2-enc"].kid, "public": K["inc2-enc"].public},
-        {"me_id": me2, "incarnation_id": xm1,
-         "certificate_id": cert_xm1_gen0["certificate_id"],
-         "encryption_kid": K["xm1-enc"].kid, "public": K["xm1-enc"].public},
+        {"me_id": me1, "operational_id": op2,
+         "certificate_id": cert_op2_gen0["certificate_id"],
+         "encryption_kid": K["op2-enc"].kid, "public": K["op2-enc"].public},
+        {"me_id": me2, "operational_id": opx,
+         "certificate_id": cert_opx_gen0["certificate_id"],
+         "encryption_kid": K["opx-enc"].kid, "public": K["opx-enc"].public},
     ]
     # d1 uses exactly the 24-hour TTL bound; d2 is the mandated durable
     # reseal, issued only after d1 has expired, retaining the event/message
@@ -1218,29 +1310,54 @@ def build_universe():
     # the rotated concrete recipient set, to each recipient's latest
     # certificate/encryption key.
     rotation_recipient_fixtures = [
-        {"me_id": me1, "incarnation_id": inc2,
-         "certificate_id": cert_inc2_gen1["certificate_id"],
-         "encryption_kid": K["inc2-enc2"].kid,
-         "public": K["inc2-enc2"].public},
-        {"me_id": me2, "incarnation_id": xm1,
-         "certificate_id": cert_xm1_gen0["certificate_id"],
-         "encryption_kid": K["xm1-enc"].kid, "public": K["xm1-enc"].public},
+        {"me_id": me1, "operational_id": op2,
+         "certificate_id": cert_op2_gen1["certificate_id"],
+         "encryption_kid": K["op2-enc2"].kid,
+         "public": K["op2-enc2"].public},
+        {"me_id": me2, "operational_id": opx,
+         "certificate_id": cert_opx_gen0["certificate_id"],
+         "encryption_kid": K["opx-enc"].kid, "public": K["opx-enc"].public},
     ]
     d3 = build_sealed("d3", e1, sender_desc, rotation_auth["event_id"],
                       rotation_delivery_issued,
                       rotation_delivery_issued + MAX_DELIVERY_TTL_MS,
                       rotation_recipient_fixtures)
     add("me1/sealed-delivery-3-rotation.json", d3)
-    # Second lease within the same session (continues sequence and hash)
-    # for the stateful lease-chain oracle.
+    # Park/wake to body B under another operational credential. The identity-
+    # wide lease sequence continues and the signed cutoff retires op1.
     lease1 = build_lease(
-        me1, inc1, cert_inc1_gen1, K["inc1-sign"], "session-inc1-a",
-        1, lease0["artifact_hash"], None,
+        me1, op2, cert_op2_gen1, K["op2-sign"], "session-op2-b",
+        1, lease0["artifact_hash"], lease0["body"]["session_id"],
         T0 + 120000, T0 + 120000 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        BODY_B_HASH, CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-local"))}])
-    add("me1/lease-inc1-1.json", lease1)
+          "route_id": "dm:route:v0:" + b64(det("route-op2-local"))}],
+        previous_lease_receipt_id=receipt0["artifact_id"],
+        supersedes_operational_id=op1,
+        superseded_event_cutoff=cutoff0)
+    add("me1/lease-op1-1.json", lease1)
+    receipt1 = build_lease_receipt(
+        lease1, None, issuing_11, me2, opx, cert_opx_gen0,
+        control_position(me2_genesis), T0 + 121000, K["opx-sign"])
+    add("me1/lease-receipt-1.json", receipt1)
+
+    # The same park/wake is valid when the cited predecessor receipt has no
+    # checkpointed event cutoff. Null is copied exactly rather than treated
+    # as missing handoff evidence.
+    lease1_no_events = build_lease(
+        me1, op2, cert_op2_gen1, K["op2-sign"],
+        "session-op2-b-no-events", 1, lease0["artifact_hash"],
+        lease0["body"]["session_id"], T0 + 120100,
+        T0 + 120100 + 240000, BODY_B_HASH, CAPABILITY_HASH,
+        [{"kind": "local",
+          "route_id": "dm:route:v0:" + b64(det("route-op2-no-events"))}],
+        previous_lease_receipt_id=receipt0_no_events["artifact_id"],
+        supersedes_operational_id=op1, superseded_event_cutoff=None)
+    add("me1/lease-op1-1-no-events.json", lease1_no_events)
+    receipt1_no_events = build_lease_receipt(
+        lease1_no_events, None, issuing_11, me2, opx, cert_opx_gen0,
+        control_position(me2_genesis), T0 + 121100, K["opx-sign"])
+    add("me1/lease-receipt-1-no-events.json", receipt1_no_events)
 
     # ------------------------------------------------------------------
     # Threshold endorsement fixtures: partial quorum, a second distinct
@@ -1266,12 +1383,13 @@ def build_universe():
         genesis_with_sigs([K["root-a"], K["root-b"], K["root-c"]],
                           [K["rec-a"], K["rec-b"]]))
 
-    add("fixtures/embodiment-description.json", EMBODIMENT_BODY)
+    add("fixtures/body-description.json", BODY_DESCRIPTION)
+    add("fixtures/body-description-b.json", BODY_DESCRIPTION_B)
     add("fixtures/capability-description.json", CAPABILITY_BODY)
 
     meta = {
-        "me1": me1, "me2": me2, "inc1": inc1, "inc2": inc2, "inc3": inc3,
-        "xm1": xm1,
+        "me1": me1, "me2": me2, "op1": op1, "op2": op2, "op3": op3,
+        "opx": opx,
         "withheld_event_id": e3["event_id"],
         "withheld_event_hash": e3["event_hash"],
         "withheld_event_sequence": 3,
@@ -1281,20 +1399,25 @@ def build_universe():
             "recovery_policy": recovery_policy,
             "recovery_transition": recovery_transition,
             "standalone_revocation": standalone_revocation,
-            "cert_inc1_gen0": cert_inc1_gen0, "cert_inc1_gen1": cert_inc1_gen1,
-            "cert_inc2_gen0": cert_inc2_gen0, "cert_inc3_gen0": cert_inc3_gen0,
-            "cert_xm1_gen0": cert_xm1_gen0,
-            "acc_inc1_gen0": acc_inc1_gen0, "acc_inc1_gen1": acc_inc1_gen1,
-            "acc_inc2_gen0": acc_inc2_gen0, "acc_inc3_gen0": acc_inc3_gen0,
-            "acc_xm1_gen0": acc_xm1_gen0,
+            "cert_op1_gen0": cert_op1_gen0, "cert_op1_gen1": cert_op1_gen1,
+            "cert_op2_gen0": cert_op2_gen0, "cert_op3_gen0": cert_op3_gen0,
+            "cert_opx_gen0": cert_opx_gen0,
+            "acc_op1_gen0": acc_op1_gen0, "acc_op1_gen1": acc_op1_gen1,
+            "acc_op2_gen0": acc_op2_gen0, "acc_op3_gen0": acc_op3_gen0,
+            "acc_opx_gen0": acc_opx_gen0,
             "lease0": lease0, "lease1": lease1,
-            "e0": e0, "e1": e1, "e2": e2, "xm1e0": xm1e0, "xm1e1": xm1e1,
+            "receipt0": receipt0, "receipt0_alt": receipt0_alt,
+            "receipt0_no_events": receipt0_no_events,
+            "receipt1": receipt1,
+            "lease1_no_events": lease1_no_events,
+            "receipt1_no_events": receipt1_no_events,
+            "e0": e0, "e1": e1, "e2": e2, "opxe0": opxe0, "opxe1": opxe1,
             "e4": e4,
-            "inc2e0": inc2e0, "inc2e1": inc2e1, "inc2e2": inc2e2,
-            "inc2e3": inc2e3, "inc2e4": inc2e4,
+            "op2e0": op2e0, "op2e1": op2e1, "op2e2": op2e2,
+            "op2e3": op2e3, "op2e4": op2e4,
             "rotation_auth": rotation_auth,
             "revoked_recipient_auth": revoked_recipient_auth,
-            "cert_inc2_gen1": cert_inc2_gen1, "acc_inc2_gen1": acc_inc2_gen1,
+            "cert_op2_gen1": cert_op2_gen1, "acc_op2_gen1": acc_op2_gen1,
             "checkpoint": checkpoint, "d1": d1, "d2": d2, "d3": d3,
         },
         "add": add, "files": files, "raw_files": raw_files,
@@ -1319,16 +1442,16 @@ def build_extras(meta):
     raw_files = meta["raw_files"]
     F = meta["fixtures"]
     me1, me2 = meta["me1"], meta["me2"]
-    inc1, inc2, inc3, xm1 = meta["inc1"], meta["inc2"], meta["inc3"], meta["xm1"]
+    op1, op2, op3, opx = meta["op1"], meta["op2"], meta["op3"], meta["opx"]
     genesis = F["genesis"]
     root_transition = F["root_transition"]
     recovery_policy = F["recovery_policy"]
     recovery_transition = F["recovery_transition"]
     standalone_revocation = F["standalone_revocation"]
-    cert_g0, cert_g1 = F["cert_inc1_gen0"], F["cert_inc1_gen1"]
-    cert_i2, cert_i2_g1 = F["cert_inc2_gen0"], F["cert_inc2_gen1"]
-    cert_i3, cert_x = F["cert_inc3_gen0"], F["cert_xm1_gen0"]
-    e0, e1, e2, xm1e0, e4 = F["e0"], F["e1"], F["e2"], F["xm1e0"], F["e4"]
+    cert_g0, cert_g1 = F["cert_op1_gen0"], F["cert_op1_gen1"]
+    cert_i2, cert_i2_g1 = F["cert_op2_gen0"], F["cert_op2_gen1"]
+    cert_i3, cert_x = F["cert_op3_gen0"], F["cert_opx_gen0"]
+    e0, e1, e2, opxe0, e4 = F["e0"], F["e1"], F["e2"], F["opxe0"], F["e4"]
     checkpoint, d1, d2 = F["checkpoint"], F["d1"], F["d2"]
     issuing_10 = control_position(recovery_transition)
     issuing_11 = control_position(standalone_revocation)
@@ -1350,8 +1473,8 @@ def build_extras(meta):
 
     def neg_event(rel, seq, prev_id, parents, lt, payload_text, **kw):
         ev = build_event(
-            me1, inc1, cert_g1, K["inc1-sign"], "event-nonce-" + rel,
-            seq, prev_id, lt, parents, EMBODIMENT_HASH,
+            me1, op1, cert_g1, K["op1-sign"], "event-nonce-" + rel,
+            seq, prev_id, lt, parents, BODY_HASH,
             "x/test-event", None,
             {"schema": "x/test-payload/v0", "text": payload_text}, **kw)
         return add("negative/" + rel + ".json", ev)
@@ -1448,7 +1571,7 @@ def build_extras(meta):
     genesis_unknown_role = copy.deepcopy(genesis)
     genesis_unknown_role["signatures"] = sort_sigs(
         genesis_unknown_role["signatures"] + [
-            sig_record(K["root-c"], "incarnation-authorization",
+            sig_record(K["root-c"], "operational-authorization",
                        artifact_preimage(DOM_GENESIS, genesis["body"]))
         ])
     add("negative/genesis-unknown-signature-role.json", genesis_unknown_role)
@@ -1497,20 +1620,20 @@ def build_extras(meta):
         possession_signers=[K["branchroot-a"], K["branchroot-b"]])
     add("fork/root-transition-branch-b.json", branch_b)
     branch_cert = build_certificate(
-        me1, "incarnation-nonce-incf", "certificate-nonce-incf-gen0",
-        0, None, K["incf-sign"], K["incf-enc"],
+        me1, "operational-nonce-opf", "certificate-nonce-opf-gen0",
+        0, None, K["opf-sign"], K["opf-enc"],
         control_position(branch_b),
         [key_desc(K["branchroot-a"]), key_desc(K["branchroot-b"])],
         T0 + 130, T0 + 130, T0 + 130 + 7 * 24 * 3600 * 1000,
         {"signing": ["event"], "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["branchroot-a"], K["branchroot-b"]])
-    add("fork/certificate-incf-gen0.json", branch_cert)
-    branch_inc = branch_cert["body"]["incarnation_id"]
+    add("fork/certificate-opf-gen0.json", branch_cert)
+    branch_inc = branch_cert["body"]["operational_id"]
     branch_acceptance = build_acceptance(
-        me1, branch_inc, branch_cert, K["incf-sign"])
-    add("fork/acceptance-incf-gen0.json", branch_acceptance)
+        me1, branch_inc, branch_cert, K["opf-sign"])
+    add("fork/acceptance-opf-gen0.json", branch_acceptance)
     branch_descendant = build_recovery_policy(
         branch_b,
         {"mode": "threshold",
@@ -1533,7 +1656,7 @@ def build_extras(meta):
     fork_resolution = build_recovery_transition(
         genesis, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "confirmed", "control_cutoff": branch_cutoff,
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         [branch_cutoff_revocation],
         recovery_auth_signers=[K["rec-a"], K["rec-b"]],
         root_possession_signers=[K["sroot-a"], K["sroot-b"]],
@@ -1544,7 +1667,7 @@ def build_extras(meta):
     incomplete_recovery = build_recovery_transition(
         genesis, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "confirmed", "control_cutoff": control_position(root_transition),
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         [revocation_entry(
             "key-compromise",
             {"kind": "certificates-from-control-cutoff",
@@ -1560,7 +1683,7 @@ def build_extras(meta):
         genesis, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "confirmed",
          "control_cutoff": control_position(root_transition),
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         [revocation_entry(
             "key-compromise",
             {"kind": "certificates-from-control-cutoff",
@@ -1576,7 +1699,7 @@ def build_extras(meta):
         genesis, [K["proot-a"], K["proot-b"]], 2,
         {"mode": "confirmed",
          "control_cutoff": control_position(root_transition),
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         [revocation_entry(
             "key-compromise",
             {"kind": "certificates-from-control-cutoff",
@@ -1595,8 +1718,8 @@ def build_extras(meta):
           execution="executable", check="recovery-cutoff",
           vectors=["me1/genesis.json", "me1/root-transition.json",
                    "fork/root-transition-branch-b.json",
-                   "fork/certificate-incf-gen0.json",
-                   "fork/acceptance-incf-gen0.json",
+                   "fork/certificate-opf-gen0.json",
+                   "fork/acceptance-opf-gen0.json",
                    "fork/recovery-resolution-a.json"],
           params={"known_heads": ["me1/root-transition.json",
                                   "fork/root-transition-branch-b.json"],
@@ -1610,8 +1733,8 @@ def build_extras(meta):
           execution="executable", check="cutoff-revoked-certificate",
           vectors=["me1/genesis.json", "me1/root-transition.json",
                    "fork/root-transition-branch-b.json",
-                   "fork/certificate-incf-gen0.json",
-                   "fork/acceptance-incf-gen0.json",
+                   "fork/certificate-opf-gen0.json",
+                   "fork/acceptance-opf-gen0.json",
                    "fork/recovery-resolution-a.json"],
           params={"known_heads": ["me1/root-transition.json",
                                   "fork/root-transition-branch-b.json"],
@@ -1687,25 +1810,46 @@ def build_extras(meta):
             root_signers=[K["newroot-a"], K["newroot-c"]],
             recovery_auth_signers=[],
             recovery_possession_signers=[K["rec2-a"], K["rec2-b"]]))
-    # Recovery transition "authorized" by a current incarnation key.
-    add("negative/recovery-transition-incarnation-signed.json",
+    # Recovery transition "authorized" by a current operational key.
+    add("negative/recovery-transition-operational-signed.json",
         build_recovery_transition(
             recovery_policy, [K["proot-a"], K["proot-b"]], 2,
             {"mode": "none", "control_cutoff": None,
-             "preserved_certificate_ids": [], "incarnation_high_waters": []},
+             "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
             [revocation_entry(
                 "key-retired",
                 {"kind": "root-key", "id": root_transition["artifact_id"],
                  "kid": K["newroot-a"].kid})],
-            recovery_auth_signers=[K["inc1-sign"]],
+            recovery_auth_signers=[K["op1-sign"]],
             root_possession_signers=[K["proot-a"], K["proot-b"]]))
+    add("negative/recovery-transition-transport-signed.json",
+        build_recovery_transition(
+            recovery_policy, [K["proot-a"], K["proot-b"]], 2,
+            {"mode": "none", "control_cutoff": None,
+             "preserved_certificate_ids": [], "event_high_waters": [],
+             "lease_high_water": None},
+            [revocation_entry(
+                "key-retired",
+                {"kind": "root-key", "id": root_transition["artifact_id"],
+                 "kid": K["newroot-a"].kid})],
+            recovery_auth_signers=[K["transport-gov-sign"]],
+            root_possession_signers=[K["proot-a"], K["proot-b"]]))
+    entry(id="neg-recovery-transport-governance-signed",
+          **{"class": "negative"}, execution="executable",
+          check="control-wrapper",
+          vectors=["negative/recovery-transition-transport-signed.json"],
+          params={"artifact": "recovery-transition"}, expect="reject",
+          covers=["n-recovery-transport-governance-signed"],
+          spec="identity-continuity §6.3/§13",
+          note="transport governance has no identity-control authority even "
+               "when it signs a structurally complete recovery transition")
     # One certificate both preserved and effectively revoked: invalid.
     add("negative/recovery-transition-preserved-and-revoked.json",
         build_recovery_transition(
             recovery_policy, [K["proot-a"], K["proot-b"]], 2,
             {"mode": "none", "control_cutoff": None,
              "preserved_certificate_ids": [cert_g0["certificate_id"]],
-             "incarnation_high_waters": []},
+             "event_high_waters": [], "lease_high_water": None},
             [revocation_entry(
                 "key-compromise",
                 {"kind": "certificate", "id": cert_g0["certificate_id"],
@@ -1717,7 +1861,7 @@ def build_extras(meta):
         build_recovery_transition(
             recovery_policy, [K["proot-a"], K["proot-b"]], 2,
             {"mode": "none", "control_cutoff": None,
-             "preserved_certificate_ids": [], "incarnation_high_waters": []},
+             "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
             [],
             recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
             root_possession_signers=[K["proot-a"], K["proot-b"]],
@@ -1735,57 +1879,57 @@ def build_extras(meta):
     # Old (genesis) root issues a new certificate after replacement; the
     # transition at (0,1) invalidated all of its certificates.
     add("negative/certificate-old-root-issues.json", build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-oldroot",
-        0, None, K["inc1-sign"], K["inc1-enc"],
+        me1, "operational-nonce-op1", "certificate-nonce-op1-oldroot",
+        0, None, K["op1-sign"], K["op1-enc"],
         control_position(genesis),
         threshold_set([K["root-a"], K["root-b"], K["root-c"]], 2)["keys"],
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": FULL_SIGNING_PURPOSES, "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["root-a"], K["root-b"]]))
     # Certificate anchored to a control head not on the accepted chain.
     add("negative/certificate-unknown-anchor.json", build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-badanchor",
-        0, None, K["inc1-sign"], K["inc1-enc"],
+        me1, "operational-nonce-op1", "certificate-nonce-op1-badanchor",
+        0, None, K["op1-sign"], K["op1-enc"],
         {"recovery_generation": 1, "control_sequence": 7,
          "control_hash": b64(det("bogus-control-hash"))},
         post_root_descs,
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": FULL_SIGNING_PURPOSES, "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]]))
     # Certificate-generation gap (0 -> 2).
     add("negative/certificate-generation-gap.json", build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-gap",
-        2, cert_g0["certificate_id"], K["inc1-sign"], K["inc1-enc"],
+        me1, "operational-nonce-op1", "certificate-nonce-op1-gap",
+        2, cert_g0["certificate_id"], K["op1-sign"], K["op1-enc"],
         issuing_11, post_root_descs,
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": FULL_SIGNING_PURPOSES, "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]]))
     # Renewal naming the wrong predecessor certificate.
     add("negative/certificate-predecessor-mismatch.json", build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-badpred",
+        me1, "operational-nonce-op1", "certificate-nonce-op1-badpred",
         1, "dm:cert:v0:" + b64(det("bogus-cert-id")),
-        K["inc1-sign"], K["inc1-enc"],
+        K["op1-sign"], K["op1-enc"],
         issuing_11, post_root_descs,
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": FULL_SIGNING_PURPOSES, "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]]))
-    # Certificate fork: same incarnation and generation, different content.
+    # Certificate fork: same operational and generation, different content.
     certificate_fork_variant = build_certificate(
-        me1, "incarnation-nonce-inc1", "certificate-nonce-inc1-fork",
-        1, cert_g0["certificate_id"], K["inc1-sign"], K["inc1-enc"],
+        me1, "operational-nonce-op1", "certificate-nonce-op1-fork",
+        1, cert_g0["certificate_id"], K["op1-sign"], K["op1-enc"],
         issuing_11, post_root_descs,
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": FULL_SIGNING_PURPOSES, "encryption": ["sealed-event-recipient"]},
         {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
     add("negative/certificate-fork-variant.json", certificate_fork_variant)
     add("negative/certificate-fork-zero-signature.json",
@@ -1810,13 +1954,13 @@ def build_extras(meta):
           params={}, expect="reject", covers=["n-duplicate-signature-record"],
           spec="canonical-artifacts §4.2/§5.3",
           note="certificate wrapper duplicates a valid root signature record")
-    # Cross-role key reuse: a root public key as incarnation encryption key.
+    # Cross-role key reuse: a root public key as operational encryption key.
     reused_enc_desc = {"alg": "X25519",
                        "kid": key_id("X25519", b64(K["proot-a"].public)),
                        "public_key": b64(K["proot-a"].public)}
     add("negative/certificate-cross-role-key-reuse.json", build_certificate(
-        me1, "incarnation-nonce-inc9", "certificate-nonce-inc9",
-        0, None, K["inc1-sign"], K["inc1-enc"],
+        me1, "operational-nonce-op9", "certificate-nonce-op9",
+        0, None, K["op1-sign"], K["op1-enc"],
         issuing_11, post_root_descs,
         T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
         {"signing": ["event"], "encryption": ["sealed-event-recipient"]},
@@ -1824,93 +1968,325 @@ def build_extras(meta):
         None,
         root_signers=[K["proot-a"], K["proot-b"]],
         enc_desc_override=reused_enc_desc))
-    # Two incarnation IDs claiming one signing key.
-    add("negative/certificate-signing-key-two-incarnations.json",
+    # Two operational IDs claiming one signing key.
+    add("negative/certificate-signing-key-two-operationals.json",
         build_certificate(
-            me1, "incarnation-nonce-inc1b", "certificate-nonce-inc1b",
-            0, None, K["inc1-sign"], K["inc1-enc"],
+            me1, "operational-nonce-op1b", "certificate-nonce-op1b",
+            0, None, K["op1-sign"], K["op1-enc"],
             issuing_11, post_root_descs,
             T0 + 300, T0 + 300, T0 + 300 + 7 * 24 * 3600 * 1000,
             {"signing": ["event"], "encryption": ["sealed-event-recipient"]},
             {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": ["x/"]},
             None,
             root_signers=[K["proot-a"], K["proot-b"]]))
+    # The op1 signing key cannot be certified under another root-bearing /me.
+    cross_me_key_certificate = build_certificate(
+        me2, "operational-nonce-cross-me-key",
+        "certificate-nonce-cross-me-key", 0, None,
+        K["op1-sign"], K["opp-enc"],
+        control_position(files["me2/genesis.json"]),
+        [key_desc(K["xroot-a"])], T0 + 350, T0 + 350,
+        T0 + 350 + 7 * 24 * 3600 * 1000,
+        {"signing": ["event"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT,
+         "event_type_prefixes": ["x/"]},
+        None, root_signers=[K["xroot-a"]])
+    add("negative/certificate-signing-key-two-me.json",
+        cross_me_key_certificate)
+    entry(id="neg-signing-key-two-me", **{"class": "negative"},
+          execution="executable", check="certificate-me2-key-reuse",
+          vectors=["negative/certificate-signing-key-two-me.json"],
+          params={}, expect="reject", covers=["n-signing-key-two-me"],
+          spec="identity-continuity §13; canonical-artifacts §5.3",
+          note="a signing key already owned by one /me cannot be certified "
+               "under another /me even with that identity's valid roots")
+
+    # A generation-2 certificate may be structurally valid after learning an
+    # unaccepted generation 1, but its subject acceptance must fail because
+    # generation 1 never advanced the accepted high-water.
+    skip_g0 = build_certificate(
+        me1, "operational-nonce-unaccepted-skip",
+        "certificate-nonce-unaccepted-skip-g0", 0, None,
+        K["opp-sign"], K["opp-enc"], issuing_11, post_root_descs,
+        T0 + 400, T0 + 400, T0 + 400 + 7 * 24 * 3600 * 1000,
+        {"signing": ["event"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT,
+         "event_type_prefixes": ["x/"]}, None,
+        root_signers=[K["proot-a"], K["proot-b"]])
+    skip_op = skip_g0["body"]["operational_id"]
+    skip_a0 = build_acceptance(me1, skip_op, skip_g0, K["opp-sign"])
+    skip_g1 = build_certificate(
+        me1, "operational-nonce-unaccepted-skip",
+        "certificate-nonce-unaccepted-skip-g1", 1,
+        skip_g0["certificate_id"], K["opp-sign"], K["opp-enc"],
+        issuing_11, post_root_descs, T0 + 500, T0 + 500,
+        T0 + 500 + 7 * 24 * 3600 * 1000,
+        {"signing": ["event"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT,
+         "event_type_prefixes": ["x/"]}, None,
+        root_signers=[K["proot-a"], K["proot-b"]])
+    skip_g2 = build_certificate(
+        me1, "operational-nonce-unaccepted-skip",
+        "certificate-nonce-unaccepted-skip-g2", 2,
+        skip_g1["certificate_id"], K["opp-sign"], K["opp-enc"],
+        issuing_11, post_root_descs, T0 + 600, T0 + 600,
+        T0 + 600 + 7 * 24 * 3600 * 1000,
+        {"signing": ["event"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT,
+         "event_type_prefixes": ["x/"]}, None,
+        root_signers=[K["proot-a"], K["proot-b"]])
+    skip_a2 = build_acceptance(me1, skip_op, skip_g2, K["opp-sign"])
+    for path, artifact in (
+            ("negative/certificate-unaccepted-skip-g0.json", skip_g0),
+            ("negative/acceptance-unaccepted-skip-g0.json", skip_a0),
+            ("negative/certificate-unaccepted-skip-g1.json", skip_g1),
+            ("negative/certificate-unaccepted-skip-g2.json", skip_g2),
+            ("negative/acceptance-unaccepted-skip-g2.json", skip_a2)):
+        add(path, artifact)
+    entry(id="neg-unaccepted-generation-skip", **{"class": "negative"},
+          execution="executable", check="unaccepted-generation-skip",
+          vectors=["negative/certificate-unaccepted-skip-g0.json",
+                   "negative/acceptance-unaccepted-skip-g0.json",
+                   "negative/certificate-unaccepted-skip-g1.json",
+                   "negative/certificate-unaccepted-skip-g2.json",
+                   "negative/acceptance-unaccepted-skip-g2.json"],
+          params={}, expect="reject",
+          covers=["n-unaccepted-generation-skip"],
+          spec="identity-continuity §7/§13",
+          note="a validated but unaccepted generation cannot be skipped by "
+               "accepting its successor")
     # Subject acceptance naming another certificate's hash.
     add("negative/acceptance-hash-mismatch.json", build_acceptance(
-        me1, inc1, cert_g1, K["inc1-sign"],
+        me1, op1, cert_g1, K["op1-sign"],
         cert_hash_override=cert_g0["certificate_hash"]))
     # Subject acceptance naming an unknown certificate.
     bogus_cert_id = "dm:cert:v0:" + b64(det("unknown-cert-id"))
     add("negative/acceptance-unknown-certificate.json", build_acceptance(
-        me1, inc1, cert_g1, K["inc1-sign"],
+        me1, op1, cert_g1, K["op1-sign"],
         cert_id_override=bogus_cert_id,
         cert_hash_override=b64(det("unknown-cert-hash"))))
 
     # Lease variants.
     add("negative/lease-ttl-exceeded.json", build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"], "session-inc1-bad-ttl",
+        me1, op1, cert_g1, K["op1-sign"], "session-op1-bad-ttl",
         0, None, None, T0 + 9000, T0 + 9000 + 300001,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        BODY_HASH, CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-local"))}]))
+          "route_id": "dm:route:v0:" + b64(det("route-op1-local"))}]))
     add("negative/lease-beyond-certificate.json", build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"], "session-inc1-beyond-cert",
+        me1, op1, cert_g1, K["op1-sign"], "session-op1-beyond-cert",
         0, None, None, T0 + 9000,
         cert_g1["body"]["expires_at_ms"] + 1,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        BODY_HASH, CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-local"))}]))
+          "route_id": "dm:route:v0:" + b64(det("route-op1-local"))}]))
     add("negative/lease-before-certificate-not-before.json", build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"],
-        "session-inc1-before-certificate", 0, None, None,
+        me1, op1, cert_g1, K["op1-sign"],
+        "session-op1-before-certificate", 0, None, None,
         cert_g1["body"]["not_before_ms"] - 100,
         cert_g1["body"]["not_before_ms"] - 1,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        BODY_HASH, CAPABILITY_HASH,
         [{"kind": "local",
           "route_id": "dm:route:v0:" +
-          b64(det("route-inc1-before-certificate"))}]))
+          b64(det("route-op1-before-certificate"))}]))
     lease_fork = build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"], "session-inc1-a",
-        1, F["lease0"]["artifact_hash"], None,
+        me1, op1, cert_g1, K["op1-sign"], "session-op1-fork",
+        1, F["lease0"]["artifact_hash"],
+        F["lease0"]["body"]["session_id"],
         T0 + 120001, T0 + 120001 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+        b64(det("body-c-hash")), CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-fork"))}])
-    add("negative/lease-inc1-1-fork.json", lease_fork)
+          "route_id": "dm:route:v0:" + b64(det("route-op1-fork"))}],
+        previous_lease_receipt_id=F["receipt0"]["artifact_id"],
+        supersedes_operational_id=op1,
+        superseded_event_cutoff=F["receipt0"]["body"]["event_cutoff"])
+    add("negative/lease-op1-1-fork.json", lease_fork)
+    receipt_fork = build_lease_receipt(
+        lease_fork, None, issuing_11, me2, meta["opx"], cert_x,
+        control_position(files["me2/genesis.json"]), T0 + 121001,
+        K["opx-sign"])
+    add("negative/lease-receipt-1-fork.json", receipt_fork)
     entry(id="neg-lease-fork", **{"class": "negative"},
           execution="executable", check="lease-fork",
-          vectors=["me1/lease-inc1-1.json",
-                   "negative/lease-inc1-1-fork.json"],
-          params={"predecessor": "me1/lease-inc1-0.json"},
+          vectors=["me1/lease-op1-1.json", "me1/lease-receipt-1.json",
+                   "negative/lease-op1-1-fork.json",
+                   "negative/lease-receipt-1-fork.json"],
+          params={"predecessor": "me1/lease-op1-0.json",
+                  "predecessor_receipt": "me1/lease-receipt-0.json"},
           expect="quarantined", covers=["n-lease-fork"],
           spec="identity-continuity §8/§10/§13",
           note="two valid leases occupy sequence 1 and extend the same signed "
                "lease predecessor")
 
-    old_generation_lease = build_lease(
-        me1, inc1, cert_g0, K["inc1-sign"], "session-inc1-old-generation",
-        0, None, None, T0 + 8000, T0 + 8000 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH,
+    lease_reset = build_lease(
+        me1, op2, cert_i2_g1, K["op2-sign"], "session-op2-reset",
+        0, None, None, T0 + 120000, T0 + 120000 + 240000,
+        BODY_B_HASH, CAPABILITY_HASH,
         [{"kind": "local",
-          "route_id": "dm:route:v0:" + b64(det("route-inc1-old-gen"))}])
-    add("negative/lease-inc1-old-generation.json", old_generation_lease)
+          "route_id": "dm:route:v0:" + b64(det("route-op2-reset"))}])
+    add("negative/lease-operational-reset.json", lease_reset)
+    entry(id="neg-identity-lease-reset", **{"class": "negative"},
+          execution="executable", check="lease-reset",
+          vectors=["negative/lease-operational-reset.json"], params={},
+          expect="reject", covers=["n-identity-wide-lease-reset"],
+          spec="identity-continuity §8/§10/§13",
+          note="a fresh operational credential cannot reset the /me lease "
+               "sequence to zero")
+
+    unreceipted_wake = build_lease(
+        me1, op2, cert_i2_g1, K["op2-sign"], "session-op2-unreceipted",
+        1, F["lease0"]["artifact_hash"], F["lease0"]["body"]["session_id"],
+        T0 + 120000, T0 + 120000 + 240000,
+        BODY_B_HASH, CAPABILITY_HASH,
+        [{"kind": "local",
+          "route_id": "dm:route:v0:" + b64(det("route-op2-unreceipted"))}],
+        previous_lease_receipt_id="dm:lease-receipt:v0:" +
+        b64(det("missing-receipt")), supersedes_operational_id=op1,
+        superseded_event_cutoff=F["receipt0"]["body"]["event_cutoff"])
+    add("negative/lease-wake-unreceipted.json", unreceipted_wake)
+    entry(id="neg-unreceipted-wake", **{"class": "negative"},
+          execution="executable", check="lease-uncommitted",
+          vectors=["negative/lease-wake-unreceipted.json"], params={},
+          expect="uncommitted", covers=["n-unreceipted-wake"],
+          spec="identity-continuity §8/§10",
+          note="a byte-valid wake citing an unavailable receipt remains a "
+               "local candidate and never becomes active")
+
+    old_operational_lease = build_lease(
+        me1, op1, cert_g1, K["op1-sign"], "session-op1-after-wake",
+        2, F["lease1"]["artifact_hash"], F["lease1"]["body"]["session_id"],
+        T0 + 130000, T0 + 130000 + 240000,
+        BODY_HASH, CAPABILITY_HASH,
+        [{"kind": "local",
+          "route_id": "dm:route:v0:" + b64(det("route-op1-after-wake"))}],
+        previous_lease_receipt_id=F["receipt1"]["artifact_id"],
+        supersedes_operational_id=op2, superseded_event_cutoff=None)
+    add("negative/lease-old-operational-after-wake.json",
+        old_operational_lease)
+    entry(id="neg-old-operational-lease-after-wake",
+          **{"class": "negative"}, execution="executable",
+          check="old-operational-lease",
+          vectors=["negative/lease-old-operational-after-wake.json"],
+          params={}, expect="reject", covers=["n-old-operational-after-wake"],
+          spec="identity-continuity §8/§10/§13",
+          note="the superseded operational credential cannot extend a later "
+               "identity-wide head")
+
+    bad_receipt_body = dict(F["receipt0"]["body"])
+    bad_receipt_body["lease_hash"] = b64(det("wrong-lease-hash"))
+    bad_receipt = wrap_special(
+        DOM_LEASE_RECEIPT, bad_receipt_body, "dm:lease-receipt:v0:",
+        "artifact_hash", "artifact_id",
+        [sig_record(K["opx-sign"], "witness-authorization",
+                    artifact_preimage(DOM_LEASE_RECEIPT, bad_receipt_body))])
+    add("negative/lease-receipt-wrong-hash.json", bad_receipt)
+    entry(id="neg-lease-receipt-wrong-hash", **{"class": "negative"},
+          execution="executable", check="lease-receipt",
+          vectors=["me1/lease-op1-0.json",
+                   "negative/lease-receipt-wrong-hash.json"], params={},
+          expect="reject", covers=["n-lease-receipt-binding"],
+          spec="canonical-artifacts §5.5",
+          note="a correctly signed receipt for the wrong lease hash rejects")
+
+    same_me_receipt = build_lease_receipt(
+        F["lease0"], F["receipt0"]["body"]["event_cutoff"], issuing_11,
+        me1, op2, cert_i2_g1, issuing_11, T0 + 9600, K["op2-sign"])
+    add("negative/lease-receipt-same-me-witness.json", same_me_receipt)
+    entry(id="neg-lease-receipt-same-me-witness",
+          **{"class": "negative"}, execution="executable",
+          check="lease-receipt",
+          vectors=["me1/lease-op1-0.json",
+                   "negative/lease-receipt-same-me-witness.json"], params={},
+          expect="reject", covers=["n-lease-receipt-witness"],
+          spec="canonical-artifacts §5.5",
+          note="another credential of the same /me is not an independent "
+               "external lease-head witness")
+
+    same_session_body_change = build_lease(
+        me1, op1, cert_g1, K["op1-sign"], "session-op1-a",
+        1, F["lease0"]["artifact_hash"], None,
+        T0 + 120000, T0 + 120000 + 240000,
+        BODY_B_HASH, CAPABILITY_HASH,
+        [{"kind": "local",
+          "route_id": "dm:route:v0:" + b64(det("route-op1-body-change"))}],
+        previous_lease_receipt_id=F["receipt0"]["artifact_id"])
+    add("negative/lease-same-session-body-change.json",
+        same_session_body_change)
+    same_session_receipt = build_lease_receipt(
+        same_session_body_change, None, issuing_11, me2, meta["opx"], cert_x,
+        control_position(files["me2/genesis.json"]), T0 + 121000,
+        K["opx-sign"])
+    add("negative/lease-receipt-same-session-body-change.json",
+        same_session_receipt)
+    entry(id="neg-same-session-body-change", **{"class": "negative"},
+          execution="executable", check="lease-successor-reject",
+          vectors=["negative/lease-same-session-body-change.json",
+                   "negative/lease-receipt-same-session-body-change.json"],
+          params={}, expect="reject", covers=["n-same-session-body-change"],
+          spec="identity-continuity §8/§10",
+          note="a same-session refresh cannot silently claim another body")
+
+    old_event = build_event(
+        me1, op1, cert_g1, K["op1-sign"], "event-old-op-after-cutoff",
+        3, e2["event_id"], {"physical_ms": T0 + 7100, "counter": 0},
+        [e2["event_id"]], BODY_HASH, "x/test-event", None,
+        {"schema": "x/test-payload/v0", "text": "after wake cutoff"})
+    add("negative/event-old-operational-after-cutoff.json", old_event)
+    entry(id="neg-old-operational-event-after-wake",
+          **{"class": "negative"}, execution="executable",
+          check="superseded-event",
+          vectors=["negative/event-old-operational-after-cutoff.json"],
+          params={"known_events": ["me1/event-op1-0.json",
+                                   "me1/event-op1-1.json",
+                                   "me1/event-op1-2-disclosure.json"],
+                  "cutoff_receipt": "me1/lease-receipt-0.json"},
+          expect="reject", covers=["n-old-operational-after-wake"],
+          spec="identity-continuity §8",
+          note="a cryptographically valid old-key event beyond the committed "
+               "handoff cutoff is inadmissible")
+
+    membership_cert = build_certificate(
+        me1, "operational-nonce-membership", "certificate-nonce-membership",
+        0, None, K["opp-sign"], K["opp-enc"], issuing_11,
+        post_root_descs, T0 + 400, T0 + 400,
+        T0 + 400 + 24 * 3600 * 1000,
+        {"signing": ["we-membership"], "encryption": []},
+        {"max_event_bytes": CEILING_EVENT, "event_type_prefixes": []},
+        None, root_signers=[K["proot-a"], K["proot-b"]])
+    add("negative/certificate-we-membership-purpose.json", membership_cert)
+    entry(id="neg-operational-we-membership-authority",
+          **{"class": "negative"}, execution="executable",
+          check="certificate",
+          vectors=["negative/certificate-we-membership-purpose.json"],
+          params={}, expect="reject",
+          covers=["n-operational-we-membership-authority"],
+          spec="identity-continuity §10; canonical-artifacts §5.3",
+          note="an operational certificate cannot grant /we membership")
+
+    old_generation_lease = build_lease(
+        me1, op1, cert_g0, K["op1-sign"], "session-op1-old-generation",
+        0, None, None, T0 + 8000, T0 + 8000 + 240000,
+        BODY_HASH, CAPABILITY_HASH,
+        [{"kind": "local",
+          "route_id": "dm:route:v0:" + b64(det("route-op1-old-gen"))}])
+    add("negative/lease-op1-old-generation.json", old_generation_lease)
     entry(id="neg-lease-old-certificate-generation",
           **{"class": "negative"}, execution="executable", check="lease",
-          vectors=["negative/lease-inc1-old-generation.json"], params={},
+          vectors=["negative/lease-op1-old-generation.json"], params={},
           expect="reject", covers=["n-lease-old-certificate-generation"],
           spec="identity-continuity §7/§13",
           note="accepted but superseded certificate generation cannot issue "
                "a new presence lease")
     entry(id="neg-lease-revoked-certificate", **{"class": "negative"},
           execution="executable", check="lease-revoked",
-          vectors=["me1/lease-inc1-0.json"], params={}, expect="reject",
+          vectors=["me1/lease-op1-0.json"], params={}, expect="reject",
           covers=["n-lease-revoked-certificate"],
           spec="identity-continuity §9/§13",
           note="otherwise-valid lease is rejected after its certificate is "
                "present in durable revocation state")
     entry(id="neg-lease-expired-at-verification", **{"class": "negative"},
           execution="executable", check="lease-expiry",
-          vectors=["me1/lease-inc1-0.json"],
+          vectors=["me1/lease-op1-0.json"],
           params={"at_ms": F["lease0"]["body"]["expires_at_ms"]},
           expect="reject", covers=["n-lease-expired-at-verification"],
           spec="identity-continuity §10/§13",
@@ -1918,8 +2294,9 @@ def build_extras(meta):
                "otherwise-valid signed lease")
     entry(id="neg-stale-lease-replay", **{"class": "negative"},
           execution="executable", check="lease-rollback",
-          vectors=["me1/lease-inc1-0.json", "me1/lease-inc1-1.json",
-                   "me1/lease-inc1-0.json"], params={}, expect="reject",
+          vectors=["me1/lease-op1-0.json", "me1/lease-receipt-0.json",
+                   "me1/lease-op1-1.json", "me1/lease-receipt-1.json",
+                   "me1/lease-op1-0.json"], params={}, expect="reject",
           covers=["n-stale-lease-replay"],
           spec="identity-continuity §10/§13",
           note="durable lease sequence/hash high-water rejects an older "
@@ -1975,7 +2352,7 @@ def build_extras(meta):
     neg_event("event-duplicate-parents", 2, e1["event_id"],
               [e1["event_id"], e1["event_id"]],
               {"physical_ms": T0 + 6500, "counter": 0}, "duplicate parents")
-    unsorted_parents = sorted([e0["event_id"], xm1e0["event_id"]],
+    unsorted_parents = sorted([e0["event_id"], opxe0["event_id"]],
                               reverse=True)
     neg_event("event-unsorted-parents", 2, e1["event_id"], unsorted_parents,
               {"physical_ms": T0 + 6500, "counter": 0},
@@ -1992,30 +2369,30 @@ def build_extras(meta):
     event_fork_variant = neg_event(
         "event-fork-variant", 1, e0["event_id"], [e0["event_id"]],
         {"physical_ms": T0 + 6500, "counter": 0},
-        "different content at the same incarnation sequence")
+        "different content at the same operational sequence")
     add("negative/event-fork-zero-signature.json",
         zero_signatures(event_fork_variant))
     entry(id="neg-event-fork-zero-signature", **{"class": "negative"},
           execution="executable", check="event-contextual",
           vectors=["negative/event-fork-zero-signature.json"],
-          params={"known_events": ["me1/event-inc1-0.json"]},
+          params={"known_events": ["me1/event-op1-0.json"]},
           expect="reject", covers=["n-event-fork-invalid-signature"],
           spec="canonical-artifacts §4.2/§6.2",
           note="zero-signature event variant is rejected before fork handling")
     incomplete_descendant = build_event(
-        me1, inc1, cert_g1, K["inc1-sign"],
+        me1, op1, cert_g1, K["op1-sign"],
         "event-nonce-incomplete-descendant", 5, F["e4"]["event_id"],
         {"physical_ms": T0 + 9000, "counter": 0}, [F["e4"]["event_id"]],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "descendant of an available but incomplete predecessor"})
-    add("negative/event-inc1-5-incomplete-descendant.json",
+    add("negative/event-op1-5-incomplete-descendant.json",
         incomplete_descendant)
     entry(id="neg-event-incomplete-ancestor-propagates",
           **{"class": "negative"}, execution="executable",
           check="event-contextual",
-          vectors=["negative/event-inc1-5-incomplete-descendant.json"],
-          params={"known_events": ["me1/event-inc1-4-out-of-order.json"]},
+          vectors=["negative/event-op1-5-incomplete-descendant.json"],
+          params={"known_events": ["me1/event-op1-4-out-of-order.json"]},
           expect="incomplete",
           covers=["n-incomplete-ancestor-propagates",
                   "n-quarantine-descendant-no-effects"],
@@ -2023,21 +2400,21 @@ def build_extras(meta):
           note="bytes for the direct predecessor exist, but its own withheld "
                "ancestor keeps this descendant incomplete and unprojectable")
     activation_probe = build_event(
-        me1, inc2, cert_i2, K["inc2-sign"],
-        "event-nonce-inc2-gen0-activation-probe", 0, None,
-        {"physical_ms": T0 + 1500, "counter": 0}, [], EMBODIMENT_HASH,
+        me1, op2, cert_i2, K["op2-sign"],
+        "event-nonce-op2-gen0-activation-probe", 0, None,
+        {"physical_ms": T0 + 1500, "counter": 0}, [], BODY_HASH,
         "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "generation-zero activation probe"})
-    add("negative/event-inc2-gen0-activation-probe.json", activation_probe)
+    add("negative/event-op2-gen0-activation-probe.json", activation_probe)
     entry(id="neg-certificate-acceptance-gates-activation",
           **{"class": "negative"}, execution="executable",
           check="activation-acceptance",
-          vectors=["me1/certificate-inc2-gen0.json",
-                   "me1/acceptance-inc2-gen0.json",
-                   "negative/event-inc2-gen0-activation-probe.json",
-                   "me1/certificate-inc2-gen1.json",
-                   "me1/acceptance-inc2-gen1.json"],
+          vectors=["me1/certificate-op2-gen0.json",
+                   "me1/acceptance-op2-gen0.json",
+                   "negative/event-op2-gen0-activation-probe.json",
+                   "me1/certificate-op2-gen1.json",
+                   "me1/acceptance-op2-gen1.json"],
           params={}, expect="accept",
           covers=["n-certificate-without-acceptance",
                   "p-unaccepted-renewal-does-not-supersede"],
@@ -2046,29 +2423,29 @@ def build_extras(meta):
                "does not deactivate the accepted predecessor, and successful "
                "acceptance advances the active-generation high-water")
     # Late parent revealing an HLC regression.
-    xm1_late = build_event(
-        me2, xm1, cert_x, K["xm1-sign"], "event-nonce-xm1-late",
-        1, xm1e0["event_id"], {"physical_ms": T0 + 9000, "counter": 0},
-        [xm1e0["event_id"]], EMBODIMENT_HASH, "x/test-event", None,
+    opx_late = build_event(
+        me2, opx, cert_x, K["opx-sign"], "event-nonce-opx-late",
+        1, opxe0["event_id"], {"physical_ms": T0 + 9000, "counter": 0},
+        [opxe0["event_id"]], BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0", "text": "late cross-me parent"})
-    add("negative/event-xm1-late-parent.json", xm1_late)
+    add("negative/event-opx-late-parent.json", opx_late)
     neg_event("event-late-parent-hlc", 2, e1["event_id"],
-              sorted([e1["event_id"], xm1_late["event_id"]]),
+              sorted([e1["event_id"], opx_late["event_id"]]),
               {"physical_ms": T0 + 8500, "counter": 0},
               "late parent makes the signed tuple non-increasing")
-    # Event under a revoked certificate (inc3, revoked at (1,1)).
+    # Event under a revoked certificate (op3, revoked at (1,1)).
     ev_revoked = build_event(
-        me1, inc3, cert_i3, K["inc3-sign"], "event-nonce-revoked-cert",
+        me1, op3, cert_i3, K["op3-sign"], "event-nonce-revoked-cert",
         0, None, {"physical_ms": T0 + 1200, "counter": 0}, [],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "ingested after the certificate revocation was observed"})
     add("negative/event-under-revoked-certificate.json", ev_revoked)
     # New event under the superseded generation-0 certificate.
     ev_old_gen = build_event(
-        me1, inc1, cert_g1, K["inc1-sign"], "event-nonce-old-gen",
+        me1, op1, cert_g1, K["op1-sign"], "event-nonce-old-gen",
         0, None, {"physical_ms": T0 + 1100, "counter": 0}, [],
-        EMBODIMENT_HASH, "x/test-event", None,
+        BODY_HASH, "x/test-event", None,
         {"schema": "x/test-payload/v0",
          "text": "new event under the superseded certificate generation"},
         cert_id_override=cert_g0["certificate_id"])
@@ -2078,55 +2455,55 @@ def build_extras(meta):
     # Checkpoint negatives (signed by the witness, semantically wrong)
     # ------------------------------------------------------------------
     add("negative/checkpoint-wrong-sequence.json", build_checkpoint(
-        me1, inc1, cert_g1["certificate_id"], 2, e1["event_id"],
-        e1["event_hash"], issuing_11, me1, inc2,
-        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["inc2-sign"]))
+        me1, op1, cert_g1["certificate_id"], 2, e1["event_id"],
+        e1["event_hash"], issuing_11, me1, op2,
+        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["op2-sign"]))
     add("negative/checkpoint-wrong-event-hash.json", build_checkpoint(
-        me1, inc1, cert_g1["certificate_id"], 1, e1["event_id"],
-        e0["event_hash"], issuing_11, me1, inc2,
-        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["inc2-sign"]))
+        me1, op1, cert_g1["certificate_id"], 1, e1["event_id"],
+        e0["event_hash"], issuing_11, me1, op2,
+        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["op2-sign"]))
     add("negative/checkpoint-wrong-certificate.json", build_checkpoint(
-        me1, inc1, cert_g0["certificate_id"], 1, e1["event_id"],
-        e1["event_hash"], issuing_11, me1, inc2,
-        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["inc2-sign"]))
+        me1, op1, cert_g0["certificate_id"], 1, e1["event_id"],
+        e1["event_hash"], issuing_11, me1, op2,
+        cert_i2["certificate_id"], issuing_10, T0 + 9500, K["op2-sign"]))
     add("negative/checkpoint-witness-equals-subject.json", build_checkpoint(
-        me1, inc1, cert_g1["certificate_id"], 1, e1["event_id"],
-        e1["event_hash"], issuing_11, me1, inc1,
-        cert_g1["certificate_id"], issuing_11, T0 + 9500, K["inc1-sign"]))
+        me1, op1, cert_g1["certificate_id"], 1, e1["event_id"],
+        e1["event_hash"], issuing_11, me1, op1,
+        cert_g1["certificate_id"], issuing_11, T0 + 9500, K["op1-sign"]))
 
     # ------------------------------------------------------------------
     # Sealed-delivery negatives
     # ------------------------------------------------------------------
-    sender_desc = {"me_id": me1, "incarnation_id": inc1,
+    sender_desc = {"me_id": me1, "operational_id": op1,
                    "certificate_id": cert_g1["certificate_id"],
-                   "signing_kid": K["inc1-sign"].kid, "_key": K["inc1-sign"]}
-    r_inc2 = {"me_id": me1, "incarnation_id": inc2,
+                   "signing_kid": K["op1-sign"].kid, "_key": K["op1-sign"]}
+    r_op2 = {"me_id": me1, "operational_id": op2,
               "certificate_id": cert_i2["certificate_id"],
-              "encryption_kid": K["inc2-enc"].kid, "public": K["inc2-enc"].public}
-    r_xm1 = {"me_id": me2, "incarnation_id": xm1,
+              "encryption_kid": K["op2-enc"].kid, "public": K["op2-enc"].public}
+    r_opx = {"me_id": me2, "operational_id": opx,
              "certificate_id": cert_x["certificate_id"],
-             "encryption_kid": K["xm1-enc"].kid, "public": K["xm1-enc"].public}
-    r_inc3 = {"me_id": me1, "incarnation_id": inc3,
+             "encryption_kid": K["opx-enc"].kid, "public": K["opx-enc"].public}
+    r_op3 = {"me_id": me1, "operational_id": op3,
               "certificate_id": cert_i3["certificate_id"],
-              "encryption_kid": K["inc3-enc"].kid,
-              "public": K["inc3-enc"].public}
+              "encryption_kid": K["op3-enc"].kid,
+              "public": K["op3-enc"].public}
 
     add("negative/sealed-empty-recipients.json", build_sealed(
         "neg-empty", e1, sender_desc, e2["event_id"],
         T0 + 10000, T0 + 10000 + 3600000, []))
 
     single = build_sealed("neg-single", e1, sender_desc, e2["event_id"],
-                          T0 + 10000, T0 + 10000 + 3600000, [r_inc2])
+                          T0 + 10000, T0 + 10000 + 3600000, [r_op2])
     dup_recipients = [single["recipients"][0], dict(single["recipients"][0])]
     add("negative/sealed-duplicate-recipients.json", build_sealed(
         "neg-duplicate", e1, sender_desc, e2["event_id"],
-        T0 + 10000, T0 + 10000 + 3600000, [r_inc2],
+        T0 + 10000, T0 + 10000 + 3600000, [r_op2],
         tampered_recipients=dup_recipients))
 
     both_sorted = d1["recipients"]
     add("negative/sealed-unsorted-recipients.json", build_sealed(
         "neg-unsorted", e1, sender_desc, e2["event_id"],
-        T0 + 10000, T0 + 10000 + 3600000, [r_inc2, r_xm1],
+        T0 + 10000, T0 + 10000 + 3600000, [r_op2, r_opx],
         tampered_recipients=list(reversed([dict(r) for r in both_sorted]))))
 
     oversized = []
@@ -2136,7 +2513,7 @@ def build_extras(meta):
         else:
             oversized.append({
                 "me_id": me1,
-                "incarnation_id": "dm:inc:v0:" + b64(det("fake-inc/%d" % i)),
+                "operational_id": "dm:op:v0:" + b64(det("fake-op/%d" % i)),
                 "certificate_id": "dm:cert:v0:" + b64(det("fake-cert/%d" % i)),
                 "encryption_kid": key_id("X25519", b64(det("fake-enc/%d" % i))),
                 "enc": b64(det("fake-enc-bytes/%d" % i)),
@@ -2145,13 +2522,13 @@ def build_extras(meta):
     oversized.sort(key=recipient_sort_key)
     add("negative/sealed-oversized-recipients.json", build_sealed(
         "neg-oversized", e1, sender_desc, e2["event_id"],
-        T0 + 10000, T0 + 10000 + 3600000, [r_inc2, r_xm1],
+        T0 + 10000, T0 + 10000 + 3600000, [r_op2, r_opx],
         tampered_recipients=oversized))
 
     add("negative/sealed-ttl-exceeded.json", build_sealed(
         "neg-ttl", e1, sender_desc, e2["event_id"],
         T0 + 10000, T0 + 10000 + MAX_DELIVERY_TTL_MS + 1,
-        [r_inc2, r_xm1]))
+        [r_op2, r_opx]))
 
     # The outer delivery is freshly and correctly signed, but the decrypted
     # event carries canonical-length all-zero signature bytes.  This isolates
@@ -2161,7 +2538,7 @@ def build_extras(meta):
     add("negative/sealed-inner-zero-signature.json", build_sealed(
         "neg-inner-zero-signature", inner_zero_signature, sender_desc,
         e2["event_id"], T0 + 10000, T0 + 10000 + MAX_DELIVERY_TTL_MS,
-        [r_inc2, r_xm1]))
+        [r_op2, r_opx]))
 
     # The disclosure authorization is valid and exact, but one concrete
     # recipient certificate has already been revoked by the accepted control
@@ -2170,7 +2547,7 @@ def build_extras(meta):
         "neg-revoked-recipient", e1, sender_desc,
         F["revoked_recipient_auth"]["event_id"],
         T0 + 10000, T0 + 10000 + MAX_DELIVERY_TTL_MS,
-        [r_inc2, r_inc3]))
+        [r_op2, r_op3]))
 
     # Disclosure authorization variants (validly signed events; the binding
     # to the delivery is wrong).
@@ -2181,62 +2558,62 @@ def build_extras(meta):
                     "NOT a DM-012 normative schema.",
             "event_id": e1["event_id"],
             "event_hash": e1["event_hash"],
-            "sender": {"me_id": me1, "incarnation_id": inc1,
+            "sender": {"me_id": me1, "operational_id": op1,
                        "certificate_id": cert_g1["certificate_id"],
-                       "signing_kid": K["inc1-sign"].kid},
-            "recipients": sorted([reduced_recipient(r_inc2),
-                                  reduced_recipient(r_xm1)],
+                       "signing_kid": K["op1-sign"].kid},
+            "recipients": sorted([reduced_recipient(r_op2),
+                                  reduced_recipient(r_opx)],
                                  key=recipient_sort_key),
         }
         payload.update(overrides)
         ev = build_event(
-            me1, inc1, cert_g1, K["inc1-sign"], "event-nonce-" + rel,
+            me1, op1, cert_g1, K["op1-sign"], "event-nonce-" + rel,
             31, e1["event_id"], {"physical_ms": T0 + 6900, "counter": 0},
-            [e1["event_id"]], EMBODIMENT_HASH,
+            [e1["event_id"]], BODY_HASH,
             "x/test-disclosure-authorization", None, payload)
         return add("negative/" + rel + ".json", ev)
 
     disclosure_variant("disclosure-wrong-event",
                        event_id=e0["event_id"], event_hash=e0["event_hash"])
     disclosure_variant("disclosure-wrong-sender",
-                       sender={"me_id": me1, "incarnation_id": inc1,
+                       sender={"me_id": me1, "operational_id": op1,
                                "certificate_id": cert_g1["certificate_id"],
-                               "signing_kid": K["inc2-sign"].kid})
+                               "signing_kid": K["op2-sign"].kid})
     disclosure_variant("disclosure-wrong-recipients",
-                       recipients=[reduced_recipient(r_inc2)])
+                       recipients=[reduced_recipient(r_op2)])
 
     revoked_sender_desc = {
-        "me_id": me1, "incarnation_id": inc3,
+        "me_id": me1, "operational_id": op3,
         "certificate_id": cert_i3["certificate_id"],
-        "signing_kid": K["inc3-sign"].kid, "_key": K["inc3-sign"],
+        "signing_kid": K["op3-sign"].kid, "_key": K["op3-sign"],
     }
     revoked_sender_auth = build_event(
-        me1, inc2, cert_i2_g1, K["inc2-sign"],
+        me1, op2, cert_i2_g1, K["op2-sign"],
         "event-nonce-disclosure-revoked-sender", 7,
         F["revoked_recipient_auth"]["event_id"],
         {"physical_ms": T0 + 9300, "counter": 0},
         [F["revoked_recipient_auth"]["event_id"]],
-        EMBODIMENT_HASH, "x/test-disclosure-authorization", None,
+        BODY_HASH, "x/test-disclosure-authorization", None,
         {"schema": "x/test-disclosure-authorization/v0",
          "note": "Synthetic x/test authorization binding a since-revoked "
                  "sender; NOT a DM-012 normative schema.",
          "event_id": e1["event_id"], "event_hash": e1["event_hash"],
          "sender": {k: v for k, v in revoked_sender_desc.items()
                     if not k.startswith("_")},
-         "recipients": sorted([reduced_recipient(r_inc2),
-                               reduced_recipient(r_xm1)],
+         "recipients": sorted([reduced_recipient(r_op2),
+                               reduced_recipient(r_opx)],
                               key=recipient_sort_key)})
     add("negative/disclosure-revoked-sender.json", revoked_sender_auth)
     add("negative/sealed-revoked-sender.json", build_sealed(
         "neg-revoked-sender", e1, revoked_sender_desc,
         revoked_sender_auth["event_id"],
         T0 + 10000, T0 + 10000 + MAX_DELIVERY_TTL_MS,
-        [r_inc2, r_xm1]))
+        [r_op2, r_opx]))
 
     entry(id="neg-sealed-inner-zero-signature", **{"class": "negative"},
           execution="executable", check="sealed",
           vectors=["negative/sealed-inner-zero-signature.json"],
-          params={"authorization": "me1/event-inc1-2-disclosure.json",
+          params={"authorization": "me1/event-op1-2-disclosure.json",
                   "inner": "negative/event-inner-zero-signature.json"},
           expect="reject", covers=["n-inner-event-signature"],
           spec="canonical-artifacts §8.2/§9",
@@ -2245,8 +2622,8 @@ def build_extras(meta):
           execution="executable", check="sealed",
           vectors=["negative/sealed-revoked-sender.json"],
           params={"authorization": "negative/disclosure-revoked-sender.json",
-                  "inner": "me1/event-inc1-1.json",
-                  "revoked_certificates": ["me1/certificate-inc3-gen0.json"]},
+                  "inner": "me1/event-op1-1.json",
+                  "revoked_certificates": ["me1/certificate-op3-gen0.json"]},
           expect="reject", covers=["n-revoked-sender-delivery"],
           spec="canonical-artifacts §8.3/§9",
           note="a correctly signed delivery from a revoked sender certificate is rejected")
@@ -2254,9 +2631,9 @@ def build_extras(meta):
           execution="executable", check="sealed",
           vectors=["negative/sealed-revoked-recipient.json"],
           params={"authorization":
-                  "me1/event-inc2-6-disclosure-revoked-recipient.json",
-                  "inner": "me1/event-inc1-1.json",
-                  "revoked_certificates": ["me1/certificate-inc3-gen0.json"]},
+                  "me1/event-op2-6-disclosure-revoked-recipient.json",
+                  "inner": "me1/event-op1-1.json",
+                  "revoked_certificates": ["me1/certificate-op3-gen0.json"]},
           expect="reject", covers=["n-revoked-recipient-delivery"],
           spec="canonical-artifacts §8.3/§9",
           note="a concretely authorized but revoked recipient is rejected")
@@ -2277,12 +2654,12 @@ def build_extras(meta):
               spec="canonical-artifacts §9", note=note)
 
     ED25519_L = 2**252 + 27742317777372353535851937790883648493
-    tamper("tamper-event-modified-body", "me1/event-inc1-1.json",
+    tamper("tamper-event-modified-body", "me1/event-op1-1.json",
            [{"op": "json-set", "path": ["body", "payload", "text"],
              "value": "tampered"}],
            "event-wrapper", "modified canonical body is rejected",
            ["n-modified-body"])
-    tamper("tamper-event-id-mismatch", "me1/event-inc1-1.json",
+    tamper("tamper-event-id-mismatch", "me1/event-op1-1.json",
            [{"op": "json-set", "path": ["event_id"], "value": e0["event_id"]}],
            "event-wrapper", "derived event ID mismatch is rejected",
            ["n-id-hash-mismatch"])
@@ -2292,10 +2669,10 @@ def build_extras(meta):
            "control-wrapper",
            "derived artifact hash mismatch is rejected",
            ["n-id-hash-mismatch"], params={"artifact": "genesis"})
-    tamper("tamper-cross-domain-signature", "me1/lease-inc1-0.json",
-           [{"op": "set-sig-value-from-file", "file": "me1/event-inc1-1.json",
-             "from_role": "incarnation-authorization",
-             "to_role": "incarnation-authorization"}],
+    tamper("tamper-cross-domain-signature", "me1/lease-op1-0.json",
+           [{"op": "set-sig-value-from-file", "file": "me1/event-op1-1.json",
+             "from_role": "operational-authorization",
+             "to_role": "operational-authorization"}],
            "lease-wrapper",
            "a valid event signature presented under the lease domain is "
            "rejected (same signing key, different domain)",
@@ -2343,28 +2720,28 @@ def build_extras(meta):
              "value": cert_g0["certificate_id"]}],
            "sealed", "tampered recipient descriptor is rejected",
            ["n-tampered-delivery"])
-    tamper("tamper-checkpoint-body", "me1/checkpoint-inc2-witness.json",
+    tamper("tamper-checkpoint-body", "me1/checkpoint-opx-witness.json",
            [{"op": "json-set", "path": ["body", "accepted_at_ms"],
              "value": T0 + 9501}],
            "checkpoint-wrapper", "modified checkpoint body is rejected",
            ["n-modified-body"])
-    tamper("tamper-certificate-body", "me1/certificate-inc1-gen1.json",
+    tamper("tamper-certificate-body", "me1/certificate-op1-gen1.json",
            [{"op": "json-set", "path": ["body", "purposes", "encryption"],
              "value": []}],
            "certificate-wrapper", "modified certificate body is rejected",
            ["n-modified-body"])
-    tamper("tamper-ed25519-noncanonical-s", "me1/event-inc1-1.json",
+    tamper("tamper-ed25519-noncanonical-s", "me1/event-op1-1.json",
            [{"op": "set-signature-s", "s_le_hex": "%064x" % ED25519_L}],
            "event-wrapper",
            "a non-canonical Ed25519 S scalar is rejected",
            ["n-ed25519-noncanonical-s"])
-    tamper("tamper-noncanonical-base64", "me1/event-inc1-1.json",
+    tamper("tamper-noncanonical-base64", "me1/event-op1-1.json",
            [{"op": "json-set", "path": ["body", "event_nonce"],
              "value": e1["body"]["event_nonce"] + "="}],
            "event-wrapper",
            "padded (non-canonical) base64url is rejected",
            ["n-noncanonical-base64"])
-    tamper("tamper-unknown-property", "me1/event-inc1-1.json",
+    tamper("tamper-unknown-property", "me1/event-op1-1.json",
            [{"op": "json-set", "path": ["body", "bogus_property"],
              "value": "x"}],
            "event-wrapper",
@@ -2490,14 +2867,14 @@ def build_extras(meta):
     revocations_256 = build_recovery_transition(
         recovery_policy, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "none", "control_cutoff": None,
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         revocation_items[:256],
         recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
         root_possession_signers=[K["sroot-a"], K["sroot-b"]])
     revocations_257 = build_recovery_transition(
         recovery_policy, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "none", "control_cutoff": None,
-         "preserved_certificate_ids": [], "incarnation_high_waters": []},
+         "preserved_certificate_ids": [], "event_high_waters": [], "lease_high_water": None},
         revocation_items,
         recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
         root_possession_signers=[K["sroot-a"], K["sroot-b"]])
@@ -2510,59 +2887,61 @@ def build_extras(meta):
         for i in range(65)
     ], key=lambda value: (value["kind"], value["route_id"]))
     routes_64 = build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"], "boundary-routes-64",
+        me1, op1, cert_g1, K["op1-sign"], "boundary-routes-64",
         0, None, None, T0 + 9000, T0 + 9000 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH, route_items[:64])
+        BODY_HASH, CAPABILITY_HASH, route_items[:64])
     routes_65 = build_lease(
-        me1, inc1, cert_g1, K["inc1-sign"], "boundary-routes-65",
+        me1, op1, cert_g1, K["op1-sign"], "boundary-routes-65",
         0, None, None, T0 + 9000, T0 + 9000 + 240000,
-        EMBODIMENT_HASH, CAPABILITY_HASH, route_items)
+        BODY_HASH, CAPABILITY_HASH, route_items)
     add("boundary/routes-64.json", routes_64)
     add("boundary/routes-65.json", routes_65)
 
     prefix_items = sorted("x/p%03d" % i for i in range(65))
     prefixes_64 = build_certificate(
-        me1, "boundary-prefixes-inc64", "boundary-prefixes-cert64",
-        0, None, K["incp-sign"], K["incp-enc"], issuing_11,
+        me1, "boundary-prefixes-op64", "boundary-prefixes-cert64",
+        0, None, K["opp-sign"], K["opp-enc"], issuing_11,
         post_root_descs, T0 + 400, T0 + 400,
         T0 + 400 + 7 * 24 * 3600 * 1000,
         {"signing": ["event"], "encryption": []},
         {"max_event_bytes": CEILING_EVENT,
          "event_type_prefixes": prefix_items[:64]},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
     prefixes_65 = build_certificate(
         me1, "boundary-prefixes-inc65", "boundary-prefixes-cert65",
-        0, None, K["incp-sign"], K["incp-enc"], issuing_11,
+        0, None, K["opp-sign"], K["opp-enc"], issuing_11,
         post_root_descs, T0 + 400, T0 + 400,
         T0 + 400 + 7 * 24 * 3600 * 1000,
         {"signing": ["event"], "encryption": []},
         {"max_event_bytes": CEILING_EVENT,
          "event_type_prefixes": prefix_items},
-        EMBODIMENT_HASH,
+        BODY_HASH,
         root_signers=[K["proot-a"], K["proot-b"]])
     add("boundary/event-type-prefixes-64.json", prefixes_64)
     add("boundary/event-type-prefixes-65.json", prefixes_65)
 
     high_water_items = sorted([
-        {"incarnation_id":
-         "dm:inc:v0:" + b64(det("boundary/incarnation/%04d" % i)),
-         "domain": "event", "sequence": i,
-         "artifact_hash": b64(det("boundary/high-water/%04d" % i))}
+        {"operational_id":
+         "dm:op:v0:" + b64(det("boundary/operational/%04d" % i)),
+         "sequence": i,
+         "event_id": "dm:event:v0:" +
+         b64(det("boundary/high-water/%04d" % i)),
+         "event_hash": b64(det("boundary/high-water/%04d" % i))}
         for i in range(1025)
-    ], key=lambda value: (value["incarnation_id"], value["domain"]))
+    ], key=lambda value: value["operational_id"])
     high_waters_1024 = build_recovery_transition(
         recovery_policy, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "none", "control_cutoff": None,
          "preserved_certificate_ids": [],
-         "incarnation_high_waters": high_water_items[:1024]},
+         "event_high_waters": high_water_items[:1024], "lease_high_water": None},
         [], recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
         root_possession_signers=[K["sroot-a"], K["sroot-b"]])
     high_waters_1025 = build_recovery_transition(
         recovery_policy, [K["sroot-a"], K["sroot-b"]], 2,
         {"mode": "none", "control_cutoff": None,
          "preserved_certificate_ids": [],
-         "incarnation_high_waters": high_water_items},
+         "event_high_waters": high_water_items, "lease_high_water": None},
         [], recovery_auth_signers=[K["rec2-a"], K["rec2-b"]],
         root_possession_signers=[K["sroot-a"], K["sroot-b"]])
     add("boundary/high-waters-1024.json", high_waters_1024)
@@ -2633,10 +3012,10 @@ def build_index(meta, entries):
     K = KEYS
     F = meta["fixtures"]
     files = meta["files"]
-    cert_g0, cert_g1 = F["cert_inc1_gen0"], F["cert_inc1_gen1"]
+    cert_g0, cert_g1 = F["cert_op1_gen0"], F["cert_op1_gen1"]
     e0, e1, e2 = F["e0"], F["e1"], F["e2"]
     d1, d2, d3 = F["d1"], F["d2"], F["d3"]
-    cert_i2_g1 = F["cert_inc2_gen1"]
+    cert_i2_g1 = F["cert_op2_gen1"]
     checkpoint = F["checkpoint"]
     recovery_transition = F["recovery_transition"]
 
@@ -2661,12 +3040,12 @@ def build_index(meta, entries):
              note="Ed25519/X25519 seed-to-public-key and content-derived key IDs"),
         dict(id="pos-descriptive-fixtures", **{"class": "positive"},
              execution="executable", check="fixtures",
-             vectors=["fixtures/embodiment-description.json",
+             vectors=["fixtures/body-description.json",
                       "fixtures/capability-description.json"],
              params={}, expect="accept",
              covers=["p-jcs-canonical", "p-metadata-me-unchanged"],
              spec="canonical-artifacts §5.4/§6.1",
-             note="embodiment/capability hashes follow the current formulas; "
+             note="body/capability hashes follow the current formulas; "
                   "bodies are x/test placeholders until DM-018 freezes them"),
         dict(id="pos-identity-chain", **{"class": "positive"},
              execution="executable", check="chain",
@@ -2684,6 +3063,18 @@ def build_index(meta, entries):
              note="exact chain: genesis (0,0); root transition (0,1); "
                   "recovery policy (0,2); recovery (1,0) embedding "
                   "revocations; standalone revocation (1,1)"),
+        dict(id="pos-certificate-carry-forward",
+             **{"class": "positive"}, execution="executable",
+             check="certificate-carry-forward",
+             vectors=["me1/genesis.json",
+                      "carry-forward/certificate-pre-rotation.json",
+                      "carry-forward/root-transition.json",
+                      "carry-forward/acceptance-pre-rotation.json"],
+             params={}, expect="accept",
+             covers=["p-certificate-carry-forward"],
+             spec="identity-continuity §6.2/§13",
+             note="a certificate issued before rotation remains valid because "
+                  "the transition commits its exact already-validated ID"),
         dict(id="pos-me2-genesis", **{"class": "positive"}, execution="executable",
              check="chain", vectors=["me2/genesis.json"],
              params={"chain": "me2"}, expect="accept",
@@ -2691,50 +3082,92 @@ def build_index(meta, entries):
              note="second /me with explicit no-recovery mode"),
         dict(id="pos-certificates", **{"class": "positive"}, execution="executable",
              check="certificates",
-             vectors=["me1/certificate-inc1-gen0.json",
-                      "me1/acceptance-inc1-gen0.json",
-                      "me1/certificate-inc1-gen1.json",
-                      "me1/acceptance-inc1-gen1.json",
-                      "me1/certificate-inc2-gen0.json",
-                      "me1/acceptance-inc2-gen0.json",
-                      "me1/certificate-inc2-gen1.json",
-                      "me1/acceptance-inc2-gen1.json",
-                      "me1/certificate-inc3-gen0.json",
-                      "me1/acceptance-inc3-gen0.json",
-                      "me2/certificate-xm1-gen0.json",
-                      "me2/acceptance-xm1-gen0.json"],
+             vectors=["me1/certificate-op1-gen0.json",
+                      "me1/acceptance-op1-gen0.json",
+                      "me1/certificate-op1-gen1.json",
+                      "me1/acceptance-op1-gen1.json",
+                      "me1/certificate-op2-gen0.json",
+                      "me1/acceptance-op2-gen0.json",
+                      "me1/certificate-op2-gen1.json",
+                      "me1/acceptance-op2-gen1.json",
+                      "me1/certificate-op3-gen0.json",
+                      "me1/acceptance-op3-gen0.json",
+                      "me2/certificate-opx-gen0.json",
+                      "me2/acceptance-opx-gen0.json"],
              params={}, expect="accept",
-             covers=["p-incarnation-id", "p-certificate-id", "p-exact-renewal",
+             covers=["p-operational-id", "p-certificate-id", "p-exact-renewal",
                      "p-wrapper-domain-certificate",
                      "p-wrapper-domain-acceptance"],
              spec="canonical-artifacts §5.3/§9",
              note="generation-0 certificate with null previous_certificate_id "
                   "and generation-1 exact renewal, with subject acceptances"),
         dict(id="pos-lease", **{"class": "positive"}, execution="executable",
-             check="lease", vectors=["me1/lease-inc1-0.json"], params={},
+             check="lease", vectors=["me1/lease-op1-0.json"], params={},
              expect="accept", covers=["p-wrapper-domain-lease"],
              spec="canonical-artifacts §5.4",
              note="first-ever lease: null predecessor, bounded TTL, sorted routes"),
+        dict(id="pos-lease-receipt", **{"class": "positive"},
+             execution="executable", check="lease-receipt",
+             vectors=["me1/lease-op1-0.json",
+                      "me1/lease-receipt-0.json"], params={},
+             expect="accept",
+             covers=["p-wrapper-domain-lease-receipt",
+                     "p-external-lease-commit", "p-lease-high-water"],
+             spec="canonical-artifacts §5.5",
+             note="a designated external /me signs the exact durable lease "
+                  "head and receipt-bearing event cutoff"),
+        dict(id="pos-park-wake", **{"class": "positive"},
+             execution="executable", check="park-wake",
+             vectors=["me1/lease-op1-0.json", "me1/lease-receipt-0.json",
+                      "me1/lease-op1-1.json", "me1/lease-receipt-1.json"],
+             params={}, expect="accept",
+             covers=["p-identity-wide-lease", "p-park-wake"],
+             spec="identity-continuity §8/§10; canonical-artifacts §5.4/§5.5",
+             note="one /me moves from body/op1 to body/op2 while its lease "
+                  "sequence continues from the receipt-bearing predecessor"),
+        dict(id="pos-park-wake-null-cutoff", **{"class": "positive"},
+             execution="executable", check="park-wake",
+             vectors=["me1/lease-op1-0.json",
+                      "me1/lease-receipt-0-no-events.json",
+                      "me1/lease-op1-1-no-events.json",
+                      "me1/lease-receipt-1-no-events.json"],
+             params={}, expect="accept", covers=["p-null-handoff-cutoff"],
+             spec="canonical-artifacts §5.4/§5.5",
+             note="a body/key handoff copies a cited receipt's null event "
+                  "cutoff exactly when no checkpoint was retained"),
+        dict(id="pos-multiple-lease-receipts", **{"class": "positive"},
+             execution="executable", check="multiple-lease-receipts",
+             vectors=["me1/lease-op1-0.json",
+                      "me1/lease-receipt-0.json",
+                      "me1/lease-receipt-0-alt.json",
+                      "me1/lease-op1-1.json",
+                      "me1/lease-receipt-1.json"],
+             params={}, expect="accept",
+             covers=["p-multiple-lease-receipts"],
+             spec="canonical-artifacts §5.5",
+             note="receipts for one lease have set semantics: a later "
+                  "arrival cannot invalidate a successor citing an earlier "
+                  "accepted receipt"),
         dict(id="pos-events", **{"class": "positive"}, execution="executable",
              check="events",
-             vectors=["me1/event-inc2-0.json", "me1/event-inc2-1.json",
-                      "me1/event-inc2-2-nfc.json",
-                      "me1/event-inc2-3-hlc-max-counter.json",
-                      "me1/event-inc2-4-hlc-reset.json",
-                      "me2/event-xm1-0.json", "me2/event-xm1-1-nfd.json"],
+             vectors=["me1/event-op2-0.json", "me1/event-op2-1.json",
+                      "me1/event-op2-2-nfc.json",
+                      "me1/event-op2-3-hlc-max-counter.json",
+                      "me1/event-op2-4-hlc-reset.json",
+                      "me2/event-opx-0.json", "me2/event-opx-1-nfd.json"],
              params={}, expect="accept",
              covers=["p-wrapper-domain-event", "p-event-zero",
                      "p-event-successor", "p-event-hlc", "p-cross-me-parent"],
              spec="canonical-artifacts §6.1/§6.2",
-             note="complete inc2 generation-1 chain through the HLC maximum "
+             note="complete op2 generation-1 chain through the HLC maximum "
                   "and physical-time reset, plus a complete me2 chain"),
         dict(id="pos-hlc-safe-max-reset", **{"class": "positive"},
              execution="executable", check="hlc-author",
-             vectors=["me1/event-inc2-3-hlc-max-counter.json",
-                      "me1/event-inc2-4-hlc-reset.json"],
-             params={"known_events": ["me1/event-inc2-0.json",
-                                      "me1/event-inc2-1.json",
-                                      "me1/event-inc2-2-nfc.json"],
+             vectors=["me1/event-op2-3-hlc-max-counter.json",
+                      "me1/event-op2-4-hlc-reset.json"],
+             params={"known_events": ["me1/event-op2-0.json",
+                                      "me1/event-op2-1.json",
+                                      "me1/event-op2-2-nfc.json"],
                      "safe_integer_max": SAFE_INT_MAX},
              expect="accept", covers=["p-hlc-counter-overflow-handling"],
              spec="canonical-artifacts §6.2",
@@ -2743,18 +3176,18 @@ def build_index(meta, entries):
                   "the counter to zero"),
         dict(id="pos-out-of-order-incomplete", **{"class": "positive"},
              execution="executable", check="event-contextual",
-             vectors=["me1/event-inc1-4-out-of-order.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json",
-                                      "me1/event-inc1-2-disclosure.json"]},
+             vectors=["me1/event-op1-4-out-of-order.json"],
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json",
+                                      "me1/event-op1-2-disclosure.json"]},
              expect="incomplete", covers=["p-out-of-order-incomplete"],
              spec="canonical-artifacts §6.2",
              note="valid predecessor reference whose bytes are withheld "
                   "(index.withheld) yields incomplete, not reject"),
         dict(id="pos-distinct-nonces", **{"class": "positive"},
              execution="executable", check="events",
-             vectors=["me1/event-inc2-0.json",
-                      "me1/event-inc2-1.json"],
+             vectors=["me1/event-op2-0.json",
+                      "me1/event-op2-1.json"],
              params={"standalone": True}, expect="accept",
              covers=["p-distinct-nonces-two-events"],
              spec="canonical-artifacts §6.1/§9",
@@ -2762,13 +3195,13 @@ def build_index(meta, entries):
                   "two events"),
         dict(id="pos-nfc-nfd", **{"class": "positive"}, execution="executable",
              check="nfc-nfd",
-             vectors=["me1/event-inc2-2-nfc.json",
-                      "me2/event-xm1-1-nfd.json"],
+             vectors=["me1/event-op2-2-nfc.json",
+                      "me2/event-opx-1-nfd.json"],
              params={}, expect="accept", covers=["p-nfc-nfd-distinct"],
              spec="canonical-artifacts §2.1",
              note="NFC and NFD strings remain distinct signed data"),
         dict(id="pos-checkpoint", **{"class": "positive"}, execution="executable",
-             check="checkpoint", vectors=["me1/checkpoint-inc2-witness.json"],
+             check="checkpoint", vectors=["me1/checkpoint-opx-witness.json"],
              params={}, expect="accept",
              covers=["p-wrapper-domain-checkpoint", "p-checkpoint-binding"],
              spec="canonical-artifacts §7",
@@ -2776,15 +3209,15 @@ def build_index(meta, entries):
                   "certificate/high-water binding"),
         dict(id="pos-checkpoint-coverage", **{"class": "positive"},
              execution="executable", check="checkpoint-coverage",
-             vectors=["me1/checkpoint-inc2-witness.json",
-                      "me1/event-inc1-1.json"],
+             vectors=["me1/checkpoint-opx-witness.json",
+                      "me1/event-op1-1.json"],
              params={}, expect="covered", covers=["p-checkpoint-coverage"],
              spec="canonical-artifacts §7",
              note="the named high-water prefix is covered"),
         dict(id="pos-sealed", **{"class": "positive"}, execution="executable",
              check="sealed", vectors=["me1/sealed-delivery-1.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json",
-                     "inner": "me1/event-inc1-1.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json",
+                     "inner": "me1/event-op1-1.json"},
              expect="accept",
              covers=["p-wrapper-domain-sealed", "p-sealed-decryption",
                      "p-multi-recipient", "p-disclosure-authorization"],
@@ -2796,8 +3229,8 @@ def build_index(meta, entries):
              check="reseal",
              vectors=["me1/sealed-delivery-1.json",
                       "me1/sealed-delivery-2-reseal.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json",
-                     "inner": "me1/event-inc1-1.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json",
+                     "inner": "me1/event-op1-1.json"},
              expect="accept", covers=["p-reseal-same-event"],
              spec="canonical-artifacts §8.3",
              note="d1 uses exactly the 24-hour TTL; d2 is issued strictly "
@@ -2808,11 +3241,11 @@ def build_index(meta, entries):
              vectors=["me1/sealed-delivery-1.json",
                       "me1/sealed-delivery-3-rotation.json"],
              params={"old_authorization":
-                     "me1/event-inc1-2-disclosure.json",
+                     "me1/event-op1-2-disclosure.json",
                      "new_authorization":
-                     "me1/event-inc2-5-disclosure-rotation.json",
-                     "old_inner": "me1/event-inc1-1.json",
-                     "new_inner": "me1/event-inc1-1.json"},
+                     "me1/event-op2-5-disclosure-rotation.json",
+                     "old_inner": "me1/event-op1-1.json",
+                     "new_inner": "me1/event-op1-1.json"},
              expect="accept", covers=["p-delivery-rotation-authorization"],
              spec="canonical-artifacts §8.3",
              note="rotated recipient key uses its renewed certificate and a "
@@ -2821,15 +3254,15 @@ def build_index(meta, entries):
              execution="executable", check="delivery-expiry",
              vectors=["me1/sealed-delivery-3-rotation.json"],
              params={"at_ms": cert_i2_g1["body"]["expires_at_ms"] + 1,
-                     "expired_key_name": "inc2-enc2",
-                     "active_key_name": "xm1-enc",
+                     "expired_key_name": "op2-enc2",
+                     "active_key_name": "opx-enc",
                      "authorization":
-                     "me1/event-inc2-5-disclosure-rotation.json",
-                     "inner": "me1/event-inc1-1.json"},
+                     "me1/event-op2-5-disclosure-rotation.json",
+                     "inner": "me1/event-op1-1.json"},
              expect="accept", covers=["p-per-recipient-expiry"],
              spec="canonical-artifacts §8.1/§8.3",
-             note="after inc2's certificate expiry its recipient path is "
-                  "expired while xm1 remains independently processable"),
+             note="after op2's certificate expiry its recipient path is "
+                  "expired while opx remains independently processable"),
         dict(id="pos-threshold", **{"class": "positive"}, execution="executable",
              check="threshold",
              vectors=["threshold/genesis-partial.json", "me1/genesis.json",
@@ -2842,7 +3275,7 @@ def build_index(meta, entries):
                   "quorum subsets represents one artifact"),
         dict(id="pos-event-replay-idempotent", **{"class": "positive"},
              execution="executable", check="idempotent",
-             vectors=["me1/event-inc1-1.json"], params={"kind": "event"},
+             vectors=["me1/event-op1-1.json"], params={"kind": "event"},
              expect="idempotent", covers=["n-event-replay-idempotent"],
              spec="canonical-artifacts §6.3",
              note="same event replay is idempotent"),
@@ -2903,13 +3336,13 @@ def build_index(meta, entries):
              note="recovery policy replaced without its existing threshold "
                   "(also: root alone creating a new policy although genesis "
                   "already declared one)"),
-        dict(id="neg-recovery-incarnation-signed", **{"class": "negative"},
+        dict(id="neg-recovery-operational-signed", **{"class": "negative"},
              execution="executable", check="control-wrapper",
-             vectors=["negative/recovery-transition-incarnation-signed.json"],
+             vectors=["negative/recovery-transition-operational-signed.json"],
              params={"artifact": "recovery-transition"}, expect="reject",
-             covers=["n-recovery-incarnation-signed"],
+             covers=["n-recovery-operational-signed"],
              spec="identity-continuity §13",
-             note="recovery signed by a current incarnation key"),
+             note="recovery signed by a current operational key"),
         dict(id="neg-preserved-and-revoked", **{"class": "negative"},
              execution="executable", check="control-wrapper",
              vectors=["negative/recovery-transition-preserved-and-revoked.json"],
@@ -2962,25 +3395,25 @@ def build_index(meta, entries):
              note="renewal names the wrong predecessor certificate"),
         dict(id="neg-cert-fork", **{"class": "negative"}, execution="executable",
              check="pair-fork",
-             vectors=["me1/certificate-inc1-gen1.json",
+             vectors=["me1/certificate-op1-gen1.json",
                       "negative/certificate-fork-variant.json"],
              params={"kind": "certificate"}, expect="quarantined",
              covers=["n-cert-fork"], spec="canonical-artifacts §5.3",
-             note="two certificates at one incarnation/generation are a fork"),
+             note="two certificates at one operational/generation are a fork"),
         dict(id="neg-cross-role-key-reuse", **{"class": "negative"},
              execution="executable", check="certificate",
              vectors=["negative/certificate-cross-role-key-reuse.json"],
              params={}, expect="reject", covers=["n-cross-role-key-reuse"],
              spec="canonical-artifacts §4.1",
-             note="a root public key reused as an incarnation encryption key"),
-        dict(id="neg-signing-key-two-incarnations", **{"class": "negative"},
+             note="a root public key reused as an operational encryption key"),
+        dict(id="neg-signing-key-two-operationals", **{"class": "negative"},
              execution="executable", check="certificate",
-             vectors=["negative/certificate-signing-key-two-incarnations.json"],
+             vectors=["negative/certificate-signing-key-two-operationals.json"],
              params={}, expect="reject",
-             covers=["n-signing-key-two-incarnations"],
+             covers=["n-signing-key-two-operationals"],
              spec="canonical-artifacts §5.3",
-             note="two incarnation IDs claiming one signing key: key-reuse "
-                  "conflict, not a second incarnation"),
+             note="two operational IDs claiming one signing key: key-reuse "
+                  "conflict, not a second operational"),
         dict(id="neg-acceptance-hash-mismatch", **{"class": "negative"},
              execution="executable", check="acceptance",
              vectors=["negative/acceptance-hash-mismatch.json"],
@@ -3015,85 +3448,85 @@ def build_index(meta, entries):
         dict(id="neg-event-signed-by-recovery-key", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-signed-by-recovery-key.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="reject", covers=["n-recovery-key-signs-event"],
              spec="identity-continuity §13",
              note="recovery key signs an ordinary event"),
         dict(id="neg-event-sequence-gap", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-sequence-gap.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="reject", covers=["n-event-sequence-gap"],
              spec="canonical-artifacts §6.2",
              note="known predecessor with a wrong sequence increment"),
         dict(id="neg-event-missing-predecessor-parent", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-missing-predecessor-parent.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json",
-                                      "me2/event-xm1-0.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json",
+                                      "me2/event-opx-0.json"]},
              expect="reject", covers=["n-event-missing-predecessor-parent"],
              spec="canonical-artifacts §6.2",
              note="local predecessor missing from causal parents"),
         dict(id="neg-event-hlc-regression", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-hlc-regression.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json",
-                                      "me2/event-xm1-0.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json",
+                                      "me2/event-opx-0.json"]},
              expect="reject", covers=["n-event-hlc-regression"],
              spec="canonical-artifacts §6.2",
              note="HLC tuple not greater than the known predecessor tuple"),
         dict(id="neg-event-duplicate-parents", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-duplicate-parents.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="reject", covers=["n-event-duplicate-parents"],
              spec="canonical-artifacts §2.2",
              note="duplicate causal parents"),
         dict(id="neg-event-unsorted-parents", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-unsorted-parents.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json",
-                                      "me2/event-xm1-0.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json",
+                                      "me2/event-opx-0.json"]},
              expect="reject", covers=["n-event-unsorted-parents"],
              spec="canonical-artifacts §2.2",
              note="causal parents not in canonical sorted order"),
         dict(id="neg-event-65-parents", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-65-parents.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="reject", covers=["n-event-too-many-parents"],
              spec="canonical-artifacts §2.1",
              note="more than 64 causal parents exceed the resource bound"),
         dict(id="neg-event-unknown-parent", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-unknown-parent.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="incomplete", covers=["n-event-unknown-parent-incomplete"],
              spec="canonical-artifacts §6.2",
              note="unknown causal parent yields incomplete quarantine, not "
                   "silent projection"),
         dict(id="neg-event-fork", **{"class": "negative"}, execution="executable",
              check="pair-fork",
-             vectors=["me1/event-inc1-1.json",
+             vectors=["me1/event-op1-1.json",
                       "negative/event-fork-variant.json"],
              params={"kind": "event"}, expect="quarantined",
              covers=["n-event-fork"], spec="canonical-artifacts §6.2/§6.3",
-             note="same incarnation/sequence, different event: fork"),
+             note="same operational/sequence, different event: fork"),
         dict(id="neg-late-parent-hlc", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-late-parent-hlc.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json",
-                                      "me2/event-xm1-0.json",
-                                      "negative/event-xm1-late-parent.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json",
+                                      "me2/event-opx-0.json",
+                                      "negative/event-opx-late-parent.json"]},
              expect="reject", covers=["n-late-parent-hlc"],
              spec="canonical-artifacts §6.2",
              note="a late parent revealing an HLC regression invalidates the "
@@ -3102,7 +3535,7 @@ def build_index(meta, entries):
              execution="executable", check="event-contextual",
              vectors=["negative/event-under-revoked-certificate.json"],
              params={"revoked_certificates":
-                     ["me1/certificate-inc3-gen0.json"]},
+                     ["me1/certificate-op3-gen0.json"]},
              expect="reject", covers=["n-revoked-cert-event"],
              spec="identity-continuity §9/§13",
              note="event ingested after the certificate revocation was "
@@ -3110,16 +3543,16 @@ def build_index(meta, entries):
         dict(id="neg-event-under-old-generation", **{"class": "negative"},
              execution="executable", check="event-contextual",
              vectors=["negative/event-under-old-generation.json"],
-             params={"known_events": ["me1/event-inc1-0.json",
-                                      "me1/event-inc1-1.json"]},
+             params={"known_events": ["me1/event-op1-0.json",
+                                      "me1/event-op1-1.json"]},
              expect="reject", covers=["n-old-generation-event"],
              spec="identity-continuity §7",
              note="a superseded certificate generation cannot authorize new "
                   "events"),
         dict(id="neg-old-generation-replay", **{"class": "negative"},
              execution="executable", check="old-generation-replay",
-             vectors=["me1/certificate-inc1-gen0.json",
-                      "me1/acceptance-inc1-gen0.json"],
+             vectors=["me1/certificate-op1-gen0.json",
+                      "me1/acceptance-op1-gen0.json"],
              params={"highest_generation": 1}, expect="reject",
              covers=["n-old-generation-replay"],
              spec="identity-continuity §7/§13",
@@ -3149,62 +3582,62 @@ def build_index(meta, entries):
              vectors=["negative/checkpoint-witness-equals-subject.json"],
              params={}, expect="reject", covers=["n-checkpoint-mismatch"],
              spec="canonical-artifacts §7",
-             note="the witness must differ from the subject incarnation"),
+             note="the witness must differ from the subject operational"),
         dict(id="neg-checkpoint-revoked-witness", **{"class": "negative"},
              execution="executable", check="checkpoint-revoked-witness",
-             vectors=["me1/checkpoint-inc2-witness.json"], params={},
+             vectors=["me1/checkpoint-opx-witness.json"], params={},
              expect="reject", covers=["n-checkpoint-mismatch"],
              spec="canonical-artifacts §7",
              note="a checkpoint witnessed by a revoked certificate is "
                   "rejected even when its signature and ancestry are valid"),
         dict(id="neg-checkpoint-beyond-high-water", **{"class": "negative"},
              execution="executable", check="checkpoint-coverage",
-             vectors=["me1/checkpoint-inc2-witness.json",
-                      "me1/event-inc1-2-disclosure.json"],
+             vectors=["me1/checkpoint-opx-witness.json",
+                      "me1/event-op1-4-out-of-order.json"],
              params={}, expect="not-covered",
              covers=["n-checkpoint-beyond-high-water"],
              spec="canonical-artifacts §7",
              note="a checkpoint claiming a descendant beyond its high-water "
                   "does not cover it"),
-        dict(id="neg-checkpoint-cross-incarnation", **{"class": "negative"},
+        dict(id="neg-checkpoint-cross-operational", **{"class": "negative"},
              execution="executable", check="checkpoint-coverage",
-             vectors=["me1/checkpoint-inc2-witness.json",
-                      "me2/event-xm1-0.json"],
+             vectors=["me1/checkpoint-opx-witness.json",
+                      "me2/event-opx-0.json"],
              params={}, expect="not-covered",
-             covers=["n-checkpoint-cross-incarnation-coverage"],
+             covers=["n-checkpoint-cross-operational-coverage"],
              spec="canonical-artifacts §7",
-             note="a subject checkpoint does not cover another incarnation's "
+             note="a subject checkpoint does not cover another operational's "
                   "event merely because it is a causal parent"),
         dict(id="neg-sealed-empty-recipients", **{"class": "negative"},
              execution="executable", check="sealed",
              vectors=["negative/sealed-empty-recipients.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json"},
              expect="reject", covers=["n-recipients-empty"],
              spec="canonical-artifacts §8.1", note="empty recipient set"),
         dict(id="neg-sealed-duplicate-recipients", **{"class": "negative"},
              execution="executable", check="sealed",
              vectors=["negative/sealed-duplicate-recipients.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json"},
              expect="reject", covers=["n-recipients-duplicate"],
              spec="canonical-artifacts §8.1", note="duplicate recipient triple"),
         dict(id="neg-sealed-unsorted-recipients", **{"class": "negative"},
              execution="executable", check="sealed",
              vectors=["negative/sealed-unsorted-recipients.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json"},
              expect="reject", covers=["n-recipients-unsorted"],
              spec="canonical-artifacts §8.1/§2.2",
              note="recipient set not in canonical sorted order"),
         dict(id="neg-sealed-oversized-recipients", **{"class": "negative"},
              execution="executable", check="sealed",
              vectors=["negative/sealed-oversized-recipients.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json"},
              expect="reject", covers=["n-recipients-oversized"],
              spec="canonical-artifacts §2.1",
              note="257 recipients exceed the 256 recipient bound"),
         dict(id="neg-sealed-ttl-exceeded", **{"class": "negative"},
              execution="executable", check="sealed",
              vectors=["negative/sealed-ttl-exceeded.json"],
-             params={"authorization": "me1/event-inc1-2-disclosure.json"},
+             params={"authorization": "me1/event-op1-2-disclosure.json"},
              expect="reject", covers=["n-delivery-ttl"],
              spec="canonical-artifacts §8.1",
              note="delivery TTL above 24 hours"),
@@ -3292,11 +3725,11 @@ def build_index(meta, entries):
         ("d-all-authority-lost", "identity-continuity §6.5",
          "loss of all root and recovery authority freezes identity or "
          "starts a new /me; never a silent reset"),
-        ("d-two-incarnations-eligible", "identity-continuity §13",
-         "two separately certified incarnations active simultaneously are "
-         "both eligible for /we"),
+        ("d-distinct-me-eligible", "identity-continuity §13",
+         "two distinct me_id values with valid collective membership and "
+         "receipt-bearing leases may both be eligible for /we routing"),
         ("d-quarantined-lease", "identity-continuity §13",
-         "a quarantined incarnation presenting a valid lease is excluded "
+         "a quarantined identity presenting a valid lease is excluded "
          "from /we"),
         ("d-post-expiry-event", "identity-continuity §7",
          "an event first seen after certificate expiry with no pre-expiry "
@@ -3319,9 +3752,9 @@ def build_index(meta, entries):
          "durable local acceptance, a root/recovery high-water, or an "
          "explicit attestor policy (attested-timely)"),
         ("d-lease-session-claims", "identity-continuity §13",
-         "a new lease changing embodiment/capability hashes within one "
-         "session replaces the newest lease only; stale claims are never "
-         "unioned"),
+         "one session may refresh capability claims but cannot silently "
+         "change body; every accepted successor replaces rather than unions "
+         "stale claims"),
     ]
     for tag, spec, rationale in D:
         entry(id=tag, **{"class": "negative"}, execution="documented",
@@ -3345,7 +3778,7 @@ def build_index(meta, entries):
         "keys": "keys.json",
         "withheld": {
             "note": ("Bytes of this validly signed predecessor event are "
-                     "deliberately not shipped; me1/event-inc1-4-out-of-order.json"
+                     "deliberately not shipped; me1/event-op1-4-out-of-order.json"
                      " references it and is therefore 'incomplete'."),
             "event_id": meta["withheld_event_id"],
             "event_hash": meta["withheld_event_hash"],
@@ -3374,7 +3807,7 @@ ciphertext.
   normative `rationale`.
 - `keys.json` — all synthetic test keys, including private material so
   implementations can exercise decryption.  Not secrets.
-- `fixtures/` — x/test placeholder embodiment/capability bodies (DM-018
+- `fixtures/` — x/test placeholder body/capability bodies (DM-018
   freezes the normative bodies; their hashes follow the current formulas).
 - `me1/`, `me2/` — identity-control chains, certificates, acceptances,
   lease, events, checkpoint, sealed deliveries.

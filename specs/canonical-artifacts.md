@@ -17,8 +17,8 @@ V0 separates three objects:
 
 1. a signed **canonical artifact**, which is durable evidence and may enter the
    append-only ledger;
-2. a signed **canonical event**, which is an incarnation-authored artifact with
-   causal and per-incarnation ordering;
+2. a signed **canonical event**, which is authored by one `/me` operational
+   credential with causal and per-credential ordering;
 3. a **sealed delivery**, which encrypts already signed canonical bytes for a
    concrete recipient set and is disposable transport state.
 
@@ -29,8 +29,8 @@ checkpoint.
 
 Tribe principals, directory epochs, audiences, host names, harnesses, models,
 providers, HMK rows, GitHub identities, and route credentials MUST NOT appear
-as `/me` or incarnation authority. A sealed delivery resolves recipients only
-to certified Daimon incarnation encryption keys.
+as `/me`, operational-credential, body, or `/we` authority. A sealed delivery
+resolves recipients only to certified Daimon operational encryption keys.
 
 ## 2. Strict JSON and canonical bytes
 
@@ -56,9 +56,9 @@ still obeys this data model. Every conforming implementation MUST support a
 nesting depth through 64 levels and MUST reject a deeper value. Before parsing
 or performing cryptography it MUST reject a complete wire artifact larger than
 its V0 ceiling: 262144 bytes for a genesis, control, certificate, acceptance,
-lease, or checkpoint wrapper; 1048576 bytes for an event wrapper; and 2097152
-bytes for a sealed-delivery wrapper. It MUST NOT configure a smaller ceiling
-and still claim V0 interoperability.
+lease, lease-head receipt, or checkpoint wrapper; 1048576 bytes for an event
+wrapper; and 2097152 bytes for a sealed-delivery wrapper. It MUST NOT configure
+a smaller ceiling and still claim V0 interoperability.
 
 Resource-bearing arrays are bounded before cryptographic evaluation: at most
 32 keys per threshold set, 128 detached signatures per wrapper, 256 embedded
@@ -87,15 +87,21 @@ All arrays whose semantic meaning is a set are sorted and duplicate-free:
 - key descriptors and signatures: by UTF-8 `kid`, with signatures secondarily
   sorted by `role`;
 - IDs and hashes: by their ASCII wire value;
-- concrete recipients: by `(me_id, incarnation_id, encryption_kid)`.
+- concrete recipients: by `(me_id, operational_id, encryption_kid)`.
 
-High-water arrays sort by `(incarnation_id, domain)` and reject a repeated
-pair. Route arrays sort by `(kind, route_id)`. Protocol-owned string sets,
-including purposes and event-type prefixes, sort by their ASCII bytes. Revocation entries sort by their JCS
-bytes and reject a repeated `(target.kind,target.id,target.kid)` tuple.
+Event high-water arrays sort by `operational_id` and reject a repeated
+operational stream. The identity-wide lease high-water is a singleton rather
+than an array. Route arrays sort by `(kind, route_id)`. Protocol-owned string
+sets, including purposes and event-type prefixes, sort by their ASCII bytes.
+Revocation entries sort by their JCS bytes and reject a repeated
+`(target.kind,target.id,target.kid)` tuple.
 
 Order-sensitive arrays such as causal paths or application payload lists retain
 their declared order.
+
+Every V0 validity interval is half-open: an instant `t` is within it exactly
+when `not_before_or_issued_at <= t < expires_at`. Expiry instants themselves
+are never valid.
 
 ## 3. Cryptographic suite and domains
 
@@ -117,10 +123,11 @@ daimon/genesis/v0
 daimon/root-transition/v0
 daimon/recovery-transition/v0
 daimon/recovery-policy/v0
-daimon/incarnation-certificate/v0
-daimon/incarnation-acceptance/v0
+daimon/operational-certificate/v0
+daimon/operational-acceptance/v0
 daimon/revocation/v0
 daimon/presence-lease/v0
+daimon/lease-head-receipt/v0
 daimon/event/v0
 daimon/event-checkpoint/v0
 daimon/sealed-event/v0
@@ -315,8 +322,9 @@ compromise = {
   mode: "none"|"suspected"|"confirmed",
   control_cutoff: {recovery_generation, control_sequence, control_hash}|null,
   preserved_certificate_ids: sorted IDs,
-  incarnation_high_waters: sorted [{incarnation_id, domain, sequence,
-                                      artifact_hash}]
+  event_high_waters: sorted [{operational_id, sequence, event_id, event_hash}]
+  lease_high_water: null or {lease_sequence, lease_id, lease_hash,
+                              commit_receipt_id}
 }
 revocations = sorted revocation entries
 ```
@@ -359,26 +367,29 @@ effective = {
   prior_control_position: {recovery_generation, control_sequence,
                            control_hash}|null
 }
-high_waters = sorted [{incarnation_id, domain, sequence, artifact_hash}]
+event_high_waters = sorted [{operational_id, sequence, event_id, event_hash}]
+lease_high_water = null or {lease_sequence, lease_id, lease_hash,
+                             commit_receipt_id}
 replacement_artifact_id = string or null
 ```
 
-V0 target kinds are `certificate`, `incarnation-signing-key`,
-`incarnation-encryption-key`, `root-key`, `recovery-key`, and
+V0 target kinds are `certificate`, `operational-signing-key`,
+`operational-encryption-key`, `root-key`, `recovery-key`, and
 `certificates-from-control-cutoff`. V0 reason codes are `planned-rotation`,
-`key-retired`, `key-compromise`, `key-loss`, `incarnation-fork`,
+`key-retired`, `key-compromise`, `key-loss`, `operational-fork`,
 `policy-violation`, `operator-request`, and `unspecified`. New values require a
 later registry/version and are not silently accepted by a V0 validator.
 
 The valid target-field combinations are closed: `certificate` uses its
-certificate ID and null `kid`; either incarnation-key kind uses its
-`incarnation_id` and exact non-null key ID; either root/recovery-key kind uses
+certificate ID and null `kid`; either operational-key kind uses its
+`operational_id` and exact non-null key ID; either root/recovery-key kind uses
 the control artifact ID that installed the set and the exact non-null key ID;
 and `certificates-from-control-cutoff` uses the cutoff control artifact ID and
 null `kid`. Every ID and hash MUST use its referenced type's exact grammar.
-`domain` in a high-water entry is the closed enum `event` or
-`presence-lease`; `sequence` and `artifact_hash` name that exact signed
-artifact.
+Event high-waters sort by `operational_id` and name exact event IDs and hashes.
+The optional lease high-water is a singleton for the enclosing `me_id`, binds
+its accepted external receipt, and is never keyed by operational credential.
+A credential change never creates another lease namespace.
 
 `on_acceptance` requires a null prior position; the effective position is the
 derived position/hash of the enclosing standalone-revocation or recovery
@@ -401,15 +412,15 @@ All four non-genesis control wrappers use
 `artifact_id = dm:ctl:v0:<artifact-hash>` and their corresponding Section 3
 domain.
 
-### 5.3 Incarnation certificate and acceptance
+### 5.3 Operational certificate and acceptance
 
 The certificate body has exactly:
 
 ```text
-schema = "daimon-incarnation-certificate/v0"
+schema = "daimon-operational-certificate/v0"
 me_id
-incarnation_id
-incarnation_nonce = stable 32-byte base64url for this incarnation
+operational_id
+operational_nonce = stable 32-byte base64url for this operational credential
 certificate_nonce = fresh 32-byte base64url for this certificate generation
 certificate_generation
 previous_certificate_id = certificate ID or null
@@ -423,14 +434,15 @@ not_before_ms
 expires_at_ms
 purposes = {
   signing: sorted subset of ["event", "presence-lease",
-                             "event-checkpoint", "sealed-delivery"],
+                             "event-checkpoint", "lease-head-receipt",
+                             "sealed-delivery"],
   encryption: sorted subset of ["sealed-event-recipient"]
 }
 constraints = {
   max_event_bytes: integer from 1 through 1048576,
   event_type_prefixes: sorted non-empty event-type prefixes
 }
-initial_embodiment_hash = 32-byte base64url or null
+initial_body_hash = 32-byte base64url or null
 ```
 
 An empty signing/encryption purpose list grants no use of that key for the
@@ -443,24 +455,23 @@ set at `issuing_control_position`, never the variable quorum subset whose
 endorsements happen to be attached. The threshold is evaluated from that
 active root descriptor.
 
-The incarnation identifier is:
+The operational identifier is:
 
 ```text
-incarnation_input = JCS({
-  "incarnation_nonce": incarnation_nonce,
+operational_input = JCS({
+  "operational_nonce": operational_nonce,
   "me_id": me_id,
   "signing_key": signing_key
 })
-incarnation_digest = SHA-256(
-  UTF8("daimon/incarnation-id/v0") || 0x00 || incarnation_input
+operational_digest = SHA-256(
+  UTF8("daimon/operational-id/v0") || 0x00 || operational_input
 )
-incarnation_id = "dm:inc:v0:" || base64url(incarnation_digest)
+operational_id = "dm:op:v0:" || base64url(operational_digest)
 ```
 
-Within one `/me`, an accepted incarnation signing public key MAY identify only
-one `incarnation_id`; attempting to certify the same signing descriptor under a
-different incarnation nonce/ID is a key-reuse conflict, not a second
-incarnation.
+Within one `/me`, an accepted operational signing public key MAY identify only
+one `operational_id`; attempting to certify the same signing descriptor under a
+different operational nonce/ID is a key-reuse conflict, not a second key.
 
 The certificate identifier deliberately follows DM-010:
 
@@ -471,14 +482,14 @@ certificate_id = "dm:cert:v0:" || base64url(certificate_digest)
 
 Certificate generation zero requires `previous_certificate_id = null`. Every
 renewal names the directly preceding accepted certificate, increments
-generation by exactly one, reuses `incarnation_nonce` when the signing key is
-unchanged, and draws a new `certificate_nonce`. Changing the incarnation signing
-key requires a new incarnation nonce and ID. Two certificates for one
-incarnation and generation are a certificate fork.
+generation by exactly one, reuses `operational_nonce` when the signing key is
+unchanged, and draws a new `certificate_nonce`. Changing the operational
+signing key requires a new operational nonce and ID. Two certificates for one
+operational ID and generation are a certificate fork.
 
 A certificate becomes active only after its certificate and subject acceptance
 validate. Activation of generation `N+1` supersedes generation `N` for new
-events and leases and durably advances the verifier's per-incarnation
+events and leases and durably advances the verifier's per-operational-ID
 certificate high-water. Later arrival of evidence under an older generation
 MUST NOT restore its broader purposes or constraints. Such evidence is timely
 only when a prior durable acceptance record, a valid event checkpoint, or a
@@ -490,10 +501,10 @@ The certificate wrapper has exact fields `body`, `certificate_id`,
 certificate digest. Its signature role is `root-authorization` under the
 certificate domain.
 
-The acceptance body has exactly `schema = "daimon-incarnation-acceptance/v0"`,
-`me_id`, `incarnation_id`, `certificate_id`, and `certificate_hash`. Its wrapper
+The acceptance body has exactly `schema = "daimon-operational-acceptance/v0"`,
+`me_id`, `operational_id`, `certificate_id`, and `certificate_hash`. Its wrapper
 uses `dm:accept:v0:<artifact-hash>` and one `subject-acceptance` signature from
-the certificate's incarnation signing key.
+the certificate's operational signing key.
 
 ### 5.4 Presence lease
 
@@ -502,21 +513,27 @@ The lease body has exactly:
 ```text
 schema = "daimon-presence-lease/v0"
 me_id
-incarnation_id
+operational_id
 certificate_id
 session_id = 32-byte random base64url
 lease_sequence
 previous_lease_hash = 32-byte base64url or null
+previous_lease_receipt_id = lease-head receipt ID or null
 supersedes_session_id = 32-byte base64url or null
+supersedes_operational_id = operational ID or null
+superseded_event_cutoff = null or {
+  operational_id, certificate_id, event_sequence, event_id, event_hash,
+  checkpoint_id
+}
 issued_at_ms
 expires_at_ms
-embodiment_hash = 32-byte base64url
+body_hash = 32-byte base64url
 capability_hash = 32-byte base64url
 routes = sorted [{kind, route_id}]
 ```
 
-Every certificate `initial_embodiment_hash`, lease `embodiment_hash`, and event
-`embodiment_hash` uses the same content reference defined in Section 6.1. A
+Every certificate `initial_body_hash`, lease `body_hash`, and event
+`body_hash` uses the same content reference defined in Section 6.1. A
 lease capability reference is likewise exact:
 
 ```text
@@ -535,10 +552,84 @@ byte-exact `(kind,route_id)` pair, and reject duplicates. A route is a signed
 reachability hint, not authorization; DM-053 defines its separately protected
 endpoint resolution.
 
-Only the incarnation's first-ever lease uses a null predecessor. A new session
-continues the lease sequence and hash, names the superseded session, and does
-not reset high-water state. The wrapper uses
-`dm:lease:v0:<artifact-hash>` and one `incarnation-authorization` signature.
+Only the `/me` identity's first-ever lease uses null predecessor and receipt
+fields. Every successor increments the identity-wide sequence by exactly one,
+names the previous signed lease hash and its accepted external receipt, and
+never resets after operational-key or body change. A new session names the
+superseded session and operational ID. If body or operational ID changes, it
+also copies the exact receipt-bearing event cutoff for the superseded
+credential. A purely local predecessor is not an accepted head.
+
+The wrapper uses `dm:lease:v0:<artifact-hash>` and one
+`operational-authorization` signature. Two successors of the same accepted
+predecessor, two unexpired body claims for one `me_id`, or a retired credential
+attempting to extend any later head are split-brain evidence and quarantine the
+identity. Acceptance of a superseding head immediately makes its prior session
+ineligible. It makes the prior operational credential ineligible only when the
+new head changes `operational_id`; a same-body restart may reuse the credential
+under its new committed session as allowed by DM-010.
+
+### 5.5 External lease-head receipt
+
+A signed receipt proves that an independent designated verifier durably stored
+one lease head outside the subject body. Its body has exactly:
+
+```text
+schema = "daimon-lease-head-receipt/v0"
+subject_me_id
+lease_id
+lease_hash
+lease_sequence
+session_id
+operational_id
+certificate_id
+body_hash
+event_cutoff = null or {
+  operational_id, certificate_id, event_sequence, event_id, event_hash,
+  checkpoint_id
+}
+subject_identity_control_position = {recovery_generation, control_sequence,
+                                     control_hash}
+witness_me_id
+witness_operational_id
+witness_certificate_id
+witness_identity_control_position = {recovery_generation, control_sequence,
+                                     control_hash}
+accepted_at_ms
+```
+
+The wrapper uses `dm:lease-receipt:v0:<artifact-hash>`, the
+`daimon/lease-head-receipt/v0` domain, and exactly one
+`witness-authorization` signature. The witness must be a distinct `me_id`, its
+accepted certificate must carry `lease-head-receipt` purpose, and local policy
+must designate it as a wake verifier. A valid signature without that policy is
+attributed storage evidence, not authority to move the identity. A
+root/recovery control artifact committing the same lease high-water is an
+authoritative alternative.
+
+The signature proves only that the witness made this durable-retention claim;
+it cannot prove physical storage durability. Relative to a verifier, a lease
+becomes `committed` exactly when that verifier has durably accepted the lease,
+its receipt, the witness designation, and all referenced identity/cutoff
+evidence. Before then the signed lease is only `uncommitted` candidate evidence
+and is never an active routing head.
+
+Every copied lease field must equal the validated referenced lease. A non-null
+event cutoff must equal a validated event checkpoint for the named operational
+credential. Receipt time must fall within the subject lease and witness
+certificate validity intervals. A wake lease is accepted only when its
+`previous_lease_receipt_id` resolves to such an accepted receipt for its exact
+predecessor. Receipt forks do not choose a lease branch: conflicting
+receipt-bearing successors quarantine `/me`.
+
+A lease may have more than one independently valid accepted receipt. Those
+receipts form an unordered set keyed by receipt ID; accepting another receipt
+for the same lease MUST NOT replace an earlier one or change the committed
+head. A successor may cite any accepted receipt in that set and, when a body or
+operational ID changes, MUST copy that cited receipt's exact `event_cutoff`,
+including an exact null-to-null copy when the predecessor authored no
+checkpointed events. Receipt arrival order therefore cannot change successor
+validity.
 
 ## 6. Canonical event
 
@@ -550,13 +641,13 @@ An event body has exactly:
 schema = "daimon-event/v0"
 event_nonce = 32-byte random base64url
 me_id
-incarnation_id
+operational_id
 certificate_id
 event_sequence
 previous_event_id = event ID or null
 logical_time = {physical_ms, counter}
 causal_parents = sorted event IDs
-embodiment_hash = 32-byte base64url
+body_hash = 32-byte base64url
 event_type = registered or extension ASCII identifier
 intent = null or {thread_id, scope, operation}
 payload = type-defined JSON value
@@ -582,7 +673,7 @@ event_id = "dm:event:v0:" || event_hash
 
 The event wrapper has exactly `body`, `event_id`, `event_hash`, and
 `signature`. `signature` is one signature record with role
-`incarnation-authorization`; its preimage is `event_preimage`.
+`operational-authorization`; its preimage is `event_preimage`.
 
 `event_nonce` makes independently authored occurrences distinct even when their
 semantic payloads are equal. Event identity establishes authorship, ordering,
@@ -604,33 +695,37 @@ or memory admission. DM-012 expresses a reply by retaining `thread_id` and
 citing every directly replied-to message event in `causal_parents`; it MUST NOT
 add an unsigned reply identifier in the delivery layer.
 
-`embodiment_hash` identifies the exact canonical embodiment-description body
+`body_hash` identifies the exact canonical body-description body
 claimed by the author:
 
 ```text
-embodiment_hash = base64url(SHA-256(JCS(embodiment_body)))
+body_hash = base64url(SHA-256(JCS(body_description_body)))
 ```
 
 The event signature authenticates this content reference. DM-018 freezes the
-closed descriptive body and any independently signed embodiment artifact;
+closed descriptive body and any independently signed body artifact;
 DM-011 does not invent a second incomplete signature domain. Harness, model,
 provider, host, tools, sensors, and actuators remain provenance claims, never
 identity authority. Missing description bytes make detailed provenance
 `incomplete`; the receiver MUST NOT substitute its own body, the latest lease,
 or harness-derived metadata. Presence is not required for offline event
-authorship.
+authorship. Offline evidence remains eligible only through the event cutoff
+later committed by park/wake. After a superseding lease is accepted, any event
+from the retired credential above that exact sequence/hash is inadmissible
+regardless of its claimed timestamp; the event at the cutoff must match the
+exact committed ID and hash.
 
-### 6.2 Per-incarnation sequence and causal order
+### 6.2 Per-operational-credential sequence and causal order
 
-Event sequence is one domain-specific counter per incarnation. It starts at
+Event sequence is one domain-specific counter per operational ID. It starts at
 zero and increments by exactly one. Sequence zero has a null
 `previous_event_id`. Every later event names the previous event from that
-incarnation, and that ID also appears in `causal_parents`.
+operational ID, and that ID also appears in `causal_parents`.
 
 `causal_parents` is the author's signed causal-provenance claim. The author MUST
 include every event it identifies as a direct observed cause, but a verifier
 cannot prove that no cause was omitted. Parents MAY be events of another `/me`
-or incarnation; each validates against its own genesis, control, certificate,
+or operational ID; each validates against its own genesis, control, certificate,
 and signature proof. Cross-`/me` causality grants no identity, scope, disclosure,
 or memory authority. The set is duplicate-free and capped at 64.
 
@@ -662,11 +757,12 @@ The physical component is informational and HLC order is a deterministic
 projection aid, not proof of real-world time or a substitute for causal parents.
 If a late predecessor/parent makes the signed tuple non-increasing, the event
 becomes invalid causal evidence and its dependent projections are quarantined;
-same-incarnation sequence equivocation still follows the fork rule below.
+same-operational-ID sequence equivocation still follows the fork rule below.
 
-Two different valid events with the same `(incarnation_id, event_sequence)` are
-an incarnation fork. A verifier quarantines both branches and descendants until
-the DM-010 root/recovery process resolves the incarnation. Longest chain,
+Two different valid events with the same `(operational_id, event_sequence)` are
+an operational fork. A verifier quarantines the `/me`, both branches, and their
+descendants until the DM-010 root/recovery process selects a cutoff and
+replacement credential. Longest chain,
 arrival order, wall clock, route, and host preference never choose a winner.
 
 ### 6.3 Validation and replay
@@ -686,13 +782,13 @@ Validation order is:
 
 The replay key is `(me_id,event_id)`. Identical canonical bytes are idempotent.
 The same ID with different bytes is a content-address conflict. The same
-incarnation/sequence with different IDs is a fork. A replay received through
+operational credential/sequence with different IDs is a fork. A replay received through
 another route or sealed delivery does not create another event.
 
 ## 7. Event checkpoint evidence
 
 An event checkpoint attests that a verifier or authorized witness claims to
-have accepted a specific incarnation event prefix by a stated local time. Its
+have accepted a specific operational credential event prefix by a stated local time. Its
 signature proves the source and coverage of that claim, not objective time.
 
 Its body has exactly:
@@ -700,7 +796,7 @@ Its body has exactly:
 ```text
 schema = "daimon-event-checkpoint/v0"
 subject_me_id
-subject_incarnation_id
+subject_operational_id
 subject_certificate_id
 high_water_sequence
 high_water_event_id
@@ -708,7 +804,7 @@ high_water_event_hash
 subject_identity_control_position = {recovery_generation, control_sequence,
                                      control_hash}
 witness_me_id
-witness_incarnation_id
+witness_operational_id
 witness_certificate_id
 witness_identity_control_position = {recovery_generation, control_sequence,
                                      control_hash}
@@ -720,13 +816,14 @@ with one `witness-authorization` signature. The complete subject prefix and
 subject certificate state validate relative to
 `subject_identity_control_position`. The witness certificate, subject
 acceptance, `event-checkpoint` signing purpose, and revocation state validate
-relative to `witness_identity_control_position`. The witness MUST differ from
-the subject incarnation. A root/recovery control artifact containing the same
+relative to `witness_identity_control_position`. A portable signed witness
+MUST be a distinct `me_id` from the subject; another credential of the same
+identity is not independent off-body evidence. A root/recovery control artifact containing the same
 subject high-water is authoritative checkpoint evidence without a separate
 witness artifact.
 
 The named high-water event MUST have exactly `subject_me_id`,
-`subject_incarnation_id`, and `subject_certificate_id` from the checkpoint body,
+`subject_operational_id`, and `subject_certificate_id` from the checkpoint body,
 and its recomputed sequence, event ID, and event hash MUST equal all three
 high-water fields. `accepted_at_ms` MUST fall within the subject certificate's
 validity interval for local or witness timeliness; that signed-time condition is
@@ -734,9 +831,9 @@ necessary but is not sufficient evidence of objective time. A checkpoint cannot
 pair an old event with a newer certificate or cross a certificate generation
 implicitly.
 
-A checkpoint covers only the subject incarnation's contiguous prefix obtained
+A checkpoint covers only the subject operational ID's contiguous prefix obtained
 by following `previous_event_id` back from the named high-water. A causal parent
-authored by another incarnation requires its own checkpoint evidence. The
+authored by another operational ID requires its own checkpoint evidence. The
 checkpoint does not make descendants timely. For an event first observed after
 its certificate expired, a verifier may establish timeliness from exactly one of:
 
@@ -748,7 +845,7 @@ The third result is `attested-timely`, not objective cryptographic time, and its
 proof bundle identifies the policy and witness checkpoint. With none of these,
 the signature remains attributable but the event is not automatically canonical
 lived experience. A newly seeded verifier MUST NOT treat any signed witness
-timestamp as trusted merely because the witness is another incarnation.
+timestamp as trusted merely because the witness is another operational ID.
 A checkpoint first observed only after the witness certificate expired is also
 attributable but not automatically portable time evidence without a prior local
 record or another policy-authorized time attestation.
@@ -765,12 +862,12 @@ schema = "daimon-sealed-event/v0"
 delivery_id = "dm:delivery:v0:" + 32-byte random base64url
 event_id
 event_hash
-sender = {me_id, incarnation_id, certificate_id, signing_kid}
+sender = {me_id, operational_id, certificate_id, signing_kid}
 disclosure_authorization_id = signed resolution/grant/event ID
 issued_at_ms
 expires_at_ms
 suite
-recipients = sorted [{me_id, incarnation_id, certificate_id,
+recipients = sorted [{me_id, operational_id, certificate_id,
                       encryption_kid, enc, wrapped_cek}]
 payload = {nonce, ciphertext}
 signature
@@ -781,7 +878,7 @@ identity/key descriptors, and without `payload`, HPKE `enc`/`wrapped_cek`, or
 `signature`. It therefore binds the delivery, inner event, sender, expiry,
 suite, and exact concrete recipient/key set.
 
-The recipient array contains from 1 through 256 unique certified incarnations;
+The recipient array contains from 1 through 256 unique certified operational credentials;
 duplicate recipient triples or encryption keys are rejected. The sender
 certificate requires `sealed-delivery` signing purpose and every recipient
 certificate requires `sealed-event-recipient` encryption purpose. Delivery TTL
@@ -793,7 +890,7 @@ Every delivery requires a DM-012/DM-016 signed resolution, grant, or event that
 binds the exact `event_id`, sender certificate/signing key, and concrete
 recipient certificate/encryption-key set; its ID is mandatory as
 `disclosure_authorization_id`. Author equality proves who sealed/authored data,
-not permission to disclose it. A different certified incarnation may reseal
+not permission to disclose it. A different certified operational credential may reseal
 only when that same evidence also authorizes forwarding. DM-011 does not invent
 the authority. Until it validates, a receiver MUST reject semantic processing
 even when signatures and decryption succeed. The inner event signature remains
@@ -824,7 +921,7 @@ ciphertext = ChaCha20Poly1305.encrypt(CEK, nonce,
 ```
 
 For each recipient, HPKE base-mode Seal encrypts the CEK to the X25519 public
-key in its currently valid incarnation certificate. HPKE uses empty AAD and:
+key in its currently valid operational credential certificate. HPKE uses empty AAD and:
 
 ```text
 hpke_info = UTF8("daimon/sealed-event/cek-wrap/v0") || 0x00 ||
@@ -901,11 +998,12 @@ Deterministic golden vectors cover:
 - strict JSON/JCS and canonical base64url;
 - Ed25519 seed-to-public-key;
 - genesis core to `me_id`;
-- incarnation input to `incarnation_id`;
+- operational input to `operational_id`;
 - certificate body to certificate ID/hash;
 - one valid signed wrapper for every identity domain;
 - genesis to root transition, recovery policy/transition, certificate,
-  acceptance, revocation, and lease linkage;
+  acceptance, revocation, identity-wide lease, external receipt, and park/wake
+  linkage;
 - event zero and a causal successor with exact JCS bytes, hash, ID, signature,
   HLC, parents, and message/thread intent;
 - checkpoint coverage and control high-water binding;
@@ -917,7 +1015,11 @@ whose decryption is normative; regeneration need not produce identical
 encapsulation/ciphertext. Independent implementations MUST additionally pass
 the RFC 9180 known-answer tests for the Section 3 suite.
 
-Negative vectors cover every DM-010 Section 13 scenario plus:
+Executable or explicitly documented entries cover every DM-010 Section 13
+scenario whose wire artifacts are frozen by DM-010/DM-011. Collective
+membership ceremony scenarios remain assigned to DM-012 rather than being
+simulated with transport or operational authority. The DM-011 negatives also
+cover:
 
 - escaped duplicate keys such as `"a"` plus `"\u0061"`, unknown properties,
   invalid UTF-8, float, negative zero, safe-integer exact boundaries, unsafe
@@ -930,12 +1032,16 @@ Negative vectors cover every DM-010 Section 13 scenario plus:
 - non-canonical Ed25519 `S`, invalid/small-order Ed25519 points, and X25519
   low-order/all-zero-DH inputs;
 - authorization signature used as possession proof or cross-domain replay;
-- reused public key across root, recovery, incarnation signing/encryption, or
-  transport roles, including two incarnation IDs claiming one signing key;
+- reused public key across root, recovery, operational signing/encryption, or
+  transport roles, including two operational IDs claiming one signing key;
 - certificate-generation gap, predecessor mismatch, fork, rollback, and replay
   of an older broader certificate after renewal;
 - a certificate simultaneously preserved and effectively revoked by one
   recovery transition;
+- lease sequence reset after operational rotation, unreceipted wake, wrong
+  receipt binding or witness, conflicting receipt-bearing body successors, and
+  old-credential lease/event evidence after the accepted handoff cutoff;
+- an operational certificate attempting to grant `/we` membership authority;
 - known event sequence gap, wrong known predecessor, missing local predecessor
   from causal parents, HLC regression, duplicate parents, and more than 64
   parents; out-of-order unknown predecessors produce `incomplete`, not reject;
@@ -947,7 +1053,7 @@ Negative vectors cover every DM-010 Section 13 scenario plus:
 - post-expiry event not covered by a pre-expiry checkpoint is not timely;
 - checkpoint claiming a descendant beyond its high-water does not cover it;
 - checkpoint certificate, ID, hash, or sequence mismatch is rejected;
-- subject checkpoint does not cover another incarnation merely because its
+- subject checkpoint does not cover another operational ID merely because its
   event is a causal parent;
 - witness checkpoint first seen after expiry without explicit attestor policy
   remains attributable but not timely;
@@ -967,8 +1073,9 @@ Negative vectors cover every DM-010 Section 13 scenario plus:
 - retired/revoked sender or recipient certificate/key and control-head rollback;
 - same inner event re-encrypted under a new delivery remains one event.
 
-Stable validation outcomes are `accept`, `attested-timely`, `idempotent`,
-`incomplete`, `expired`, `revoked`, `quarantined`, and `unverifiable`.
+Stable validation outcomes are `accept`, `uncommitted`, `committed`,
+`attested-timely`, `idempotent`, `incomplete`, `expired`, `revoked`,
+`quarantined`, and `unverifiable`.
 Implementations MAY expose local diagnostic subcodes, but V0 does not claim an
 interoperable exhaustive reason-code registry. Remote errors MUST NOT expose
 identity membership to an unauthorized caller.
@@ -1003,13 +1110,13 @@ V0 explicitly rejects or leaves behind:
 - DM-013 through DM-017 define the payload schemas for birth, species, source,
   tribe, and memory-boundary events and decide which accepted events represent
   lived experience, consolidation, or another semantic class.
-- DM-018 freezes the canonical embodiment-description body and adapter bindings.
+- DM-018 freezes the canonical body-description body and adapter bindings.
 - DM-021 implements identity artifact validation and key custody.
 - DM-022 stores canonical event bytes and intrinsic replay/fork evidence without
   rewriting.
 - DM-023 manages contextual completeness, checkpoint availability, projections,
   cursors, and idempotent `/we.sync` convergence. It never changes event IDs,
-  invents embodiment provenance, or turns cryptographic acceptance into semantic
+  invents body provenance, or turns cryptographic acceptance into semantic
   admission.
 - DM-050 and DM-051 adapt Tribe routing and recipient encryption to sealed
   deliveries without importing Tribe authority.

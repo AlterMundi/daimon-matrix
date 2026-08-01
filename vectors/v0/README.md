@@ -15,7 +15,7 @@ ciphertext.
   normative `rationale`.
 - `keys.json` — all synthetic test keys, including private material so
   implementations can exercise decryption.  Not secrets.
-- `fixtures/` — x/test placeholder embodiment/capability bodies (DM-018
+- `fixtures/` — x/test placeholder body/capability bodies (DM-018
   freezes the normative bodies; their hashes follow the current formulas).
 - `me1/`, `me2/` — identity-control chains, certificates, acceptances,
   lease, events, checkpoint, sealed deliveries.

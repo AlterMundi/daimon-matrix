@@ -56,9 +56,10 @@ SIGNATURE_ROLES = {
         "root-authorization", "recovery-authorization",
         "recovery-possession"},
     "daimon/revocation/v0": {"root-authorization"},
-    "daimon/incarnation-certificate/v0": {"root-authorization"},
-    "daimon/incarnation-acceptance/v0": {"subject-acceptance"},
-    "daimon/presence-lease/v0": {"incarnation-authorization"},
+    "daimon/operational-certificate/v0": {"root-authorization"},
+    "daimon/operational-acceptance/v0": {"subject-acceptance"},
+    "daimon/presence-lease/v0": {"operational-authorization"},
+    "daimon/lease-head-receipt/v0": {"witness-authorization"},
     "daimon/event-checkpoint/v0": {"witness-authorization"},
 }
 
@@ -67,16 +68,17 @@ DOM = {
     "root-transition": "daimon/root-transition/v0",
     "recovery-transition": "daimon/recovery-transition/v0",
     "recovery-policy": "daimon/recovery-policy/v0",
-    "certificate": "daimon/incarnation-certificate/v0",
-    "acceptance": "daimon/incarnation-acceptance/v0",
+    "certificate": "daimon/operational-certificate/v0",
+    "acceptance": "daimon/operational-acceptance/v0",
     "revocation": "daimon/revocation/v0",
     "lease": "daimon/presence-lease/v0",
+    "lease-receipt": "daimon/lease-head-receipt/v0",
     "event": "daimon/event/v0",
     "checkpoint": "daimon/event-checkpoint/v0",
     "sealed": "daimon/sealed-event/v0",
     "sealed-aad": "daimon/sealed-event/payload-aad/v0",
     "sealed-cek": "daimon/sealed-event/cek-wrap/v0",
-    "incarnation-id": "daimon/incarnation-id/v0",
+    "operational-id": "daimon/operational-id/v0",
 }
 
 EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$")
@@ -84,17 +86,17 @@ PREFIX_RE = re.compile(r"^[a-z][a-z0-9./-]*$")
 
 REVOCATION_REASONS = {
     "planned-rotation", "key-retired", "key-compromise", "key-loss",
-    "incarnation-fork", "policy-violation", "operator-request", "unspecified",
+    "operational-fork", "policy-violation", "operator-request", "unspecified",
 }
 REVOCATION_KINDS = {
-    "certificate", "incarnation-signing-key", "incarnation-encryption-key",
+    "certificate", "operational-signing-key", "operational-encryption-key",
     "root-key", "recovery-key", "certificates-from-control-cutoff",
 }
 SIGNING_PURPOSES = {"event", "presence-lease", "event-checkpoint",
+                    "lease-head-receipt",
                     "sealed-delivery"}
 ENCRYPTION_PURPOSES = {"sealed-event-recipient"}
 ROUTE_KINDS = {"local", "direct", "hub"}
-HIGH_WATER_DOMAINS = {"event", "presence-lease"}
 
 
 class Reject(Exception):
@@ -595,26 +597,41 @@ def position_of(wrapper):
     return (b["recovery_generation"], b["control_sequence"])
 
 
-def validate_high_waters(hws):
+def validate_event_high_waters(hws):
     if not isinstance(hws, list) or len(hws) > 1024:
-        raise Reject("high-water array out of bounds")
+        raise Reject("event high-water array out of bounds")
     keys = []
     for hw in hws:
-        require_keys(hw, ["artifact_hash", "domain", "incarnation_id",
-                          "sequence"], "high-water entry")
-        typed_id(hw["incarnation_id"], "dm:inc:v0:")
-        if hw["domain"] not in HIGH_WATER_DOMAINS:
-            raise Reject("unknown high-water domain")
+        require_keys(hw, ["event_hash", "event_id", "operational_id",
+                          "sequence"], "event high-water entry")
+        typed_id(hw["operational_id"], "dm:op:v0:")
         require_uint(hw["sequence"], "high-water sequence")
-        ub64(hw["artifact_hash"], 32)
-        keys.append((hw["incarnation_id"], hw["domain"]))
+        typed_id(hw["event_id"], "dm:event:v0:")
+        ub64(hw["event_hash"], 32)
+        if hw["event_id"] != "dm:event:v0:" + hw["event_hash"]:
+            raise Reject("event high-water ID/hash mismatch")
+        keys.append(hw["operational_id"])
     if keys != sorted(keys) or len(set(keys)) != len(keys):
-        raise Reject("high-water entries not sorted or repeated pair")
+        raise Reject("event high-waters not sorted or repeated")
+
+
+def validate_lease_high_water(hw):
+    if hw is None:
+        return
+    require_keys(hw, ["commit_receipt_id", "lease_hash", "lease_id",
+                      "lease_sequence"], "lease high-water")
+    require_uint(hw["lease_sequence"], "lease high-water sequence")
+    typed_id(hw["lease_id"], "dm:lease:v0:")
+    ub64(hw["lease_hash"], 32)
+    if hw["lease_id"] != "dm:lease:v0:" + hw["lease_hash"]:
+        raise Reject("lease high-water ID/hash mismatch")
+    typed_id(hw["commit_receipt_id"], "dm:lease-receipt:v0:")
 
 
 def validate_revocation_entry(entry, st=None, known_control_positions=None,
                               what="revocation entry"):
-    require_keys(entry, ["effective", "high_waters", "reason",
+    require_keys(entry, ["effective", "event_high_waters",
+                         "lease_high_water", "reason",
                          "replacement_artifact_id", "target"], what)
     if entry["reason"] not in REVOCATION_REASONS:
         raise Reject("%s: unregistered reason code" % what)
@@ -626,9 +643,9 @@ def validate_revocation_entry(entry, st=None, known_control_positions=None,
         typed_id(t["id"], "dm:cert:v0:")
         if t["kid"] is not None:
             raise Reject("certificate target must have null kid")
-    elif t["kind"] in ("incarnation-signing-key",
-                       "incarnation-encryption-key"):
-        typed_id(t["id"], "dm:inc:v0:")
+    elif t["kind"] in ("operational-signing-key",
+                       "operational-encryption-key"):
+        typed_id(t["id"], "dm:op:v0:")
         typed_id(t["kid"], "dm:key:v0:")
     elif t["kind"] in ("root-key", "recovery-key"):
         typed_id(t["id"], "dm:ctl:v0:")
@@ -668,7 +685,8 @@ def validate_revocation_entry(entry, st=None, known_control_positions=None,
             raise Reject("prior control position is not on the accepted chain")
     else:
         raise Reject("unknown effective mode")
-    validate_high_waters(entry["high_waters"])
+    validate_event_high_waters(entry["event_high_waters"])
+    validate_lease_high_water(entry["lease_high_water"])
     if (entry["replacement_artifact_id"] is not None
             and not isinstance(entry["replacement_artifact_id"], str)):
         raise Reject("bad replacement reference")
@@ -929,7 +947,8 @@ def validate_recovery_transition(wrapper, st, known_competing_heads=None,
     new_root = validate_threshold_set(b["post_recovery_root"],
                                       "post-recovery root")
     comp = b["compromise"]
-    require_keys(comp, ["control_cutoff", "incarnation_high_waters", "mode",
+    require_keys(comp, ["control_cutoff", "event_high_waters",
+                        "lease_high_water", "mode",
                         "preserved_certificate_ids"], "compromise")
     if comp["mode"] not in ("none", "suspected", "confirmed"):
         raise Reject("unknown compromise mode")
@@ -969,7 +988,8 @@ def validate_recovery_transition(wrapper, st, known_competing_heads=None,
         raise Reject("preserved certificate IDs not sorted and unique")
     for i in comp["preserved_certificate_ids"]:
         typed_id(i, "dm:cert:v0:")
-    validate_high_waters(comp["incarnation_high_waters"])
+    validate_event_high_waters(comp["event_high_waters"])
+    validate_lease_high_water(comp["lease_high_water"])
     revs = b["revocations"]
     if not isinstance(revs, list) or len(revs) > 256:
         raise Reject("revocation array exceeds the bound of 256")
@@ -1056,11 +1076,11 @@ def validate_control(wrapper, st, known_competing_heads=None,
 class CertRegistry:
     def __init__(self):
         self.certs = {}              # certificate_id -> validated record
-        self.by_incarnation = {}     # incarnation_id -> {generation: id}
-        self.signing_key_owner = {}  # signing public key -> incarnation_id
+        self.by_operational = {}     # operational_id -> {generation: id}
+        self.signing_key_owner = {}  # signing public key -> operational_id
         self.revoked_cert_ids = set()
         self.accepted_cert_ids = set()
-        self.accepted_by_incarnation = {}  # incarnation -> {generation: id}
+        self.accepted_by_operational = {}  # operational -> {generation: id}
 
 
 def validate_certificate(wrapper, st, registry):
@@ -1077,36 +1097,36 @@ def validate_certificate(wrapper, st, registry):
                       SIGNATURE_ROLES[DOM["certificate"]])
     require_keys(b, ["certificate_generation", "certificate_nonce",
                      "constraints", "encryption_key", "expires_at_ms",
-                     "incarnation_id", "incarnation_nonce",
-                     "initial_embodiment_hash", "issued_at_ms",
+                     "operational_id", "operational_nonce",
+                     "initial_body_hash", "issued_at_ms",
                      "issuing_control_position", "issuing_root_kids",
                      "me_id", "not_before_ms", "previous_certificate_id",
                      "purposes", "schema", "signing_key"],
                  "certificate body")
-    if b["schema"] != "daimon-incarnation-certificate/v0":
+    if b["schema"] != "daimon-operational-certificate/v0":
         raise Reject("certificate schema mismatch")
     if b["me_id"] != st.me_id:
         raise Reject("certificate me_id mismatch")
-    ub64(b["incarnation_nonce"], 32)
+    ub64(b["operational_nonce"], 32)
     ub64(b["certificate_nonce"], 32)
     sign_pub = validate_descriptor(b["signing_key"], "Ed25519")
     enc_pub = validate_descriptor(b["encryption_key"], "X25519")
     if sign_pub == enc_pub:
         raise Reject("signing and encryption keys must be distinct")
     if sign_pub in st.root_recovery_pubs or enc_pub in st.root_recovery_pubs:
-        raise Reject("public key reused across root/recovery/incarnation "
+        raise Reject("public key reused across root/recovery/operational "
                      "roles")
-    inc_pre = DOM["incarnation-id"].encode("utf-8") + b"\x00" + jcs({
-        "incarnation_nonce": b["incarnation_nonce"],
+    operational_pre = DOM["operational-id"].encode("utf-8") + b"\x00" + jcs({
+        "operational_nonce": b["operational_nonce"],
         "me_id": b["me_id"],
         "signing_key": b["signing_key"],
     })
-    inc_id = "dm:inc:v0:" + b64e(sha256(inc_pre))
-    if b["incarnation_id"] != inc_id:
-        raise Reject("derived incarnation_id mismatch")
+    operational_id = "dm:op:v0:" + b64e(sha256(operational_pre))
+    if b["operational_id"] != operational_id:
+        raise Reject("derived operational_id mismatch")
     owner = registry.signing_key_owner.get(sign_pub)
-    if owner is not None and owner != inc_id:
-        raise Reject("one signing key claimed by two incarnation IDs")
+    if owner is not None and owner != operational_id:
+        raise Reject("one signing key claimed by two operational IDs")
     pos = b["issuing_control_position"]
     require_keys(pos, ["control_hash", "control_sequence",
                        "recovery_generation"], "issuing control position")
@@ -1124,13 +1144,10 @@ def validate_certificate(wrapper, st, registry):
     epoch_set, epoch_threshold = epoch
     if b["issuing_root_kids"] != sorted(epoch_set.keys()):
         raise Reject("issuing_root_kids is not the complete active root set")
-    # A certificate issued under a superseded root epoch is valid only if a
-    # later rotation explicitly carried it forward (which can only name
-    # certificates existing at the rotation), so a newly issued certificate
-    # under an old root is rejected whenever its epoch was closed.
-    last_epoch_position = st.root_epochs[-1][0]
-    if position < last_epoch_position:
-        raise Reject("certificate issued under a superseded root epoch")
+    # A certificate issued under an older root epoch remains valid only when
+    # every later transition explicitly carried its exact pre-existing ID.
+    # The disposition checks below reject backdated post-rotation issuance,
+    # because such an ID could not have appeared in the signed transition.
     for (inv_pos, mode, carried) in st.invalidations:
         if position < inv_pos and mode == "invalidate_all":
             raise Reject("issuing root's certificates were invalidated")
@@ -1143,7 +1160,7 @@ def validate_certificate(wrapper, st, registry):
         raise Reject("certificate lacks the issuing root threshold")
     gen = b["certificate_generation"]
     require_uint(gen, "certificate generation")
-    known = registry.by_incarnation.setdefault(inc_id, {})
+    known = registry.by_operational.setdefault(operational_id, {})
     if gen == 0:
         if b["previous_certificate_id"] is not None:
             raise Reject("generation zero requires a null predecessor")
@@ -1152,7 +1169,7 @@ def validate_certificate(wrapper, st, registry):
         if prev_id is None or known.get(gen - 1) != prev_id:
             raise Reject("certificate predecessor mismatch or generation gap")
     if gen in known and known[gen] != cert_id:
-        raise Reject("certificate fork at one incarnation/generation")
+        raise Reject("certificate fork at one operational/generation")
     purposes = b["purposes"]
     require_keys(purposes, ["encryption", "signing"], "certificate purposes")
     if purposes["signing"] != sorted(purposes["signing"]) or \
@@ -1186,18 +1203,18 @@ def validate_certificate(wrapper, st, registry):
     lifetime = b["expires_at_ms"] - b["not_before_ms"]
     if lifetime > st.policy["max_certificate_lifetime_ms"]:
         raise Reject("certificate exceeds the maximum lifetime")
-    if b["initial_embodiment_hash"] is not None:
-        ub64(b["initial_embodiment_hash"], 32)
+    if b["initial_body_hash"] is not None:
+        ub64(b["initial_body_hash"], 32)
     record = {
         "certificate_id": cert_id, "hash": b64e(digest), "body": b,
-        "incarnation_id": inc_id, "me_id": b["me_id"],
+        "operational_id": operational_id, "me_id": b["me_id"],
         "generation": gen, "signing_kid": b["signing_key"]["kid"],
         "signing_pub": sign_pub, "encryption_kid": b["encryption_key"]["kid"],
         "encryption_pub": enc_pub,
     }
     registry.certs[cert_id] = record
     known[gen] = cert_id
-    registry.signing_key_owner[sign_pub] = inc_id
+    registry.signing_key_owner[sign_pub] = operational_id
     return record
 
 
@@ -1205,18 +1222,18 @@ def validate_acceptance(wrapper, registry):
     raw = validate_wrapper(wrapper, DOM["acceptance"], "dm:accept:v0:",
                            "acceptance")
     b = wrapper["body"]
-    require_keys(b, ["certificate_hash", "certificate_id", "incarnation_id",
+    require_keys(b, ["certificate_hash", "certificate_id", "operational_id",
                      "me_id", "schema"], "acceptance body")
-    if b["schema"] != "daimon-incarnation-acceptance/v0":
+    if b["schema"] != "daimon-operational-acceptance/v0":
         raise Reject("acceptance schema mismatch")
     cert = registry.certs.get(b["certificate_id"])
     if cert is None:
         raise Reject("acceptance names an unknown certificate")
     if b["certificate_hash"] != cert["hash"]:
         raise Reject("acceptance names another certificate hash")
-    if b["incarnation_id"] != cert["incarnation_id"] \
+    if b["operational_id"] != cert["operational_id"] \
             or b["me_id"] != cert["me_id"]:
-        raise Reject("acceptance names another incarnation or /me")
+        raise Reject("acceptance names another operational or /me")
     sigs = wrapper["signatures"]
     if len(sigs) != 1 or sigs[0]["role"] != "subject-acceptance":
         raise Reject("acceptance requires one subject-acceptance signature")
@@ -1225,8 +1242,8 @@ def validate_acceptance(wrapper, registry):
     sig = validate_sig_record(sigs[0])
     ed25519_verify(cert["signing_pub"], sig,
                    artifact_preimage(DOM["acceptance"], b))
-    accepted = registry.accepted_by_incarnation.setdefault(
-        cert["incarnation_id"], {})
+    accepted = registry.accepted_by_operational.setdefault(
+        cert["operational_id"], {})
     generation = cert["generation"]
     if generation > 0 and accepted.get(generation - 1) != \
             cert["body"]["previous_certificate_id"]:
@@ -1243,10 +1260,12 @@ def validate_acceptance(wrapper, registry):
 def validate_lease(wrapper, registry, st, at_ms=None):
     raw = validate_wrapper(wrapper, DOM["lease"], "dm:lease:v0:", "lease")
     b = wrapper["body"]
-    require_keys(b, ["capability_hash", "certificate_id", "embodiment_hash",
-                     "expires_at_ms", "incarnation_id", "issued_at_ms",
+    require_keys(b, ["capability_hash", "certificate_id", "body_hash",
+                     "expires_at_ms", "operational_id", "issued_at_ms",
                      "lease_sequence", "me_id", "previous_lease_hash",
-                     "routes", "schema", "session_id",
+                     "previous_lease_receipt_id", "routes", "schema",
+                     "session_id", "superseded_event_cutoff",
+                     "supersedes_operational_id",
                      "supersedes_session_id"], "lease body")
     if b["schema"] != "daimon-presence-lease/v0":
         raise Reject("lease schema mismatch")
@@ -1257,25 +1276,45 @@ def validate_lease(wrapper, registry, st, at_ms=None):
         raise Reject("lease certificate lacks subject acceptance")
     if cert["certificate_id"] in registry.revoked_cert_ids:
         raise Reject("lease certificate is revoked")
-    accepted_generations = registry.accepted_by_incarnation.get(
-        cert["incarnation_id"], {})
+    accepted_generations = registry.accepted_by_operational.get(
+        cert["operational_id"], {})
     if cert["generation"] < max(accepted_generations):
         raise Reject("superseded certificate generation cannot issue leases")
-    if b["incarnation_id"] != cert["incarnation_id"] \
+    if b["operational_id"] != cert["operational_id"] \
             or b["me_id"] != cert["me_id"]:
-        raise Reject("lease names another incarnation")
+        raise Reject("lease names another operational")
     if "presence-lease" not in cert["body"]["purposes"]["signing"]:
         raise Reject("certificate lacks the presence-lease purpose")
     ub64(b["session_id"], 32)
     if b["supersedes_session_id"] is not None:
         ub64(b["supersedes_session_id"], 32)
+    if b["supersedes_operational_id"] is not None:
+        typed_id(b["supersedes_operational_id"], "dm:op:v0:")
     require_uint(b["lease_sequence"], "lease sequence")
     if b["lease_sequence"] == 0:
-        if b["previous_lease_hash"] is not None:
-            raise Reject("first lease must have a null predecessor")
+        if any(value is not None for value in (
+                b["previous_lease_hash"], b["previous_lease_receipt_id"],
+                b["supersedes_session_id"],
+                b["supersedes_operational_id"],
+                b["superseded_event_cutoff"])):
+            raise Reject("first identity lease must have null handoff fields")
     else:
         ub64(b["previous_lease_hash"], 32)
-    ub64(b["embodiment_hash"], 32)
+        typed_id(b["previous_lease_receipt_id"],
+                 "dm:lease-receipt:v0:")
+    cutoff = b["superseded_event_cutoff"]
+    if cutoff is not None:
+        require_keys(cutoff, ["certificate_id", "checkpoint_id",
+                              "event_hash", "event_id", "event_sequence",
+                              "operational_id"],
+                     "superseded event cutoff")
+        typed_id(cutoff["operational_id"], "dm:op:v0:")
+        typed_id(cutoff["certificate_id"], "dm:cert:v0:")
+        require_uint(cutoff["event_sequence"], "cutoff event sequence")
+        typed_id(cutoff["event_id"], "dm:event:v0:")
+        ub64(cutoff["event_hash"], 32)
+        typed_id(cutoff["checkpoint_id"], "dm:checkpoint:v0:")
+    ub64(b["body_hash"], 32)
     ub64(b["capability_hash"], 32)
     routes = b["routes"]
     if not isinstance(routes, list) or len(routes) > 64:
@@ -1307,13 +1346,109 @@ def validate_lease(wrapper, registry, st, at_ms=None):
                 < min(b["expires_at_ms"], cert["body"]["expires_at_ms"]):
             raise Reject("lease is not live at the injected verification time")
     sigs = wrapper["signatures"]
-    if len(sigs) != 1 or sigs[0]["role"] != "incarnation-authorization":
-        raise Reject("lease requires one incarnation-authorization signature")
+    if len(sigs) != 1 or sigs[0]["role"] != "operational-authorization":
+        raise Reject("lease requires one operational-authorization signature")
     if sigs[0]["kid"] != cert["signing_kid"]:
         raise Reject("lease not signed by the certificate's key")
     sig = validate_sig_record(sigs[0])
     ed25519_verify(cert["signing_pub"], sig,
                    artifact_preimage(DOM["lease"], b))
+    return True
+
+
+def validate_lease_receipt(wrapper, registry, states, leases, checkpoints,
+                           event_index, trusted_witnesses):
+    validate_wrapper(wrapper, DOM["lease-receipt"],
+                     "dm:lease-receipt:v0:", "lease-head receipt")
+    b = wrapper["body"]
+    require_keys(b, ["accepted_at_ms", "body_hash", "certificate_id",
+                     "event_cutoff", "lease_hash", "lease_id",
+                     "lease_sequence", "operational_id", "schema",
+                     "session_id", "subject_identity_control_position",
+                     "subject_me_id", "witness_certificate_id",
+                     "witness_identity_control_position",
+                     "witness_me_id", "witness_operational_id"],
+                 "lease-head receipt body")
+    if b["schema"] != "daimon-lease-head-receipt/v0":
+        raise Reject("lease-head receipt schema mismatch")
+    lease = leases.get(b["lease_id"])
+    if lease is None:
+        raise Incomplete("receipt lease evidence unavailable")
+    lb = lease["body"]
+    subject_state = states.get(b["subject_me_id"])
+    witness_state = states.get(b["witness_me_id"])
+    if subject_state is None or witness_state is None:
+        raise Incomplete("receipt identity-control evidence unavailable")
+    validate_lease(lease, registry, subject_state)
+    expected = {
+        "subject_me_id": lb["me_id"],
+        "lease_id": lease["artifact_id"],
+        "lease_hash": lease["artifact_hash"],
+        "lease_sequence": lb["lease_sequence"],
+        "session_id": lb["session_id"],
+        "operational_id": lb["operational_id"],
+        "certificate_id": lb["certificate_id"],
+        "body_hash": lb["body_hash"],
+    }
+    for key, value in expected.items():
+        if b[key] != value:
+            raise Reject("receipt does not bind the exact lease " + key)
+    _validate_control_position(b["subject_identity_control_position"],
+                               subject_state, "receipt subject control")
+    _validate_control_position(b["witness_identity_control_position"],
+                               witness_state, "receipt witness control")
+    if b["witness_me_id"] == b["subject_me_id"]:
+        raise Reject("lease-head witness must be a distinct /me")
+    witness_cert = registry.certs.get(b["witness_certificate_id"])
+    if witness_cert is None or witness_cert["certificate_id"] not in \
+            registry.accepted_cert_ids:
+        raise Reject("receipt witness certificate is not accepted")
+    if witness_cert["certificate_id"] in registry.revoked_cert_ids:
+        raise Reject("receipt witness certificate is revoked")
+    if b["witness_me_id"] != witness_cert["me_id"] or \
+            b["witness_operational_id"] != witness_cert["operational_id"]:
+        raise Reject("receipt witness identity mismatch")
+    if "lease-head-receipt" not in \
+            witness_cert["body"]["purposes"]["signing"]:
+        raise Reject("witness lacks lease-head-receipt purpose")
+    if b["witness_operational_id"] not in trusted_witnesses:
+        raise Reject("witness is not designated by local wake policy")
+    require_uint(b["accepted_at_ms"], "receipt acceptance time")
+    if not lb["issued_at_ms"] <= b["accepted_at_ms"] < lb["expires_at_ms"]:
+        raise Reject("receipt time falls outside the lease interval")
+    if not witness_cert["body"]["not_before_ms"] <= b["accepted_at_ms"] \
+            < witness_cert["body"]["expires_at_ms"]:
+        raise Reject("receipt time falls outside witness certificate")
+    cutoff = b["event_cutoff"]
+    if cutoff is not None:
+        require_keys(cutoff, ["certificate_id", "checkpoint_id",
+                              "event_hash", "event_id", "event_sequence",
+                              "operational_id"], "receipt event cutoff")
+        checkpoint = checkpoints.get(cutoff["checkpoint_id"])
+        event = event_index.get(cutoff["event_id"])
+        if checkpoint is None or event is None:
+            raise Incomplete("receipt cutoff evidence unavailable")
+        validate_checkpoint(checkpoint, registry, states, event_index)
+        cb = checkpoint["body"]
+        eb = event["body"]
+        if cutoff != {
+                "operational_id": eb["operational_id"],
+                "certificate_id": eb["certificate_id"],
+                "event_sequence": eb["event_sequence"],
+                "event_id": event["event_id"],
+                "event_hash": event["event_hash"],
+                "checkpoint_id": checkpoint["artifact_id"]}:
+            raise Reject("receipt event cutoff does not bind exact evidence")
+        if cb["high_water_event_id"] != cutoff["event_id"]:
+            raise Reject("receipt cutoff is outside its checkpoint")
+    sigs = wrapper["signatures"]
+    if len(sigs) != 1 or sigs[0]["role"] != "witness-authorization":
+        raise Reject("receipt requires one witness signature")
+    if sigs[0]["kid"] != witness_cert["signing_kid"]:
+        raise Reject("receipt not signed by its witness certificate")
+    ed25519_verify(witness_cert["signing_pub"],
+                   validate_sig_record(sigs[0]),
+                   artifact_preimage(DOM["lease-receipt"], b))
     return True
 
 
@@ -1325,16 +1460,16 @@ def validate_event_structure(wrapper):
     require_keys(wrapper, ["body", "event_hash", "event_id", "signature"],
                  "event wrapper")
     b = wrapper["body"]
-    require_keys(b, ["causal_parents", "certificate_id", "embodiment_hash",
+    require_keys(b, ["causal_parents", "certificate_id", "body_hash",
                      "event_nonce", "event_sequence", "event_type",
-                     "incarnation_id", "intent", "logical_time", "me_id",
+                     "operational_id", "intent", "logical_time", "me_id",
                      "payload", "previous_event_id", "schema"],
                  "event body")
     if b["schema"] != "daimon-event/v0":
         raise Reject("event schema mismatch")
     ub64(b["event_nonce"], 32)
     typed_id(b["me_id"], "dm:me:v0:")
-    typed_id(b["incarnation_id"], "dm:inc:v0:")
+    typed_id(b["operational_id"], "dm:op:v0:")
     typed_id(b["certificate_id"], "dm:cert:v0:")
     seq = b["event_sequence"]
     if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
@@ -1355,7 +1490,7 @@ def validate_event_structure(wrapper):
         raise Reject("causal parents unsorted or duplicated")
     for p in parents:
         typed_id(p, "dm:event:v0:")
-    ub64(b["embodiment_hash"], 32)
+    ub64(b["body_hash"], 32)
     et = b["event_type"]
     if not isinstance(et, str) or not 1 <= len(et) <= 128 \
             or not EVENT_TYPE_RE.match(et):
@@ -1374,17 +1509,18 @@ def validate_event_structure(wrapper):
         raise Reject("derived event ID mismatch")
     sig = wrapper["signature"]
     validate_sig_record(sig)
-    if sig["role"] != "incarnation-authorization":
+    if sig["role"] != "operational-authorization":
         raise Reject("event signature role mismatch")
     return raw
 
 
 def validate_event_contextual(wrapper, registry, known_events,
-                              revoked_cert_ids=(), verify_signature=True):
+                              revoked_cert_ids=(), verify_signature=True,
+                              superseded_cutoffs=None):
     """Validate an event against available evidence.
 
-    ``known_events`` maps event IDs to
-    ``(sequence, physical_ms, counter, context_complete)``.  Merely having
+    ``known_events`` maps event IDs to ``(sequence, physical_ms, counter,
+    context_complete, me_id, operational_id, certificate_id)``. Merely having
     bytes for a predecessor is not enough: an incomplete ancestor propagates
     ``Incomplete`` and cannot make a descendant projectable.
     """
@@ -1399,17 +1535,17 @@ def validate_event_contextual(wrapper, registry, known_events,
     revoked.update(revoked_cert_ids)
     if b["certificate_id"] in revoked:
         raise Reject("event under a revoked certificate")
-    accepted_generations = registry.accepted_by_incarnation.get(
-        cert["incarnation_id"], {})
+    accepted_generations = registry.accepted_by_operational.get(
+        cert["operational_id"], {})
     if not accepted_generations:
-        raise Reject("event incarnation has no accepted certificate")
+        raise Reject("event operational has no accepted certificate")
     highest = max(accepted_generations)
     if cert["generation"] < highest:
         raise Reject("a superseded certificate generation cannot authorize "
                      "new events")
-    if b["incarnation_id"] != cert["incarnation_id"] \
+    if b["operational_id"] != cert["operational_id"] \
             or b["me_id"] != cert["me_id"]:
-        raise Reject("event names another incarnation")
+        raise Reject("event names another operational")
     if "event" not in cert["body"]["purposes"]["signing"]:
         raise Reject("certificate lacks the event signing purpose")
     prefixes = cert["body"]["constraints"]["event_type_prefixes"]
@@ -1421,6 +1557,14 @@ def validate_event_contextual(wrapper, registry, known_events,
     if verify_signature:
         ed25519_verify(cert["signing_pub"], ub64(sig["value"], 64),
                        artifact_preimage(DOM["event"], b))
+    if superseded_cutoffs and b["operational_id"] in superseded_cutoffs:
+        cutoff = superseded_cutoffs[b["operational_id"]]
+        if b["event_sequence"] > cutoff["event_sequence"]:
+            raise Reject("event is beyond the accepted park/wake cutoff")
+        if b["event_sequence"] == cutoff["event_sequence"] and \
+                (wrapper["event_id"] != cutoff["event_id"] or
+                 wrapper["event_hash"] != cutoff["event_hash"]):
+            raise Reject("event conflicts at the accepted park/wake cutoff")
     seq = b["event_sequence"]
     lt = (b["logical_time"]["physical_ms"], b["logical_time"]["counter"])
     if seq > 0:
@@ -1431,6 +1575,8 @@ def validate_event_contextual(wrapper, registry, known_events,
             raise Incomplete("predecessor has incomplete ancestry")
         if prev[0] != seq - 1:
             raise Reject("known predecessor with a wrong sequence increment")
+        if prev[4] != b["me_id"] or prev[5] != b["operational_id"]:
+            raise Reject("previous_event_id crosses an operational stream")
         if b["previous_event_id"] not in b["causal_parents"]:
             raise Reject("local predecessor missing from causal parents")
         if (prev[1], prev[2]) >= lt:
@@ -1444,6 +1590,13 @@ def validate_event_contextual(wrapper, registry, known_events,
         if (parent[1], parent[2]) >= lt:
             raise Reject("HLC regression against a known causal parent")
     return True
+
+
+def event_context_tuple(wrapper, complete):
+    b = wrapper["body"]
+    return (b["event_sequence"], b["logical_time"]["physical_ms"],
+            b["logical_time"]["counter"], complete, b["me_id"],
+            b["operational_id"], b["certificate_id"])
 
 
 def known_events_map(paths, registry=None):
@@ -1469,10 +1622,7 @@ def known_events_map(paths, registry=None):
                 validate_event_contextual(wrapper, registry, out)
             except Incomplete:
                 continue
-            b = wrapper["body"]
-            out[event_id] = (
-                b["event_sequence"], b["logical_time"]["physical_ms"],
-                b["logical_time"]["counter"], True)
+            out[event_id] = event_context_tuple(wrapper, True)
             del pending[event_id]
             progressed = True
         if not progressed:
@@ -1483,10 +1633,7 @@ def known_events_map(paths, registry=None):
         try:
             validate_event_contextual(wrapper, registry, out)
         except Incomplete:
-            b = wrapper["body"]
-            out[event_id] = (
-                b["event_sequence"], b["logical_time"]["physical_ms"],
-                b["logical_time"]["counter"], False)
+            out[event_id] = event_context_tuple(wrapper, False)
         else:
             raise AssertionError("event became complete outside fixpoint")
     return out
@@ -1506,7 +1653,7 @@ def _validate_control_position(pos, st, what):
         raise Reject("%s names a position off the accepted chain" % what)
 
 
-def validate_checkpoint(wrapper, registry, st, event_index):
+def validate_checkpoint(wrapper, registry, states, event_index):
     """event_index: {event_id: validated event wrapper}."""
     raw = validate_wrapper(wrapper, DOM["checkpoint"], "dm:checkpoint:v0:",
                            "checkpoint")
@@ -1515,13 +1662,17 @@ def validate_checkpoint(wrapper, registry, st, event_index):
                      "high_water_event_id", "high_water_sequence", "schema",
                      "subject_certificate_id",
                      "subject_identity_control_position",
-                     "subject_incarnation_id", "subject_me_id",
+                     "subject_operational_id", "subject_me_id",
                      "witness_certificate_id",
                      "witness_identity_control_position",
-                     "witness_incarnation_id", "witness_me_id"],
+                     "witness_operational_id", "witness_me_id"],
                  "checkpoint body")
     if b["schema"] != "daimon-event-checkpoint/v0":
         raise Reject("checkpoint schema mismatch")
+    subject_state = states.get(b["subject_me_id"])
+    witness_state = states.get(b["witness_me_id"])
+    if subject_state is None or witness_state is None:
+        raise Incomplete("checkpoint identity-control evidence unavailable")
     require_uint(b["high_water_sequence"],
                  "checkpoint high-water sequence")
     require_uint(b["accepted_at_ms"], "checkpoint acceptance time")
@@ -1535,13 +1686,13 @@ def validate_checkpoint(wrapper, registry, st, event_index):
         raise Reject("checkpoint certificate lacks subject acceptance")
     if witness_cert["certificate_id"] in registry.revoked_cert_ids:
         raise Reject("checkpoint witness certificate is revoked")
-    if b["subject_incarnation_id"] == b["witness_incarnation_id"]:
-        raise Reject("the witness must differ from the subject incarnation")
+    if b["subject_me_id"] == b["witness_me_id"]:
+        raise Reject("portable checkpoint witness must be a distinct /me")
     if b["subject_me_id"] != subject_cert["me_id"] \
-            or b["subject_incarnation_id"] != subject_cert["incarnation_id"]:
+            or b["subject_operational_id"] != subject_cert["operational_id"]:
         raise Reject("checkpoint subject identity mismatch")
     if b["witness_me_id"] != witness_cert["me_id"] \
-            or b["witness_incarnation_id"] != witness_cert["incarnation_id"]:
+            or b["witness_operational_id"] != witness_cert["operational_id"]:
         raise Reject("checkpoint witness identity mismatch")
     if "event-checkpoint" not in witness_cert["body"]["purposes"]["signing"]:
         raise Reject("witness certificate lacks the event-checkpoint purpose")
@@ -1556,10 +1707,8 @@ def validate_checkpoint(wrapper, registry, st, event_index):
                     registry.revoked_cert_ids)
             except Incomplete:
                 continue
-            eb = event_wrapper["body"]
-            trusted_events[event_id] = (
-                eb["event_sequence"], eb["logical_time"]["physical_ms"],
-                eb["logical_time"]["counter"], True)
+            trusted_events[event_id] = event_context_tuple(
+                event_wrapper, True)
             del pending_events[event_id]
             progressed = True
         if not progressed:
@@ -1576,9 +1725,11 @@ def validate_checkpoint(wrapper, registry, st, event_index):
     if b["high_water_event_id"] not in trusted_events:
         raise Incomplete("checkpoint high-water prefix is not contextually "
                          "complete")
-    _validate_control_position(b["subject_identity_control_position"], st,
+    _validate_control_position(b["subject_identity_control_position"],
+                               subject_state,
                                "subject control position")
-    _validate_control_position(b["witness_identity_control_position"], st,
+    _validate_control_position(b["witness_identity_control_position"],
+                               witness_state,
                                "witness control position")
     typed_id(b["high_water_event_id"], "dm:event:v0:")
     ub64(b["high_water_event_hash"], 32)
@@ -1591,11 +1742,11 @@ def validate_checkpoint(wrapper, registry, st, event_index):
     if hb["event_sequence"] != b["high_water_sequence"]:
         raise Reject("checkpoint high-water sequence mismatch")
     if hb["me_id"] != b["subject_me_id"] \
-            or hb["incarnation_id"] != b["subject_incarnation_id"] \
+            or hb["operational_id"] != b["subject_operational_id"] \
             or hb["certificate_id"] != b["subject_certificate_id"]:
         raise Reject("checkpoint subject binding mismatch")
     if not subject_cert["body"]["not_before_ms"] <= b["accepted_at_ms"] \
-            <= subject_cert["body"]["expires_at_ms"]:
+            < subject_cert["body"]["expires_at_ms"]:
         raise Reject("accepted_at_ms outside the subject certificate "
                      "validity interval")
     sigs = wrapper["signatures"]
@@ -1615,7 +1766,7 @@ def checkpoint_covers(checkpoint, event, event_index):
     b = checkpoint["body"]
     eb = event["body"]
     if eb["me_id"] != b["subject_me_id"] \
-            or eb["incarnation_id"] != b["subject_incarnation_id"] \
+            or eb["operational_id"] != b["subject_operational_id"] \
             or eb["certificate_id"] != b["subject_certificate_id"]:
         return False
     if eb["event_sequence"] > b["high_water_sequence"]:
@@ -1635,11 +1786,11 @@ def checkpoint_covers(checkpoint, event, event_index):
 
 def reduced_recipient(entry):
     return {k: entry[k] for k in
-            ("certificate_id", "encryption_kid", "incarnation_id", "me_id")}
+            ("certificate_id", "encryption_kid", "operational_id", "me_id")}
 
 
 def recipient_sort_key(entry):
-    return (entry["me_id"], entry["incarnation_id"], entry["encryption_kid"])
+    return (entry["me_id"], entry["operational_id"], entry["encryption_kid"])
 
 
 def protected_metadata(delivery):
@@ -1679,14 +1830,14 @@ def validate_delivery(delivery, registry, authorization, recipient_privs,
     if b["expires_at_ms"] - b["issued_at_ms"] > MAX_DELIVERY_TTL_MS:
         raise Reject("delivery TTL above 24 hours")
     sender = b["sender"]
-    require_keys(sender, ["certificate_id", "incarnation_id", "me_id",
+    require_keys(sender, ["certificate_id", "operational_id", "me_id",
                           "signing_kid"], "delivery sender")
     sender_cert = registry.certs.get(sender["certificate_id"])
     if sender_cert is None:
         raise Reject("delivery names an unknown sender certificate")
     if sender_cert["certificate_id"] not in registry.accepted_cert_ids:
         raise Reject("delivery sender certificate lacks subject acceptance")
-    if sender["incarnation_id"] != sender_cert["incarnation_id"] \
+    if sender["operational_id"] != sender_cert["operational_id"] \
             or sender["me_id"] != sender_cert["me_id"] \
             or sender["signing_kid"] != sender_cert["signing_kid"]:
         raise Reject("delivery sender binding mismatch")
@@ -1705,18 +1856,18 @@ def validate_delivery(delivery, registry, authorization, recipient_privs,
         raise Reject("recipient count out of bounds")
     if recipients != sorted(recipients, key=recipient_sort_key):
         raise Reject("recipients not in canonical sorted order")
-    seen_incarnations, seen_kids = set(), set()
+    seen_operationals, seen_kids = set(), set()
     for r in recipients:
         require_keys(r, ["certificate_id", "enc", "encryption_kid",
-                         "incarnation_id", "me_id", "wrapped_cek"],
+                         "operational_id", "me_id", "wrapped_cek"],
                      "recipient entry")
         ub64(r["enc"], 32)
         ub64(r["wrapped_cek"], 48)
-        incarnation = (r["me_id"], r["incarnation_id"])
-        if incarnation in seen_incarnations \
+        operational = (r["me_id"], r["operational_id"])
+        if operational in seen_operationals \
                 or r["encryption_kid"] in seen_kids:
-            raise Reject("duplicate recipient incarnation or encryption key")
-        seen_incarnations.add(incarnation)
+            raise Reject("duplicate recipient operational or encryption key")
+        seen_operationals.add(operational)
         seen_kids.add(r["encryption_kid"])
         rcert = registry.certs.get(r["certificate_id"])
         if rcert is None:
@@ -1724,7 +1875,7 @@ def validate_delivery(delivery, registry, authorization, recipient_privs,
         if rcert["certificate_id"] not in registry.accepted_cert_ids:
             raise Reject("delivery recipient certificate lacks subject "
                          "acceptance")
-        if r["incarnation_id"] != rcert["incarnation_id"] \
+        if r["operational_id"] != rcert["operational_id"] \
                 or r["me_id"] != rcert["me_id"] \
                 or r["encryption_kid"] != rcert["encryption_kid"]:
             raise Reject("recipient binding mismatch")
@@ -1809,7 +1960,7 @@ def validate_delivery(delivery, registry, authorization, recipient_privs,
     inner = strict_parse(inner_bytes, CEILING_EVENT)
     if known_events is None:
         known_events = known_events_map([
-            "me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+            "me1/event-op1-0.json", "me2/event-opx-0.json"])
     validate_event_contextual(inner, registry, known_events, revoked)
     if b["event_id"] != inner["event_id"] \
             or b["event_hash"] != inner["event_hash"]:
@@ -1827,16 +1978,16 @@ def validate_delivery(delivery, registry, authorization, recipient_privs,
 _ME1_CHAIN = ["me1/genesis.json", "me1/root-transition.json",
               "me1/recovery-policy.json", "me1/recovery-transition.json",
               "me1/standalone-revocation.json"]
-_ME1_CERTS = ["me1/certificate-inc1-gen0.json",
-              "me1/certificate-inc1-gen1.json",
-              "me1/certificate-inc2-gen0.json",
-              "me1/certificate-inc2-gen1.json",
-              "me1/certificate-inc3-gen0.json"]
-_ME1_ACCEPTANCES = ["me1/acceptance-inc1-gen0.json",
-                    "me1/acceptance-inc1-gen1.json",
-                    "me1/acceptance-inc2-gen0.json",
-                    "me1/acceptance-inc2-gen1.json",
-                    "me1/acceptance-inc3-gen0.json"]
+_ME1_CERTS = ["me1/certificate-op1-gen0.json",
+              "me1/certificate-op1-gen1.json",
+              "me1/certificate-op2-gen0.json",
+              "me1/certificate-op2-gen1.json",
+              "me1/certificate-op3-gen0.json"]
+_ME1_ACCEPTANCES = ["me1/acceptance-op1-gen0.json",
+                    "me1/acceptance-op1-gen1.json",
+                    "me1/acceptance-op2-gen0.json",
+                    "me1/acceptance-op2-gen1.json",
+                    "me1/acceptance-op3-gen0.json"]
 
 _CTX = {}
 
@@ -1863,9 +2014,9 @@ def combined_registry():
     for rel in _ME1_ACCEPTANCES:
         validate_acceptance(load_artifact(rel), registry)
     st2 = build_me2_chain()
-    validate_certificate(load_artifact("me2/certificate-xm1-gen0.json"),
+    validate_certificate(load_artifact("me2/certificate-opx-gen0.json"),
                          st2, registry)
-    validate_acceptance(load_artifact("me2/acceptance-xm1-gen0.json"),
+    validate_acceptance(load_artifact("me2/acceptance-opx-gen0.json"),
                         registry)
     registry.revoked_cert_ids = {
         t["id"] for t in st1.revoked_targets if t["kind"] == "certificate"}
@@ -1889,7 +2040,7 @@ class ActivationOracle:
     def activate(self, certificate, acceptance):
         record = validate_certificate(certificate, self.state, self.registry)
         validate_acceptance(acceptance, self.registry)
-        inc = record["incarnation_id"]
+        inc = record["operational_id"]
         generation = record["generation"]
         previous = self.highest.get(inc, -1)
         if generation < previous:
@@ -1930,15 +2081,11 @@ class EventIngestOracle:
         except Incomplete:
             self.canonical_bytes[event_id] = canonical
             self.status[event_id] = "incomplete"
-            self.known[event_id] = (
-                b["event_sequence"], b["logical_time"]["physical_ms"],
-                b["logical_time"]["counter"], False)
+            self.known[event_id] = event_context_tuple(wrapper, False)
             return "incomplete"
         self.canonical_bytes[event_id] = canonical
         self.status[event_id] = "accepted"
-        self.known[event_id] = (
-            b["event_sequence"], b["logical_time"]["physical_ms"],
-            b["logical_time"]["counter"], True)
+        self.known[event_id] = event_context_tuple(wrapper, True)
         self.effects.append(event_id)
         return "accepted"
 
@@ -1984,36 +2131,118 @@ class ControlIngestOracle:
 
 
 class LeaseIngestOracle:
-    """Detect concurrent sessions claiming one lease predecessor slot."""
+    """Identity-wide candidate/receipt state for park/wake and split-brain."""
 
-    def __init__(self, registry, state):
+    def __init__(self, registry, states, checkpoints, event_index,
+                 trusted_witnesses):
         self.registry = registry
-        self.state = state
+        self.states = states
+        self.checkpoints = checkpoints
+        self.event_index = event_index
+        self.trusted_witnesses = trusted_witnesses
+        self.candidates = {}
+        self.receipts = {}
+        self.committed = {}
+        self.committed_leases = {}
         self.slots = {}
-        self.by_incarnation = {}
+        self.retired_operationals = set()
+        self.quarantined = set()
 
     def ingest(self, wrapper):
-        validate_lease(wrapper, self.registry, self.state)
         b = wrapper["body"]
-        incarnation = b["incarnation_id"]
-        sequence = b["lease_sequence"]
-        chain = self.by_incarnation.setdefault(incarnation, {})
-        if chain and sequence < max(chain):
-            raise Reject("stale lease replay is below durable high-water")
-        if sequence > 0:
-            predecessor = chain.get(sequence - 1)
-            if predecessor is None:
-                raise Incomplete("lease predecessor evidence unavailable")
-            if predecessor != b["previous_lease_hash"]:
-                raise Reject("lease predecessor hash mismatch")
-        slot = (b["incarnation_id"], b["lease_sequence"],
-                b["previous_lease_hash"])
-        existing = self.slots.get(slot)
-        if existing is not None and existing != wrapper["artifact_id"]:
+        state = self.states.get(b["me_id"])
+        if state is None:
+            raise Incomplete("lease identity-control evidence unavailable")
+        validate_lease(wrapper, self.registry, state)
+        if b["operational_id"] in self.retired_operationals:
+            raise Reject("superseded operational credential cannot issue lease")
+        head = self.committed.get(b["me_id"])
+        if head is not None:
+            head_sequence = head["lease"]["body"]["lease_sequence"]
+            if b["lease_sequence"] < head_sequence:
+                raise Reject("lease is below committed identity high-water")
+            if b["lease_sequence"] == head_sequence:
+                if wrapper["artifact_id"] == head["lease"]["artifact_id"]:
+                    return "idempotent"
+                raise Reject("lease conflicts at committed identity high-water")
+        existing = self.candidates.get(wrapper["artifact_id"])
+        if existing is not None:
+            if jcs(existing) != jcs(wrapper):
+                raise Reject("lease ID content conflict")
+            return "idempotent"
+        self.candidates[wrapper["artifact_id"]] = wrapper
+        return "uncommitted"
+
+    def commit(self, receipt):
+        receipt_id = receipt["artifact_id"]
+        if receipt_id in self.receipts:
+            if jcs(self.receipts[receipt_id]) != jcs(receipt):
+                raise Reject("receipt ID content conflict")
+            return "idempotent"
+        lease_id = receipt["body"]["lease_id"]
+        lease = self.candidates.get(lease_id)
+        if lease is None:
+            raise Incomplete("receipt names an unavailable lease candidate")
+        validate_lease_receipt(
+            receipt, self.registry, self.states, self.candidates,
+            self.checkpoints, self.event_index, self.trusted_witnesses)
+        b = lease["body"]
+        me_id = b["me_id"]
+        if me_id in self.quarantined:
             return "quarantined"
-        self.slots[slot] = wrapper["artifact_id"]
-        chain[sequence] = wrapper["artifact_hash"]
-        return "accepted" if existing is None else "idempotent"
+        head = self.committed.get(me_id)
+        committed_lease = self.committed_leases.get(lease_id)
+        if committed_lease is not None:
+            committed_lease["receipts"][receipt_id] = receipt
+            self.receipts[receipt_id] = receipt
+            return "committed"
+        slot = (me_id, b["lease_sequence"], b["previous_lease_hash"])
+        existing = self.slots.get(slot)
+        if existing is not None and existing != lease_id:
+            self.quarantined.add(me_id)
+            self.receipts[receipt_id] = receipt
+            return "quarantined"
+        if head is None:
+            if b["lease_sequence"] != 0:
+                raise Incomplete("identity genesis lease head unavailable")
+        else:
+            hb = head["lease"]["body"]
+            if b["lease_sequence"] != hb["lease_sequence"] + 1:
+                raise Reject("identity-wide lease sequence gap or reset")
+            if b["previous_lease_hash"] != head["lease"]["artifact_hash"]:
+                raise Reject("lease does not extend committed predecessor")
+            predecessor_receipt = head["receipts"].get(
+                b["previous_lease_receipt_id"])
+            if predecessor_receipt is None:
+                raise Reject("lease predecessor lacks exact accepted receipt")
+            same_session = b["session_id"] == hb["session_id"]
+            body_or_key_changed = b["body_hash"] != hb["body_hash"] or \
+                b["operational_id"] != hb["operational_id"]
+            if same_session:
+                if body_or_key_changed or any(value is not None for value in (
+                        b["supersedes_session_id"],
+                        b["supersedes_operational_id"],
+                        b["superseded_event_cutoff"])):
+                    raise Reject("same session silently changes body/credential")
+            else:
+                if b["supersedes_session_id"] != hb["session_id"] or \
+                        b["supersedes_operational_id"] != hb["operational_id"]:
+                    raise Reject("wake does not name superseded session/key")
+                if body_or_key_changed:
+                    cutoff = b["superseded_event_cutoff"]
+                    if cutoff != predecessor_receipt["body"]["event_cutoff"]:
+                        raise Reject("wake lacks receipt-bearing event cutoff")
+        self.slots[slot] = lease_id
+        self.receipts[receipt_id] = receipt
+        if head is not None:
+            prior_op = head["lease"]["body"]["operational_id"]
+            if prior_op != b["operational_id"]:
+                self.retired_operationals.add(prior_op)
+        committed_lease = {
+            "lease": lease, "receipts": {receipt_id: receipt}}
+        self.committed_leases[lease_id] = committed_lease
+        self.committed[me_id] = committed_lease
+        return "committed"
 
 
 def author_hlc_next(last_physical_ms, last_counter, now_ms):
@@ -2137,26 +2366,26 @@ def check_keys(entry):
 
 
 def check_fixtures(entry):
-    embodiment = strict_parse(load_bytes("fixtures/embodiment-description.json"),
+    body = strict_parse(load_bytes("fixtures/body-description.json"),
                               CEILING_EVENT)
     capability = strict_parse(load_bytes("fixtures/capability-description.json"),
                               CEILING_EVENT)
-    eh = b64e(sha256(jcs(embodiment)))
+    eh = b64e(sha256(jcs(body)))
     ch = b64e(sha256(jcs(capability)))
-    cert = load_artifact("me1/certificate-inc1-gen1.json")
-    lease = load_artifact("me1/lease-inc1-0.json")
-    event = load_artifact("me1/event-inc1-1.json", CEILING_EVENT)
-    if eh != cert["body"]["initial_embodiment_hash"] \
-            or eh != lease["body"]["embodiment_hash"] \
-            or eh != event["body"]["embodiment_hash"]:
-        raise AssertionError("embodiment hash formula mismatch")
+    cert = load_artifact("me1/certificate-op1-gen1.json")
+    lease = load_artifact("me1/lease-op1-0.json")
+    event = load_artifact("me1/event-op1-1.json", CEILING_EVENT)
+    if eh != cert["body"]["initial_body_hash"] \
+            or eh != lease["body"]["body_hash"] \
+            or eh != event["body"]["body_hash"]:
+        raise AssertionError("body hash formula mismatch")
     if ch != lease["body"]["capability_hash"]:
         raise AssertionError("capability hash formula mismatch")
     genesis = load_artifact("me1/genesis.json")
     derived_me = "dm:me:v0:" + b64e(sha256(jcs(genesis["body"]["core"])))
     if derived_me != genesis["body"]["me_id"]:
         raise AssertionError("me_id does not derive solely from genesis core")
-    changed_metadata = dict(embodiment)
+    changed_metadata = dict(body)
     changed_metadata["host"] = "another-host-is-descriptive-only"
     if "host" in genesis["body"]["core"] or \
             b64e(sha256(jcs(changed_metadata))) == eh:
@@ -2179,11 +2408,11 @@ def check_certificates(entry):
     registry = combined_registry()
     certs = [v for v in entry["vectors"] if "/certificate-" in v]
     accs = [v for v in entry["vectors"] if "/acceptance-" in v]
-    g0 = load_artifact("me1/certificate-inc1-gen0.json")
-    g1 = load_artifact("me1/certificate-inc1-gen1.json")
+    g0 = load_artifact("me1/certificate-op1-gen0.json")
+    g1 = load_artifact("me1/certificate-op1-gen1.json")
     if g1["body"]["certificate_generation"] != 1 \
             or g1["body"]["previous_certificate_id"] != g0["certificate_id"] \
-            or g1["body"]["incarnation_nonce"] != g0["body"]["incarnation_nonce"] \
+            or g1["body"]["operational_nonce"] != g0["body"]["operational_nonce"] \
             or g1["body"]["certificate_nonce"] == g0["body"]["certificate_nonce"] \
             or g1["body"]["signing_key"] != g0["body"]["signing_key"]:
         raise AssertionError("not an exact renewal")
@@ -2191,6 +2420,22 @@ def check_certificates(entry):
         raise AssertionError("generation zero must name a null predecessor")
     if len(certs) != 6 or len(accs) != 6:
         raise AssertionError("unexpected vector set")
+    return "accept"
+
+
+def check_certificate_carry_forward(entry):
+    genesis, certificate, transition, acceptance = (
+        load_artifact(path) for path in entry["vectors"])
+    state = validate_genesis(genesis)
+    registry = CertRegistry()
+    validate_certificate(certificate, state, registry)
+    validate_control(
+        transition, state,
+        known_certificate_ids={certificate["certificate_id"]})
+    # A fresh verifier must still validate the old-epoch certificate against
+    # the complete post-rotation chain when the signed disposition names it.
+    validate_certificate(certificate, state, registry)
+    validate_acceptance(acceptance, registry)
     return "accept"
 
 
@@ -2221,12 +2466,141 @@ def check_lease_expiry(entry):
         combined_registry(), build_me1_chain(), entry["params"]["at_ms"])
 
 
-def check_lease_rollback(entry):
-    oracle = LeaseIngestOracle(combined_registry(), build_me1_chain())
-    first, successor, replay = (
+def check_lease_receipt(entry):
+    oracle = _lease_oracle()
+    lease = load_artifact(entry["vectors"][0])
+    receipt = load_artifact(entry["vectors"][1])
+    if oracle.ingest(lease) != "uncommitted":
+        raise AssertionError("lease became active without a receipt")
+    validate_lease_high_water({
+        "lease_sequence": lease["body"]["lease_sequence"],
+        "lease_id": lease["artifact_id"],
+        "lease_hash": lease["artifact_hash"],
+        "commit_receipt_id": receipt["artifact_id"],
+    })
+    return _expect_reject(oracle.commit, receipt)
+
+
+def check_lease_uncommitted(entry):
+    oracle = _lease_oracle()
+    lease0 = load_artifact("me1/lease-op1-0.json")
+    receipt0 = load_artifact("me1/lease-receipt-0.json")
+    if oracle.ingest(lease0) != "uncommitted" or \
+            oracle.commit(receipt0) != "committed":
+        raise AssertionError("committed predecessor setup failed")
+    outcome = oracle.ingest(load_artifact(entry["vectors"][0]))
+    head = oracle.committed[lease0["body"]["me_id"]]["lease"]
+    if head["artifact_id"] != lease0["artifact_id"]:
+        raise AssertionError("unreceipted candidate displaced committed head")
+    return outcome
+
+
+def check_park_wake(entry):
+    oracle = _lease_oracle()
+    lease0, receipt0, lease1, receipt1 = (
         load_artifact(path) for path in entry["vectors"])
-    if oracle.ingest(first) != "accepted" \
-            or oracle.ingest(successor) != "accepted":
+    if oracle.ingest(lease0) != "uncommitted" or \
+            oracle.commit(receipt0) != "committed" or \
+            oracle.ingest(lease1) != "uncommitted" or \
+            oracle.commit(receipt1) != "committed":
+        raise AssertionError("park/wake chain did not commit")
+    head = oracle.committed[lease0["body"]["me_id"]]["lease"]["body"]
+    if head["lease_sequence"] != 1 or \
+            head["operational_id"] == lease0["body"]["operational_id"]:
+        raise AssertionError("park/wake did not continue identity-wide state")
+    return "accept"
+
+
+def check_multiple_lease_receipts(entry):
+    lease0, receipt0, receipt0_alt, lease1, receipt1 = (
+        load_artifact(path) for path in entry["vectors"])
+    oracle = _lease_oracle()
+    if oracle.ingest(lease0) != "uncommitted" or \
+            oracle.commit(receipt0) != "committed" or \
+            oracle.commit(receipt0_alt) != "committed":
+        raise AssertionError("multiple predecessor receipts did not commit")
+    head = oracle.committed[lease0["body"]["me_id"]]
+    if set(head["receipts"]) != {
+            receipt0["artifact_id"], receipt0_alt["artifact_id"]}:
+        raise AssertionError("accepted receipt set was overwritten")
+    if oracle.ingest(lease1) != "uncommitted" or \
+            oracle.commit(receipt1) != "committed":
+        raise AssertionError("receipt arrival order changed successor validity")
+
+    # Reverse the relevant arrival relation: the alternative receipt arrives
+    # only after the successor is already the committed head. It augments the
+    # historical predecessor's receipt set without rolling the head back.
+    reverse = _lease_oracle()
+    if reverse.ingest(lease0) != "uncommitted" or \
+            reverse.commit(receipt0) != "committed" or \
+            reverse.ingest(lease1) != "uncommitted" or \
+            reverse.commit(receipt1) != "committed" or \
+            reverse.commit(receipt0_alt) != "committed":
+        raise AssertionError("late historical receipt was not accepted")
+    historical = reverse.committed_leases[lease0["artifact_id"]]
+    if set(historical["receipts"]) != {
+            receipt0["artifact_id"], receipt0_alt["artifact_id"]} or \
+            reverse.committed[lease0["body"]["me_id"]]["lease"][
+                "artifact_id"] != lease1["artifact_id"]:
+        raise AssertionError("late receipt changed the committed head")
+    return "accept"
+
+
+def check_lease_reset(entry):
+    oracle = _lease_oracle()
+    lease0 = load_artifact("me1/lease-op1-0.json")
+    receipt0 = load_artifact("me1/lease-receipt-0.json")
+    if oracle.ingest(lease0) != "uncommitted" or \
+            oracle.commit(receipt0) != "committed":
+        raise AssertionError("identity lease genesis setup failed")
+    return _expect_reject(oracle.ingest,
+                          load_artifact(entry["vectors"][0]))
+
+
+def check_old_operational_lease(entry):
+    oracle = _lease_oracle()
+    for lease_path, receipt_path in (
+            ("me1/lease-op1-0.json", "me1/lease-receipt-0.json"),
+            ("me1/lease-op1-1.json", "me1/lease-receipt-1.json")):
+        if oracle.ingest(load_artifact(lease_path)) != "uncommitted" or \
+                oracle.commit(load_artifact(receipt_path)) != "committed":
+            raise AssertionError("park/wake setup failed")
+    return _expect_reject(oracle.ingest,
+                          load_artifact(entry["vectors"][0]))
+
+
+def check_lease_successor_reject(entry):
+    oracle = _lease_oracle()
+    lease0 = load_artifact("me1/lease-op1-0.json")
+    receipt0 = load_artifact("me1/lease-receipt-0.json")
+    candidate = load_artifact(entry["vectors"][0])
+    receipt = load_artifact(entry["vectors"][1])
+    if oracle.ingest(lease0) != "uncommitted" or \
+            oracle.commit(receipt0) != "committed" or \
+            oracle.ingest(candidate) != "uncommitted":
+        raise AssertionError("lease successor setup failed")
+    return _expect_reject(oracle.commit, receipt)
+
+
+def check_superseded_event(entry):
+    registry = combined_registry()
+    known = known_events_map(entry["params"]["known_events"], registry)
+    receipt = load_artifact(entry["params"]["cutoff_receipt"])
+    cutoff = receipt["body"]["event_cutoff"]
+    return _expect_reject(
+        validate_event_contextual,
+        load_artifact(entry["vectors"][0], CEILING_EVENT), registry, known,
+        (), True, {cutoff["operational_id"]: cutoff})
+
+
+def check_lease_rollback(entry):
+    oracle = _lease_oracle()
+    first, first_receipt, successor, successor_receipt, replay = (
+        load_artifact(path) for path in entry["vectors"])
+    if oracle.ingest(first) != "uncommitted" \
+            or oracle.commit(first_receipt) != "committed" \
+            or oracle.ingest(successor) != "uncommitted" \
+            or oracle.commit(successor_receipt) != "committed":
         raise AssertionError("lease high-water setup was not accepted")
     return _expect_reject(oracle.ingest, replay)
 
@@ -2239,22 +2613,19 @@ def check_events(entry):
         known = known_events_map(params.get("known_events", []))
         for w in wrappers:
             validate_event_contextual(w, registry, known)
-            b = w["body"]
-            known[w["event_id"]] = (
-                b["event_sequence"], b["logical_time"]["physical_ms"],
-                b["logical_time"]["counter"], True)
+            known[w["event_id"]] = event_context_tuple(w, True)
         if len({w["event_id"] for w in wrappers}) != len(wrappers):
             raise AssertionError("distinct nonces must keep distinct IDs")
         payloads = [jcs(w["body"]["payload"]) for w in wrappers]
         if len(set(payloads)) != 1:
             raise AssertionError("vectors should carry identical payloads")
         return "accept"
-    e0 = "me1/event-inc1-0.json"
-    xm1e0 = "me2/event-xm1-0.json"
-    known = known_events_map([e0, xm1e0])
+    e0 = "me1/event-op1-0.json"
+    opxe0 = "me2/event-opx-0.json"
+    known = known_events_map([e0, opxe0])
     validate_event_contextual(load_artifact(e0, CEILING_EVENT), registry, {})
-    validate_event_contextual(load_artifact(xm1e0, CEILING_EVENT), registry, {})
-    validate_event_contextual(load_artifact("me1/event-inc1-1.json",
+    validate_event_contextual(load_artifact(opxe0, CEILING_EVENT), registry, {})
+    validate_event_contextual(load_artifact("me1/event-op1-1.json",
                                             CEILING_EVENT), registry, known)
     return "accept"
 
@@ -2277,8 +2648,8 @@ def check_nfc_nfd(entry):
     registry = combined_registry()
     nfc, nfd = (load_artifact(v, CEILING_EVENT) for v in entry["vectors"])
     known = known_events_map(entry["params"].get("known_events", [
-        "me1/event-inc2-0.json", "me1/event-inc2-1.json",
-        "me2/event-xm1-0.json"]))
+        "me1/event-op2-0.json", "me1/event-op2-1.json",
+        "me2/event-opx-0.json"]))
     for w in (nfc, nfd):
         validate_event_contextual(w, registry, known)
     if nfc["event_id"] == nfd["event_id"]:
@@ -2297,34 +2668,45 @@ def check_nfc_nfd(entry):
 
 def _checkpoint_context():
     registry = combined_registry()
-    st = build_me1_chain()
+    st1 = build_me1_chain()
+    st2 = build_me2_chain()
+    states = {st1.me_id: st1, st2.me_id: st2}
     event_index = {}
-    paths = ("me1/event-inc1-0.json", "me1/event-inc1-1.json",
-             "me1/event-inc1-2-disclosure.json", "me2/event-xm1-0.json")
+    paths = ("me1/event-op1-0.json", "me1/event-op1-1.json",
+             "me1/event-op1-2-disclosure.json", "me2/event-opx-0.json")
     trusted = known_events_map(paths, registry)
     for rel in paths:
         w = load_artifact(rel, CEILING_EVENT)
         if not trusted[w["event_id"]][3]:
             raise AssertionError("checkpoint fixture prefix is incomplete")
         event_index[w["event_id"]] = w
-    return registry, st, event_index
+    return registry, states, event_index
+
+
+def _lease_oracle():
+    registry, states, event_index = _checkpoint_context()
+    checkpoint = load_artifact("me1/checkpoint-opx-witness.json")
+    checkpoints = {checkpoint["artifact_id"]: checkpoint}
+    trusted = {checkpoint["body"]["witness_operational_id"]}
+    return LeaseIngestOracle(registry, states, checkpoints, event_index,
+                             trusted)
 
 
 def check_checkpoint(entry):
-    registry, st, event_index = _checkpoint_context()
+    registry, states, event_index = _checkpoint_context()
     wrapper = load_artifact(entry["vectors"][0])
-    return _expect_reject(validate_checkpoint, wrapper, registry, st,
+    return _expect_reject(validate_checkpoint, wrapper, registry, states,
                           event_index)
 
 
 def check_checkpoint_revoked_witness(entry):
-    registry, st, event_index = _checkpoint_context()
+    registry, states, event_index = _checkpoint_context()
     wrapper = load_artifact(entry["vectors"][0])
     certificate_id = wrapper["body"]["witness_certificate_id"]
     already_revoked = certificate_id in registry.revoked_cert_ids
     registry.revoked_cert_ids.add(certificate_id)
     try:
-        return _expect_reject(validate_checkpoint, wrapper, registry, st,
+        return _expect_reject(validate_checkpoint, wrapper, registry, states,
                               event_index)
     finally:
         if not already_revoked:
@@ -2341,11 +2723,11 @@ def check_checkpoint_coverage(entry):
 
 def _recipient_privs():
     privs = {
-        load_keys()["inc2-enc"]["kid"]: key_priv("inc2-enc"),
-        load_keys()["xm1-enc"]["kid"]: key_priv("xm1-enc"),
+        load_keys()["op2-enc"]["kid"]: key_priv("op2-enc"),
+        load_keys()["opx-enc"]["kid"]: key_priv("opx-enc"),
     }
-    if "inc2-enc2" in load_keys():
-        privs[load_keys()["inc2-enc2"]["kid"]] = key_priv("inc2-enc2")
+    if "op2-enc2" in load_keys():
+        privs[load_keys()["op2-enc2"]["kid"]] = key_priv("op2-enc2")
     return privs
 
 
@@ -2419,14 +2801,14 @@ def check_idempotent(entry):
         wrapper = load_artifact(entry["vectors"][0], CEILING_EVENT)
         oracle = EventIngestOracle(
             combined_registry(),
-            ["me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+            ["me1/event-op1-0.json", "me2/event-opx-0.json"])
     elif entry["params"]["kind"] == "delivery":
         wrapper = load_artifact(entry["vectors"][0], CEILING_SEALED)
         oracle = DeliveryIngestOracle(
             combined_registry(),
-            _validate_authorization("me1/event-inc1-2-disclosure.json"),
+            _validate_authorization("me1/event-op1-2-disclosure.json"),
             _recipient_privs(), known_events_map([
-                "me1/event-inc1-0.json", "me2/event-xm1-0.json"]))
+                "me1/event-op1-0.json", "me2/event-opx-0.json"]))
     else:
         raise AssertionError("unknown idempotency kind")
     if oracle.ingest(wrapper) != "accepted":
@@ -2510,18 +2892,18 @@ def check_pair_fork(entry):
         st_b, registry_b = _fresh_certificate_context(b)
         validate_certificate(a, st_a, registry_a)
         validate_certificate(b, st_b, registry_b)
-        same = (a["body"]["incarnation_id"], a["body"]["certificate_generation"]) \
-            == (b["body"]["incarnation_id"], b["body"]["certificate_generation"])
+        same = (a["body"]["operational_id"], a["body"]["certificate_generation"]) \
+            == (b["body"]["operational_id"], b["body"]["certificate_generation"])
         differ = a["certificate_id"] != b["certificate_id"]
     elif kind == "event":
         a = load_artifact(a_rel, CEILING_EVENT)
         b = load_artifact(b_rel, CEILING_EVENT)
         known = known_events_map(entry["params"].get("known_events", [
-            "me1/event-inc1-0.json", "me2/event-xm1-0.json"]))
+            "me1/event-op1-0.json", "me2/event-opx-0.json"]))
         validate_event_contextual(a, combined_registry(), known)
         validate_event_contextual(b, combined_registry(), known)
-        same = (a["body"]["incarnation_id"], a["body"]["event_sequence"]) \
-            == (b["body"]["incarnation_id"], b["body"]["event_sequence"])
+        same = (a["body"]["operational_id"], a["body"]["event_sequence"]) \
+            == (b["body"]["operational_id"], b["body"]["event_sequence"])
         differ = a["event_id"] != b["event_id"]
     elif kind == "recovery":
         a, b = load_artifact(a_rel), load_artifact(b_rel)
@@ -2560,6 +2942,24 @@ def check_certificate(entry):
                           load_artifact(entry["vectors"][0]), st, registry)
 
 
+def check_certificate_me2_key_reuse(entry):
+    return _expect_reject(
+        validate_certificate, load_artifact(entry["vectors"][0]),
+        build_me2_chain(), combined_registry())
+
+
+def check_unaccepted_generation_skip(entry):
+    cert0, acceptance0, cert1, cert2, acceptance2 = (
+        load_artifact(path) for path in entry["vectors"])
+    registry = CertRegistry()
+    state = build_me1_chain()
+    validate_certificate(cert0, state, registry)
+    validate_acceptance(acceptance0, registry)
+    validate_certificate(cert1, state, registry)
+    validate_certificate(cert2, state, registry)
+    return _expect_reject(validate_acceptance, acceptance2, registry)
+
+
 def check_acceptance(entry):
     registry = combined_registry()
     return _expect_reject(validate_acceptance,
@@ -2571,8 +2971,8 @@ def check_old_generation_replay(entry):
     old_cert = load_artifact(entry["vectors"][0])
     old_acceptance = load_artifact(entry["vectors"][1])
     oracle.activate(old_cert, old_acceptance)
-    oracle.activate(load_artifact("me1/certificate-inc1-gen1.json"),
-                    load_artifact("me1/acceptance-inc1-gen1.json"))
+    oracle.activate(load_artifact("me1/certificate-op1-gen1.json"),
+                    load_artifact("me1/acceptance-op1-gen1.json"))
     return _expect_reject(oracle.activate, old_cert, old_acceptance)
 
 
@@ -2681,9 +3081,7 @@ def check_hlc_author(entry):
     reset = load_artifact(entry["vectors"][1], CEILING_EVENT)
     validate_event_contextual(maximum, registry, known)
     mb = maximum["body"]
-    known[maximum["event_id"]] = (
-        mb["event_sequence"], mb["logical_time"]["physical_ms"],
-        mb["logical_time"]["counter"], True)
+    known[maximum["event_id"]] = event_context_tuple(maximum, True)
     validate_event_contextual(reset, registry, known)
     last = mb["logical_time"]
     nxt = reset["body"]["logical_time"]
@@ -2712,15 +3110,21 @@ class _raises_reject_context:
 
 
 def check_lease_fork(entry):
-    oracle = LeaseIngestOracle(combined_registry(), build_me1_chain())
+    oracle = _lease_oracle()
     predecessor = load_artifact(entry["params"]["predecessor"])
-    first = load_artifact(entry["vectors"][0])
-    second = load_artifact(entry["vectors"][1])
-    if oracle.ingest(predecessor) != "accepted":
+    predecessor_receipt = load_artifact(
+        entry["params"]["predecessor_receipt"])
+    first, first_receipt, second, second_receipt = (
+        load_artifact(path) for path in entry["vectors"])
+    if oracle.ingest(predecessor) != "uncommitted" or \
+            oracle.commit(predecessor_receipt) != "committed":
         raise AssertionError("lease predecessor was not accepted")
-    if oracle.ingest(first) != "accepted":
-        raise AssertionError("first lease was not accepted")
-    return oracle.ingest(second)
+    if oracle.ingest(first) != "uncommitted" or \
+            oracle.ingest(second) != "uncommitted":
+        raise AssertionError("lease successors were not retained as candidates")
+    if oracle.commit(first_receipt) != "committed":
+        raise AssertionError("first receipt did not commit its lease")
+    return oracle.commit(second_receipt)
 
 
 def check_control_rollback(entry):
@@ -2772,7 +3176,7 @@ def check_delivery_rotation(entry):
     old_auth = _validate_authorization(entry["params"]["old_authorization"])
     new_auth = _validate_authorization(entry["params"]["new_authorization"])
     known = known_events_map([
-        "me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+        "me1/event-op1-0.json", "me2/event-opx-0.json"])
     validate_delivery(old_delivery, combined_registry(), old_auth,
                       _recipient_privs(), entry["params"].get("old_inner"),
                       known)
@@ -2797,7 +3201,7 @@ def check_delivery_expiry(entry):
     delivery = load_artifact(entry["vectors"][0], CEILING_SEALED)
     authorization = _validate_authorization(entry["params"]["authorization"])
     known = known_events_map([
-        "me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+        "me1/event-op1-0.json", "me2/event-opx-0.json"])
     keys = load_keys()
     expired_name = entry["params"]["expired_key_name"]
     active_name = entry["params"]["active_key_name"]
@@ -2824,7 +3228,7 @@ def check_key_descriptor(entry):
 
 
 def check_hpke_all_zero_dh(entry):
-    priv = key_priv("inc2-enc")
+    priv = key_priv("op2-enc")
     outcomes = []
     for bad_peer in (b"\x00" * 32, b"\x01" + b"\x00" * 31):
         try:
@@ -2881,7 +3285,7 @@ def check_tamper(entry):
                               event_index)
     if sub == "sealed":
         w = strict_parse(tampered_bytes, CEILING_SEALED)
-        auth = _validate_authorization("me1/event-inc1-2-disclosure.json")
+        auth = _validate_authorization("me1/event-op1-2-disclosure.json")
         return _expect_reject(validate_delivery, w, combined_registry(),
                               auth, _recipient_privs())
     if sub == "delivery-conflict":
@@ -2895,12 +3299,21 @@ CHECKS = {
     "fixtures": check_fixtures,
     "chain": check_chain,
     "certificates": check_certificates,
+    "certificate-carry-forward": check_certificate_carry_forward,
     "lease": check_lease,
     "lease-revoked": check_lease_revoked,
     "lease-expiry": check_lease_expiry,
+    "lease-receipt": check_lease_receipt,
+    "lease-uncommitted": check_lease_uncommitted,
+    "park-wake": check_park_wake,
+    "multiple-lease-receipts": check_multiple_lease_receipts,
+    "lease-reset": check_lease_reset,
+    "old-operational-lease": check_old_operational_lease,
+    "lease-successor-reject": check_lease_successor_reject,
     "lease-rollback": check_lease_rollback,
     "events": check_events,
     "event-contextual": check_event_contextual,
+    "superseded-event": check_superseded_event,
     "nfc-nfd": check_nfc_nfd,
     "checkpoint": check_checkpoint,
     "checkpoint-revoked-witness": check_checkpoint_revoked_witness,
@@ -2912,6 +3325,8 @@ CHECKS = {
     "pair-fork": check_pair_fork,
     "control-wrapper": check_control_wrapper,
     "certificate": check_certificate,
+    "certificate-me2-key-reuse": check_certificate_me2_key_reuse,
+    "unaccepted-generation-skip": check_unaccepted_generation_skip,
     "acceptance": check_acceptance,
     "old-generation-replay": check_old_generation_replay,
     "activation-acceptance": check_activation_acceptance,
@@ -2974,12 +3389,12 @@ class TestPrimitives(unittest.TestCase):
         # the crypto layer (the wire layer rejects the same tampering even
         # earlier, at the outer signature).
         registry = combined_registry()
-        auth = _validate_authorization("me1/event-inc1-2-disclosure.json")
+        auth = _validate_authorization("me1/event-op1-2-disclosure.json")
         delivery = strict_parse(load_bytes("me1/sealed-delivery-1.json"),
                                 CEILING_SEALED)
         inner = validate_delivery(delivery, registry, auth,
                                   _recipient_privs(),
-                                  "me1/event-inc1-1.json")
+                                  "me1/event-op1-1.json")
         self.assertEqual(inner["event_id"], delivery["event_id"])
         privs = _recipient_privs()
         entry = next(r for r in delivery["recipients"]
@@ -3005,7 +3420,7 @@ class TestPrimitives(unittest.TestCase):
     def test_domain_separation(self):
         st = build_me1_chain()
         registry = combined_registry()
-        event = load_artifact("me1/event-inc1-1.json", CEILING_EVENT)
+        event = load_artifact("me1/event-op1-1.json", CEILING_EVENT)
         cert = registry.certs[event["body"]["certificate_id"]]
         sig = ub64(event["signature"]["value"], 64)
         # Valid under its own domain.
@@ -3019,13 +3434,25 @@ class TestPrimitives(unittest.TestCase):
                 ed25519_verify(cert["signing_pub"], sig,
                                artifact_preimage(domain, event["body"]))
 
+    def test_lease_receipt_rejects_checkpoint_signature(self):
+        oracle = _lease_oracle()
+        lease = load_artifact("me1/lease-op1-0.json")
+        receipt = load_artifact("me1/lease-receipt-0.json")
+        checkpoint = load_artifact("me1/checkpoint-opx-witness.json")
+        receipt = json.loads(jcs(receipt).decode("utf-8"))
+        receipt["signatures"][0]["value"] = \
+            checkpoint["signatures"][0]["value"]
+        self.assertEqual(oracle.ingest(lease), "uncommitted")
+        with self.assertRaises(Reject):
+            oracle.commit(receipt)
+
     def test_ed25519_edge_encodings(self):
         cert_pub = ub64(load_keys()["root-a"]["public_key_b64"], 32)
         for bad in ED_SMALL_ORDER:
             with self.assertRaises(Reject):
                 ed25519_check_public(bad)
         sig = bytearray(
-            ub64(load_artifact("me1/event-inc1-1.json",
+            ub64(load_artifact("me1/event-op1-1.json",
                                CEILING_EVENT)["signature"]["value"], 64))
         sig[32:] = ED_L.to_bytes(32, "little")
         with self.assertRaises(Reject):
@@ -3038,7 +3465,7 @@ class TestOracleSensitivity(unittest.TestCase):
     def test_delivery_invokes_full_inner_event_validation(self):
         delivery = load_artifact("me1/sealed-delivery-1.json", CEILING_SEALED)
         authorization = _validate_authorization(
-            "me1/event-inc1-2-disclosure.json")
+            "me1/event-op1-2-disclosure.json")
         module = sys.modules[__name__]
         sentinel = mock.Mock(side_effect=Reject("sentinel inner validator"))
         with mock.patch.object(module, "validate_event_contextual", sentinel):
@@ -3046,17 +3473,17 @@ class TestOracleSensitivity(unittest.TestCase):
                 validate_delivery(
                     delivery, combined_registry(), authorization,
                     _recipient_privs(), known_events=known_events_map([
-                        "me1/event-inc1-0.json",
-                        "me2/event-xm1-0.json"]))
+                        "me1/event-op1-0.json",
+                        "me2/event-opx-0.json"]))
         self.assertEqual(sentinel.call_count, 1)
 
     def test_zero_signature_inner_is_otherwise_outer_valid(self):
         delivery = load_artifact(
             "negative/sealed-inner-zero-signature.json", CEILING_SEALED)
         authorization = _validate_authorization(
-            "me1/event-inc1-2-disclosure.json")
+            "me1/event-op1-2-disclosure.json")
         known = known_events_map([
-            "me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+            "me1/event-op1-0.json", "me2/event-opx-0.json"])
         with self.assertRaises(Reject):
             validate_delivery(delivery, combined_registry(), authorization,
                               _recipient_privs(), known_events=known)
@@ -3070,8 +3497,8 @@ class TestOracleSensitivity(unittest.TestCase):
         bypass.assert_called_once()
 
     def test_activation_oracle_invokes_certificate_and_acceptance(self):
-        certificate = load_artifact("me1/certificate-inc1-gen0.json")
-        acceptance = load_artifact("me1/acceptance-inc1-gen0.json")
+        certificate = load_artifact("me1/certificate-op1-gen0.json")
+        acceptance = load_artifact("me1/acceptance-op1-gen0.json")
         module = sys.modules[__name__]
         with mock.patch.object(
                 module, "validate_certificate",
@@ -3085,10 +3512,10 @@ class TestOracleSensitivity(unittest.TestCase):
                 ActivationOracle().activate(certificate, acceptance)
 
     def test_event_dedup_conflict_precedes_revalidation(self):
-        wrapper = load_artifact("me1/event-inc1-1.json", CEILING_EVENT)
+        wrapper = load_artifact("me1/event-op1-1.json", CEILING_EVENT)
         oracle = EventIngestOracle(
             combined_registry(),
-            ["me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+            ["me1/event-op1-0.json", "me2/event-opx-0.json"])
         self.assertEqual(oracle.ingest(wrapper), "accepted")
         conflict = json.loads(jcs(wrapper).decode("utf-8"))
         conflict["signature"]["value"] = b64e(b"\x00" * 64)
@@ -3103,7 +3530,7 @@ class TestOracleSensitivity(unittest.TestCase):
         wrapper = load_artifact(
             "negative/event-fork-zero-signature.json", CEILING_EVENT)
         oracle = EventIngestOracle(
-            combined_registry(), ["me1/event-inc1-0.json"])
+            combined_registry(), ["me1/event-op1-0.json"])
         for _ in range(2):
             with self.assertRaises(Reject):
                 oracle.ingest(wrapper)
@@ -3112,36 +3539,34 @@ class TestOracleSensitivity(unittest.TestCase):
 
     def test_incomplete_event_revalidates_when_context_completes(self):
         predecessor = load_artifact(
-            "me1/event-inc1-4-out-of-order.json", CEILING_EVENT)
+            "me1/event-op1-4-out-of-order.json", CEILING_EVENT)
         descendant = load_artifact(
-            "negative/event-inc1-5-incomplete-descendant.json",
+            "negative/event-op1-5-incomplete-descendant.json",
             CEILING_EVENT)
         oracle = EventIngestOracle(
-            combined_registry(), ["me1/event-inc1-4-out-of-order.json"])
+            combined_registry(), ["me1/event-op1-4-out-of-order.json"])
         self.assertEqual(oracle.ingest(descendant), "incomplete")
         self.assertEqual(oracle.effects, [])
-        pb = predecessor["body"]
-        oracle.known[predecessor["event_id"]] = (
-            pb["event_sequence"], pb["logical_time"]["physical_ms"],
-            pb["logical_time"]["counter"], True)
+        oracle.known[predecessor["event_id"]] = event_context_tuple(
+            predecessor, True)
         self.assertEqual(oracle.ingest(descendant), "accepted")
         self.assertEqual(oracle.effects, [descendant["event_id"]])
 
     def test_invalid_parent_never_becomes_trusted_context(self):
-        parent = load_artifact("me1/event-inc2-0.json", CEILING_EVENT)
+        parent = load_artifact("me1/event-op2-0.json", CEILING_EVENT)
         original = load_bytes
         poisoned = json.loads(jcs(parent).decode("utf-8"))
         poisoned["signature"]["value"] = b64e(b"\x00" * 64)
 
         def fake_load(rel):
-            if rel == "me1/event-inc2-0.json":
+            if rel == "me1/event-op2-0.json":
                 return jcs(poisoned)
             return original(rel)
 
         module = sys.modules[__name__]
         with mock.patch.object(module, "load_bytes", fake_load):
             with self.assertRaises(Reject):
-                known_events_map(["me1/event-inc2-0.json"])
+                known_events_map(["me1/event-op2-0.json"])
 
     def test_fork_classification_depends_on_crypto_validation(self):
         entry = next(e for e in load_index()["entries"]
@@ -3162,10 +3587,10 @@ class TestOracleSensitivity(unittest.TestCase):
                 ("negative/sealed-revoked-sender.json",
                  "negative/disclosure-revoked-sender.json"),
                 ("negative/sealed-revoked-recipient.json",
-                 "me1/event-inc2-6-disclosure-revoked-recipient.json"),
+                 "me1/event-op2-6-disclosure-revoked-recipient.json"),
             ]
             known = known_events_map([
-                "me1/event-inc1-0.json", "me2/event-xm1-0.json"])
+                "me1/event-op1-0.json", "me2/event-opx-0.json"])
             for delivery_rel, authorization_rel in cases:
                 with self.subTest(delivery=delivery_rel):
                     delivery = load_artifact(delivery_rel, CEILING_SEALED)
@@ -3177,7 +3602,7 @@ class TestOracleSensitivity(unittest.TestCase):
 
     def test_checkpoint_rejects_invalid_high_water_event(self):
         registry, state, event_index = _checkpoint_context()
-        checkpoint = load_artifact("me1/checkpoint-inc2-witness.json")
+        checkpoint = load_artifact("me1/checkpoint-opx-witness.json")
         high_water_id = checkpoint["body"]["high_water_event_id"]
         poisoned = json.loads(
             jcs(event_index[high_water_id]).decode("utf-8"))
@@ -3188,7 +3613,7 @@ class TestOracleSensitivity(unittest.TestCase):
 
     def test_checkpoint_rejects_revoked_witness_certificate(self):
         registry, state, event_index = _checkpoint_context()
-        checkpoint = load_artifact("me1/checkpoint-inc2-witness.json")
+        checkpoint = load_artifact("me1/checkpoint-opx-witness.json")
         certificate_id = checkpoint["body"]["witness_certificate_id"]
         already_revoked = certificate_id in registry.revoked_cert_ids
         registry.revoked_cert_ids.add(certificate_id)
@@ -3282,11 +3707,15 @@ def _assert_trees_equal(a, b):
 REQUIRED_COVERAGE = {
     # positive inventory
     "p-jcs-canonical", "p-base64url", "p-ed25519-seed-to-public",
-    "p-genesis-core-me-id", "p-incarnation-id", "p-certificate-id",
+    "p-genesis-core-me-id", "p-operational-id", "p-certificate-id",
+    "p-certificate-carry-forward",
     "p-wrapper-domain-genesis", "p-wrapper-domain-root-transition",
     "p-wrapper-domain-recovery-policy", "p-wrapper-domain-recovery-transition",
     "p-wrapper-domain-revocation", "p-wrapper-domain-certificate",
     "p-wrapper-domain-acceptance", "p-wrapper-domain-lease",
+    "p-wrapper-domain-lease-receipt", "p-external-lease-commit",
+    "p-lease-high-water", "p-identity-wide-lease", "p-park-wake",
+    "p-null-handoff-cutoff", "p-multiple-lease-receipts",
     "p-wrapper-domain-event", "p-wrapper-domain-checkpoint",
     "p-wrapper-domain-sealed",
     "p-linkage-chain", "p-event-zero", "p-event-successor", "p-event-hlc",
@@ -3308,21 +3737,28 @@ REQUIRED_COVERAGE = {
     "n-ed25519-noncanonical-s", "n-ed25519-small-order",
     "n-x25519-all-zero-dh", "n-cross-domain-signature",
     "n-authorization-as-possession", "n-cross-role-key-reuse",
-    "n-signing-key-two-incarnations",
+    "n-signing-key-two-operationals", "n-signing-key-two-me",
     # certificates and control chain
     "n-cert-generation-gap", "n-cert-predecessor-mismatch", "n-cert-fork",
     "n-old-generation-replay", "n-cert-preserved-and-revoked",
     "n-genesis-fork", "n-control-fork", "n-control-sequence-skip",
     "n-root-rotation-new-only", "n-root-rotation-old-only",
     "n-carry-forward-without-ids", "n-policy-without-recovery-threshold",
-    "n-recovery-incarnation-signed", "n-standalone-root-key-revocation",
+    "n-recovery-operational-signed",
+    "n-recovery-transport-governance-signed",
+    "n-standalone-root-key-revocation",
     "n-old-root-issues-cert", "n-cert-unknown-anchor", "n-acceptance-mismatch",
     "n-lease-ttl", "n-recovery-key-signs-event", "n-revoked-cert-event",
     "n-lease-old-certificate-generation", "n-lease-revoked-certificate",
     "n-lease-expired-at-verification", "n-stale-lease-replay",
+    "n-identity-wide-lease-reset", "n-unreceipted-wake",
+    "n-old-operational-after-wake", "n-lease-receipt-binding",
+    "n-lease-receipt-witness", "n-same-session-body-change",
+    "n-operational-we-membership-authority",
     "n-old-generation-event", "n-cutoff-anchored-cert",
     "n-certificate-without-acceptance",
     "p-unaccepted-renewal-does-not-supersede",
+    "n-unaccepted-generation-skip",
     "n-both-predecessor-fields",
     "n-certificate-fork-invalid-signature",
     "n-control-fork-invalid-signature", "n-event-fork-invalid-signature",
@@ -3341,7 +3777,7 @@ REQUIRED_COVERAGE = {
     "p-hlc-counter-overflow-handling",
     # checkpoints
     "n-checkpoint-beyond-high-water", "n-checkpoint-mismatch",
-    "n-checkpoint-cross-incarnation-coverage",
+    "n-checkpoint-cross-operational-coverage",
     # sealed deliveries
     "n-disclosure-missing", "n-disclosure-wrong-event",
     "n-disclosure-wrong-sender", "n-disclosure-wrong-recipient",
@@ -3367,7 +3803,7 @@ REQUIRED_COVERAGE = {
     "d-reachable-no-lease",
     "d-clock-backward",
     "d-clock-uncertainty", "d-all-authority-lost",
-    "d-two-incarnations-eligible", "d-quarantined-lease", "d-post-expiry-event",
+    "d-distinct-me-eligible", "d-quarantined-lease", "d-post-expiry-event",
     "d-witness-checkpoint-expired", "d-attested-timely-policy",
     "d-planned-vs-compromised-key", "d-remote-error-membership",
     "d-checkpoint-timeliness-classes", "d-lease-session-claims",
