@@ -14,6 +14,9 @@ versions.
 - One `/me` may have at most one active body lease; overlapping valid leases
   are split-brain evidence and are quarantined.
 - Runtime keys and credentials remain outside the public repository.
+- GitHub coordination uses dedicated ephemeral session keys. It must never
+  reuse a Daimon root, operational, transport, SSH, signing, or encryption key;
+  a coordination session is work attribution, not `/me` or presence evidence.
 - Public signing keys are never treated as encryption secrets.
 - Tribe and source relationships do not imply access beyond signed grants.
 - Models may propose memory changes but cannot write canonical state directly.

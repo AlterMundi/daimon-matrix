@@ -53,6 +53,8 @@ not itself the Daimon Matrix runtime. Tribe v0 is retired.
   its simultaneous-instances and `/we`-as-instances sentences are superseded
   by the corrected interpretation in `ONTOLOGY.md`.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — claim leases and contribution workflow.
+- [Signed GitHub coordination](docs/github-coordination.md) — session-attested
+  claims, heartbeats, releases, expiry receipts, and recovery.
 
 ## Governance
 

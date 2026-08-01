@@ -1,0 +1,350 @@
+{
+  "$id": "https://github.com/AlterMundi/daimon-matrix/coordination/claim.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "branch": {
+      "allOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^\\s~^:?*\\[\\\\]+(?:/[^\\s~^:?*\\[\\\\]+)*$",
+          "type": "string"
+        },
+        {
+          "not": {
+            "pattern": "(^[./]|[/.]$|\\.\\.|@\\{|//|(^|/)\\.|\\.lock(/|$))"
+          }
+        }
+      ]
+    },
+    "issue": {
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "repository": {
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "number"
+      ],
+      "type": "object"
+    },
+    "key": {
+      "additionalProperties": false,
+      "properties": {
+        "alg": {
+          "const": "Ed25519"
+        },
+        "kid": {
+          "pattern": "^dm:coord-key:v0:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "public_key": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alg",
+        "kid",
+        "public_key"
+      ],
+      "type": "object"
+    },
+    "resources": {
+      "items": {
+        "maxLength": 256,
+        "pattern": "^(issue|path|service|project|protocol):[^\\s]+$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "claim",
+                "heartbeat",
+                "review",
+                "release"
+              ]
+            },
+            "at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "branch": {
+              "$ref": "#/$defs/branch"
+            },
+            "claim_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "command_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "issue": {
+              "$ref": "#/$defs/issue"
+            },
+            "lease_seconds": {
+              "maximum": 86400,
+              "minimum": 60,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "note": {
+              "maxLength": 500,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "previous_receipt_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "previous_receipt_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "principal": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:@/-]+$",
+              "type": "string"
+            },
+            "pull_request": {
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "resources": {
+              "$ref": "#/$defs/resources"
+            },
+            "schema": {
+              "const": "daimon-claim-command/v0"
+            },
+            "session_id": {
+              "pattern": "^dm:coord-session:v0:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "session_key": {
+              "$ref": "#/$defs/key"
+            }
+          },
+          "required": [
+            "schema",
+            "action",
+            "command_id",
+            "claim_id",
+            "issue",
+            "principal",
+            "session_id",
+            "session_key",
+            "at",
+            "lease_seconds",
+            "resources",
+            "branch",
+            "pull_request",
+            "previous_receipt_id",
+            "previous_receipt_hash",
+            "note"
+          ],
+          "type": "object"
+        },
+        "signature": {
+          "additionalProperties": false,
+          "properties": {
+            "alg": {
+              "const": "Ed25519"
+            },
+            "kid": {
+              "type": "string"
+            },
+            "role": {
+              "const": "claim-attestation"
+            },
+            "value": {
+              "pattern": "^[A-Za-z0-9_-]{86}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "alg",
+            "kid",
+            "role",
+            "value"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "body",
+        "signature"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "claim",
+                "heartbeat",
+                "review",
+                "release",
+                "expire"
+              ]
+            },
+            "at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "branch": {
+              "$ref": "#/$defs/branch"
+            },
+            "claim_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "command_id": {
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decision": {
+              "enum": [
+                "accepted",
+                "rejected",
+                "expired"
+              ]
+            },
+            "issue": {
+              "$ref": "#/$defs/issue"
+            },
+            "lease_until": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "previous_receipt_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "previous_receipt_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "principal": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:@/-]+$",
+              "type": "string"
+            },
+            "pull_request": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reason": {
+              "pattern": "^[a-z][a-z0-9_]{0,127}$",
+              "type": "string"
+            },
+            "resources": {
+              "$ref": "#/$defs/resources"
+            },
+            "schema": {
+              "const": "daimon-claim-receipt/v0"
+            },
+            "session_id": {
+              "pattern": "^dm:coord-session:v0:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "ready",
+                "in_progress",
+                "in_review",
+                "done"
+              ]
+            },
+            "workflow_sha": {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "decision",
+            "action",
+            "reason",
+            "command_id",
+            "claim_id",
+            "issue",
+            "principal",
+            "session_id",
+            "state",
+            "at",
+            "lease_until",
+            "resources",
+            "branch",
+            "pull_request",
+            "previous_receipt_id",
+            "previous_receipt_hash",
+            "workflow_sha"
+          ],
+          "type": "object"
+        },
+        "receipt_hash": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "receipt_id": {
+          "pattern": "^dm:claim-receipt:v0:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "receipt_id",
+        "receipt_hash"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "Daimon Matrix GitHub claim command or receipt v0"
+}

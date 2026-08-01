@@ -1,0 +1,20 @@
+{
+  "principals": {
+    "codex@localhost": {
+      "enabled": true,
+      "github_logins": [
+        "nicoechaniz"
+      ]
+    },
+    "compaii@localhost": {
+      "enabled": true,
+      "github_logins": [
+        "nicoechaniz"
+      ]
+    }
+  },
+  "receipt_authors": [
+    "github-actions[bot]"
+  ],
+  "schema": "daimon-coordination-principals/v0"
+}
