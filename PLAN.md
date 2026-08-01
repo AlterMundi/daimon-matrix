@@ -64,8 +64,10 @@ Each daimon identity owns a stable `/me` root. An ordinary body receives a
 revocable operational credential and signed presence lease without receiving
 the root private key. A park/wake transition moves the same `/me` sequentially
 between bodies and supersedes the prior lease. A birth creates a new `/me`, new
-keys, empty autobiographical memory, and a signed relationship to its parent,
-source, species release, and inherited tribal grants.
+keys, empty autobiographical memory, and signed lineage references to its
+parent, source, and species release. It may commit future fresh attenuated
+tribal delegations, but birth itself never inherits a grant, membership, route,
+or relationship authority.
 
 The newborn generates and retains its own root key at first awakening.
 The protocol must define root-key custody, offline recovery, rotation,
@@ -75,8 +77,9 @@ compromise, and irrecoverable-loss behavior before the keystore is implemented.
 
 The species genome contains the root `/me` definition and capability
 contracts, not personal identity or memory. Threshold maintainers publish
-signed releases. Compatible releases may apply automatically through
-`/species.incoming`.
+signed releases. Compatible releases may apply through `/species.incoming`
+only after exact local deterministic verification, explicit opt-in, and
+sandbox/capability checks.
 
 Speciation requires an intentional signed branch and an incompatible release.
 Agent 0 and its first real evolutionary branch remain future events; V0 tests

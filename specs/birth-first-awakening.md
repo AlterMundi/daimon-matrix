@@ -128,7 +128,7 @@ awakening_key = Ed25519 public signing-key descriptor
 parent_me_id
 parent_identity_control_position = {recovery_generation, control_sequence,
                                     control_hash}
-species_release_id = non-empty string
+species_release_id = DM-014 species release ID
 source_references = sorted unique [reference string]
 tribal_commitments = sorted unique [commitment object]
 issued_at_ms
@@ -156,9 +156,10 @@ event's `me_id`, and `parent_identity_control_position` MUST name an accepted
 position on the parent's identity-control chain at which the signing
 certificate validates. Reference strings (`species_release_id` excepted) are
 printable ASCII of 1 through 512 bytes; DM-015 and DM-016 freeze their exact
-grammars and resolution semantics. `species_release_id` is printable ASCII of
-1 through 512 bytes and is the exact string the newborn genesis statement MUST
-carry verbatim. Operation strings are printable ASCII of 1 through 128 bytes.
+grammars and resolution semantics. `species_release_id` matches exactly
+`dm:species-release:v0:<32-byte-canonical-base64url>` and is the exact string
+the newborn genesis statement MUST carry verbatim. Operation strings are
+printable ASCII of 1 through 128 bytes.
 
 Before publishing the offer, the parent generates a fresh Ed25519 capability
 keypair independently of every identity, recovery, operational, transport, and
@@ -263,7 +264,7 @@ core = {
   parent_me_id,
   parent_identity_control_position = {recovery_generation, control_sequence,
                                       control_hash},
-  species_release_id = non-empty string,
+  species_release_id = DM-014 species release ID,
   source_references = sorted unique [reference string],
   tribal_commitments = sorted unique [commitment object],
   accepted_at_ms
@@ -432,10 +433,10 @@ streams begin at `event_sequence = 0` with null `previous_event_id`; no
 newborn event exists before first awakening, and the acceptance is a root
 artifact, not an event.
 
-Missing or not-yet-defined DM-014/DM-015 contextual validation does not grant
-species, source, or delegation authority and does not prevent the independent
-identity from becoming active. Such claims remain `context-incomplete` until
-their owning protocols validate them.
+Missing or not-yet-validated DM-014 species evidence and not-yet-defined DM-015
+source validation grant no species, source, or delegation authority and do not
+prevent the independent identity from becoming active. Such claims remain
+`context-incomplete` until their owning protocols validate them.
 
 ## 9. Empty autobiographical memory
 
@@ -576,10 +577,11 @@ offer, and one genesis carries exactly one `birth_offer_id`.
   projection input) when their references are well-formed; malformed or
   invalid presented bytes reject the binding. Missing species or source bytes
   instead yield `context-incomplete` under the next rule.
-- Unavailable or not-yet-specified species/source artifacts leave contextual
-  claims `context-incomplete` and grant no species/source authority. Invalid
-  bytes, once their owning protocol exists, quarantine the affected provenance
-  claim, not the cryptographic lineage binding or newborn identity.
+- Unavailable DM-014 species evidence or not-yet-specified DM-015 source
+  artifacts leave contextual claims `context-incomplete` and grant no
+  species/source authority. Invalid bytes under an available owning protocol
+  quarantine the affected provenance claim, not the cryptographic lineage
+  binding or newborn identity.
 - Parent identity-control forks quarantine the parent's chain under DM-010;
   offers anchored at a quarantined position are not validatable while the
   fork stands, so dependent ceremonies wait or abort. Newborn genesis forks
