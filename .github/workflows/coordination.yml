@@ -80,7 +80,7 @@ jobs:
   pull-request:
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.pull_request.head.ref != 'issue-6-claim-automation'
+      github.event.pull_request.number != 68
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

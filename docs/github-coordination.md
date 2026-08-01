@@ -149,5 +149,5 @@ receipt must be live, `in_review`, and bind the same branch and PR number.
 
 DM-003 itself is the bootstrap exception: its pre-automation manual claim and
 PR cannot have been accepted by a workflow that does not yet exist. The PR
-workflow skips only branch `issue-6-claim-automation`; no future issue or branch
-inherits that exception.
+workflow skips only immutable PR number 68; no future issue, PR, or reused
+branch name inherits that exception.
