@@ -11,12 +11,12 @@ relationships (`/tribe`).
 
 ## Status
 
-V0 planning and the concurrent-work audit are complete. This repository
-contains specifications and a dependency-ordered implementation backlog.
-DM-003 and DM-010 are the first released cards; later work remains blocked by
-its listed dependencies. The reviewed pre-Daimon HMK, Wiki, compaii-state, and
-Tribe v1 stack is the reversible transitional runtime used while this
-implementation is built; it is not itself the Daimon Matrix runtime.
+V0 planning and the concurrent-work audit are complete. A finite transitional
+closeout is tracked by DM-004; DM-010 is the selected first implementation
+card after it closes, while DM-003 remains dependency-ready. The reviewed
+pre-Daimon HMK, Wiki, compaii-state, and Tribe v1 stack is the reversible
+transitional runtime used while this implementation is built; it is not itself
+the Daimon Matrix runtime. Tribe v0 is retired.
 
 ## Canonical documents
 
@@ -28,6 +28,8 @@ implementation is built; it is not itself the Daimon Matrix runtime.
   already active in another session.
 - [CONCURRENT-WORK-AUDIT.md](CONCURRENT-WORK-AUDIT.md) — evidence, reuse
   classifications, deployed state, and released-card decisions.
+- [CURRENT-STATE.md](CURRENT-STATE.md) — live pre-V0 baseline, resolved work,
+  explicit deferrals, and the next card.
 - [Foundation snapshot](docs/foundation/daimon-matrix.md) — preserved source.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — claim leases and contribution workflow.
 

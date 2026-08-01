@@ -18,8 +18,8 @@ collective-memory, compaii-state, Wiki, and CompAII deployment work.
 - Preserve `mccompaii` as an intentional DaemonCraft/Minecraft body profile,
   but do not treat its bundled HMK database as a second `/me` authority.
 - Do not migrate Tribe v0 messages or preserve v0 wire compatibility.
-- Permit narrowly scoped containment of the live v0 service while replacement
-  implementation remains dependency-blocked.
+- Tribe v0 containment was temporary and is now superseded by complete v0
+  retirement and the v1 production cutover.
 
 ## Repository and worktree inventory
 
@@ -114,27 +114,34 @@ transactionally reliable.
 
 ## Deployed state observed
 
-- `tribe-lcm-local.service`: active and enabled, listening on
-  `0.0.0.0:8585`. This is the current v0 CompAII channel, uses
-  roster-derived encryption that provides no confidentiality, and requires
-  immediate loopback/anyVPN/firewall containment rather than architectural
-  continuation.
-- `tribe-bridge-v1-canary.service`: active but disabled on boot, listening on
-  `127.0.0.1:8685`, built from
-  `38313628ef7a0c4b04c6642ba826ed680ff1ed49`. It completed three messages,
-  five deliveries, five acknowledgements, zero pending rows, integrity
-  verification, and a verified backup.
-- The canary is transport evidence for DM-050 through DM-053 and DM-073. It is
-  also the staging environment for the transitional Tribe v1 runtime. It is
-  not yet DM-072 evidence because `compaii` and `codex@localhost` are
-  independent v1 agent IDs, not certified incarnations of one `/me`.
-- The local Python runtime uses SQLite 3.46.1. The canary correctly refused WAL
-  and selected rollback journal `DELETE` with `synchronous=FULL`.
-- The live HMK plugin matches PR 2 source, its doctor is clean, and 89 tests
-  passed. The Wiki gate matches PR 6 behavior and its focused tests passed.
-- The dated Wiki architecture evidence remains the current transitional
-  architecture record while Daimon Matrix has no runtime. A later Daimon note
-  must supersede, not rewrite, it.
+The following supersedes the audit-time canary snapshot:
+
+- Tribe v0 is fully retired on Legion and the hub. No v0 service or port is
+  active, and v1 does not parse or negotiate downgrade traffic.
+- `tribe-bridge-v1.service` is the transitional runtime. The signed directory
+  is at epoch 3 with seven active principals; Legion serves the local/direct
+  route and the hub serves the anyVPN-first store-and-forward route.
+- `@localhost` principals are enforced as local-only at audience expansion and
+  envelope encryption. They cannot address remote or mixed audiences, and a
+  remote recipient receives no wrapped content key.
+- Tribe repository commit `94d088eb91d3a5a2ae0ae069bad04252f52a7c11`
+  contains the v0 retirement and client-side inbox-limit validation. The live
+  broker reports build `e02568818000165cf4f299f7be95d534b42daebc`; the later
+  commit is CLI-only and does not require a broker restart.
+- Hermes integration commit
+  `0db1912911fafa384aa5ee0145929658a9d1dd33` is deployed on Legion and
+  `daimonmatrix`. Kimi K3 256k remains primary; cheaper DeepSeek auxiliaries
+  handle title generation.
+- The single operational HMK plugin is pinned to
+  `96261b222647a453abe6b6842c9f1d5045d64c63`. Its status dispatcher succeeds
+  on both hosts and remote doctor found no duplicate plugin source.
+- The live two-host `/we` walking skeleton converged distinct signed events,
+  resumed after interruption, preserved incarnation/host/harness provenance,
+  projected idempotently into host-local HMK, and rejected tampering. Its code
+  remains unmerged evidence; canonical semantics merged in PR 47.
+- `eko@amapola` onboarding is prepared as directory epoch 4 but cannot be
+  signed until the existing offline governance-root custody procedure is
+  recovered. Roots must not be silently rotated as part of onboarding.
 
 No deployed key, secret, database, message history, or private Wiki content is
 an import candidate.
@@ -171,11 +178,9 @@ until the named fix is verified.
    reviewed publication contracts.
 4. Personal memory authority moves from HMK to the ledger; non-Daimon
    HMK-native artifact classes may retain their existing authority.
-5. The existing v1 canary becomes the staging and rollback environment for the
-   transitional runtime; it is not DM-072 continuity until identities are
-   certified incarnations of one `/me`.
-6. Security containment of the live v0 service is allowed during the
-   dependency freeze.
+5. The production v1 transitional runtime is not DM-072 continuity until its
+   identities are certified incarnations of one `/me`.
+6. Tribe v0 is retired; rollback repairs v1 and never recreates v0.
 7. Root-key custody, compromise, rotation, and recovery are protocol
    requirements before keystore implementation.
 
@@ -191,15 +196,8 @@ Every other V0 card retains at least one unresolved direct blocker.
 
 ## Transitional runtime execution
 
-The audit does not require Daimon Matrix runtime code to exist before the
-reviewed work above is useful. The intended sequence is:
-
-1. fix and re-review the changes requested on HMK PR 4 and Tribe Bridge PR 20;
-2. merge the approved stacks in dependency order;
-3. deploy the HMK, compaii-state, Wiki, collective-publication, manifest, and
-   Tribe v1 components as a reversible transitional system;
-4. perform a clean v0-to-v1 Tribe cutover with empty v1 stores and no
-   compatibility or history migration;
-5. keep that system running and collect operational evidence while the Daimon
-   Matrix cards replace its identity, continuity, memory, and communication
-   layers incrementally.
+The sequence above completed through the v1 cutover and two-host evidence
+spike. The remaining finite closeout is tracked by DM-004. After it closes,
+implementation starts with DM-010 while the transitional runtime stays active
+and reversible. Its authority contracts are replaced incrementally; its
+message history and experimental `/we` code are not migration inputs.

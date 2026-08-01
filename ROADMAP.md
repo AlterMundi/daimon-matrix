@@ -14,13 +14,18 @@ collective-memory, and harness incarnation. Classify each item as:
 - superseded but worth preserving;
 - safe to stop.
 
-The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-003 and DM-010 are the
-first released cards.
+The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-003 and DM-010 are
+dependency-ready; after the finite DM-004 closeout, DM-010 is the selected
+first V0 implementation card.
 
 The reviewed Tribe v1, HMK, Wiki, collective-publication, compaii-state, and
 manifest work is also completed and deployed as a reversible transitional
 runtime. It remains in service and under test while later waves replace its
 provisional identity, memory-authority, and communication semantics.
+
+The v0 Tribe runtime is fully retired. Canonical `/we.sync` semantics are
+merged, and the live two-host walking skeleton is preserved unmerged as test
+evidence rather than imported as V0 runtime code.
 
 ## Wave 1 — Freeze semantics
 

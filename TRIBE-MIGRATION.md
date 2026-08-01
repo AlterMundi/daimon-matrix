@@ -12,8 +12,8 @@ an adapter despite being controlled by the same project.
 
 ## Reusable work
 
-The current project provides useful starting points from both v0 and the
-audited draft v1 branches:
+The current project provides useful starting points from the retired v0
+implementation and the deployed v1 runtime:
 
 - canonical signed JSON and negative parsing vectors;
 - Ed25519 signing and X25519/HPKE recipient wrapping;
@@ -28,14 +28,21 @@ audited draft v1 branches:
 These behaviors will be imported behind a transport interface so they can be
 replaced or supplemented without changing namespace semantics.
 
-## Security replacement
+## Completed v0 retirement
 
-The current AES key is deterministically derived from the public
-`allowed_signers` roster and a fixed public string. Anyone with the public
-roster can derive that key, so the existing mechanism does not provide
-confidentiality.
+V0 derived an AES key from public roster material and therefore did not provide
+confidentiality. It is no longer running on Legion or the hub. V0 services,
+parsers, commands, ports, downgrade paths, and message-history migration have
+been retired. Rollback means repairing v1 with a successor state; it never
+means reinstalling v0.
 
-V0 must separate:
+The active transitional runtime is Tribe Bridge v1 directory epoch 3. It uses
+signed directory chaining, recipient encryption, authenticated envelopes,
+stable IDs, leases, and direct/hub routing. This is useful transport evidence,
+but its directory still must not become Daimon `/me` authority.
+
+The v1 cutover established these separations, which the Daimon import must
+preserve:
 
 - identity signing keys;
 - relationship and authorization grants;
@@ -64,13 +71,19 @@ but it must never be used as encryption key material.
 Repository provenance is retained; wire compatibility and conversation history
 are not.
 
-## Transitional containment
+## Transitional v1 operating policy
 
-The live v0 service may be hardened while replacement implementation remains
-dependency-blocked. Bind it to loopback or an explicit anyVPN address whenever
-possible; a wildcard bind requires a verified source-allowlisted firewall.
-Containment changes must not extend v0 lifetime, add compatibility layers, or
-turn v0 storage into a migration source.
+- Prefer anyVPN endpoints, then configured fallbacks.
+- Require an explicit per-agent client environment; an absent host default
+  fails closed instead of impersonating a convenient harness.
+- Principals ending in `@localhost` may address only audiences wholly local to
+  the same embodiment. Their content keys are not wrapped for remote members.
+- Directory epochs advance through the governance-signed hash chain. Clients
+  and brokers never downgrade an anti-rollback state.
+- A new host seeded directly at an epoch greater than one needs the matching
+  trusted roots and seeded directory-state receipt.
+- Governance-root custody, recovery, and loss are transitional operational
+  risks and direct evidence for DM-010.
 
 ## Target layers
 
