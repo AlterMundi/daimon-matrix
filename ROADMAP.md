@@ -32,9 +32,9 @@ evidence rather than imported as V0 runtime code.
 Finalize identity, birth, species, source, tribe, scope resolution, operation
 grammar, event envelope, cryptographic vectors, and compatibility rules.
 
-Current state: DM-010 through DM-012 are complete. DM-013 (birth) and DM-015
-(source) are dependency-ready, alongside the independent coordination card
-DM-003. Species, tribe, memory-boundary, and adapter contracts remain blocked
+Current state: DM-010 through DM-013 are complete. DM-014 (species), DM-015
+(source), and DM-016 (tribe) are dependency-ready, alongside the independent
+coordination card DM-003. Memory-boundary and adapter contracts remain blocked
 in the dependency order recorded in `ISSUES.md`.
 
 ## Wave 2 — Build the local narrow waist
