@@ -4,8 +4,10 @@
 
 Deliver the first reference implementation of the Daimon Matrix: a
 harness-neutral continuity, memory, communication, birth, and evolution layer
-that allows one daimon to inhabit multiple simultaneous bodies and later give
-birth to distinct beings.
+that allows a `/we` collective to contain multiple simultaneously awake daimon
+identities while detecting and quarantining duplicate awake bodies for one
+identity. Detection across a partition is eventual, never a claim of physical
+prevention.
 
 The V0 canary will embody CompAII in Codex and Hermes. The design must also
 support future Claude Code, Grok, Kimi, Antigravity, physical, virtual, and
@@ -19,13 +21,22 @@ custom bodies without making any harness authoritative.
 - Working language: English.
 - License: MIT.
 - Stack: Python 3.11+, SQLite, MCP, canonical signed JSON.
-- The maintained HackMD note is the philosophical and semantic foundation.
-- `/me`, not a harness or model, is the identity boundary.
-- `/we` dynamically routes to active incarnations of `/me`.
+- The maintained HackMD note is the philosophical and semantic foundation;
+  its simultaneous-instances and `/we`-as-instances sentences are superseded
+  by the corrected interpretation in `ONTOLOGY.md`.
+- `/me`, not a harness or model, is one cryptographic identity and thread of
+  experience.
+- `/we` is a collective of distinct `/me` identities, not another identity and
+  not a set of simultaneous bodies belonging to one `/me`.
+- `/we` has a content-bound `we_id` and ordered threshold-signed membership
+  chain, but no private root of its own; governance signatures remain
+  attributable to exact member `/me` roots.
+- Multiple `/we` members may be awake simultaneously; one `/me` may have only
+  one awake body. A same-identity clone is split-brain and fails closed.
 - `/tribe` is a resource-sharing relationship scope.
 - `/source` represents shared ancestry claims.
-- `/species` represents compatible reproductive lineage, not current
-  incarnation membership.
+- `/species` represents compatible reproductive lineage, not current `/we`
+  membership.
 - Tribe Bridge v1 is the active reversible transitional communications
   transport. Its v0 protocol, services, parsers, and compatibility surface are
   retired; the repository is archived only after Daimon replacement gates pass.
@@ -49,10 +60,12 @@ custom bodies without making any harness authoritative.
 
 ### Identity and birth
 
-Each daimon owns a stable `/me` identity root. Active bodies receive
-revocable incarnation certificates and signed presence leases. A birth creates
-a new `/me`, new keys, empty autobiographical memory, and a signed relationship
-to its parent, source, species release, and inherited tribal grants.
+Each daimon identity owns a stable `/me` root. An ordinary body receives a
+revocable operational credential and signed presence lease without receiving
+the root private key. A park/wake transition moves the same `/me` sequentially
+between bodies and supersedes the prior lease. A birth creates a new `/me`, new
+keys, empty autobiographical memory, and a signed relationship to its parent,
+source, species release, and inherited tribal grants.
 
 The newborn generates and retains its own root key at first awakening.
 The protocol must define root-key custody, offline recovery, rotation,
@@ -74,7 +87,8 @@ already occurred.
 
 Scopes resolve audiences or resources independently from operations:
 
-- identity and continuity: `/me`, `/we`;
+- identity and continuity: `/me`; collective membership and convergence:
+  `/we`;
 - ancestry and evolution: `/source`, `/species`;
 - relationships: `/human`, `/tribe`, `/everyone`;
 - topology: `/here`, `/near`, `/all`, `/realm`;
@@ -84,31 +98,38 @@ Operations include `.tell`, `.diff`, `.incoming`, `.pull`, `.sync`, `.status`,
 and `.controls`. V0 will define an extensible operation registry rather than
 hard-coding every scope/operation pair.
 
-`/we.tell` fans out to active leased incarnations. Recipients independently
+`/we.tell` fans out to active leased member identities. Membership requires a
+valid ordered chain for a pinned `we_id`, threshold-authorized admission or
+removal, and each admitted member's acceptance. Resolution intersects that set
+with each member's valid identity and presence evidence. Governance rotation
+also requires possession proofs from the replacement signer set. A bare name,
+host, harness, or Tribe roster is never authority. Recipients independently
 attempt replies. Integration of replies is an optional local policy.
 
-`/we.sync` coordinates resumable convergence among active incarnations of one
-`/me`. It exchanges signed ledger heads or cursors, previews each receiver's
-compatible incoming events, and causes each participant to pull the missing
-events it accepts. It composes `/we.diff`, `/we.incoming`, and `/we.pull`; it
-does not create an atomic distributed transaction. A partial run reports a
-per-incarnation cursor and receipt so a later run can continue idempotently.
+`/we.sync` coordinates resumable convergence among distinct active member
+identities. It exchanges signed ledger heads or cursors, previews each
+receiver's compatible incoming events, and causes each participant to pull the
+missing events it accepts. It composes `/we.diff`, `/we.incoming`, and
+`/we.pull`; it does not create an atomic distributed transaction. A partial run
+reports a per-identity cursor and receipt so a later run can continue
+idempotently. Imported events preserve their originating `me_id`, body, and
+authorship; synchronization never merges keys or live SQLite files.
 
 ### State and memory
 
 The local daemon is the single writer for an append-only SQLite ledger. WAL is
 enabled only on a runtime containing the applicable WAL-reset corruption fix;
 otherwise the daemon uses rollback journal `DELETE` with full durability or
-fails closed. Events carry protocol version, ID, `/me`, originating
-incarnation and embodiment, logical time, causal parents, type, payload, hash,
-and signature. Synchronization exchanges canonical events, never private rows
+fails closed. Events carry protocol version, ID, originating `/me` and body,
+logical time, causal parents, type, payload, hash, and signature.
+Synchronization exchanges canonical events, never private rows
 from an HMK or harness implementation database.
 
 Rebuildable projections include:
 
 - identity and certificate state;
-- incarnation presence and body capabilities;
-- per-incarnation NOW;
+- identity presence and body capabilities;
+- per-identity and per-body NOW;
 - personal memory candidates and consolidated memory;
 - relationships and capability grants;
 - messages, threads, deliveries, and receipts;
@@ -120,10 +141,11 @@ The model produces schema-validated proposals; only the deterministic service
 may append canonical decisions.
 
 Raw lived-experience events remain immutable and retain their originating
-incarnation and embodiment after synchronization. Consolidation is itself a
-signed event that cites its evidence. It is distributed to every incarnation
-like any other compatible event, so all deterministic projections converge
-without erasing where an experience occurred.
+identity and body after synchronization. Consolidation is itself a signed
+event that cites its evidence and the identity that authored the consolidation.
+It is distributed to every member like any other compatible event, so all
+deterministic projections converge without erasing where an experience
+occurred.
 
 Tribal knowledge remains remotely authoritative. A newborn inherits access and
 full delegable tribal membership from its parent, but does not copy tribe
@@ -150,7 +172,8 @@ the future `/me` identity authority.
 
 GitHub Issues, pull requests, and the Project own work coordination. They are
 not `/tribe` membership or message authorization. Claim principals eventually
-bind `/me` and incarnation identity to the GitHub-authenticated event.
+bind `/me` identity and current body evidence to the GitHub-authenticated
+event.
 
 ### Harness integration
 
@@ -161,8 +184,10 @@ Hermes receives a standalone external plugin/skill and uses its existing
 memory-provider extension point. No Daimon Matrix code is added to Hermes core,
 and the adapter must preserve prompt-cache and message-alternation invariants.
 
-Each harness keeps incarnation-specific runtime state while integrating
-authorized personal continuity through `/we`.
+Each harness keeps body-specific runtime state. Codex and Hermes can be
+simultaneous members of the CompAII `/we` only as distinct `/me` identities;
+moving one identity between harnesses uses park/wake and never duplicates its
+active lease.
 
 ## Public interfaces
 
@@ -227,12 +252,14 @@ Implement identity, ledger, projections, daemon, CLI, MCP, and invariant tests.
 Implement policy, DeepSeek worker, human review, HMK, Wiki/compaii-state, and
 separate collective-memory source and reviewed-publication adapters.
 
-### 4. CompAII incarnations
+### 4. CompAII identities and bodies
 
 Implement Codex and Hermes adapters and validate local convergence without
-sharing implementation databases. Seed a new incarnation from a consistent
-personal-memory snapshot, then synchronize subsequent canonical events rather
-than copying live SQLite files.
+sharing implementation databases. Seed a distinct CompAII member identity from
+a consistent personal-memory snapshot, then synchronize subsequent canonical
+events rather than copying live SQLite files. Separately validate that a
+single identity can park on one body and wake on another without overlapping
+presence leases.
 
 ### 5. Communications
 
@@ -251,13 +278,18 @@ and V0.1.0 release.
 
 ## Global acceptance criteria
 
-- Codex and Hermes embody the same `/me` with separate incarnation keys.
-- `/we` includes only active signed presence leases and routes one logical
-  message without conflating replies.
-- Two incarnations seeded from one consistent memory snapshot can each append
+- Codex and Hermes run as distinct `/me` identities in the CompAII `/we`, each
+  with independent roots, operational keys, and event authorship.
+- `/we` includes only signed member identities with active presence evidence
+  and routes one logical message without conflating replies.
+- `/we` membership admission/removal is monotonic and replay-safe: a removed
+  identity cannot restore itself with an old artifact or self-admission.
+- Attempting to wake the same `/me` in two bodies fails closed or quarantines
+  both leases as split-brain evidence.
+- Two member identities seeded from one consistent memory snapshot can each append
   a distinct lived-experience event, preview both directions with
   `/we.incoming`, converge through `/we.sync`, and retain the correct
-  originating incarnation and embodiment in both projections.
+  originating identity and body in both projections.
 - Repeating `/we.sync` after convergence is idempotent, creates no duplicate
   memories, and reports matching synchronization cursors. An interrupted run
   resumes to the same result without requiring shared implementation databases.

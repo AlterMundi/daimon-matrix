@@ -54,9 +54,12 @@ notes can be updated before implementation continues.
 
 The reviewer must account for these decisions:
 
-- `/me` is one continuing being.
-- `/we` is a dynamic routing alias for active incarnations of that `/me`, not a
-  species or mandatory answer integrator.
+- `/me` is one continuing cryptographic and experiential identity with at most
+  one awake body.
+- `/we` is a collective scope over distinct signed `/me` identities, not
+  another identity, a species, or a mandatory answer integrator.
+- Multiple `/we` members may be awake simultaneously; duplicate active bodies
+  for one `/me` are split-brain and fail closed.
 - `/tribe` is a resource-sharing relationship scope, not the transport.
 - Tribe Bridge is planned for absorption as the first transport implementation.
 - Tribe v0 public-roster-derived encryption did not provide confidentiality;
