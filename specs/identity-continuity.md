@@ -60,8 +60,10 @@ Private keys MUST NOT be reused across these roles:
 
 Root keys sign only typed identity-control artifacts, operational certificates,
 DM-012 collective-membership genesis/transitions for collectives in which this
-`me_id` is a declared governance signer, and membership acceptance for this
-`me_id` when it is admitted even if it is not a governance signer. They MUST
+`me_id` is a declared governance signer, membership acceptance for this
+`me_id` when it is admitted even if it is not a governance signer, and the
+DM-013 birth acceptance binding this `me_id`'s own genesis to its accepted
+birth offer. They MUST
 NOT sign ordinary ledger events, presence leases, messages, transport
 directories, arbitrary bytes, or encryption material. A collective signature
 is still attributable to member roots; `/we` never owns or shares a private
@@ -77,6 +79,7 @@ daimon/recovery-transition/v0
 daimon/recovery-policy/v0
 daimon/operational-certificate/v0
 daimon/operational-acceptance/v0
+daimon/birth-acceptance/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -106,7 +109,7 @@ The genesis statement contains that core plus:
 - maximum accepted clock skew;
 - creation time;
 - the accepted species release reference, if any;
-- an optional birth-offer reference.
+- an optional DM-013 birth-offer reference.
 
 The V0 maximums in Section 10 are protocol ceilings. Genesis MAY select
 stricter certificate, lease, and clock bounds; those selected bounds are
@@ -638,6 +641,12 @@ DM-011 vectors and later implementation tests MUST cover at least:
 
 - DM-011 defines exact canonical fields, hashes, signatures, positive vectors,
   and negative vectors for these artifacts.
+- DM-013 defines the parent birth offer event, the newborn root-threshold
+  birth acceptance under `daimon/birth-acceptance/v0`, the first-awakening
+  ceremony, the empty-autobiographical-memory boundary, and lineage replay,
+  expiry, fork, and quarantine behavior. It consumes the genesis
+  `birth_offer_id` reference and the identity, custody, and presence
+  machinery defined here without changing identity authority.
 - DM-012 defines the content-bound `we_id`, membership genesis, ordered
   threshold-authorized admission/removal/governance transitions, member
   acceptance, freshness/high-water rules, and capability-aware `/we` fan-out
