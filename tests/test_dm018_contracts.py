@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Independent DM-018 schema and cross-record conformance checks."""
 
+import base64
+import hashlib
 import json
 import os
 import unittest
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from jsonschema import Draft202012Validator
 
 
@@ -50,6 +54,40 @@ def strict_load(path, require_canonical=True):
 def assert_sorted_unique(values, name):
     if values != sorted(set(values)):
         raise Reject(f"{name} must be sorted and unique")
+
+
+def b64url_decode(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def canonical_bytes(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def check_deployment_fence_crypto(record):
+    descriptor = {
+        "alg": "Ed25519",
+        "public_key": record["issuer_public_key"],
+    }
+    expected_key_id = "dm:key:v0:" + base64.urlsafe_b64encode(
+        hashlib.sha256(canonical_bytes(descriptor)).digest()
+    ).rstrip(b"=").decode("ascii")
+    if record["issuer_key_id"] != expected_key_id:
+        raise Reject("deployment issuer key ID mismatch")
+    body = {key: value for key, value in record.items()
+            if key not in {"fence_id", "signature"}}
+    preimage = b"daimon/deployment-fence/v0\x00" + canonical_bytes(body)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(preimage).digest()
+                                     ).rstrip(b"=").decode("ascii")
+    if record["fence_id"] != "dm:deployment-fence:v0:" + digest:
+        raise Reject("deployment-fence content ID mismatch")
+    try:
+        Ed25519PublicKey.from_public_bytes(
+            b64url_decode(record["issuer_public_key"])
+        ).verify(b64url_decode(record["signature"]), preimage)
+    except (InvalidSignature, ValueError) as error:
+        raise Reject("deployment-fence signature mismatch") from error
 
 
 def check_manifest(record):
@@ -188,6 +226,27 @@ class DM018ContractsTest(unittest.TestCase):
                 continue
             for record in self.records(entry):
                 check_manifest(record)
+
+    def test_deployment_fence_vectors_have_real_ids_and_signatures(self):
+        paths = (
+            "valid/deployment-fence-active.json",
+            "negative/fence-regression.json",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                check_deployment_fence_crypto(
+                    strict_load(os.path.join(VECTOR_ROOT, path)))
+
+    def test_deployment_fence_crypto_rejects_tampering(self):
+        record = strict_load(os.path.join(
+            VECTOR_ROOT, "valid/deployment-fence-active.json"))
+        modified_body = dict(record, fencing_token=record["fencing_token"] + 1)
+        with self.assertRaises(Reject):
+            check_deployment_fence_crypto(modified_body)
+        modified_signature = dict(
+            record, signature="A" + record["signature"][1:])
+        with self.assertRaises(Reject):
+            check_deployment_fence_crypto(modified_signature)
 
     def test_exact_version_negotiation_uses_local_preference(self):
         local = ["v2", "v0", "v1"]

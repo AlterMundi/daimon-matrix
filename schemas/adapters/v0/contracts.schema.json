@@ -673,6 +673,10 @@
         "issuer_key_id": {
           "$ref": "#/$defs/content_id"
         },
+        "issuer_public_key": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
         "me_id": {
           "$ref": "#/$defs/content_id"
         },
@@ -713,6 +717,7 @@
         "generation",
         "holder",
         "issuer_key_id",
+        "issuer_public_key",
         "me_id",
         "predecessor_fence_id",
         "realization_id",

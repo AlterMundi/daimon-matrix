@@ -271,8 +271,10 @@ ledger, presence or fence.
 `daimon-deployment-fence/v0` is issued by the deployment authority and binds
 one `me_id` as subject metadata to an exact realization, durable volume,
 holder, monotonic `generation`, monotonic `fencing_token`, predecessor fence,
-and state (`prepared`, `active`, `parked`, or `revoked`). It authorizes only
-deployment effects.
+state (`prepared`, `active`, `parked`, or `revoked`), `issuer_key_id`, the
+matching Ed25519 `issuer_public_key`, and its signature. The consumer recomputes
+the key ID by the DM-011 descriptor formula and accepts the key only when local
+deployment policy authorizes it. The record authorizes only deployment effects.
 
 `daimon-presence-lease/v0` and `daimon-deployment-fence/v0` are separately
 named, versioned, signed and validated records. Their IDs, issuers, sequences,
