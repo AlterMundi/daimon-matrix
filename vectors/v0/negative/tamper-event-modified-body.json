@@ -1,0 +1,1 @@
+{"base":"me1/event-op1-1.json","check":"event-wrapper","note":"modified canonical body is rejected","ops":[{"op":"json-set","path":["body","payload","text"],"value":"tampered"}],"schema":"x/test-tamper-descriptor/v0"}

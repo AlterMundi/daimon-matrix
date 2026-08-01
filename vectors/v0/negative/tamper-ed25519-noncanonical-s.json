@@ -1,0 +1,1 @@
+{"base":"me1/event-op1-1.json","check":"event-wrapper","note":"a non-canonical Ed25519 S scalar is rejected","ops":[{"op":"set-signature-s","s_le_hex":"1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed"}],"schema":"x/test-tamper-descriptor/v0"}

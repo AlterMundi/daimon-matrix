@@ -382,10 +382,20 @@ own lifetime, or grant collective membership.
 
 Certificate expiry makes new presence and uncheckpointed future signatures
 inadmissible but does not erase historical evidence accepted or externally
-checkpointed while the certificate was valid. DM-011 defines exact checkpoint
-binding. The V0 maximum certificate lifetime is 30 days. Verifiers retain the
-highest accepted generation/hash durably; replay never reinstates superseded
-authority.
+checkpointed while the certificate was valid. An event first observed only
+after expiry cannot prove from its self-declared timestamp that it was signed
+before expiry; unless it is at or below a verifiable pre-expiry checkpoint, it
+is attributable to the key but MUST NOT be admitted automatically as timely
+canonical lived experience. DM-011 defines the exact checkpoint binding.
+
+The V0 maximum certificate lifetime is 30 days. Renewing the same keys names
+the accepted prior certificate, increments certificate generation by exactly
+one, and produces a new certificate ID. Two certificates at one operational
+ID/generation are a fork. Once a new generation and its subject acceptance
+activate, the prior generation cannot authorize new events or leases; late
+evidence requires prior durable acceptance or a valid checkpoint/high-water.
+Verifiers retain the highest accepted generation/hash durably; replay never
+reinstates superseded authority or metadata.
 
 ## 8. Restart, park/wake, restore, and cloning
 
@@ -440,11 +450,14 @@ or included in an authorized recovery transition. It may target an operational
 certificate or key, a root/recovery key as part of its replacement, or all
 certificates issued after a verified control cutoff.
 
-Revocation contains a reason, exact target, effective accepted-chain position,
+Revocation contains a reason, exact target, an effective rule (on acceptance
+of the revocation artifact or at a named prior accepted control position),
 known last accepted event and identity-wide lease high-water positions, and a
-replacement reference when one exists. Wall-clock time alone is never a
-compromise cutoff. Carry-forward and preserved-certificate sets name exact,
-already validated certificate IDs and contain no duplicates.
+replacement reference when one exists. Its own effective position is derived
+only after the wrapper hash validates, so the body never embeds its own hash.
+Wall-clock time alone is never a compromise cutoff. Carry-forward and
+preserved-certificate sets name exact, already validated certificate IDs and
+contain no duplicates.
 
 Revocation never deletes historical events. Once observed, it rejects new
 leases and newly ingested events beyond the permitted cutoff even when

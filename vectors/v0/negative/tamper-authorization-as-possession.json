@@ -1,0 +1,1 @@
+{"base":"me1/recovery-policy.json","check":"control-wrapper","note":"an authorization signature used as a possession proof is rejected","ops":[{"from_role":"recovery-authorization","op":"set-sig-value-by-role","to_role":"recovery-possession"}],"params":{"artifact":"recovery-policy"},"schema":"x/test-tamper-descriptor/v0"}

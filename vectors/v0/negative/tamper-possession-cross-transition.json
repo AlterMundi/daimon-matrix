@@ -1,0 +1,1 @@
+{"base":"me1/recovery-policy.json","check":"control-wrapper","note":"a possession proof from one transition attached to a different transition is rejected","ops":[{"file":"me1/root-transition.json","from_role":"root-possession","op":"set-sig-value-from-file","to_role":"recovery-possession"}],"params":{"artifact":"recovery-policy"},"schema":"x/test-tamper-descriptor/v0"}

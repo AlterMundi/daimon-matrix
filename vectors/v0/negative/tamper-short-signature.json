@@ -1,0 +1,1 @@
+{"base":"me1/genesis.json","check":"control-wrapper","note":"short threshold signatures are rejected","ops":[{"length":63,"op":"truncate-first-signature"}],"params":{"artifact":"genesis"},"schema":"x/test-tamper-descriptor/v0"}

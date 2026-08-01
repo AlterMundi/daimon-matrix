@@ -1,0 +1,1 @@
+{"base":"me1/sealed-delivery-1.json","check":"sealed","note":"tampered recipient descriptor is rejected","ops":[{"op":"json-set","path":["recipients",0,"certificate_id"],"value":"dm:cert:v0:xJL9KjvqzNVSc7qjT6BYwzs0x9p-DIO7B57ZgiisVbc"}],"schema":"x/test-tamper-descriptor/v0"}

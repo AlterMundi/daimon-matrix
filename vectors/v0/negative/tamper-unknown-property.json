@@ -1,0 +1,1 @@
+{"base":"me1/event-op1-1.json","check":"event-wrapper","note":"unknown properties in closed protocol objects are rejected","ops":[{"op":"json-set","path":["body","bogus_property"],"value":"x"}],"schema":"x/test-tamper-descriptor/v0"}

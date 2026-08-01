@@ -1,0 +1,1 @@
+{"base":"me1/genesis.json","check":"control-wrapper","note":"derived artifact hash mismatch is rejected","ops":[{"op":"json-set","path":["artifact_hash"],"value":"2y9rnBDUxrxoje_Aiqq6HNuakz8pJ-0OPHUd8vkhZbo"}],"params":{"artifact":"genesis"},"schema":"x/test-tamper-descriptor/v0"}

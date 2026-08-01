@@ -1,0 +1,1 @@
+{"base":"me1/lease-op1-0.json","check":"lease-wrapper","note":"a valid event signature presented under the lease domain is rejected (same signing key, different domain)","ops":[{"file":"me1/event-op1-1.json","from_role":"operational-authorization","op":"set-sig-value-from-file","to_role":"operational-authorization"}],"schema":"x/test-tamper-descriptor/v0"}

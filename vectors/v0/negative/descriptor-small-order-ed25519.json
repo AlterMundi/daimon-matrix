@@ -1,0 +1,1 @@
+{"descriptor":{"alg":"Ed25519","kid":"dm:key:v0:TKKfVTW35AG1uOhFmt1Iicuuw0CewI6wtj311_e6eLs","public_key":"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"note":"small-order Ed25519 public point (identity encoding) must be rejected","schema":"x/test-descriptor-vector/v0"}
