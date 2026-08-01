@@ -6,14 +6,14 @@ This document is the operational handoff between completed planning and V0
 implementation. `PLAN.md`, `ONTOLOGY.md`, `TRIBE-MIGRATION.md`, and
 `ISSUES.md` remain canonical for architecture and dependencies.
 
-After this reconciliation merges, Project 9 contains 51 cards: 12 Done, 1 In
-Progress, and 38 Todo. The sole in-progress card is the independent Eko Tribe
-onboarding card. DM-003, DM-014, DM-015, and DM-016 are dependency-ready. These
+After this reconciliation merges, Project 9 contains 52 cards: 14 Done, 1 In
+Progress, and 37 Todo. The sole in-progress card is the independent Eko Tribe
+onboarding card. DM-003, DM-015, and DM-016 are dependency-ready. These
 counts replace the original 44-card planning snapshot.
 
 ## Completed foundation and evidence
 
-- DM-000 through DM-004 and DM-010 through DM-013 are complete.
+- DM-000 through DM-004 and DM-010 through DM-014 are complete.
 - The initial `/we.sync` refinement merged in PR 47; the closed canonical
   scope, reply, cursor, outcome, and receipt contracts merged with DM-012 in
   PR 53.
@@ -28,6 +28,10 @@ counts replace the original 44-card planning snapshot.
   first-awakening ceremony, empty autobiographical-memory boundary, and
   lineage-only quarantine contract. It does not claim that a live Agent 0 has
   been born.
+- DM-014 merged in PR 61. Species now has reviewed V0 genesis/release,
+  maintainer rotation, deterministic compatibility, paged fork resolution,
+  portable application/incoming, and deliberate child-speciation contracts.
+  It does not claim that Agent 0 or a first real speciation has occurred.
 
 ## Transitional runtime
 
@@ -86,7 +90,8 @@ The corrected hierarchy is merged: `/we` collective → distinct root-bearing
 `/me` identities → at most one awake body per identity. DM-010 freezes
 identity and presence, DM-011 freezes canonical artifacts and vectors, DM-012
 freezes scope, reply, and `/we.sync` semantics, and DM-013 freezes birth and
-first awakening. DM-014 (species), DM-015 (source), and DM-016 (tribe) are the
-next dependency-ready protocol cards. DM-003 remains a separate
+first awakening. DM-014 now freezes species evolution and speciation. DM-015
+(source) and DM-016 (tribe) are the next dependency-ready protocol cards.
+DM-003 remains a separate
 dependency-ready coordination card; all proceed only through the documented
 GitHub claim protocol.
