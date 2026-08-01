@@ -1,0 +1,1 @@
+{"descriptor":{"alg":"Ed25519","kid":"dm:key:v0:E_7SoSQ_5T1ASIMmWizCvGJn52nNfjDNZ72NrjAxr2g","public_key":"qp3HbcACtzQoEBleCCdWDtMle_tWFPPDQGfTEbUNPAY"},"note":"derived key-ID mismatch must be rejected","schema":"x/test-descriptor-vector/v0"}

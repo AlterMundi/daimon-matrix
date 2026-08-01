@@ -1,0 +1,1 @@
+{"base":"me1/sealed-delivery-1.json","check":"sealed","note":"tampered HPKE encapsulation fails decapsulation","ops":[{"op":"flip-field-byte","path":["recipients",1,"enc"]}],"schema":"x/test-tamper-descriptor/v0"}

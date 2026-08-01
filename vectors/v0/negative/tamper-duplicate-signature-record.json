@@ -1,0 +1,1 @@
+{"base":"me1/genesis.json","check":"control-wrapper","note":"duplicate (role,kid) signatures are rejected","ops":[{"op":"duplicate-first-signature"}],"params":{"artifact":"genesis"},"schema":"x/test-tamper-descriptor/v0"}

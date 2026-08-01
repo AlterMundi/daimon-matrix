@@ -1,0 +1,1 @@
+{"base":"me1/sealed-delivery-1.json","check":"sealed","note":"tampered payload ciphertext fails AEAD","ops":[{"op":"flip-field-byte","path":["payload","ciphertext"]}],"schema":"x/test-tamper-descriptor/v0"}

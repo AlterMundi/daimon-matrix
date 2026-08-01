@@ -1,0 +1,1 @@
+{"base":"me1/checkpoint-inc2-witness.json","check":"checkpoint-wrapper","note":"modified checkpoint body is rejected","ops":[{"op":"json-set","path":["body","accepted_at_ms"],"value":1754000009501}],"schema":"x/test-tamper-descriptor/v0"}

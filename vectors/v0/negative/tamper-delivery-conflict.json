@@ -1,0 +1,1 @@
+{"base":"me1/sealed-delivery-2-reseal.json","check":"delivery-conflict","note":"same delivery ID with different bytes is a delivery conflict","ops":[{"op":"flip-field-byte","path":["payload","nonce"]}],"params":{"other":"me1/sealed-delivery-2-reseal.json"},"schema":"x/test-tamper-descriptor/v0"}

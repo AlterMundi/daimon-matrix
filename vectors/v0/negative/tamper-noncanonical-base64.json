@@ -1,0 +1,1 @@
+{"base":"me1/event-inc1-1.json","check":"event-wrapper","note":"padded (non-canonical) base64url is rejected","ops":[{"op":"json-set","path":["body","event_nonce"],"value":"_1YaU1A1NE1PbLrpUGiRrK2WjrglDGk0A2AVwziQR6Q="}],"schema":"x/test-tamper-descriptor/v0"}

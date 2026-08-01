@@ -25,6 +25,9 @@ not itself the Daimon Matrix runtime. Tribe v0 is retired.
 - [Identity continuity specification](specs/identity-continuity.md) — normative
   V0 `/me` roots, operational credentials, recovery, and single-body presence
   evidence.
+- [Canonical artifacts specification](specs/canonical-artifacts.md) — normative
+  V0 encodings, signed events, causal order, checkpoints, and recipient
+  encryption.
 - [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) — integration of Tribe Bridge.
 - [ROADMAP.md](ROADMAP.md) — dependency-ordered implementation waves.
 - [REVIEW-HANDOFF.md](REVIEW-HANDOFF.md) — instructions for evaluating work
