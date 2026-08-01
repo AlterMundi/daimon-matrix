@@ -2,6 +2,21 @@
   "$id": "https://github.com/AlterMundi/daimon-matrix/coordination/claim.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "branch": {
+      "allOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^\\s~^:?*\\[\\\\]+(?:/[^\\s~^:?*\\[\\\\]+)*$",
+          "type": "string"
+        },
+        {
+          "not": {
+            "pattern": "(^[./]|[/.]$|\\.\\.|@\\{|//|(^|/)\\.|\\.lock(/|$))"
+          }
+        }
+      ]
+    },
     "issue": {
       "additionalProperties": false,
       "properties": {
@@ -74,9 +89,7 @@
               "type": "string"
             },
             "branch": {
-              "maxLength": 255,
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/$defs/branch"
             },
             "claim_id": {
               "format": "uuid",
@@ -90,6 +103,8 @@
               "$ref": "#/$defs/issue"
             },
             "lease_seconds": {
+              "maximum": 86400,
+              "minimum": 60,
               "type": [
                 "integer",
                 "null"
@@ -212,13 +227,14 @@
               "type": "string"
             },
             "branch": {
-              "type": "string"
+              "$ref": "#/$defs/branch"
             },
             "claim_id": {
               "format": "uuid",
               "type": "string"
             },
             "command_id": {
+              "format": "uuid",
               "type": [
                 "string",
                 "null"
@@ -235,6 +251,7 @@
               "$ref": "#/$defs/issue"
             },
             "lease_until": {
+              "format": "date-time",
               "type": [
                 "string",
                 "null"
@@ -253,6 +270,8 @@
               ]
             },
             "principal": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:@/-]+$",
               "type": "string"
             },
             "pull_request": {
@@ -272,6 +291,7 @@
               "const": "daimon-claim-receipt/v0"
             },
             "session_id": {
+              "pattern": "^dm:coord-session:v0:[A-Za-z0-9_-]{43}$",
               "type": "string"
             },
             "state": {

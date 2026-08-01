@@ -37,9 +37,10 @@ ready --claim--> in_progress --review--> in_review
   +-----------------expiry-----------------+
 ```
 
-- A claim is accepted only when the issue has `status:ready`, its required
-  issue resource is present, no live receipt owns the issue, and no other live
-  claim overlaps an exact resource.
+- A claim is accepted only when the issue has `status:ready`, every `DM-NNN`
+  card named in its `## Blocked by` section is closed, its required issue
+  resource is present, no live receipt owns the issue, and no other live claim
+  overlaps an exact resource. Missing dependency cards fail closed.
 - All claim mutations share one workflow concurrency group. A second command
   is evaluated only after the first receipt is visible.
 - A lease lasts from 60 seconds through 24 hours. `/heartbeat` renews from the
@@ -50,8 +51,11 @@ ready --claim--> in_progress --review--> in_review
   receipt chain.
 - Label transitions drive the existing Project 9 automation. Receipts remain
   authoritative if the Project view drifts.
-- Rejected commands also receive a chained receipt but do not change the
-  effective owner, lease, branch, resources, PR, or label.
+- Rejected commands against a live claim also receive a chained receipt without
+  changing the effective owner, lease, branch, resources, PR, or label. A
+  direct decision against an already expired active head is terminalized as
+  ready so the receipt can never preserve an invalid lease; the live handler
+  normally posts the dedicated expiry receipt first.
 
 ## Resources
 
@@ -119,6 +123,11 @@ workflow SHA, verifies the detached signature, re-reads every bot-authored
 receipt, detects a broken chain, checks global resources, posts one receipt,
 and then changes the status label.
 
+Receipt-shaped text posted by any author outside the configured
+`receipt_authors` set is inert public commentary, including malformed or
+unterminated marker text. Once a comment is authored by an authorized receipt
+bot, malformed, edited, missing, reordered, or forked evidence fails closed.
+
 Operators can audit without mutation:
 
 ```bash
@@ -138,6 +147,13 @@ receipt must be live, `in_review`, and bind the same branch and PR number.
 - A missing, edited, reordered, or forked receipt fails closed. Repair by
   restoring the append-only evidence or by an explicit maintainer-reviewed
   coordination recovery; never silently rewrite a comment.
+- Scheduled reconciliation isolates failures per issue: it continues checking
+  and expiring healthy issues, returns a non-success result with the corrupt
+  issue numbers, and leaves those issues closed to mutation until their
+  evidence is explicitly recovered.
+- Status-label updates use a recently read snapshot and can race a human label
+  edit. The append-only receipt remains authoritative; the next scheduled pass
+  restores the status view without replaying authority or effects.
 - An agent that loses its session private key cannot heartbeat or release.
   The lease expires automatically; a new session can then submit a fresh claim
   citing the ready receipt.
@@ -148,6 +164,8 @@ receipt must be live, `in_review`, and bind the same branch and PR number.
   not erase public comments or branch/PR evidence.
 
 DM-003 itself is the bootstrap exception: its pre-automation manual claim and
-PR cannot have been accepted by a workflow that does not yet exist. The PR
-workflow skips only immutable PR number 68; no future issue, PR, or reused
-branch name inherits that exception.
+PR cannot have been accepted by a workflow that does not yet exist. The PR job
+checks out the default branch and enables its audit only when that trusted
+baseline contains the coordination CLI and registry. Before DM-003 merges the
+baseline lacks both, so the bootstrap PR has no audit step; after merge every
+PR uses the gate. No PR number, issue, or branch receives a reusable exemption.

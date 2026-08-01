@@ -8,12 +8,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import jsonschema
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from coordination.github_claims import (
     COMMAND_MARKER,
     RECEIPT_MARKER,
+    CoordinationError,
     decide_command,
     parse_receipt_comment,
     render_block,
@@ -22,7 +24,13 @@ from coordination.github_claims import (
 )
 from tools import github_coordination as cli
 
-from tests.test_github_claims import NOW, WORKFLOW_SHA, command_body, signed_command
+from tests.test_github_claims import (
+    NOW,
+    WORKFLOW_SHA,
+    command_body,
+    receipt_comment,
+    signed_command,
+)
 
 
 class SigningCliTests(unittest.TestCase):
@@ -59,6 +67,41 @@ class SigningCliTests(unittest.TestCase):
             json.loads(run.call_args.kwargs["input"]),
             {"labels": ["status:ready"]},
         )
+
+
+class CoordinationSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        schema_path = Path(__file__).parents[1] / "coordination" / "claim.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator.check_schema(schema)
+        self.validator = jsonschema.Draft202012Validator(
+            schema,
+            format_checker=jsonschema.FormatChecker(),
+        )
+
+    def test_generated_command_and_receipt_conform_to_published_schema(self) -> None:
+        key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        command = sign_command(command_body(), key)
+        receipt = decide_command(
+            validate_command(command),
+            None,
+            now=NOW,
+            workflow_sha=WORKFLOW_SHA,
+            issue_ready=True,
+        )
+        self.validator.validate(command)
+        self.validator.validate(receipt)
+
+    def test_schema_rejects_branches_rejected_by_runtime(self) -> None:
+        key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        command = sign_command(command_body(), key)
+        for unsafe in ("", "-bad..branch/", ".hidden", "topic.lock"):
+            candidate = json.loads(json.dumps(command))
+            candidate["body"]["branch"] = unsafe
+            with self.subTest(branch=unsafe), self.assertRaises(
+                jsonschema.ValidationError
+            ):
+                self.validator.validate(candidate)
 
 
 class FakeGitHub:
@@ -156,6 +199,88 @@ class HandlerIntegrationTests(unittest.TestCase):
         self.assertEqual([receipt.state for receipt in receipts], ["in_progress", "ready"])
         self.assertEqual(receipts[1].previous_receipt_id, receipts[0].receipt_id)
         self.assertTrue(github.comments[1]["body"].startswith("<!-- " + RECEIPT_MARKER))
+
+
+class ReceiptPoisoningTests(unittest.TestCase):
+    def setUp(self) -> None:
+        command = signed_command(Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33))))
+        self.wrapper = decide_command(
+            command,
+            None,
+            now=NOW,
+            workflow_sha=WORKFLOW_SHA,
+            issue_ready=True,
+        )
+
+    def test_untrusted_forged_and_malformed_markers_are_inert(self) -> None:
+        comments = [
+            {
+                "id": 1,
+                "user": {"login": "mallory"},
+                "body": render_block(RECEIPT_MARKER, self.wrapper),
+            },
+            receipt_comment(self.wrapper, comment_id=2),
+            {
+                "id": 3,
+                "user": {"login": "mallory"},
+                "body": "<!-- daimon-claim-receipt/v0\nnot closed",
+            },
+        ]
+        with mock.patch.object(cli, "_comments", return_value=comments):
+            current, receipts = cli._state(
+                "AlterMundi/daimon-matrix", 6, cli._registry()
+            )
+        self.assertEqual(current.receipt_id, receipts[0].receipt_id)
+        self.assertEqual(len(receipts), 1)
+
+    def test_malformed_authorized_receipt_still_fails_closed(self) -> None:
+        comment = {
+            "id": 2,
+            "user": {"login": "github-actions[bot]"},
+            "body": "<!-- daimon-claim-receipt/v0\nnot closed",
+        }
+        with (
+            mock.patch.object(cli, "_comments", return_value=[comment]),
+            self.assertRaisesRegex(CoordinationError, "unterminated"),
+        ):
+            cli._state("AlterMundi/daimon-matrix", 6, cli._registry())
+
+
+class ClaimabilityTests(unittest.TestCase):
+    def test_open_blocked_by_card_prevents_claimability(self) -> None:
+        issue = {"body": "## Blocked by\n\nDM-000 and DM-016.\n\n## Acceptance criteria"}
+        catalog = [[
+            {"number": 1, "title": "[DM-000] Audit", "state": "closed"},
+            {"number": 10, "title": "[DM-016] Tribe", "state": "open"},
+        ]]
+        with mock.patch.object(cli, "_run_gh", return_value=catalog):
+            blockers = cli._open_blockers("AlterMundi/daimon-matrix", issue)
+        self.assertEqual(blockers, ("DM-016",))
+
+
+class BatchExpiryTests(unittest.TestCase):
+    def test_one_corrupt_issue_does_not_abort_other_expiries(self) -> None:
+        healthy = {"ok": True, "expired": True, "issue": 7}
+        with (
+            mock.patch.object(
+                cli,
+                "_issues_with_label",
+                side_effect=[[6, 7], [], []],
+            ),
+            mock.patch.object(
+                cli,
+                "expire_issue",
+                side_effect=[CoordinationError("broken chain"), healthy],
+            ) as expire_issue,
+        ):
+            result = cli.expire_all(
+                "AlterMundi/daimon-matrix", now=NOW, workflow_sha=WORKFLOW_SHA
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["checked"], [6, 7])
+        self.assertEqual(result["expired"], [healthy])
+        self.assertEqual(result["failures"][0]["issue"], 6)
+        self.assertEqual(expire_issue.call_count, 2)
 
 
 class RecoveryCliTests(unittest.TestCase):

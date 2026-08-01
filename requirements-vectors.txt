@@ -1,3 +1,4 @@
 # DM-011 conformance vectors: generation and offline verification only.
 # Portable bounded requirement (not an exact environment pin).
 cryptography>=43,<47
+jsonschema>=4.23,<5

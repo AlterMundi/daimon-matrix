@@ -51,6 +51,9 @@ _CLAIM_ID = re.compile(
 )
 _DEPLOYMENT = re.compile(r"(?im)^\s*Deployment:\s*(.+?)\s*$")
 _TESTS = re.compile(r"(?ims)^##\s+Tests\s*$\s*(.+?)(?=^##\s+|\Z)")
+_BLOCKED_BY = re.compile(r"(?ims)^##\s+Blocked by\s*$\s*(.+?)(?=^##\s+|\Z)")
+_CARD_ID = re.compile(r"\bDM-[0-9]{3}\b")
+_CARD_TITLE = re.compile(r"^\[(DM-[0-9]{3})\](?:\s|$)")
 
 
 def _run_gh(arguments: list[str], *, input_data: Mapping[str, Any] | None = None) -> Any:
@@ -113,10 +116,47 @@ def _state(repo: str, issue: int, registry: dict[str, Any]):
     issue_ref = IssueRef(repo, issue)
     receipts = []
     for comment in _comments(repo, issue):
+        user = comment.get("user")
+        author = user.get("login") if isinstance(user, Mapping) else comment.get("author")
+        # Public issue authors can reproduce marker text. Only an authorized
+        # bot comment can be receipt evidence; untrusted lookalikes are inert.
+        # Once the author is trusted, malformed or edited evidence still fails
+        # closed so genuine receipt-log tampering cannot be hidden.
+        if author not in registry["receipt_authors"]:
+            continue
         receipt = parse_receipt_comment(comment, registry)
         if receipt is not None:
             receipts.append(receipt)
     return reduce_receipts(receipts, issue_ref), receipts
+
+
+def _blocked_by_ids(issue: Mapping[str, Any]) -> tuple[str, ...]:
+    body = issue.get("body") or ""
+    if not isinstance(body, str):
+        raise CoordinationError("issue body must be text")
+    section = _BLOCKED_BY.search(body)
+    return tuple(sorted(set(_CARD_ID.findall(section.group(1))))) if section else ()
+
+
+def _open_blockers(repo: str, issue: Mapping[str, Any]) -> tuple[str, ...]:
+    required = _blocked_by_ids(issue)
+    if not required:
+        return ()
+    pages = _run_gh(
+        ["api", "--paginate", "--slurp", f"repos/{repo}/issues?state=all&per_page=100"]
+    )
+    states: dict[str, str] = {}
+    for page in pages:
+        for candidate in page:
+            if "pull_request" in candidate:
+                continue
+            match = _CARD_TITLE.match(candidate.get("title") or "")
+            if match:
+                states[match.group(1)] = candidate.get("state")
+    missing = sorted(set(required).difference(states))
+    if missing:
+        raise CoordinationError("blocked-by cards are missing: " + ", ".join(missing))
+    return tuple(card for card in required if states[card] != "closed")
 
 
 def _status_label(state: str) -> str:
@@ -192,17 +232,18 @@ def handle_comment(
         _set_status(repo, issue_number, issue, "ready")
         issue = _issue(repo, issue_number)
 
-    conflict_reason = (
-        _resource_conflict(
-            repo,
-            issue_number,
-            command.resources,
-            now=now,
-            registry=registry,
-        )
-        if command.action == "claim"
-        else None
-    )
+    conflict_reason = None
+    if command.action == "claim":
+        if _open_blockers(repo, issue):
+            conflict_reason = "dependency_blocked"
+        else:
+            conflict_reason = _resource_conflict(
+                repo,
+                issue_number,
+                command.resources,
+                now=now,
+                registry=registry,
+            )
     wrapper = decide_command(
         command,
         current,
@@ -284,7 +325,13 @@ def _resource_conflict(
     for other_number in active_issues:
         if other_number == issue_number:
             continue
-        other, _ = _state(repo, other_number, registry)
+        try:
+            other, _ = _state(repo, other_number, registry)
+        except CoordinationError:
+            # Unknown ownership on any active issue cannot safely be treated
+            # as non-overlap, but it also must not crash the handler before an
+            # auditable rejection can be posted.
+            return "resource_state_unavailable"
         if other is None or not other.is_live(now):
             continue
         overlap = sorted(set(resources).intersection(other.resources))
@@ -299,11 +346,27 @@ def expire_all(repo: str, *, now: dt.datetime, workflow_sha: str) -> dict[str, A
         | set(_issues_with_label(repo, "status%3Aclaimed"))
         | set(_issues_with_label(repo, "status%3Areview"))
     )
-    results = [
-        expire_issue(repo, issue, now=now, workflow_sha=workflow_sha)
-        for issue in issues
-    ]
-    return {"ok": True, "checked": issues, "expired": [r for r in results if r["expired"]]}
+    results = []
+    failures = []
+    for issue in issues:
+        try:
+            results.append(
+                expire_issue(repo, issue, now=now, workflow_sha=workflow_sha)
+            )
+        except CoordinationError as exc:
+            failures.append(
+                {
+                    "issue": issue,
+                    "code": "invalid_receipt_state",
+                    "message": str(exc),
+                }
+            )
+    return {
+        "ok": not failures,
+        "checked": issues,
+        "expired": [result for result in results if result["expired"]],
+        "failures": failures,
+    }
 
 
 def audit_issue(repo: str, issue_number: int, *, now: dt.datetime) -> dict[str, Any]:

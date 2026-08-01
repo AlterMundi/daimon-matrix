@@ -827,7 +827,17 @@ def decide_command(
 
     accepted = reason == "accepted"
     if not accepted:
-        if current is None:
+        if (
+            current is None
+            or (
+                current.state in ACTIVE_STATES
+                and current.lease_until is not None
+                and current.lease_until <= now
+            )
+        ):
+            # Keep the decision function total even when a caller has not yet
+            # materialized the separate expiry receipt. Never emit an active
+            # state whose lease is already invalid at the decision timestamp.
             state = "ready"
             lease_until = None
         else:

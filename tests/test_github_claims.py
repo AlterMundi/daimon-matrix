@@ -318,6 +318,27 @@ class ClaimStateMachineTests(unittest.TestCase):
         self.assertEqual(expired.reason, "lease_expired")
         self.assertEqual(expired.state, "ready")
 
+    def test_rejection_against_expired_active_head_is_terminal_and_valid(self) -> None:
+        current = self.accept_claim()
+        heartbeat = self.next_command(
+            current,
+            action="heartbeat",
+            at=NOW + dt.timedelta(hours=7),
+        )
+        rejected = validate_receipt(
+            decide_command(
+                heartbeat,
+                current,
+                now=NOW + dt.timedelta(hours=7),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        self.assertEqual(rejected.decision, "rejected")
+        self.assertEqual(rejected.reason, "no_live_claim")
+        self.assertEqual(rejected.state, "ready")
+        self.assertIsNone(rejected.lease_until)
+
     def test_expiry_is_not_early(self) -> None:
         self.assertIsNone(
             expire_if_due(
