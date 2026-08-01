@@ -49,6 +49,10 @@ custom bodies without making any harness authoritative.
   retired; the repository is archived only after Daimon replacement gates pass.
 - The canonical personal state is an append-only event ledger; HMK, Wiki,
   collective-memory, and harness state are projections or external sources.
+- The DM-017 memory registry admits only same-identity signed experience,
+  insight, and learned-skill records into `/me.memory`. Tribal knowledge,
+  external references, species inheritance, and incarnation state retain
+  separate authorities even when one recall interface displays them together.
 - The CompAII Librarian uses `deepseek-v4-pro` through provider `deepseek`.
 - The concurrent-work audit is recorded in `CONCURRENT-WORK-AUDIT.md`.
   Implementation follows the dependencies and released-card decisions there.
@@ -157,6 +161,20 @@ It is distributed to every member like any other compatible event, so all
 deterministic projections converge without erasing where an experience
 occurred.
 
+Personal records use predecessor-linked correction lanes. A retraction removes
+an active projection but never edits canonical history. External/source
+promotion can create only an attributed external reference; learning requires
+a later `/me`-authored insight or skill record citing that evidence. Species
+application provides implementations, not learned skill, until `/me` records
+its own practice or adaptation.
+
+NOW, prompts, harness sessions, caches, queues, and process state are keyed to
+one presence session. Park may append a curated incarnation-handoff event and
+must commit the exact ledger cutoff/checkpoint before a deployment adapter
+stops or moves the body. Wake verifies that evidence and creates a fresh NOW;
+an HMK, volume, database, container, or cluster snapshot may accelerate a
+projection rebuild but can never lower a high-water or become `/me` authority.
+
 Tribal knowledge remains remotely authoritative. After birth, a parent may
 issue fresh grants to the newborn, equal to or narrower than the committed and
 currently delegable parent scope; the newborn must independently accept them.
@@ -263,6 +281,8 @@ Implement identity, ledger, projections, daemon, CLI, MCP, and invariant tests.
 
 Implement policy, DeepSeek worker, human review, HMK, Wiki/compaii-state, and
 separate collective-memory source and reviewed-publication adapters.
+The model proposes schema-bounded personal records; deterministic policy and
+the current `/me` credential alone authorize their canonical append.
 
 ### 4. CompAII identities and bodies
 
@@ -312,6 +332,11 @@ and V0.1.0 release.
   branches create a traceable new species.
 - Parent-delegated tribe access uses fresh keys and attenuated grants.
 - Tribal knowledge is not silently copied into personal memory.
+- External promotion creates an attributed reference, not autobiography; any
+  later learning is a separate cited personal event.
+- Park/wake starts a fresh incarnation state and preserves personal continuity
+  only from the verified ledger/checkpoint, never by restoring authority from a
+  projection snapshot.
 - Direct and hub duplicates ingest once.
 - Public roster material cannot decrypt confidential messages.
 - Offline backlogs and same-second bursts do not lose messages.

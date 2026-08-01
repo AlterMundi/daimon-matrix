@@ -800,11 +800,13 @@ as `/me.memory`, lived experience, autobiographical fact, learned personal
 skill, source claim, or species content.
 
 If exact local DM-017 policy later records that `/me` learned something from a
-tribal interaction, it authors a new attributed personal event citing the
-external evidence. The external bytes remain external; the new event does not
-copy private knowledge wholesale, erase provenance, or make the grant
+tribal interaction, it authors a new `personal-insight` or `personal-skill`
+`matrix/memory-record` with derivation `tribal-learning`, citing the exact
+retrieval/grant evidence. The external bytes remain external; the new event
+does not copy private knowledge wholesale, erase provenance, or make the grant
 permanent. Publication or import through DM-015 remains a separate explicit
-path with consent, provenance, quarantine, and promotion.
+path with consent, provenance, quarantine, and promotion. The closed category
+and learning contract is [`memory-boundaries.md`](memory-boundaries.md).
 
 Revocation or expiry disables future access and active caches according to
 policy. It does not erase already accepted event history or pretend a lived
@@ -999,9 +1001,10 @@ Conformance vectors and implementation tests MUST cover at least:
 - DM-015 `tribe-shared` publication requires an independently current DM-016
   grant for exact recipient/resource/operation. Source evidence never creates
   that grant.
-- DM-017 freezes memory categories and MUST enforce Section 10: tribal content
-  remains external and attributed; any later learning is a new cited decision,
-  never silent copying or inheritance.
+- DM-017 freezes memory categories in
+  [`memory-boundaries.md`](memory-boundaries.md) and MUST enforce Section 10:
+  tribal content remains remote and attributed; any later learning is a new
+  cited same-identity memory record, never silent copying or inheritance.
 - DM-018 freezes card, endpoint, capability, resource-adapter, and migration
   contracts without granting adapters relationship authority.
 - DM-023 projects relationship/grant ancestry, forks, high-waters, revocations,
