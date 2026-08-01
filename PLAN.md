@@ -33,7 +33,9 @@ custom bodies without making any harness authoritative.
   attributable to exact member `/me` roots.
 - Multiple `/we` members may be awake simultaneously; one `/me` may have only
   one awake body. A same-identity clone is split-brain and fails closed.
-- `/tribe` is a resource-sharing relationship scope.
+- `/tribe` is a resource-sharing relationship scope; its normative handshake,
+  grant, delegation, revocation, birth-limit, human-contact, and remote
+  knowledge contract is `specs/tribe-relationships.md`.
 - `/source` represents shared ancestry claims.
 - A `/source` signature proves only that one `/me` asserted its own relation to
   one exact content-derived source. Resolver-local assessment controls scope
@@ -155,9 +157,11 @@ It is distributed to every member like any other compatible event, so all
 deterministic projections converge without erasing where an experience
 occurred.
 
-Tribal knowledge remains remotely authoritative. A newborn inherits access and
-full delegable tribal membership from its parent, but does not copy tribe
-knowledge into `/me.memory`.
+Tribal knowledge remains remotely authoritative. After birth, a parent may
+issue fresh grants to the newborn, equal to or narrower than the committed and
+currently delegable parent scope; the newborn must independently accept them.
+No parent grant, credential, session, route secret, or tribal knowledge is
+copied into the newborn or `/me.memory`.
 
 ### Communications
 

@@ -57,8 +57,8 @@ nesting depth through 64 levels and MUST reject a deeper value. Before parsing
 or performing cryptography it MUST reject a complete wire artifact larger than
 its V0 ceiling: 262144 bytes for an identity or species genesis, control,
 certificate, acceptance (operational or birth), species release (including a
-branch declaration or fork resolution),
-lease, lease-head receipt, or checkpoint wrapper;
+branch declaration or fork resolution), lease, lease-head receipt, checkpoint
+wrapper, or DM-016 human-contact statement wrapper;
 1048576 bytes for an event wrapper; and 2097152 bytes for a sealed-delivery
 wrapper. It MUST NOT configure
 a smaller ceiling and still claim V0 interoperability.
@@ -67,8 +67,10 @@ Resource-bearing arrays are bounded before cryptographic evaluation: at most
 32 keys per threshold set, 128 detached signatures per wrapper, 256 embedded
 revocations per recovery transition, 1024 high-water entries per control
 artifact, 64 each of routes, certificate event-type prefixes, birth-offer
-source references, tribal commitments, and commitment resource/operation
-entries, 64 causal parents, and 256 sealed-delivery recipients. Subject to the
+source references, tribal commitments, commitment resource/operation entries,
+DM-016 card encryption bindings/routes/capabilities/resources, handshake roles
+and proposed grants, grant permissions and parent-state references, 64 causal
+parents, and 256 sealed-delivery recipients. Subject to the
 complete-wire ceiling,
 implementations MUST accept values through those bounds when every other
 requirement is met and MUST reject larger arrays.
@@ -148,6 +150,13 @@ daimon/source-publication-id/v0
 daimon/source-publication-binding/v0
 daimon/source-import-decision-series/v0
 daimon/source-cursor-snapshot/v0
+daimon/tribe-human-contact-id/v0
+daimon/tribe-human-statement/v0
+daimon/tribe-id/v0
+daimon/tribe-card-series/v0
+daimon/tribe-resource-id/v0
+daimon/tribe-relationship-id/v0
+daimon/tribe-grant-series/v0
 daimon/we-membership-genesis/v0
 daimon/we-membership-transition/v0
 daimon/we-membership-acceptance/v0
@@ -692,7 +701,12 @@ An `event_type` is 1 through 128 ASCII bytes and matches
 `^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$`. DM-015 registers
 `matrix/source-claim`, `matrix/source-assessment`,
 `matrix/source-publication`, `matrix/source-cursor`, and
-`matrix/source-import-decision`. A certificate prefix is 1 through 128
+`matrix/source-import-decision`. DM-016 registers
+`matrix/tribe-declaration`, `matrix/tribe-card`,
+`matrix/tribe-handshake-offer`, `matrix/tribe-handshake-acceptance`,
+`matrix/tribe-relationship-close`, `matrix/tribe-grant`,
+`matrix/tribe-grant-acceptance`, and `matrix/tribe-grant-revocation`. A
+certificate prefix is 1 through 128
 ASCII bytes, matches `^[a-z][a-z0-9./-]*$`, and is compared as a byte-exact
 prefix of the complete event type. Empty prefixes, consecutive separators in
 an event type, and unregistered bare names are rejected. DM-012 registers its
@@ -1148,7 +1162,9 @@ V0 explicitly rejects or leaves behind:
   DM-011 owns event/message ID, thread ID wire syntax, and cryptographic binding.
 - DM-013 through DM-017 define the payload schemas for birth, species, source,
   tribe, and memory-boundary events and decide which accepted events represent
-  lived experience, consolidation, or another semantic class.
+  lived experience, consolidation, or another semantic class. DM-016 also
+  defines its specialized external human-contact statement wrapper; it is not
+  a Daimon event or identity artifact.
 - DM-018 freezes the canonical body-description body and adapter bindings.
 - DM-021 implements identity artifact validation and key custody.
 - DM-022 stores canonical event bytes and intrinsic replay/fork evidence without
