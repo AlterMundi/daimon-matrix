@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""DM-020 package metadata and public-artifact boundary tests."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import tomllib
+import unittest
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from tools.check_distribution import (
+    SDIST_FILES,
+    WHEEL_FILES,
+    PackageCheckError,
+    validate_member,
+)
+from tools.scan_secrets import SecretScanError, scan_archive, scan_path
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests/fixtures/package/rejected/cases.json"
+
+
+class PackageMetadataTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with (ROOT / "pyproject.toml").open("rb") as stream:
+            self.configuration: dict[str, Any] = tomllib.load(stream)
+
+    def test_public_metadata_and_empty_runtime_dependencies(self) -> None:
+        project = self.configuration["project"]
+        self.assertEqual(project["name"], "daimon-matrix")
+        self.assertEqual(project["version"], "0.0.0")
+        self.assertEqual(project["requires-python"], ">=3.11")
+        self.assertEqual(project["dependencies"], [])
+        self.assertEqual(project["license"], "MIT")
+
+    def test_supported_versions_and_backend_are_explicit(self) -> None:
+        classifiers = set(self.configuration["project"]["classifiers"])
+        for version in ("3.11", "3.12", "3.13", "3.14"):
+            self.assertIn(f"Programming Language :: Python :: {version}", classifiers)
+        self.assertEqual(
+            self.configuration["build-system"]["requires"],
+            ["hatchling==1.31.0"],
+        )
+        self.assertTrue(self.configuration["tool"]["hatch"]["build"]["reproducible"])
+
+    def test_namespace_import_is_behavior_free_and_typed(self) -> None:
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(ROOT / "src")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import daimon_matrix; "
+                "assert daimon_matrix.__all__ == ['__version__']; "
+                "assert daimon_matrix.__version__ == '0.0.0'",
+            ],
+            cwd=ROOT,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            (ROOT / "src/daimon_matrix/py.typed").read_bytes().strip(), b""
+        )
+
+    def test_tool_requirements_are_exact_and_not_runtime_metadata(self) -> None:
+        self.assertEqual(
+            [
+                line
+                for line in (ROOT / "requirements-build.txt")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ],
+            [
+                "# DM-020 build frontend. The backend is exactly pinned "
+                "in pyproject.toml.",
+                "build==1.5.0",
+            ],
+        )
+        development = {
+            line
+            for line in (ROOT / "requirements-dev.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line
+        }
+        self.assertEqual(
+            development,
+            {"-r requirements-build.txt", "mypy==2.3.0", "ruff==0.16.1"},
+        )
+
+
+class ArtifactBoundaryTests(unittest.TestCase):
+    def test_allowlists_are_frozen(self) -> None:
+        self.assertEqual(
+            SDIST_FILES,
+            {
+                ".gitignore",
+                "LICENSE",
+                "PKG-INFO",
+                "README.md",
+                "pyproject.toml",
+                "src/daimon_matrix/__init__.py",
+                "src/daimon_matrix/py.typed",
+            },
+        )
+        self.assertEqual(
+            WHEEL_FILES,
+            {
+                "daimon_matrix/__init__.py",
+                "daimon_matrix/py.typed",
+                "daimon_matrix-0.0.0.dist-info/METADATA",
+                "daimon_matrix-0.0.0.dist-info/RECORD",
+                "daimon_matrix-0.0.0.dist-info/WHEEL",
+                "daimon_matrix-0.0.0.dist-info/licenses/LICENSE",
+            },
+        )
+
+    def test_every_named_rejection_case_is_enforced(self) -> None:
+        fixture: dict[str, Any] = json.loads(FIXTURES.read_text(encoding="utf-8"))
+        self.assertEqual(fixture["schema"], "dm-020-rejected-package-cases/v0")
+        names: set[str] = set()
+        for case in fixture["cases"]:
+            with self.subTest(case=case["name"]):
+                names.add(case["name"])
+                data = "".join(case["parts"]).encode("utf-8")
+                with self.assertRaises(PackageCheckError):
+                    validate_member(case["member"], data)
+        self.assertEqual(
+            names,
+            {
+                "absolute-path",
+                "cache",
+                "credential",
+                "egg-info",
+                "experimental-module",
+                "private-key",
+                "sqlite",
+                "traversal",
+            },
+        )
+
+    def test_zip_symlink_is_rejected_without_extraction(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dm020-test-") as directory:
+            archive_path = Path(directory) / "adversarial.whl"
+            info = zipfile.ZipInfo("daimon_matrix/link")
+            info.create_system = 3
+            info.external_attr = 0o120777 << 16
+            with zipfile.ZipFile(archive_path, mode="w") as archive:
+                archive.writestr(info, "../../private")
+            with self.assertRaises(SecretScanError):
+                scan_archive(archive_path)
+
+    def test_checkout_secret_scan_is_clean(self) -> None:
+        self.assertGreater(scan_path(ROOT), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
