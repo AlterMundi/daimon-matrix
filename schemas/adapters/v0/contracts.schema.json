@@ -641,12 +641,16 @@
       "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
       "type": "string"
     },
+    "migration_plan_id": {
+      "pattern": "^dm:migration-plan:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
     "park_id": {
       "pattern": "^dm:park:v0:[A-Za-z0-9_-]{43}$",
       "type": "string"
     },
     "presence_lease_id": {
-      "pattern": "^dm:presence-lease:v0:[A-Za-z0-9_-]{43}$",
+      "pattern": "^dm:lease:v0:[A-Za-z0-9_-]{43}$",
       "type": "string"
     },
     "realization_id": {
@@ -684,8 +688,7 @@
         },
         "versions": {
           "items": {
-            "pattern": "^v(?:0|[1-9][0-9]{0,5})$",
-            "type": "string"
+            "$ref": "#/$defs/version_label"
           },
           "maxItems": 16,
           "minItems": 1,
@@ -940,6 +943,56 @@
       ],
       "type": "object"
     },
+    "negotiation_state": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_version": {
+          "$ref": "#/$defs/version_label"
+        },
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "contract": {
+          "$ref": "#/$defs/contract_name"
+        },
+        "migration_plan_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/migration_plan_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "const": "dm-018-negotiation-state/v0"
+        },
+        "selected_version": {
+          "$ref": "#/$defs/version_label"
+        },
+        "successor_migration_receipt_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/migration_receipt_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "accepted_version",
+        "adapter_id",
+        "contract",
+        "migration_plan_id",
+        "schema",
+        "selected_version",
+        "successor_migration_receipt_id"
+      ],
+      "type": "object"
+    },
     "park_evidence": {
       "additionalProperties": false,
       "properties": {
@@ -1035,6 +1088,10 @@
         "object",
         "null"
       ]
+    },
+    "version_label": {
+      "pattern": "^v(?:0|[1-9][0-9]{0,5})$",
+      "type": "string"
     },
     "wake_evidence": {
       "additionalProperties": false,
@@ -1135,6 +1192,9 @@
     },
     {
       "$ref": "#/$defs/migration_receipt"
+    },
+    {
+      "$ref": "#/$defs/negotiation_state"
     },
     {
       "$ref": "#/$defs/capability_species_evaluation"

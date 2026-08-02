@@ -163,6 +163,11 @@ locally authorized migration plan that explicitly declares the downgrade,
 proves the target can represent all accepted state, and emits a successor
 migration receipt. Otherwise downgrade is rejected.
 
+The conformance corpus records the accepted and selected exact versions and
+rejects a downgrade without both the authorized plan and successor receipt.
+This state is durable deployment evidence; restarting an adapter or removing a
+newer implementation cannot reset the accepted-version high-water.
+
 ## 4. Schema evolution
 
 A compatible implementation update may change code while emitting identical
@@ -299,6 +304,12 @@ null predecessor. Every later accepted record names the exact prior fence;
 increases. Entering a new holder, realization, volume, or reactivation after
 expiry/failure requires a strictly higher generation and token. Positions are
 never reused. Release/expiry/GC preserves the high-water tombstone.
+
+The deployment controller consumes and persists the failed/expired position
+before it attempts reactivation, and compares the successor against that
+durable high-water. The generic fence record does not infer expiry from a
+timestamp; DM-037 controller integration supplies the failure/expiry evidence
+and exercises the strict-both successor rule.
 
 ## 7. Activation, park, wake and rollback algorithm
 

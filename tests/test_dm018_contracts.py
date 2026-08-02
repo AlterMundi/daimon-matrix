@@ -108,6 +108,23 @@ def check_negotiation(record):
         raise Reject("no mutually supported exact contract version")
 
 
+def check_version_transition(record):
+    accepted = int(record["accepted_version"][1:])
+    selected = int(record["selected_version"][1:])
+    if selected < accepted and (
+            record["migration_plan_id"] is None or
+            record["successor_migration_receipt_id"] is None):
+        raise Reject("version downgrade lacks an authorized migration successor")
+
+
+def check_idempotency(records):
+    first, candidate = records
+    if first["idempotency_key"] != candidate["idempotency_key"]:
+        raise Reject("fixtures do not exercise one idempotency key")
+    if canonical_bytes(first) != canonical_bytes(candidate):
+        raise Reject("one idempotency key names different invocation bytes")
+
+
 def check_migration(records):
     prior, candidate = records
     if candidate["migration_sequence"] != prior["migration_sequence"] + 1:
@@ -177,8 +194,10 @@ CHECKS = {
     "continuity-case": check_continuity,
     "dual-gate": check_dual_gate,
     "fence-monotonic": check_fence,
+    "idempotency-consistency": check_idempotency,
     "migration-monotonic": check_migration,
     "negotiation": check_negotiation,
+    "version-transition": check_version_transition,
 }
 
 
@@ -279,7 +298,7 @@ class DM018ContractsTest(unittest.TestCase):
             VECTOR_ROOT, "valid/activation-bundle.json"))
         wrong_position = dict(activation["predecessor_deployment_fence"])
         wrong_position["fence_id"] = (
-            "dm:presence-lease:v0:" + wrong_position["fence_id"].rsplit(":", 1)[1])
+            "dm:lease:v0:" + wrong_position["fence_id"].rsplit(":", 1)[1])
         wrong_activation = dict(
             activation, predecessor_deployment_fence=wrong_position)
         self.assertTrue(list(self.validator.iter_errors(wrong_activation)))
@@ -291,26 +310,29 @@ class DM018ContractsTest(unittest.TestCase):
                          "daimon-presence-lease/v0")
         self.assertTrue(list(self.validator.iter_errors(presence)))
 
+    def test_real_matrix_presence_id_validates_in_adapter_subject(self):
+        presence = strict_load(os.path.join(
+            ROOT, "vectors", "v0", "me1", "lease-op1-1.json"))
+        invocation = strict_load(os.path.join(
+            VECTOR_ROOT, "valid", "adapter-invocation.json"))
+        invocation["subject"] = {
+            "me_id": presence["body"]["me_id"],
+            "presence_lease_id": presence["artifact_id"],
+        }
+        self.assertFalse(list(self.validator.iter_errors(invocation)))
+
     def test_exact_version_negotiation_uses_local_preference(self):
+        manifest = strict_load(os.path.join(
+            VECTOR_ROOT, "valid", "manifest-body-deployment.json"))
+        offer = next(row for row in manifest["contracts"]
+                     if row["contract"] == "body-deployment")
         local = ["v2", "v0", "v1"]
-        offered = ["v0"]
+        offered = offer["versions"]
         selected = next((version for version in local if version in offered),
                         None)
         self.assertEqual(selected, "v0")
         self.assertIsNone(next((version for version in ["v1"]
                                 if version in offered), None))
-
-    def test_idempotency_key_cannot_name_different_bytes(self):
-        first = {"idempotency_key": "A" * 43, "operation": "prepare"}
-        replay = dict(first)
-        conflict = dict(first, operation="commit")
-        canonical = lambda value: json.dumps(
-            value, sort_keys=True, separators=(",", ":"))
-        table = {first["idempotency_key"]: canonical(first)}
-        self.assertEqual(table[replay["idempotency_key"]], canonical(replay))
-        self.assertNotEqual(table[conflict["idempotency_key"]],
-                            canonical(conflict))
-
 
 if __name__ == "__main__":
     unittest.main()
