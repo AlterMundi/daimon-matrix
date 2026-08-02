@@ -3790,10 +3790,17 @@ def build_index(meta, entries):
 
 
 README = """\
-# DM-011 conformance vectors (v0)
+# Matrix cryptographic primitive vectors
 
-Normative synthetic conformance vectors for `specs/canonical-artifacts.md`
-Section 9.  All key material is synthetic and deterministically derived;
+The supported ontology and operational schemas are in `schemas/weave/v1`.
+This directory remains a low-level adversarial corpus for canonical JSON,
+Ed25519, HPKE, hash chains, control evidence, and tamper rejection. Fixture
+names involving presence, leases, or collective membership are not current
+scope or single-body semantics. New ontology vectors belong under
+`vectors/weave/v1`.
+
+Synthetic conformance vectors retained for primitive validation. All key
+material is synthetic and deterministically derived;
 nothing here is a real identity, real memory, a credential, or live
 ciphertext.
 

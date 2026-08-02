@@ -1,75 +1,25 @@
-# V0 Roadmap
+# Roadmap
 
-The concurrent-work relevance audit is complete. Work is released only when
-all direct blockers are closed.
+## Operational release
 
-## Wave 0 — Reconcile work already in flight — complete
+- Canonical ontology and cross-runtime contracts.
+- `dm.we.v1` schemas, vectors, and conformance runner.
+- Cluster embodiment/incarnation registry and resource-scoped fences.
+- Weave ledger, preview/pull, difference navigation, local decisions, and
+  projection receipts.
+- Live `/we` fan-out with origin-marked partial results.
+- Founded Tribe membership and typed encrypted Weave transport.
+- HMK and external-identity adapters.
+- Dashboard, runbook, and two-host acceptance evidence.
 
-Inventory every active session, branch, worktree, issue, and uncommitted change
-related to Tribe Bridge, CompAII continuity, HMK, rebirth sync, Wiki,
-collective-memory, and harness bodies. Classify each item as:
+## Matrix runtime
 
-- directly reusable;
-- reusable after protocol adaptation;
-- superseded but worth preserving;
-- safe to stop.
+- Being-root genesis, custody, recovery, and rotation.
+- Body-bound embodiment credentials and incarnation authorization.
+- Keystore and verifier implementation.
+- Explicit binding from provisional `being_ref` and accepted history.
+- Removal of the provisional administrator trust anchor after binding.
 
-The result is recorded in `CONCURRENT-WORK-AUDIT.md`. DM-004 is closed. The
-corrected DM-010 identity/body boundary, DM-011 canonical artifacts and
-vectors, and DM-012 scope/reply/sync contracts are reviewed and merged.
-
-The reviewed Tribe v1, HMK, Wiki, collective-publication, compaii-state, and
-manifest work is also completed and deployed as a reversible transitional
-runtime. It remains in service and under test while later waves replace its
-provisional identity, memory-authority, and communication semantics.
-
-The v0 Tribe runtime is fully retired. Canonical `/we.sync` semantics are
-merged, and the live two-host walking skeleton is preserved unmerged as test
-evidence rather than imported as V0 runtime code.
-
-## Wave 1 — Freeze semantics
-
-Finalize identity, birth, species, source, tribe, scope resolution, operation
-grammar, event envelope, cryptographic vectors, and compatibility rules.
-
-Current state: DM-010 through DM-015 are complete. DM-016 (tribe) is
-dependency-ready, alongside the independent
-coordination card DM-003. Memory-boundary and adapter contracts remain blocked
-in the dependency order recorded in `ISSUES.md`.
-
-## Wave 2 — Build the local narrow waist
-
-Implement identity, append-only ledger, projections, local daemon, CLI, MCP,
-and deterministic failure tests.
-
-## Wave 3 — Add memory governance
-
-Implement the Librarian policy engine, exclusive lease, DeepSeek worker,
-review queue, HMK projection, Wiki publisher, and separate collective-memory
-source and reviewed-publication adapters.
-
-## Wave 4 — Embody CompAII identities
-
-Implement independent Codex and Hermes adapters without modifying the Hermes
-core. Validate that two distinct active `/me` identities belong to one signed
-CompAII `/we`, preserve identity/body-specific NOW and capabilities, and
-converge additively without sharing keys or writable databases. Separately
-prove one `/me` cannot hold two simultaneous body leases.
-
-## Wave 5 — Communications and social scopes
-
-Import and replace Tribe Bridge transport, implement secure fan-out and
-receipts, then resolve `/we`, `/tribe`, `/source`, `/here`, and other audiences
-above it.
-
-## Wave 6 — Birth and evolution
-
-Validate a synthetic birth with a new `/me`, empty autobiographical memory,
-species capability inheritance, parent-delegated tribe access, and compatible
-`/species.incoming` updates. Validate declared incompatible branching without
-claiming that Agent 0 has already been born.
-
-## Wave 7 — Canary and release
-
-Run local and remote CompAII canaries, perform adversarial review and recovery
-tests, archive Tribe Bridge after its gate, and publish V0.1.0.
+The runtime wave begins only after the operational contract is proven. It may
+strengthen authentication but must not restore single-body exclusion or turn
+`/we` into a set of different beings.

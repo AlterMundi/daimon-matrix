@@ -1,0 +1,9 @@
+{
+  "schema": "dm.we.vector-index/v1",
+  "manifest": "manifest.json",
+  "manifest_hash": "10c323b3d0ebe24f70ba10e03ab7374e9135a442f0a8f328cea41299d4ed84de",
+  "public_keys": {
+    "compaii@legion/sig/1": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+  },
+  "valid_events": ["configuration-proposal.json"]
+}
