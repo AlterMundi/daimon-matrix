@@ -19,6 +19,9 @@ DM-018 additionally freezes the harness-neutral provider narrow waist and the
 separate Matrix-presence/deployment-fence profile used with body controllers.
 DM-003 provides signed claim automation for the remaining implementation
 cards.
+DM-020 provides the behavior-free, typed Python package scaffold and its
+reproducible build/inspection pipeline; it deliberately contains no protocol
+or provider runtime yet.
 The reviewed pre-Daimon HMK, Wiki, compaii-state, and Tribe v1 stack is the
 reversible transitional runtime used while this implementation is built; it is
 not itself the Daimon Matrix runtime. Tribe v0 is retired.
@@ -64,6 +67,11 @@ not itself the Daimon Matrix runtime. Tribe v0 is retired.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — claim leases and contribution workflow.
 - [Signed GitHub coordination](docs/github-coordination.md) — session-attested
   claims, heartbeats, releases, expiry receipts, and recovery.
+- [Package scaffold and reproducible builds](docs/packaging.md) — supported
+  Python versions, dependency policy, artifact allowlists, verification, and
+  installed-wheel smoke testing.
+- [Dependency policy](DEPENDENCIES.md) — empty runtime requirements and bounded
+  build/development tooling.
 
 ## Governance
 

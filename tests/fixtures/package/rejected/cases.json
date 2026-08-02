@@ -1,0 +1,45 @@
+{
+  "schema": "dm-020-rejected-package-cases/v0",
+  "cases": [
+    {
+      "name": "absolute-path",
+      "member": "/tmp/escape.py",
+      "parts": ["public"]
+    },
+    {
+      "name": "cache",
+      "member": "daimon_matrix/__pycache__/module.pyc",
+      "parts": ["bytecode"]
+    },
+    {
+      "name": "credential",
+      "member": "credentials.env",
+      "parts": ["OPENAI_API_KEY=", "sk-test-not-a-real-secret-value"]
+    },
+    {
+      "name": "egg-info",
+      "member": "src/daimon_matrix.egg-info/PKG-INFO",
+      "parts": ["generated"]
+    },
+    {
+      "name": "experimental-module",
+      "member": "daimon_matrix/experimental_we.py",
+      "parts": ["not shipped"]
+    },
+    {
+      "name": "private-key",
+      "member": "keys/root.pem",
+      "parts": ["-----BEGIN ", "PRIVATE KEY-----"]
+    },
+    {
+      "name": "sqlite",
+      "member": "runtime/state.sqlite",
+      "parts": ["SQLite format ", "3\u0000"]
+    },
+    {
+      "name": "traversal",
+      "member": "../escape.py",
+      "parts": ["public"]
+    }
+  ]
+}

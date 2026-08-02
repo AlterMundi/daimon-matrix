@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "daimon-matrix"
+version = "0.0.0"
+description = "Reference implementation for portable, persistent multi-identity AI collectives"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "AlterMundi" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AlterMundi/daimon-matrix"
+Issues = "https://github.com/AlterMundi/daimon-matrix/issues"
+Source = "https://github.com/AlterMundi/daimon-matrix"
+
+[tool.hatch.build]
+reproducible = true
+skip-excluded-dirs = true
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/daimon_matrix"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/daimon_matrix"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+explicit_package_bases = true
