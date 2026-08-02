@@ -1,0 +1,1207 @@
+{
+  "$defs": {
+    "activation_bundle": {
+      "additionalProperties": false,
+      "properties": {
+        "activation_id": {
+          "$ref": "#/$defs/activation_id"
+        },
+        "body_description": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "capability_description": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "event_checkpoint": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "event_cutoff": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "external_lease_receipt": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "me_id": {
+          "$ref": "#/$defs/me_id"
+        },
+        "operational_acceptance": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "operational_certificate": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "predecessor_deployment_fence": {
+          "$ref": "#/$defs/fence_position"
+        },
+        "presence_lease": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "projection_manifest": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "route_handles": {
+          "items": {
+            "pattern": "^opaque:[A-Za-z0-9._-]{1,128}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema": {
+          "const": "daimon-activation-bundle/v0"
+        },
+        "species_release": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "activation_id",
+        "body_description",
+        "capability_description",
+        "event_checkpoint",
+        "event_cutoff",
+        "external_lease_receipt",
+        "me_id",
+        "operational_acceptance",
+        "operational_certificate",
+        "predecessor_deployment_fence",
+        "presence_lease",
+        "projection_manifest",
+        "route_handles",
+        "schema",
+        "species_release"
+      ],
+      "type": "object"
+    },
+    "adapter_error": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9.-]{0,63}$",
+          "type": "string"
+        },
+        "detail": {
+          "maxLength": 512,
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "detail",
+        "retryable"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "adapter_invocation": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "context": {
+          "additionalProperties": false,
+          "properties": {
+            "route_handles": {
+              "items": {
+                "pattern": "^opaque:[A-Za-z0-9._-]{1,128}$",
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "route_handles"
+          ],
+          "type": "object"
+        },
+        "contract": {
+          "$ref": "#/$defs/contract_name"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/artifact_ref"
+          },
+          "maxItems": 128,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "deadline_ms": {
+              "maximum": 86400000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_output_bytes": {
+              "maximum": 2097152,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "deadline_ms",
+            "max_output_bytes"
+          ],
+          "type": "object"
+        },
+        "operation": {
+          "pattern": "^[a-z][a-z0-9.-]{0,63}$",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "schema": {
+          "const": "daimon-adapter-invocation/v0"
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "version": {
+          "const": "v0"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "context",
+        "contract",
+        "idempotency_key",
+        "inputs",
+        "limits",
+        "operation",
+        "request_id",
+        "schema",
+        "subject",
+        "version"
+      ],
+      "type": "object"
+    },
+    "adapter_manifest": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "authority": {
+          "$ref": "#/$defs/authority_denial"
+        },
+        "capabilities": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9.-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "contracts": {
+          "items": {
+            "$ref": "#/$defs/contract_offer"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "max_input_bytes": {
+              "maximum": 2097152,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_output_bytes": {
+              "maximum": 2097152,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_runtime_ms": {
+              "maximum": 86400000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max_input_bytes",
+            "max_output_bytes",
+            "max_runtime_ms"
+          ],
+          "type": "object"
+        },
+        "provider_kind": {
+          "$ref": "#/$defs/provider_kind"
+        },
+        "schema": {
+          "const": "daimon-adapter-manifest/v0"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "authority",
+        "capabilities",
+        "contracts",
+        "limits",
+        "provider_kind",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "adapter_result": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "error": {
+                "type": "object"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "status": {
+                "const": "accepted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/artifact_ref"
+          },
+          "maxItems": 128,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "error": {
+          "$ref": "#/$defs/adapter_error"
+        },
+        "invocation_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/artifact_ref"
+          },
+          "maxItems": 128,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "request_id": {
+          "pattern": "^[0-9a-f-]{36}$",
+          "type": "string"
+        },
+        "result_id": {
+          "$ref": "#/$defs/adapter_result_id"
+        },
+        "schema": {
+          "const": "daimon-adapter-result/v0"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "failed",
+            "incomplete",
+            "refused"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "effects",
+        "error",
+        "invocation_sha256",
+        "outputs",
+        "request_id",
+        "result_id",
+        "schema",
+        "status"
+      ],
+      "type": "object"
+    },
+    "artifact_ref": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/content_id"
+        },
+        "bytes": {
+          "maximum": 2097152,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "media_type": {
+          "enum": [
+            "application/daimon+jcs",
+            "application/json",
+            "application/octet-stream"
+          ],
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "bytes",
+        "media_type",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "authority_denial": {
+      "additionalProperties": false,
+      "properties": {
+        "matrix_authority": {
+          "const": false
+        },
+        "may_append_ledger": {
+          "const": false
+        },
+        "may_issue_presence": {
+          "const": false
+        },
+        "may_mint_membership": {
+          "const": false
+        },
+        "may_sign_as_me": {
+          "const": false
+        }
+      },
+      "required": [
+        "may_append_ledger",
+        "may_issue_presence",
+        "may_mint_membership",
+        "may_sign_as_me",
+        "matrix_authority"
+      ],
+      "type": "object"
+    },
+    "body_realization": {
+      "additionalProperties": false,
+      "properties": {
+        "capability_description": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "deployment_adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "durable_volume": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "image": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "instance": {
+          "pattern": "^opaque:[A-Za-z0-9._-]{1,128}$",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "realization_id": {
+          "$ref": "#/$defs/realization_id"
+        },
+        "resources": {
+          "additionalProperties": false,
+          "properties": {
+            "cpu_millis": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "memory_bytes": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "storage_bytes": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cpu_millis",
+            "memory_bytes",
+            "storage_bytes"
+          ],
+          "type": "object"
+        },
+        "schema": {
+          "const": "daimon-body-realization/v0"
+        }
+      },
+      "required": [
+        "capability_description",
+        "deployment_adapter_id",
+        "durable_volume",
+        "image",
+        "instance",
+        "profile",
+        "realization_id",
+        "resources",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "capability_species_evaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "application_receipt": {
+          "type": "null"
+        },
+        "authority": {
+          "const": "evidence-only"
+        },
+        "compatibility_report": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "compatibility_requirements": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "evaluation_id": {
+          "$ref": "#/$defs/capability_evaluation_id"
+        },
+        "genome": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "local_policy": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "measured_outputs": {
+          "items": {
+            "$ref": "#/$defs/artifact_ref"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema": {
+          "const": "daimon-capability-species-evaluation/v0"
+        },
+        "species_release": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "suite": {
+          "$ref": "#/$defs/artifact_ref"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "application_receipt",
+        "authority",
+        "compatibility_report",
+        "compatibility_requirements",
+        "evaluation_id",
+        "genome",
+        "local_policy",
+        "measured_outputs",
+        "schema",
+        "species_release",
+        "suite"
+      ],
+      "type": "object"
+    },
+    "conformance_scenario": {
+      "additionalProperties": false,
+      "properties": {
+        "active_fence_ids": {
+          "items": {
+            "$ref": "#/$defs/deployment_fence_id"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "active_presence_ids": {
+          "items": {
+            "$ref": "#/$defs/presence_lease_id"
+          },
+          "maxItems": 16,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "case": {
+          "enum": [
+            "distinct-identity-seeding",
+            "dual-gate-delivery",
+            "multi-member-we",
+            "same-identity-relocation"
+          ],
+          "type": "string"
+        },
+        "delivery_accepted": {
+          "type": "boolean"
+        },
+        "event_cutoff": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "imported_personal_lanes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "me_ids": {
+          "items": {
+            "$ref": "#/$defs/me_id"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "schema": {
+          "const": "dm-018-conformance-scenario/v0"
+        }
+      },
+      "required": [
+        "active_fence_ids",
+        "active_presence_ids",
+        "case",
+        "delivery_accepted",
+        "event_cutoff",
+        "imported_personal_lanes",
+        "me_ids",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "content_id": {
+      "pattern": "^dm:[a-z0-9-]+:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "activation_id": {
+      "pattern": "^dm:activation:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "adapter_id": {
+      "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "adapter_result_id": {
+      "pattern": "^dm:adapter-result:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "capability_evaluation_id": {
+      "pattern": "^dm:capability-evaluation:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "deployment_fence_id": {
+      "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "deployment_key_id": {
+      "pattern": "^dm:key:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "me_id": {
+      "pattern": "^dm:me:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "migration_receipt_id": {
+      "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "migration_plan_id": {
+      "pattern": "^dm:migration-plan:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "park_id": {
+      "pattern": "^dm:park:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "presence_lease_id": {
+      "pattern": "^dm:lease:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "realization_id": {
+      "pattern": "^dm:realization:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "volume_id": {
+      "pattern": "^dm:volume:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "wake_id": {
+      "pattern": "^dm:wake:v0:[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "contract_name": {
+      "enum": [
+        "activation",
+        "artifact-store",
+        "body-deployment",
+        "capability-species",
+        "curator-worker",
+        "harness",
+        "memory-projection",
+        "migration",
+        "source",
+        "transport"
+      ],
+      "type": "string"
+    },
+    "contract_offer": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/contract_name"
+        },
+        "versions": {
+          "items": {
+            "$ref": "#/$defs/version_label"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "contract",
+        "versions"
+      ],
+      "type": "object"
+    },
+    "deployment_fence": {
+      "additionalProperties": false,
+      "properties": {
+        "deployment_adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "fence_id": {
+          "$ref": "#/$defs/deployment_fence_id"
+        },
+        "fencing_token": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "holder": {
+          "pattern": "^opaque:[A-Za-z0-9._-]{1,128}$",
+          "type": "string"
+        },
+        "issuer_key_id": {
+          "$ref": "#/$defs/deployment_key_id"
+        },
+        "issuer_public_key": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "me_id": {
+          "$ref": "#/$defs/me_id"
+        },
+        "predecessor_fence_id": {
+          "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "realization_id": {
+          "$ref": "#/$defs/realization_id"
+        },
+        "schema": {
+          "const": "daimon-deployment-fence/v0"
+        },
+        "signature": {
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "parked",
+            "prepared",
+            "revoked"
+          ],
+          "type": "string"
+        },
+        "volume_id": {
+          "$ref": "#/$defs/volume_id"
+        }
+      },
+      "required": [
+        "deployment_adapter_id",
+        "fence_id",
+        "fencing_token",
+        "generation",
+        "holder",
+        "issuer_key_id",
+        "issuer_public_key",
+        "me_id",
+        "predecessor_fence_id",
+        "realization_id",
+        "schema",
+        "signature",
+        "state",
+        "volume_id"
+      ],
+      "type": "object"
+    },
+    "digest": {
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "type": "string"
+    },
+    "fence_position": {
+      "additionalProperties": false,
+      "properties": {
+        "fence_id": {
+          "pattern": "^dm:deployment-fence:v0:[A-Za-z0-9_-]{43}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fencing_token": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fence_id",
+        "fencing_token",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "high_waters": {
+      "additionalProperties": false,
+      "properties": {
+        "deployment_generation": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fencing_token": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identity_control_generation": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "migration_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operational_generation": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presence_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "witness_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deployment_generation",
+        "event_sequence",
+        "fencing_token",
+        "identity_control_generation",
+        "memory_sequence",
+        "migration_sequence",
+        "operational_generation",
+        "presence_sequence",
+        "witness_sequence"
+      ],
+      "type": "object"
+    },
+    "migration_receipt": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "contract": {
+          "$ref": "#/$defs/contract_name"
+        },
+        "covered_high_waters": {
+          "$ref": "#/$defs/high_waters"
+        },
+        "migration_sequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "enum": [
+            "committed",
+            "rolled-back"
+          ],
+          "type": "string"
+        },
+        "predecessor_receipt_id": {
+          "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider_kind": {
+          "$ref": "#/$defs/provider_kind"
+        },
+        "receipt_id": {
+          "$ref": "#/$defs/migration_receipt_id"
+        },
+        "rollback_of_receipt_id": {
+          "pattern": "^dm:migration-receipt:v0:[A-Za-z0-9_-]{43}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema": {
+          "const": "daimon-adapter-migration-receipt/v0"
+        },
+        "source_artifact": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "source_version": {
+          "pattern": "^v[0-9]+$",
+          "type": "string"
+        },
+        "target_artifact": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "target_version": {
+          "pattern": "^v[0-9]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "contract",
+        "covered_high_waters",
+        "migration_sequence",
+        "outcome",
+        "predecessor_receipt_id",
+        "provider_kind",
+        "receipt_id",
+        "rollback_of_receipt_id",
+        "schema",
+        "source_artifact",
+        "source_version",
+        "target_artifact",
+        "target_version"
+      ],
+      "type": "object"
+    },
+    "negotiation_state": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_version": {
+          "$ref": "#/$defs/version_label"
+        },
+        "adapter_id": {
+          "$ref": "#/$defs/adapter_id"
+        },
+        "contract": {
+          "$ref": "#/$defs/contract_name"
+        },
+        "migration_plan_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/migration_plan_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "const": "dm-018-negotiation-state/v0"
+        },
+        "selected_version": {
+          "$ref": "#/$defs/version_label"
+        },
+        "successor_migration_receipt_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/migration_receipt_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "accepted_version",
+        "adapter_id",
+        "contract",
+        "migration_plan_id",
+        "schema",
+        "selected_version",
+        "successor_migration_receipt_id"
+      ],
+      "type": "object"
+    },
+    "park_evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "admission_quiesced": {
+          "const": true
+        },
+        "deployment_fence": {
+          "$ref": "#/$defs/fence_position"
+        },
+        "event_checkpoint": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "event_cutoff": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "events_flushed": {
+          "const": true
+        },
+        "external_lease_receipt": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "handoff": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/artifact_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "me_id": {
+          "$ref": "#/$defs/me_id"
+        },
+        "park_id": {
+          "$ref": "#/$defs/park_id"
+        },
+        "presence_lease": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "projection_manifest": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "schema": {
+          "const": "daimon-park-evidence/v0"
+        }
+      },
+      "required": [
+        "admission_quiesced",
+        "deployment_fence",
+        "event_checkpoint",
+        "event_cutoff",
+        "events_flushed",
+        "external_lease_receipt",
+        "handoff",
+        "me_id",
+        "park_id",
+        "presence_lease",
+        "projection_manifest",
+        "schema"
+      ],
+      "type": "object"
+    },
+    "provider_kind": {
+      "enum": [
+        "artifact-store",
+        "body-deployment",
+        "capability-species",
+        "curator-worker",
+        "harness",
+        "memory-projection",
+        "source",
+        "transport"
+      ],
+      "type": "string"
+    },
+    "subject": {
+      "additionalProperties": false,
+      "properties": {
+        "me_id": {
+          "$ref": "#/$defs/me_id"
+        },
+        "presence_lease_id": {
+          "$ref": "#/$defs/presence_lease_id"
+        }
+      },
+      "required": [
+        "me_id",
+        "presence_lease_id"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "version_label": {
+      "pattern": "^v(?:0|[1-9][0-9]{0,5})$",
+      "type": "string"
+    },
+    "wake_evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "body_description": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "capability_description": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "event_checkpoint": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "event_cutoff": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "external_lease_receipt": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "me_id": {
+          "$ref": "#/$defs/me_id"
+        },
+        "new_deployment_fence": {
+          "$ref": "#/$defs/fence_position"
+        },
+        "new_presence_lease": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "operational_acceptance": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "operational_certificate": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "predecessor_park_id": {
+          "$ref": "#/$defs/park_id"
+        },
+        "projection_manifest": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "schema": {
+          "const": "daimon-wake-evidence/v0"
+        },
+        "target_realization_id": {
+          "$ref": "#/$defs/realization_id"
+        },
+        "wake_id": {
+          "$ref": "#/$defs/wake_id"
+        }
+      },
+      "required": [
+        "body_description",
+        "capability_description",
+        "event_checkpoint",
+        "event_cutoff",
+        "external_lease_receipt",
+        "me_id",
+        "new_deployment_fence",
+        "new_presence_lease",
+        "operational_acceptance",
+        "operational_certificate",
+        "predecessor_park_id",
+        "projection_manifest",
+        "schema",
+        "target_realization_id",
+        "wake_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/adapters/v0/contracts.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/adapter_manifest"
+    },
+    {
+      "$ref": "#/$defs/adapter_invocation"
+    },
+    {
+      "$ref": "#/$defs/adapter_result"
+    },
+    {
+      "$ref": "#/$defs/body_realization"
+    },
+    {
+      "$ref": "#/$defs/activation_bundle"
+    },
+    {
+      "$ref": "#/$defs/park_evidence"
+    },
+    {
+      "$ref": "#/$defs/deployment_fence"
+    },
+    {
+      "$ref": "#/$defs/wake_evidence"
+    },
+    {
+      "$ref": "#/$defs/migration_receipt"
+    },
+    {
+      "$ref": "#/$defs/negotiation_state"
+    },
+    {
+      "$ref": "#/$defs/capability_species_evaluation"
+    },
+    {
+      "$ref": "#/$defs/conformance_scenario"
+    }
+  ],
+  "title": "Daimon Matrix DM-018 adapter contracts V0"
+}

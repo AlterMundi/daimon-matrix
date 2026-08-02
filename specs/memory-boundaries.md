@@ -511,9 +511,11 @@ and capped at 1024 entries. `included_categories` is a sorted, duplicate-free,
 non-empty subset of the Section 2 registry. `artifact_hash` is a canonical
 32-byte base64url digest of the transported projection bytes.
 
-DM-023 freezes its wrapper, persistence, and migration receipt. Until then the
-manifest is descriptive `incomplete` evidence and cannot be substituted with a
-locally invented shape.
+DM-018 freezes the provider envelope, content-reference boundary and generic
+migration receipt. DM-023 still freezes this manifest's canonical wrapper,
+persistence semantics and projection-specific migration validation. Until then
+the manifest is descriptive `incomplete` evidence and cannot be substituted
+with a locally invented shape.
 
 A projection MUST retain source event IDs, active memory-lane heads, category,
 author, evidence refs, classification, and projector version. Rebuilding from
@@ -653,8 +655,9 @@ resolved; rollback never decrements any accepted high-water.
 ## 14. Downstream implementation contract
 
 - DM-018 freezes adapter contracts, including memory-provider and body/cluster
-  boundaries, without granting adapters memory, identity, species, or presence
-  authority.
+  boundaries, projection transport references, monotonic migration receipts,
+  and independent Matrix-presence/deployment-fence gates, without granting
+  adapters memory, identity, species, or presence authority.
 - DM-021 protects identity and operational keys used to author memory events.
 - DM-022 stores canonical events and memory lanes append-only.
 - DM-023 implements contextual completeness, projection manifests, HMK/index

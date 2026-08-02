@@ -318,6 +318,13 @@ Every identity and body may advertise:
 Claims are signed and timestamped. A claim may include a test endpoint so
 another participant can evaluate compatibility rather than trusting a label.
 
+DM-018 adapters realize these claims or transport their evidence but do not
+become capability, species, identity, membership, memory, ledger, grant, or
+presence authority. Provider contracts exchange content-addressed records, not
+paths or databases. A deployed body is admitted only under current Matrix
+presence and, when configured, a separately validated monotonic deployment
+fence; neither record substitutes for the other.
+
 ## Memory and the Librarian
 
 The canonical personal continuity model is an append-only event ledger with
