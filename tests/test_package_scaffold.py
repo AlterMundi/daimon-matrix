@@ -39,6 +39,9 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(project["dependencies"], ["cryptography>=46.0.7,<47"])
         self.assertEqual(project["license"], "MIT")
+        self.assertEqual(
+            project["scripts"], {"daimon-matrixd": "daimon_matrix.daemon:main"}
+        )
 
     def test_supported_versions_and_backend_are_explicit(self) -> None:
         classifiers = set(self.configuration["project"]["classifiers"])
@@ -125,11 +128,15 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
                 "src/daimon_matrix/canonical.py",
+                "src/daimon_matrix/daemon.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/keystore.py",
                 "src/daimon_matrix/ledger.py",
+                "src/daimon_matrix/local_api.py",
                 "src/daimon_matrix/projections.py",
                 "src/daimon_matrix/py.typed",
+                "src/daimon_matrix/runtime.py",
+                "src/daimon_matrix/service.py",
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/weave.py",
             },
@@ -139,14 +146,19 @@ class ArtifactBoundaryTests(unittest.TestCase):
             {
                 "daimon_matrix/__init__.py",
                 "daimon_matrix/canonical.py",
+                "daimon_matrix/daemon.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/keystore.py",
                 "daimon_matrix/ledger.py",
+                "daimon_matrix/local_api.py",
                 "daimon_matrix/projections.py",
                 "daimon_matrix/py.typed",
+                "daimon_matrix/runtime.py",
+                "daimon_matrix/service.py",
                 "daimon_matrix/sync.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
+                "daimon_matrix-0.0.0.dist-info/entry_points.txt",
                 "daimon_matrix-0.0.0.dist-info/RECORD",
                 "daimon_matrix-0.0.0.dist-info/WHEEL",
                 "daimon_matrix-0.0.0.dist-info/licenses/LICENSE",

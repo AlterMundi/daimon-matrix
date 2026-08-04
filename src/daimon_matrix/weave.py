@@ -332,6 +332,15 @@ class EventAuthority(Protocol):
     ) -> Mapping[str, Any]:
         """Validate one configured origin without granting transport authority."""
 
+    def validate_transport_principal(
+        self,
+        origin: Mapping[str, Any],
+        *,
+        scheme: str,
+        principal_id: str,
+    ) -> Mapping[str, Any]:
+        """Bind authenticated transport metadata to one configured origin."""
+
 
 @dataclass(frozen=True)
 class ProvisionalAuthority:
@@ -361,6 +370,15 @@ class ProvisionalAuthority:
         if public is None:
             raise WeaveProtocolError("unknown_signing_key")
         return unb64url(public, length=32)
+
+    def validate_transport_principal(
+        self,
+        origin: Mapping[str, Any],
+        *,
+        scheme: str,
+        principal_id: str,
+    ) -> Mapping[str, Any]:
+        raise WeaveProtocolError("provisional_transport_authority_unsupported")
 
 
 @dataclass(frozen=True)
@@ -462,6 +480,27 @@ class RootAuthority:
         }
         if origin["principal_id"] not in principals:
             raise WeaveProtocolError("origin_principal_not_bound")
+        return member
+
+    def validate_transport_principal(
+        self,
+        origin: Mapping[str, Any],
+        *,
+        scheme: str,
+        principal_id: str,
+    ) -> Mapping[str, Any]:
+        member = self.validate_origin(origin, require_active=True)
+        if origin["principal_id"] != principal_id:
+            raise WeaveProtocolError("transport_principal_mismatch")
+        incarnation = self.incarnations[member["incarnation_authorization_id"]]
+        credential_body = self._verify_member(
+            member, incarnation["body"]["started_at_ms"]
+        )
+        if not any(
+            transport["scheme"] == scheme and transport["principal_id"] == principal_id
+            for transport in credential_body["transport_principals"]
+        ):
+            raise WeaveProtocolError("transport_principal_not_bound")
         return member
 
 
@@ -576,6 +615,17 @@ class BoundHistoryAuthority:
         self, origin: Mapping[str, Any], *, require_active: bool = False
     ) -> Mapping[str, Any]:
         return self.active.validate_origin(origin, require_active=require_active)
+
+    def validate_transport_principal(
+        self,
+        origin: Mapping[str, Any],
+        *,
+        scheme: str,
+        principal_id: str,
+    ) -> Mapping[str, Any]:
+        return self.active.validate_transport_principal(
+            origin, scheme=scheme, principal_id=principal_id
+        )
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 # DM-023 transport contract for Tribe integration
 
-Status: required input to DM-024 and DM-050–DM-055.
+Status: implemented by the DM-024 local boundary and required input to
+DM-050–DM-055.
 
 DM-023 is deliberately transport-neutral. Tribe Bridge or its absorbed Matrix
 implementation carries exact canonical documents and authenticates/encrypts
@@ -73,6 +74,12 @@ the exact response. Neither receipt means local adoption or external effect.
 No cursor may be copied into another layer as authority. On recovery, replay
 transport messages until Matrix returns its cached receipt, then advance the
 transport cursor.
+
+DM-024 exposes these operations over its owner-only authenticated socket. The
+Tribe adapter holds a purpose-limited local capability; it never opens the
+ledger or keystore. A future Buzz or Telegram adapter may use the same boundary,
+but must define a distinct versioned `scheme` and prove an authenticated remote
+principal. Matrix.org is not part of this design.
 
 ## Encryption and disclosure
 

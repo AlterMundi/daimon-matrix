@@ -37,11 +37,15 @@ SDIST_FILES: Final = frozenset(
         "pyproject.toml",
         "src/daimon_matrix/__init__.py",
         "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
+        "src/daimon_matrix/local_api.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/runtime.py",
+        "src/daimon_matrix/service.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/weave.py",
     }
@@ -50,14 +54,19 @@ WHEEL_FILES: Final = frozenset(
     {
         "daimon_matrix/__init__.py",
         "daimon_matrix/canonical.py",
+        "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py",
+        "daimon_matrix/local_api.py",
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
+        "daimon_matrix/runtime.py",
+        "daimon_matrix/service.py",
         "daimon_matrix/sync.py",
         "daimon_matrix/weave.py",
         f"{DIST_INFO}/METADATA",
+        f"{DIST_INFO}/entry_points.txt",
         f"{DIST_INFO}/RECORD",
         f"{DIST_INFO}/WHEEL",
         f"{DIST_INFO}/licenses/LICENSE",
@@ -215,11 +224,15 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
     for relative in (
         "src/daimon_matrix/__init__.py",
         "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
+        "src/daimon_matrix/local_api.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/runtime.py",
+        "src/daimon_matrix/service.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/weave.py",
     ):
@@ -268,6 +281,10 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
 
     _assert_exact(set(files), WHEEL_FILES, "wheel")
     _check_metadata(files[f"{DIST_INFO}/METADATA"], "wheel METADATA")
+    if files[f"{DIST_INFO}/entry_points.txt"] != (
+        b"[console_scripts]\ndaimon-matrixd = daimon_matrix.daemon:main\n"
+    ):
+        raise PackageCheckError("wheel console entry point mismatch")
     wheel_text = files[f"{DIST_INFO}/WHEEL"].decode("utf-8")
     if "Root-Is-Purelib: true\n" not in wheel_text:
         raise PackageCheckError("wheel is not marked purelib")
@@ -296,11 +313,15 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     source_map = {
         "daimon_matrix/__init__.py": "src/daimon_matrix/__init__.py",
         "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
+        "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
+        "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
+        "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
+        "daimon_matrix/service.py": "src/daimon_matrix/service.py",
         "daimon_matrix/sync.py": "src/daimon_matrix/sync.py",
         "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",
     }

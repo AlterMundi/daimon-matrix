@@ -5,13 +5,13 @@ The previously documented identity-wide singleton lease is not part of the
 supported architecture.
 
 `daimon-matrix` currently supplies specifications, schemas, conformance
-vectors, and a Python package scaffold. Its V0.1 MVP also includes the runtime
-that owns being-root continuity, ledgers, scopes, synchronization, memory
-policy, and secure communication. The isolated Cluster `weave` module and
-Tribe Bridge v1 are transitional implementations and executable evidence to be
-absorbed or adapted behind those contracts. Same-being membership is
-temporarily provided by an exact administrator manifest hash until DM-021
-binds it to a Matrix being root.
+vectors, and an installed Python runtime. Its V0.1 MVP owns being-root
+continuity, ledgers, scopes, synchronization, memory policy, and secure
+communication. The isolated Cluster `weave` module and Tribe Bridge v1 are
+transitional implementations and executable evidence to be absorbed or adapted
+behind those contracts. DM-021 now binds same-being membership to a Matrix
+being root; the old administrator manifest is accepted only as explicitly
+bound historical evidence.
 
 The external Matrix.org protocol and its homeservers are not an MVP dependency
 and are not meant by “Matrix” in this repository. Use `daimon-matrix` for this
@@ -38,3 +38,10 @@ DM-023 builds the typed transport-neutral `/we.sync` transaction above that
 ledger: issued requests, frozen delta responses, cursor/ingest receipts and
 local projections are durable and replay-safe. Tribe remains only the channel
 that will carry and authenticate these exact bytes in DM-050–DM-055.
+
+DM-024 adds ledger schema V3, the closed authenticated local service and the
+installed `daimon-matrixd` AF_UNIX process. It loads exact root-bound public
+authority plus purpose-separated encrypted runtime secrets, journals exact RPC
+responses, and survives retry across semantic-commit/response-write failures.
+Cluster's next host adapter supervises this process; DM-025 adds human/agent
+clients, and DM-050 begins absorbing Tribe transport behind the same boundary.

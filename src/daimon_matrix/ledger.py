@@ -29,7 +29,7 @@ from .weave import (
     verify_event,
 )
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 BUSY_TIMEOUT_MS: Final = 5_000
 
 Clock = Callable[[], int]
@@ -264,6 +264,31 @@ class Ledger:
                     projection_hash TEXT NOT NULL,
                     snapshot_json BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS local_operations (
+                    client_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    event_id TEXT NOT NULL REFERENCES events(event_id),
+                    PRIMARY KEY(client_id, request_id)
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS rpc_requests (
+                    client_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('pending', 'completed')),
+                    response_json BLOB,
+                    created_at_ms INTEGER NOT NULL,
+                    completed_at_ms INTEGER,
+                    PRIMARY KEY(client_id, request_id),
+                    CHECK(
+                        (state='pending' AND response_json IS NULL
+                            AND completed_at_ms IS NULL)
+                        OR
+                        (state='completed' AND response_json IS NOT NULL
+                            AND completed_at_ms IS NOT NULL)
+                    )
+                ) WITHOUT ROWID;
                 CREATE INDEX IF NOT EXISTS events_kind_subject
                     ON events(kind, subject);
                 CREATE INDEX IF NOT EXISTS events_status
@@ -297,8 +322,11 @@ class Ledger:
                     sorted(expected.items()),
                 )
             elif rows != expected:
-                prior = {**expected, "schema_version": "1"}
-                if rows != prior:
+                prior_versions = (
+                    {**expected, "schema_version": "1"},
+                    {**expected, "schema_version": "2"},
+                )
+                if rows not in prior_versions:
                     raise LedgerStateError("ledger_metadata_mismatch")
                 database.execute(
                     "UPDATE metadata SET value=? WHERE key='schema_version'",
@@ -353,44 +381,305 @@ class Ledger:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
-                head = self._head(database, self.local_origin["incarnation_id"])
-                sequence = 1 if head is None else int(head["sequence"]) + 1
-                event = create_event(
-                    self.authority,
-                    self.local_origin,
-                    signer,
-                    event_id=str(self.uuid_factory()) if event_id is None else event_id,
-                    sequence=sequence,
-                    previous_event_id=None if head is None else str(head["event_id"]),
-                    occurred_at_ms=self.clock()
-                    if occurred_at_ms is None
-                    else occurred_at_ms,
-                    causal_parents=causal_parents,
+                event = self._append_local(
+                    database,
                     kind=kind,
                     subject=subject,
                     payload=payload,
-                    supersedes=supersedes,
+                    signer=signer,
                     sensitivity=sensitivity,
+                    causal_parents=causal_parents,
+                    supersedes=supersedes,
+                    occurred_at_ms=occurred_at_ms,
+                    event_id=event_id,
                 )
-                dependencies = self._dependencies(event)
-                unavailable = [
-                    dependency
-                    for dependency in dependencies
-                    if database.execute(
-                        "SELECT 1 FROM events WHERE event_id=? AND status='known'",
-                        (dependency,),
-                    ).fetchone()
-                    is None
-                ]
-                if unavailable:
-                    raise LedgerGapError("local_causal_dependency_missing")
-                self._insert(database, event, source="local", status="known")
-                self._promote(database)
                 database.commit()
                 return event
             except BaseException:
                 database.rollback()
                 raise
+
+    def _append_local(
+        self,
+        database: sqlite3.Connection,
+        *,
+        kind: str,
+        subject: str,
+        payload: Mapping[str, Any],
+        signer: EventSigner,
+        sensitivity: str,
+        causal_parents: Sequence[str],
+        supersedes: str | None,
+        occurred_at_ms: int | None,
+        event_id: str | None,
+    ) -> Event:
+        head = self._head(database, self.local_origin["incarnation_id"])
+        sequence = 1 if head is None else int(head["sequence"]) + 1
+        event = create_event(
+            self.authority,
+            self.local_origin,
+            signer,
+            event_id=str(self.uuid_factory()) if event_id is None else event_id,
+            sequence=sequence,
+            previous_event_id=None if head is None else str(head["event_id"]),
+            occurred_at_ms=self.clock() if occurred_at_ms is None else occurred_at_ms,
+            causal_parents=causal_parents,
+            kind=kind,
+            subject=subject,
+            payload=payload,
+            supersedes=supersedes,
+            sensitivity=sensitivity,
+        )
+        unavailable = [
+            dependency
+            for dependency in self._dependencies(event)
+            if database.execute(
+                "SELECT 1 FROM events WHERE event_id=? AND status='known'",
+                (dependency,),
+            ).fetchone()
+            is None
+        ]
+        if unavailable:
+            raise LedgerGapError("local_causal_dependency_missing")
+        self._insert(database, event, source="local", status="known")
+        self._promote(database)
+        return event
+
+    def append_local_idempotent(
+        self,
+        *,
+        client_id: str,
+        request_id: str,
+        request_hash: str,
+        kind: str,
+        subject: str,
+        payload: Mapping[str, Any],
+        signer: EventSigner,
+        sensitivity: str = "personal",
+        causal_parents: Sequence[str] = (),
+        supersedes: str | None = None,
+        occurred_at_ms: int | None = None,
+        event_id: str | None = None,
+    ) -> Event:
+        """Author one event and its local-operation receipt in one transaction."""
+
+        self._validate_rpc_identity(client_id, request_id, request_hash)
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    existing = database.execute(
+                        "SELECT request_hash, event_id FROM local_operations "
+                        "WHERE client_id=? AND request_id=?",
+                        (client_id, request_id),
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["request_hash"] != request_hash:
+                            raise LedgerEquivocationError(
+                                {
+                                    "schema": "dm.we.equivocation/v1",
+                                    "lane": "local_operation",
+                                    "client_id": client_id,
+                                    "request_id": request_id,
+                                    "existing_request_hash": existing["request_hash"],
+                                    "presented_request_hash": request_hash,
+                                }
+                            )
+                        row = database.execute(
+                            "SELECT event_json FROM events WHERE event_id=?",
+                            (existing["event_id"],),
+                        ).fetchone()
+                        if row is None:
+                            raise LedgerStateError("local_operation_event_missing")
+                        result: Event = json.loads(bytes(row["event_json"]))
+                    else:
+                        result = self._append_local(
+                            database,
+                            kind=kind,
+                            subject=subject,
+                            payload=payload,
+                            signer=signer,
+                            sensitivity=sensitivity,
+                            causal_parents=causal_parents,
+                            supersedes=supersedes,
+                            occurred_at_ms=occurred_at_ms,
+                            event_id=event_id,
+                        )
+                        database.execute(
+                            "INSERT INTO local_operations VALUES (?, ?, ?, ?)",
+                            (client_id, request_id, request_hash, result["event_id"]),
+                        )
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
+        return result
+
+    @staticmethod
+    def _validate_rpc_identity(
+        client_id: str, request_id: str, request_hash: str
+    ) -> None:
+        if (
+            not isinstance(client_id, str)
+            or not 1 <= len(client_id.encode("utf-8")) <= 128
+        ):
+            raise LedgerError("invalid_rpc_client_id")
+        try:
+            if str(uuid.UUID(request_id)) != request_id:
+                raise ValueError
+        except (AttributeError, TypeError, ValueError) as exception:
+            raise LedgerError("invalid_rpc_request_id") from exception
+        if (
+            not isinstance(request_hash, str)
+            or len(request_hash) != 64
+            or any(character not in "0123456789abcdef" for character in request_hash)
+        ):
+            raise LedgerError("invalid_rpc_request_hash")
+
+    def begin_rpc(
+        self,
+        *,
+        client_id: str,
+        request_id: str,
+        request_hash: str,
+        method: str,
+    ) -> dict[str, Any] | None:
+        """Journal an authenticated API request or return its completed response."""
+
+        self._validate_rpc_identity(client_id, request_id, request_hash)
+        if not isinstance(method, str) or not 1 <= len(method.encode("utf-8")) <= 128:
+            raise LedgerError("invalid_rpc_method")
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    row = database.execute(
+                        "SELECT request_hash, method, state, response_json "
+                        "FROM rpc_requests WHERE client_id=? AND request_id=?",
+                        (client_id, request_id),
+                    ).fetchone()
+                    if row is None:
+                        database.execute(
+                            "INSERT INTO rpc_requests VALUES "
+                            "(?, ?, ?, ?, 'pending', NULL, ?, NULL)",
+                            (
+                                client_id,
+                                request_id,
+                                request_hash,
+                                method,
+                                self.clock(),
+                            ),
+                        )
+                        result = None
+                    else:
+                        if (
+                            row["request_hash"] != request_hash
+                            or row["method"] != method
+                        ):
+                            raise LedgerEquivocationError(
+                                {
+                                    "schema": "dm.we.equivocation/v1",
+                                    "lane": "rpc_request",
+                                    "client_id": client_id,
+                                    "request_id": request_id,
+                                    "existing_request_hash": row["request_hash"],
+                                    "presented_request_hash": request_hash,
+                                }
+                            )
+                        if row["state"] == "pending":
+                            result = None
+                        elif row["state"] == "completed" and row["response_json"]:
+                            loaded = json.loads(bytes(row["response_json"]))
+                            if not isinstance(loaded, dict):
+                                raise LedgerStateError("rpc_response_corrupt")
+                            result = loaded
+                        else:
+                            raise LedgerStateError("rpc_journal_corrupt")
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
+        return result
+
+    def finish_rpc(
+        self,
+        *,
+        client_id: str,
+        request_id: str,
+        request_hash: str,
+        method: str,
+        response: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Store the first exact API response; a concurrent finisher reuses it."""
+
+        self._validate_rpc_identity(client_id, request_id, request_hash)
+        raw = canonical_bytes(response)
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    row = database.execute(
+                        "SELECT request_hash, method, state, response_json "
+                        "FROM rpc_requests WHERE client_id=? AND request_id=?",
+                        (client_id, request_id),
+                    ).fetchone()
+                    if row is None:
+                        raise LedgerStateError("rpc_request_not_started")
+                    if row["request_hash"] != request_hash or row["method"] != method:
+                        raise LedgerEquivocationError(
+                            {
+                                "schema": "dm.we.equivocation/v1",
+                                "lane": "rpc_request",
+                                "client_id": client_id,
+                                "request_id": request_id,
+                                "existing_request_hash": row["request_hash"],
+                                "presented_request_hash": request_hash,
+                            }
+                        )
+                    if row["state"] == "completed":
+                        loaded = json.loads(bytes(row["response_json"]))
+                        if not isinstance(loaded, dict):
+                            raise LedgerStateError("rpc_response_corrupt")
+                        result = loaded
+                    elif row["state"] == "pending":
+                        database.execute(
+                            "UPDATE rpc_requests SET state='completed', "
+                            "response_json=?, completed_at_ms=? "
+                            "WHERE client_id=? AND request_id=?",
+                            (raw, self.clock(), client_id, request_id),
+                        )
+                        result = copy.deepcopy(dict(response))
+                    else:
+                        raise LedgerStateError("rpc_journal_corrupt")
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
+        return result
+
+    def rpc_requests(self) -> list[dict[str, Any]]:
+        self.initialize()
+        with self._database() as database:
+            return [
+                dict(row)
+                for row in database.execute(
+                    "SELECT client_id, request_id, request_hash, method, state, "
+                    "created_at_ms, completed_at_ms FROM rpc_requests "
+                    "ORDER BY client_id, request_id"
+                )
+            ]
 
     def _insert(
         self,
@@ -715,6 +1004,48 @@ class Ledger:
         with self._database() as database:
             rows = database.execute(query).fetchall()
         return [json.loads(bytes(row["event_json"])) for row in rows]
+
+    def event(self, event_id: str, *, include_incomplete: bool = False) -> Event | None:
+        try:
+            if str(uuid.UUID(event_id)) != event_id:
+                raise ValueError
+        except (AttributeError, TypeError, ValueError) as exception:
+            raise LedgerError("invalid_event_id") from exception
+        self.initialize()
+        query = "SELECT event_json FROM events WHERE event_id=?"
+        if not include_incomplete:
+            query += " AND status='known'"
+        with self._database() as database:
+            row = database.execute(query, (event_id,)).fetchone()
+        return None if row is None else json.loads(bytes(row["event_json"]))
+
+    def status_counts(self) -> dict[str, int]:
+        self.initialize()
+        with self._database() as database:
+            known = int(
+                database.execute(
+                    "SELECT COUNT(*) FROM events WHERE status='known'"
+                ).fetchone()[0]
+            )
+            incomplete = int(
+                database.execute(
+                    "SELECT COUNT(*) FROM events WHERE status='incomplete'"
+                ).fetchone()[0]
+            )
+            peers = int(
+                database.execute("SELECT COUNT(*) FROM peer_sync_state").fetchone()[0]
+            )
+            pending_rpc = int(
+                database.execute(
+                    "SELECT COUNT(*) FROM rpc_requests WHERE state='pending'"
+                ).fetchone()[0]
+            )
+        return {
+            "known_events": known,
+            "incomplete_events": incomplete,
+            "peer_lanes": peers,
+            "pending_rpc": pending_rpc,
+        }
 
     @staticmethod
     def _heads(database: sqlite3.Connection) -> list[dict[str, Any]]:

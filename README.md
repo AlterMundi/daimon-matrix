@@ -43,10 +43,11 @@ The repository contains specifications, schemas, conformance material, and a
 typed Python package implementing canonical identity artifacts, plural
 embodiment/incarnation authorization, control recovery, history binding, and
 encrypted custody. The package also owns the root-authorized independent Weave
-ledger, replay-safe sync, and deterministic local projection engines; Cluster
-remains its lifecycle/state-volume host and its provisional `weave/` code is a
-migration oracle rather than a second permanent
-protocol. Tribe Bridge remains a transport input until absorption. There is no
-supported single-awake-identity or distinct-identities-as-`/we` model.
+ledger, replay-safe sync, deterministic local projections, and the installed
+`daimon-matrixd` owner-local runtime API. Cluster remains its
+lifecycle/state-volume host and its provisional `weave/` code is a migration
+oracle rather than a second permanent protocol. Tribe Bridge remains a
+transport input until absorption. There is no supported single-awake-identity
+or distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.
