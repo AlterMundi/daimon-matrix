@@ -46,13 +46,16 @@ event validation and SQLite ledger behavior; Cluster hosts it.
    socket are host-local runtime objects, never portable snapshot contents.
    Restore must let Matrix validate authority, custody high-water and ledger
    metadata before marking the embodiment healthy.
+10. A physical restart that changes incarnation uses DM-079's signed
+    `dm.runtime.bundle/v2` authority history. Reusing V1, replacing the ledger,
+    or merely changing `local_origin` is a downgrade/substitution and fails.
 
 ## Required downstream tests
 
 - start two Cluster-hosted Matrix ledgers with distinct DBs/keys and verified
   embodiment/incarnation evidence;
-- restart one body and prove a new incarnation chain without changing the
-  embodiment or sharing its old private key;
+- restart one body through a signed authority epoch and prove a new incarnation
+  chain without changing the embodiment or rewriting old events;
 - import the reconciled canary fixture byte-identically, then continue under a
   root-bound manifest;
 - quiesce/snapshot/restore and resume cursors without duplicate events;

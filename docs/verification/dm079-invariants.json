@@ -1,0 +1,35 @@
+{
+  "schema": "dm-079-invariant-report/v0",
+  "scope": "synthetic-local-state",
+  "deployment": "not-applicable",
+  "ledger_schema_version": 3,
+  "bundle_successor_schema": "dm.runtime.bundle/v2",
+  "authority_epoch_schema": "dm.we.authority-epoch/v1",
+  "invariants": {
+    "successor_is_embodiment_signed": true,
+    "revision_and_incarnation_sequence_are_contiguous": true,
+    "other_manifest_rows_are_byte_equal": true,
+    "one_active_incarnation_per_embodiment": true,
+    "historical_event_selects_exact_manifest": true,
+    "accepted_manifest_set_only_expands": true,
+    "stored_events_verify_before_metadata_commit": true,
+    "projection_cache_is_disposable": true,
+    "sync_rpc_and_canonical_event_state_is_preserved": true,
+    "exact_successor_replay_is_idempotent": true,
+    "prior_bundle_downgrade_is_rejected": true,
+    "public_vectors_are_byte_reproducible": true,
+    "sqlite_precommit_fault_rolls_back": true,
+    "cluster_resource_fence_authority_is_unchanged": true
+  },
+  "evidence": [
+    "docs/dm079-authority-epochs.md",
+    "schemas/hosted/v2/bundle.schema.json",
+    "schemas/weave/v1/authority-epoch.schema.json",
+    "src/daimon_matrix/authority_epochs.py",
+    "src/daimon_matrix/ledger.py",
+    "src/daimon_matrix/runtime.py",
+    "tools/generate_dm079_vectors.py",
+    "vectors/weave/v1/authority-epoch/index.json",
+    "tests/test_dm079_authority_epochs.py"
+  ]
+}

@@ -29,6 +29,13 @@ authority, unlock custody, migrate and integrity-check the ledger, remove only a
 safe owner socket left behind under the held lock, bind `0600`, then emit the
 canonical redacted `ready` diagnostic. A second writer fails immediately.
 
+DM-079 adds `dm.runtime.bundle/v2` for an exact signed authority-epoch chain.
+V2 preserves prior manifests so existing events remain verified under the
+manifest hash they signed, while the fresh incarnation becomes the only active
+local origin. The SQLite metadata advances only after every stored event
+verifies and the complete update commits atomically. An accepted ledger cannot
+be reopened with its prior V1 bundle. See `docs/dm079-authority-epochs.md`.
+
 ## Local protocol
 
 The only release listener is an owner-local AF_UNIX stream socket. Linux peer
@@ -103,5 +110,5 @@ not. Telegram, Buzz or another human gateway may be added later only behind
 the disabled generic edge. No carrier becomes event, scope, adoption, receipt
 or Weave-cursor authority.
 
-Schemas are in `schemas/hosted/v1/`; runnable verification is in
+Schemas are in `schemas/hosted/v1/` and `schemas/hosted/v2/`; runnable verification is in
 `tests/test_dm024_service.py` and `tests/test_dm024_runtime.py`.

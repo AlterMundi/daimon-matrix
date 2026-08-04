@@ -48,7 +48,7 @@ closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
 bytes, MCP exposes only the current eighteen methods and `daimon:` resources, and
 legacy MCP and Matrix.org transports remain absent. Cluster's next host
 adapter supervises the process. DM-026 closes the local release gate with a
-38-scenario invariant registry and deterministic installed conformance report;
+39-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, live Cluster effects or rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -84,3 +84,11 @@ purpose-separated signed partial fan-out with durable exact replay, real daemon
 and CLI/MCP reads, DM-051/052 target parity, and an exact read-only Cluster
 snapshot contract. No live carrier is selected: Tribe Bridge integration is
 DM-055, while cross-being root discovery and consent remain DM-071.
+
+DM-079 closes the real-restart gap found by the Cluster #48 installed-process
+test. A signed authority epoch now advances one embodiment from incarnation
+`N` to `N+1`; hosted bundle V2 retains every prior root manifest, SQLite
+expands its accepted epoch set only after exact historical verification, and
+the old bundle becomes an explicit downgrade. This is the prerequisite for the
+fresh-host rebirth proof in DM-078, not a claim that production supervision or
+Incus relocation is already complete.

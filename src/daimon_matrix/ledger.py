@@ -326,13 +326,102 @@ class Ledger:
                     {**expected, "schema_version": "1"},
                     {**expected, "schema_version": "2"},
                 )
-                if rows not in prior_versions:
+                if rows in prior_versions:
+                    database.execute(
+                        "UPDATE metadata SET value=? WHERE key='schema_version'",
+                        (str(SCHEMA_VERSION),),
+                    )
+                elif self._authority_epoch_advance(rows, expected):
+                    self._commit_authority_epoch(database, expected)
+                else:
                     raise LedgerStateError("ledger_metadata_mismatch")
-                database.execute(
-                    "UPDATE metadata SET value=? WHERE key='schema_version'",
-                    (str(SCHEMA_VERSION),),
-                )
         _assert_owner_file(self.path)
+
+    @staticmethod
+    def _authority_epoch_advance(
+        current: Mapping[str, str], expected: Mapping[str, str]
+    ) -> bool:
+        """Recognize only monotonic expansion already verified by authority."""
+
+        stable = {
+            "being_ref",
+            "local_embodiment_id",
+            "trust_mode",
+        }
+        if set(current) != set(expected) or any(
+            current.get(field) != expected.get(field) for field in stable
+        ):
+            return False
+        if current.get("schema_version") not in {"1", "2", str(SCHEMA_VERSION)}:
+            return False
+        try:
+            old_hashes = json.loads(current["accepted_manifest_hashes"])
+            new_hashes = json.loads(expected["accepted_manifest_hashes"])
+        except (KeyError, json.JSONDecodeError, TypeError):
+            return False
+        if (
+            not isinstance(old_hashes, list)
+            or not isinstance(new_hashes, list)
+            or old_hashes != sorted(set(old_hashes))
+            or new_hashes != sorted(set(new_hashes))
+            or not all(isinstance(value, str) for value in (*old_hashes, *new_hashes))
+        ):
+            return False
+        return bool(
+            set(old_hashes) < set(new_hashes)
+            and set(old_hashes) <= set(new_hashes)
+            and current.get("manifest_hash") in new_hashes
+            and expected.get("manifest_hash") in new_hashes
+            and current.get("manifest_hash") != expected.get("manifest_hash")
+        )
+
+    def _commit_authority_epoch(
+        self, database: sqlite3.Connection, expected: Mapping[str, str]
+    ) -> None:
+        """Verify every immutable event, then atomically advance metadata."""
+
+        database.execute("BEGIN IMMEDIATE")
+        try:
+            rows = database.execute(
+                "SELECT event_id, incarnation_id, embodiment_id, sequence, kind, "
+                "subject, content_hash, event_json FROM events ORDER BY inserted_order"
+            )
+            for row in rows:
+                try:
+                    raw = bytes(row["event_json"])
+                    event = verify_event(json.loads(raw), self.authority)
+                except (
+                    json.JSONDecodeError,
+                    TypeError,
+                    WeaveProtocolError,
+                ) as exception:
+                    raise LedgerStateError(
+                        "authority_epoch_event_verification_failed"
+                    ) from exception
+                if (
+                    canonical_bytes(event) != raw
+                    or row["event_id"] != event["event_id"]
+                    or row["incarnation_id"] != event["origin"]["incarnation_id"]
+                    or row["embodiment_id"] != event["origin"]["embodiment_id"]
+                    or int(row["sequence"]) != event["sequence"]
+                    or row["kind"] != event["kind"]
+                    or row["subject"] != event["subject"]
+                    or row["content_hash"] != event["content_hash"]
+                ):
+                    raise LedgerStateError("authority_epoch_event_verification_failed")
+            database.executemany(
+                "UPDATE metadata SET value=? WHERE key=?",
+                [
+                    (expected["accepted_manifest_hashes"], "accepted_manifest_hashes"),
+                    (expected["manifest_hash"], "manifest_hash"),
+                    (expected["schema_version"], "schema_version"),
+                ],
+            )
+            database.execute("DELETE FROM projection_cache")
+            database.commit()
+        except BaseException:
+            database.rollback()
+            raise
 
     def integrity_check(self) -> None:
         self.initialize()

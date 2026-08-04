@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.5",
+  "suite_version": "DM-026.6",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -15,6 +15,20 @@
       "cleanup": "Synthetic in-memory artifacts only.",
       "platform": "all",
       "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "authority_epoch_succession",
+      "owners": ["DM-079"],
+      "specifications": ["docs/dm079-authority-epochs.md", "schemas/weave/v1/authority-epoch.schema.json"],
+      "setup": "A non-empty root-authorized ledger, exact prior manifest and signed next-incarnation successor epoch.",
+      "stimulus": "Reopen the same SQLite ledger and hosted bundle under the exact successor, then attempt downgrade and corrupt-event migration.",
+      "fault": "Manifest history is removed, rewritten, forked or advanced before every immutable old event verifies against its exact epoch.",
+      "expected": "The epoch set grows atomically, old bytes remain exact, the new incarnation starts its own chain, replay is idempotent and every downgrade or corruption fails closed.",
+      "evidence": ["tests.test_dm079_authority_epochs.AuthorityEpochTests.test_corrupt_stored_event_rolls_back_epoch_metadata", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_nonempty_ledger_advances_without_rewriting_old_events", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_public_vectors_verify_and_regenerate_byte_identically", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_sequence_body_active_and_history_forks_fail_closed", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_sqlite_fault_before_commit_retains_old_epoch_then_retry_succeeds", "tests.test_dm079_authority_epochs.HostedAuthorityEpochTests.test_v2_bundle_reopens_existing_runtime_under_exact_successor"],
+      "cleanup": "Close SQLite and hosted runtime handles before removing the isolated roots.",
+      "platform": "all",
+      "ci_lane": "complete",
       "required": true
     },
     {

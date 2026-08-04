@@ -36,6 +36,7 @@ SDIST_FILES: Final = frozenset(
         "README.md",
         "pyproject.toml",
         "src/daimon_matrix/__init__.py",
+        "src/daimon_matrix/authority_epochs.py",
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/cli.py",
         "src/daimon_matrix/client.py",
@@ -63,6 +64,7 @@ SDIST_FILES: Final = frozenset(
 WHEEL_FILES: Final = frozenset(
     {
         "daimon_matrix/__init__.py",
+        "daimon_matrix/authority_epochs.py",
         "daimon_matrix/canonical.py",
         "daimon_matrix/cli.py",
         "daimon_matrix/client.py",
@@ -246,6 +248,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
     _check_metadata(files["PKG-INFO"], "sdist PKG-INFO")
     for relative in (
         "src/daimon_matrix/__init__.py",
+        "src/daimon_matrix/authority_epochs.py",
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/cli.py",
         "src/daimon_matrix/client.py",
@@ -346,6 +349,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
 
     source_map = {
         "daimon_matrix/__init__.py": "src/daimon_matrix/__init__.py",
+        "daimon_matrix/authority_epochs.py": "src/daimon_matrix/authority_epochs.py",
         "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
         "daimon_matrix/cli.py": "src/daimon_matrix/cli.py",
         "daimon_matrix/client.py": "src/daimon_matrix/client.py",
