@@ -53,8 +53,9 @@ modern runner directly, so legacy `initialize` and missing/wrong modern
 envelopes fail before daemon dispatch. Input is strict UTF-8 with duplicate-key
 and 2 MiB line rejection. Stdout is reserved for MCP frames.
 
-The eighteen advertised tools map one-to-one to twelve DM-024 methods plus six
-DM-054 scope methods. Every
+The twenty-four advertised tools map one-to-one to twelve DM-024 methods, six
+DM-054 scope methods, two DM-030 memory methods, and four DM-031 curator
+methods. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed
 `daimon:` resources expose public contract descriptors or capability-authorized

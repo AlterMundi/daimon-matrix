@@ -14,7 +14,9 @@ from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, canonical_bytes, unb64url
+from .cluster import FenceVerifier
 from .communication import CommunicationStore
+from .curator import CuratorCoordinator, EffectTruthObserver
 from .identity import (
     ControlChain,
     VerificationError,
@@ -182,6 +184,8 @@ def load_runtime(
     clock: Clock,
     body_reader: BodyReader | None = None,
     tribe_verifier: SnapshotVerifier | None = None,
+    curator_fence_verifier: FenceVerifier | None = None,
+    curator_effect_observer: EffectTruthObserver | None = None,
 ) -> HostedRuntime:
     """Verify all public/secret bindings before exposing a hosted service."""
 
@@ -564,6 +568,12 @@ def load_runtime(
         communication=communication,
         router=router,
         scopes=scopes,
+        curator=CuratorCoordinator(
+            ledger,
+            clock,
+            fence_verifier=curator_fence_verifier,
+            effect_observer=curator_effect_observer,
+        ),
     )
     ledger.integrity_check()
     final_root = root.lstat()

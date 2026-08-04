@@ -49,6 +49,12 @@ validation and SQLite behavior; Cluster hosts the exact pinned package.
 10. A physical restart that changes incarnation uses DM-079's signed
     `dm.runtime.bundle/v2` authority history. Reusing V1, replacing the ledger,
     or merely changing `local_origin` is a downgrade/substitution and fails.
+11. DM-031 adds four separately capability-gated curator methods. Cluster's
+    existing exact five-method host capability stays unchanged. A future
+    projection host may opt into `resource-fence` claims only after pinning the
+    reviewed DM-031 Matrix artifact and supplying current fence/effect observers
+    through the explicit runtime injection boundary; queue CAS never substitutes
+    for Cluster's cross-host fence.
 
 ## Required downstream tests
 

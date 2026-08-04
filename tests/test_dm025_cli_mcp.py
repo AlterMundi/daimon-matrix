@@ -21,7 +21,12 @@ from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import MAX_FRAME_BYTES
 from daimon_matrix.mcp_server import TOOL_CONTRACTS
 from daimon_matrix.runtime import load_runtime
-from daimon_matrix.service import MEMORY_METHODS, METHODS, SCOPE_METHODS
+from daimon_matrix.service import (
+    CURATOR_METHODS,
+    MEMORY_METHODS,
+    METHODS,
+    SCOPE_METHODS,
+)
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +225,37 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "/we",
             ],
             ["scope", "tribe", "--tribe-ref", "dm:tribe:v1:test"],
+            ["curator", "enqueue", "--item", str(document)],
+            [
+                "curator",
+                "claim",
+                "--item-id",
+                "dm:curator-item:v1:" + "a" * 43,
+                "--claim-id",
+                "80000000-0000-4000-8000-000000000005",
+                "--expected-generation",
+                "0",
+                "--lease-until-ms",
+                "1800000001000",
+            ],
+            [
+                "curator",
+                "complete",
+                "--claim-id",
+                "80000000-0000-4000-8000-000000000005",
+                "--expected-generation",
+                "1",
+                "--outcome",
+                "completed",
+                "--output-ref",
+                "proposal:test",
+            ],
+            [
+                "curator",
+                "inspect",
+                "--item-id",
+                "dm:curator-item:v1:" + "a" * 43,
+            ],
             [
                 "memory",
                 "evaluate",
@@ -277,7 +313,9 @@ class InstalledSurfaceTests(RuntimeFixture):
         methods = {
             _method_params(cli_parser().parse_args(prefix + row))[0] for row in commands
         }
-        self.assertEqual(methods, set(MEMORY_METHODS | METHODS | SCOPE_METHODS))
+        self.assertEqual(
+            methods, set(CURATOR_METHODS | MEMORY_METHODS | METHODS | SCOPE_METHODS)
+        )
 
     def test_mcp_modern_stdio_lists_closed_surface_and_calls_daemon(self) -> None:
         frames = [
@@ -318,11 +356,15 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 20)
+        self.assertEqual(len(tools), 24)
         self.assertEqual(
             {item["name"] for item in tools},
             {
                 "daimon_status",
+                "curator_enqueue",
+                "curator_claim",
+                "curator_complete",
+                "curator_inspect",
                 "memory_evaluate",
                 "memory_execute",
                 "scope_me",
@@ -349,7 +391,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 item["description"].removeprefix("Typed Daimon operation ")
                 for item in tools
             },
-            set(MEMORY_METHODS | METHODS | SCOPE_METHODS),
+            set(CURATOR_METHODS | MEMORY_METHODS | METHODS | SCOPE_METHODS),
         )
         self.assertTrue(responses[3]["result"]["structuredContent"]["ok"])
         self.assertNotIn("auth", responses[3]["result"]["structuredContent"])

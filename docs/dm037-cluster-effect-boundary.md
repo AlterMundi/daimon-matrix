@@ -102,6 +102,22 @@ production supervision, real Incus relocation, a generic projection executor
 or live Tribe transport. Those remain separate follow-ups and must stay visible
 as unsupported rather than being inferred from this adapter boundary.
 
+## DM-031 follow-up boundary
+
+DM-031 consumes this contract through optional `load_runtime` injection points:
+`curator_fence_verifier` and `curator_effect_observer`. Queue-item coordination
+needs neither. Resource-fenced completion fails closed until a host supplies
+both exact adapters; the standalone daemon command does not synthesize them
+from presence, bundle fields or environment variables.
+
+The existing Cluster #48 five-method capability and Matrix pin remain valid for
+its implemented host lifecycle scope. A later Cluster adaptation must bump to
+the exact reviewed DM-031 artifact before enabling curator projection effects,
+wire the current registry/fence verifier and effect observer without exposing
+private endpoints or credentials, and run Matrix's cached-RPC contradiction
+test through the real process boundary. Until then, `resource-fence` curator
+execution is unsupported rather than silently downgraded to queue-item CAS.
+
 ## Verification and rollback
 
 Executable evidence is in `tests/test_dm037_cluster_effects.py`; public cases

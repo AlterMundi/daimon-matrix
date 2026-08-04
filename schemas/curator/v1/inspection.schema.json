@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator/v1/inspection.schema.json",
+  "title": "Curator item inspection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "item", "state", "generation", "claim", "result"],
+  "properties": {
+    "schema": {"const": "dm.curator.inspection/v1"},
+    "item": {"$ref": "item.schema.json"},
+    "state": {"enum": ["queued", "claimed", "completed", "review-required", "deferred", "failed"]},
+    "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "claim": {"anyOf": [{"type": "null"}, {"$ref": "claim.schema.json"}]},
+    "result": {"anyOf": [{"type": "null"}, {"$ref": "result.schema.json"}]}
+  }
+}

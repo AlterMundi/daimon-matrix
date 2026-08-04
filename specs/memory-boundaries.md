@@ -280,9 +280,11 @@ policy.
 DM-030 implements the pure evaluator, immutable artifact validators, exact
 checkpoint builder, guarded ledger append, daemon/client/CLI/MCP surfaces,
 schemas, vectors and synthetic tests. It does not implement a model worker,
-Librarian identity/lease, human review queue, content store, memory renderer,
-HMK adapter, public projection or live deployment. Those remain DM-031 through
-DM-036 and must consume this boundary without broadening its authority.
+human review queue, content store, memory renderer, HMK adapter, public
+projection or live deployment. DM-031 now supplies only resource-scoped
+curator coordination: immutable items, local generation CAS, exact actor origin
+and Cluster-verified effect-truth replay. DM-032 through DM-036 consume both
+boundaries without adding a being-wide lease or broadening memory authority.
 
 ## 13. Normative conformance scenarios
 

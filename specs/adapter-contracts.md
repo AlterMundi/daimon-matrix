@@ -76,3 +76,9 @@ serve a cached success. The contract and downstream hosting checklist are in
 
 Adapters negotiate exact protocol versions. Unknown or downgraded versions
 fail closed; this first release has no compatibility mode for prior ontology.
+
+DM-031 curator coordination never substitutes for this adapter contract. A
+`queue-item` claim is owner-local work ordering only. A `resource-fence` claim
+must embed the exact derived fence position accepted from the current injected
+Cluster verifier, bind its effect intent and actor, and reconcile the adapter
+receipt against current observed postcondition before every cached replay.

@@ -86,6 +86,30 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "candidate": _bounded_file(args.candidate),
             "plan": _bounded_file(args.plan),
         }
+    if command == ("curator", "enqueue"):
+        return "curator.enqueue", {"item": _bounded_file(args.item)}
+    if command == ("curator", "claim"):
+        return "curator.claim", {
+            "item_id": args.item_id,
+            "claim_id": args.claim_id,
+            "expected_generation": args.expected_generation,
+            "lease_until_ms": args.lease_until_ms,
+            "fence_evidence": None
+            if args.fence_evidence is None
+            else _bounded_file(args.fence_evidence),
+        }
+    if command == ("curator", "complete"):
+        return "curator.complete", {
+            "claim_id": args.claim_id,
+            "expected_generation": args.expected_generation,
+            "outcome": args.outcome,
+            "output_refs": sorted(set(args.output_ref)),
+            "effect_receipt": None
+            if args.effect_receipt is None
+            else _bounded_file(args.effect_receipt),
+        }
+    if command == ("curator", "inspect"):
+        return "curator.inspect", {"item_id": args.item_id}
     if command == ("we", "heads"):
         return "we.heads", {}
     if command == ("we", "diff"):
@@ -206,6 +230,37 @@ def parser() -> argparse.ArgumentParser:
     execute.add_argument("--policy", required=True, help="exact policy JSON file")
     execute.add_argument("--candidate", required=True, help="exact candidate JSON file")
     execute.add_argument("--plan", required=True, help="exact plan JSON file")
+
+    curator = families.add_parser(
+        "curator", help="resource-scoped curator work coordination"
+    )
+    curator_commands = curator.add_subparsers(dest="command", required=True)
+    enqueue = curator_commands.add_parser(
+        "enqueue", help="enqueue one immutable curator item"
+    )
+    enqueue.add_argument("--item", required=True, help="closed item JSON file")
+    claim = curator_commands.add_parser(
+        "claim", help="claim one item with generation compare-and-swap"
+    )
+    claim.add_argument("--item-id", required=True)
+    claim.add_argument("--claim-id", required=True)
+    claim.add_argument("--expected-generation", type=int, required=True)
+    claim.add_argument("--lease-until-ms", type=int, required=True)
+    claim.add_argument("--fence-evidence", help="closed Cluster fence evidence JSON")
+    complete = curator_commands.add_parser(
+        "complete", help="record one claim-bound terminal result"
+    )
+    complete.add_argument("--claim-id", required=True)
+    complete.add_argument("--expected-generation", type=int, required=True)
+    complete.add_argument(
+        "--outcome",
+        choices=("completed", "proposed", "deferred", "failed"),
+        required=True,
+    )
+    complete.add_argument("--output-ref", action="append", default=[])
+    complete.add_argument("--effect-receipt", help="closed effect receipt JSON")
+    inspect = curator_commands.add_parser("inspect", help="inspect one queue item")
+    inspect.add_argument("--item-id", required=True)
 
     we = families.add_parser("we", help="local Weave ledger and projection")
     we_commands = we.add_subparsers(dest="command", required=True)

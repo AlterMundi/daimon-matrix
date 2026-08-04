@@ -24,8 +24,9 @@ is explicitly outside the MVP.
    crash/rebuild invariants (DM-022 through DM-026).
 5. Integrate personal-memory policy/projections and Codex/Hermes embodiment
    adapters without granting harnesses identity authority (DM-030 through
-   DM-042). DM-030's evaluator and transactional executor are implemented;
-   DM-031 onward consume that frozen boundary.
+   DM-042). DM-030's evaluator/transactional executor and DM-031's
+   resource-scoped curator coordination are implemented; DM-032 onward consume
+   those frozen boundaries without an exclusive being-wide lease.
 6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
    encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
    resolution; then remove the standalone runtime dependency (DM-050 through
