@@ -9,3 +9,8 @@ references without secret values, canonical content hashing, domain-separated
 signing, and a configuration proposal that remains non-effective until a
 local decision.
 
+`root-bound/` adds deterministic DM-021 genesis, embodiment credential and
+incarnation-authorization references, a `being-manifest/v2`, one valid event,
+and a content-tampered negative fixture. The index points to the shared public
+identity vectors; all seeds are deterministic test material and contain no
+operational credential.

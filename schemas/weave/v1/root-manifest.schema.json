@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/root-manifest.schema.json",
+  "title": "Root-bound being manifest V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "being_ref", "control_head", "history_binding_id",
+    "revision", "embodiments"
+  ],
+  "properties": {
+    "schema": {"const": "being-manifest/v2"},
+    "being_ref": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+    "control_head": {"$ref": "#/$defs/artifactId"},
+    "history_binding_id": {
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/artifactId"}]
+    },
+    "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "embodiments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/member"}
+    }
+  },
+  "$defs": {
+    "artifactId": {
+      "type": "string",
+      "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_ref", "embodiment_credential_id", "embodiment_id",
+        "incarnation_authorization_id", "incarnation_id", "status"
+      ],
+      "properties": {
+        "body_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "embodiment_credential_id": {"$ref": "#/$defs/artifactId"},
+        "embodiment_id": {"type": "string", "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"},
+        "incarnation_authorization_id": {"$ref": "#/$defs/artifactId"},
+        "incarnation_id": {"type": "string", "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"},
+        "status": {"enum": ["active", "retired"]}
+      }
+    }
+  }
+}

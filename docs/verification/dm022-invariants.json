@@ -1,0 +1,20 @@
+{
+  "schema": "dm.verification.weave-ledger-invariants/v1",
+  "card": "DM-022",
+  "production_secrets_used": false,
+  "invariants": [
+    {"id": "root-bound-origin", "test": "AuthorizationAndCompatibilityTests.test_root_authority_binds_body_incarnation_principal_and_signer"},
+    {"id": "eager-manifest-authorization", "test": "AuthorizationAndCompatibilityTests.test_every_manifest_member_is_verified_before_use"},
+    {"id": "revoked-incarnation", "test": "AuthorizationAndCompatibilityTests.test_revoked_later_incarnation_cannot_authorize_events"},
+    {"id": "provisional-vector-compatibility", "test": "AuthorizationAndCompatibilityTests.test_published_provisional_vector_remains_byte_compatible"},
+    {"id": "binding-preserves-history", "test": "AuthorizationAndCompatibilityTests.test_signed_binding_preserves_provisional_bytes_and_blocks_downgrade"},
+    {"id": "schema-closure", "test": "AuthorizationAndCompatibilityTests.test_root_manifest_and_event_match_closed_schemas"},
+    {"id": "partition-resume-convergence", "test": "LedgerBehaviorTests.test_partition_preview_pull_restart_resume_and_local_adoption"},
+    {"id": "atomic-gap-equivocation", "test": "LedgerBehaviorTests.test_gap_invalid_page_and_equivocation_are_atomic"},
+    {"id": "causal-incomplete-promotion", "test": "LedgerBehaviorTests.test_causal_missing_is_incomplete_then_promotes_without_rewrite"},
+    {"id": "bounded-atomic-input", "test": "LedgerBehaviorTests.test_oversize_event_and_page_reject_without_partial_state"},
+    {"id": "concurrent-contiguous-chain", "test": "LedgerBehaviorTests.test_concurrent_writers_allocate_one_contiguous_chain"},
+    {"id": "secret-and-path-rejection", "test": "LedgerBehaviorTests.test_secret_payload_and_unsafe_filesystem_fail_closed"},
+    {"id": "deterministic-root-vectors", "test": "DM022VectorTests.test_root_bound_vector_regeneration_is_byte_identical"}
+  ]
+}

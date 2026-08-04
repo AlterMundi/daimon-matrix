@@ -28,3 +28,8 @@ synthetic being-root/control, plural credentials, transport-principal binding,
 history binding, and encrypted custody gate. It is followed by the local
 runtime narrow waist, Tribe absorption, Matrix↔Cluster integration, and a
 root-authorized multi-host rebirth drill.
+
+DM-022 migrates the reviewed per-embodiment ledger mechanics from Cluster into
+the installed package. Root-bound ledgers verify DM-021 credential/incarnation
+evidence; an activated binding admits only the exact byte-preserved provisional
+history it names. Cluster continues to host process/state and resource fences.

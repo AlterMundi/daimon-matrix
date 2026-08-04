@@ -127,7 +127,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/canonical.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/keystore.py",
+                "src/daimon_matrix/ledger.py",
                 "src/daimon_matrix/py.typed",
+                "src/daimon_matrix/weave.py",
             },
         )
         self.assertEqual(
@@ -137,7 +139,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/canonical.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/keystore.py",
+                "daimon_matrix/ledger.py",
                 "daimon_matrix/py.typed",
+                "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
                 "daimon_matrix-0.0.0.dist-info/RECORD",
                 "daimon_matrix-0.0.0.dist-info/WHEEL",

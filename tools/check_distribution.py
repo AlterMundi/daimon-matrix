@@ -39,7 +39,9 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
+        "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/weave.py",
     }
 )
 WHEEL_FILES: Final = frozenset(
@@ -48,7 +50,9 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/canonical.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/keystore.py",
+        "daimon_matrix/ledger.py",
         "daimon_matrix/py.typed",
+        "daimon_matrix/weave.py",
         f"{DIST_INFO}/METADATA",
         f"{DIST_INFO}/RECORD",
         f"{DIST_INFO}/WHEEL",
@@ -209,7 +213,9 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
+        "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/weave.py",
     ):
         if files[relative] != (source_root / relative).read_bytes():
             raise PackageCheckError(f"sdist source drift: {relative}")
@@ -286,7 +292,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
+        "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
+        "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",
     }
     for member, relative in source_map.items():
         if files[member] != (source_root / relative).read_bytes():
