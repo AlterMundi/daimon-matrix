@@ -25,6 +25,7 @@ dependencies = ["cryptography>=46.0.7,<47", "mcp==2.0.0"]
 
 [project.scripts]
 daimon = "daimon_matrix.cli:main"
+daimon-conformance = "daimon_matrix.conformance:main"
 daimon-mcp = "daimon_matrix.mcp_server:main"
 daimon-matrixd = "daimon_matrix.daemon:main"
 

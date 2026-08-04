@@ -39,6 +39,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/cli.py",
         "src/daimon_matrix/client.py",
+        "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
@@ -59,6 +60,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/canonical.py",
         "daimon_matrix/cli.py",
         "daimon_matrix/client.py",
+        "daimon_matrix/conformance.py",
         "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/keystore.py",
@@ -235,6 +237,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/canonical.py",
         "src/daimon_matrix/cli.py",
         "src/daimon_matrix/client.py",
+        "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
@@ -296,6 +299,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     if files[f"{DIST_INFO}/entry_points.txt"] != (
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
+        b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
     ):
@@ -330,6 +334,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
         "daimon_matrix/cli.py": "src/daimon_matrix/cli.py",
         "daimon_matrix/client.py": "src/daimon_matrix/client.py",
+        "daimon_matrix/conformance.py": "src/daimon_matrix/conformance.py",
         "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",

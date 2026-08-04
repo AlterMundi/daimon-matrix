@@ -1,0 +1,32 @@
+{
+  "schema": "dm-026-invariant-report/v0",
+  "scope": "synthetic-local-state",
+  "deployment": "not-applicable",
+  "registry_schema": "dm.conformance.registry/v1",
+  "report_schema": "dm.conformance.report/v1",
+  "required_scenario_count": 22,
+  "invariants": {
+    "closed_bidirectional_registry": true,
+    "canonical_registry_digest_pinned": true,
+    "all_release_scenarios_required": true,
+    "evidence_load_has_no_import_side_effect": true,
+    "evidence_processes_are_isolated_and_bounded": true,
+    "deterministic_schedule": true,
+    "deterministic_transcript": true,
+    "real_sqlite_delete_full_reopen_integrity": true,
+    "required_skip_fails_release": true,
+    "raw_diagnostics_and_paths_absent": true,
+    "artifact_hashes_verified": true,
+    "report_written_atomically_owner_only": true,
+    "installed_wheel_exercised": true,
+    "matrix_org_cluster_tribe_and_carriers_absent": true
+  },
+  "evidence": [
+    "conformance/registry-v1.json",
+    "schemas/conformance/v1/registry.schema.json",
+    "schemas/conformance/v1/report.schema.json",
+    "src/daimon_matrix/conformance.py",
+    "tests/test_dm026_conformance.py",
+    ".github/workflows/tests.yml"
+  ]
+}

@@ -1,10 +1,10 @@
 # Package scaffold and reproducible builds
 
-DM-020 introduced the closed package scaffold. DM-021 through DM-025 add
+DM-020 introduced the closed package scaffold. DM-021 through DM-026 add
 identity/custody, the independent Weave ledger, hosted daemon, authenticated
-client, CLI and MCP stdio adapter while preserving the explicit reproducible
-artifact boundary. The package contains no remote carrier, Matrix.org client,
-deployment/provider integration or live state.
+client, CLI, MCP stdio adapter and local conformance runner while preserving
+the explicit reproducible artifact boundary. The package contains no remote
+carrier, Matrix.org client, deployment/provider integration or live state.
 
 ## Supported interpreter baseline
 
@@ -40,8 +40,8 @@ observable install path.
 
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
-identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI and MCP
-modules, `__init__.py`, and `py.typed`.
+identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP
+and conformance modules, `__init__.py`, and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 
@@ -63,6 +63,7 @@ python -m venv /tmp/daimon-matrix-wheel-smoke
   dist/daimon_matrix-0.0.0-py3-none-any.whl
 /tmp/daimon-matrix-wheel-smoke/bin/python -c \
   'import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"'
+/tmp/daimon-matrix-wheel-smoke/bin/daimon-conformance --help
 ```
 
 Use a fresh disposable path rather than an existing operator environment. No

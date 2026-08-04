@@ -47,5 +47,8 @@ DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
 bytes, MCP exposes only the current twelve methods and `daimon:` resources, and
 legacy MCP/Matrix.org/network transports remain absent. Cluster's next host
-adapter supervises the process; DM-050 begins absorbing Tribe transport behind
-the same boundary.
+adapter supervises the process. DM-026 closes the local release gate with a
+22-scenario invariant registry and deterministic installed conformance report;
+it exercises real process, AF_UNIX, filesystem and SQLite paths without
+claiming remote delivery, Cluster effects or rebirth. DM-050 begins absorbing
+Tribe transport behind the same boundary.
