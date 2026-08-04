@@ -11,9 +11,9 @@ The external Matrix.org protocol is not part of this stack.
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `daimon-matrix` | ontology, being-root continuity, canonical schemas/state, scopes, synchronization, memory policy, communications | host resources and container lifecycle |
-| Cluster | bodies, embodiments, incarnations, resource fences, lifecycle evidence | being identity, memory meaning, Tribe governance |
-| Weave | provisional per-embodiment ledger and reusable `/we.sync` evidence | transport directory, resource fencing, root identity |
+| `daimon-matrix` | ontology, being-root continuity, canonical schemas/state, Weave ledger/sync, scopes, memory policy, communications | host resources and container lifecycle |
+| Cluster | bodies, embodiments, incarnations, Matrix process/state-volume hosting, resource fences, lifecycle evidence | being identity, event meaning, memory meaning, Tribe governance |
+| Weave subsystem | independent per-embodiment ledger and reusable `/we.sync` evidence inside `daimon-matrix` | transport directory, resource fencing, root identity |
 | Tribe Bridge | transitional authenticated principals, encrypted delivery, audiences, ACKs | same-being membership, memory adoption, resource effects |
 
 ## Provisional same-being manifest
@@ -35,9 +35,11 @@ and accepted event heads. Similar names, keys, memories, or routes never imply
 that binding. Tribe keys MUST NOT become Matrix root keys.
 
 After binding, Matrix credential verification replaces the administrator
-manifest as same-being authority. DM-050 through DM-055 replace the standalone
-Tribe Bridge runtime while preserving its recipient-encrypted delivery
-evidence. Neither migration changes Cluster's resource authority.
+manifest as same-being authority. The exact bound provisional manifest and
+event closure remain readable historical authorities but cannot authorize new
+events. DM-050 through DM-055 replace the standalone Tribe Bridge runtime while
+preserving its recipient-encrypted delivery evidence. Neither migration changes
+Cluster's resource authority.
 
 ## End-to-end flow
 

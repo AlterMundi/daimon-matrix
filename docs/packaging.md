@@ -1,9 +1,10 @@
 # Package scaffold and reproducible builds
 
-DM-020 introduces an intentionally behavior-free `daimon-matrix` package. It
-reserves the typed `daimon_matrix` namespace without implementing identity,
-keys, ledger, daemon, RPC, CLI/MCP, memory, transport, adapters, deployment, or
-provider behavior.
+DM-020 introduced an intentionally behavior-free package scaffold. DM-021 and
+DM-022 add identity/custody and the independent Weave ledger while preserving
+the same closed reproducible artifact boundary. The package still contains no
+daemon, RPC, CLI/MCP, remote transport, adapter, deployment, provider, or live
+state.
 
 ## Supported interpreter baseline
 
@@ -39,9 +40,9 @@ observable install path.
 
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
-identity and keystore modules, `__init__.py`, and `py.typed`. The wheel may
-contain only those package modules, the typing marker, MIT license, and
-required `.dist-info` metadata/record files.
+identity, keystore, Weave, and ledger modules, `__init__.py`, and `py.typed`.
+The wheel may contain only those package modules, the typing marker, MIT
+license, and required `.dist-info` metadata/record files.
 
 The checker rejects absolute/traversing paths, links and special archive
 members, generated `egg-info`, bytecode/caches, SQLite or WAL state, private

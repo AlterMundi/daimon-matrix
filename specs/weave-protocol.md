@@ -13,7 +13,7 @@ Every durable event is a closed JSON object validated by
 object without `content_hash` and `signature`. The signature preimage is:
 
 ```text
-UTF8("daimon/weave/event/v1") || 0x00 || base64url_decode(content_hash)
+UTF8("daimon/weave/event/v1") || 0x00 || hex_decode(content_hash)
 ```
 
 Sequence starts at one for each incarnation. `previous_event_id` is null only
@@ -21,6 +21,18 @@ at sequence one and otherwise names sequence minus one from that incarnation.
 `causal_parents` may additionally cite events from any configured embodiment.
 The same `origin.incarnation_id + sequence` with different bytes is
 equivocation. Event IDs, parent IDs, and request IDs are UUIDs.
+
+`being-manifest/v1` is the provisional administrator-installed view used by
+the original canary. `being-manifest/v2` is the root-bound view: it names the
+current DM-021 control head and exact credential/incarnation artifact IDs for
+each configured origin. The manifest selects routes and configured peers; it
+cannot add an origin whose credential chain fails Matrix verification.
+
+When a DM-021 binding is activated, a ledger may admit the exact V1 manifest
+and complete event closure named by that binding as historical authority. Its
+bytes, IDs, signatures and origins remain unchanged. Only the active V2
+manifest may authorize newly created events, and reopening the ledger with a
+provisional-only authority fails closed.
 
 Registered kinds are:
 
@@ -44,8 +56,11 @@ whole page before committing it transactionally.
 
 `incoming` and `preview` never mutate state. `pull` imports valid events into
 the `known` ledger and advances a durable cursor. Repeating a page is
-idempotent. A gap, conflicting head, invalid origin, revoked Tribe principal,
-wrong being, oversize page, or bad signature rejects the complete page.
+idempotent. A same-origin gap, conflicting head, invalid origin, revoked
+credential, unbound transport principal, wrong being, oversize page, or bad
+signature rejects the complete page. A missing cross-origin causal parent is
+stored as `incomplete`; it cannot enter differences, decisions, or projections
+until the complete valid dependency closure arrives.
 
 Import is not adoption. The local effective state is a projection of local
 `adoption.decided` events. Decisions are `adopt`, `reject`, `defer`, or
@@ -84,4 +99,3 @@ set. Same-sequence equivocation, incompatible effects against one fenced
 resource, malformed lifecycle transitions, and invalid signatures do not
 merge. Those lanes remain quarantined until an explicit successor protocol
 resolves them.
-

@@ -13,14 +13,20 @@
   "properties": {
     "protocol": {"const": "dm.we.v1"},
     "event_id": {"type": "string", "format": "uuid"},
-    "being_ref": {"type": "string", "pattern": "^being:[0-9a-f-]{36}$"},
+    "being_ref": {
+      "type": "string",
+      "anyOf": [
+        {"pattern": "^being:[0-9a-f-]{36}$"},
+        {"pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"}
+      ]
+    },
     "manifest_hash": {"$ref": "#/$defs/hash"},
     "origin": {
       "type": "object", "additionalProperties": false,
       "required": ["embodiment_id", "incarnation_id", "principal_id", "body_ref"],
       "properties": {
-        "embodiment_id": {"type": "string", "pattern": "^embodiment:[0-9a-f-]{36}$"},
-        "incarnation_id": {"type": "string", "pattern": "^incarnation:[0-9a-f-]{36}$"},
+        "embodiment_id": {"type": "string", "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"},
+        "incarnation_id": {"type": "string", "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"},
         "principal_id": {"type": "string", "minLength": 1, "maxLength": 128},
         "body_ref": {"type": "string", "minLength": 1, "maxLength": 256}
       }
@@ -31,7 +37,11 @@
     "causal_parents": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}},
     "kind": {"enum": ["experience.observed", "skill.proposed", "preference.proposed", "configuration.proposed", "adoption.decided", "projection.receipted", "lifecycle.announced"]},
     "subject": {"type": "string", "minLength": 1, "maxLength": 256},
-    "payload": {"type": "object", "maxProperties": 64},
+    "payload": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {"$ref": "#/$defs/canonicalValue"}
+    },
     "supersedes": {"type": ["string", "null"], "format": "uuid"},
     "sensitivity": {"enum": ["personal", "private", "shareable"]},
     "content_hash": {"$ref": "#/$defs/hash"},
@@ -45,6 +55,17 @@
       }
     }
   },
-  "$defs": {"hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "canonicalValue": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        {"type": "string", "maxLength": 65536},
+        {"type": "array", "items": {"$ref": "#/$defs/canonicalValue"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonicalValue"}}
+      ]
+    }
+  }
 }
-

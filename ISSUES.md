@@ -10,6 +10,8 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
   authorization, and binding of provisional history in the V0.1 MVP.
 - `dm.we.v1` events, heads, deltas, decisions, projection receipts, and live
   request/response schemas.
+- Installed per-embodiment Weave ledger engine, synchronization mechanics,
+  decisions, projections, and communications service.
 - Scope, memory, Tribe, and adapter conformance vectors.
 - Root-authorized additional-embodiment, relocation, and disaster-rebirth
   acceptance on a fresh host (DM-078).
@@ -18,7 +20,8 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
 
 - Embodiment/incarnation registry integrated with lifecycle.
 - Resource-scoped fences and effect-truth idempotency.
-- Weave ledger, sync, difference navigation, decisions, and fan-out.
+- Hosting the Matrix Weave process/state volume, backup/quiesce integration,
+  lifecycle evidence, and resource-fenced projection effects.
 - HMK and external-identity adapters.
 - Dashboard, runbook, and two-host acceptance.
 
@@ -30,8 +33,10 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
 - Explicit separation of audience, `tribe_ref`, and `being_ref`.
 
 DM-050 through DM-055 move these responsibilities into `daimon-matrix` and
-remove the standalone runtime dependency before release. Matrix.org is not an
-implementation target or dependency.
+remove the standalone Tribe runtime dependency before release. Cluster's
+provisional `weave/` implementation is retained only as migration evidence and
+a compatibility oracle until its host adapter runs the installed Matrix
+engine. Matrix.org is not an implementation target or dependency.
 
 Closed cards whose acceptance encoded identity-wide body exclusion must be
 rewritten and reopened. Completion is evaluated only against current

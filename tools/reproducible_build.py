@@ -33,7 +33,9 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/canonical.py"),
     Path("src/daimon_matrix/identity.py"),
     Path("src/daimon_matrix/keystore.py"),
+    Path("src/daimon_matrix/ledger.py"),
     Path("src/daimon_matrix/py.typed"),
+    Path("src/daimon_matrix/weave.py"),
 )
 
 

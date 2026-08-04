@@ -14,6 +14,8 @@ fields fail closed in closed V1 objects.
 - `dm.keystore/v1`: authenticated encrypted custody container; never a
   synchronized artifact.
 - `being-manifest/v1`: provisional administrator configuration.
+- `being-manifest/v2`: root-bound configured-origin view whose members cite
+  exact DM-021 credential and incarnation artifacts.
 - `dm.we.v1`: origin-retaining durable event.
 - `dm.we.heads/v1` and `dm.we.delta/v1`: bounded synchronization exchange.
 - `dm.we.request/v1` and `dm.we.response/v1`: live fan-out.
