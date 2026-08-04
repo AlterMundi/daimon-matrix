@@ -33,8 +33,11 @@ implementation and the deployed v1 runtime:
 - durable outboxes, delivery leases, acknowledgements, and backups;
 - optional human-facing gateway mirroring.
 
-These behaviors will be imported behind a transport interface so they can be
-replaced or supplemented without changing namespace semantics.
+These behaviors will be independently reimplemented behind Daimon interfaces
+so they can be replaced or supplemented without changing namespace semantics.
+DM-050 found no detected upstream license at the pinned public head, so no
+Tribe source, schema, fixture or prose is currently copied. The exact no-copy
+provenance boundary is in `provenance/tribe-bridge-v1.json`.
 
 ## Completed v0 retirement
 
@@ -66,9 +69,10 @@ but it must never be used as encryption key material.
 
 ## Repository and legacy history
 
-- Import Git history when it is straightforward and preserves authorship.
-- If history import would materially delay the planning or implementation,
-  import the code with explicit commit and repository provenance.
+- Do not import Git history or source while the upstream license/authorization
+  state remains unresolved.
+- If compatible authorization is later recorded, use a successor provenance
+  manifest and retain exact file-level authorship, license and commit evidence.
 - Do not migrate, import, dual-write, back up, or preserve v0 messages for the
   Daimon transport. New stores start empty.
 - Treat legacy ciphertext as potentially non-confidential.
@@ -76,8 +80,8 @@ but it must never be used as encryption key material.
   replacement and provenance gates.
 - Add an archive notice pointing to `AlterMundi/daimon-matrix`.
 
-Repository provenance is retained; wire compatibility and conversation history
-are not.
+Repository provenance and behavioral evidence are retained; source bytes, wire
+compatibility and conversation history are not.
 
 ## Transitional v1 operating policy
 

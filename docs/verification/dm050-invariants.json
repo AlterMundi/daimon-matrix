@@ -1,0 +1,30 @@
+{
+  "schema": "dm-050-invariant-report/v0",
+  "scope": "public-upstream-provenance-only",
+  "deployment": "not-applicable",
+  "upstream_repository": "https://github.com/nicoechaniz/tribe-bridge",
+  "upstream_commit": "b81a6838dd81167f7a8ffcae82cd7ebaadfa21e2",
+  "upstream_tree": "1fc32b48867b8068a3ce6949bd84694bfd34177f",
+  "manifest_sha256": "68acd3655763c6db04aa694965bccdc56b253062d949398c47c28b9aa62e2eaf",
+  "selected_item_count": 23,
+  "invariants": {
+    "immutable_upstream_pin": true,
+    "blob_and_sha256_facts_recorded": true,
+    "license_not_detected": true,
+    "copy_allowed": false,
+    "source_imported": false,
+    "runtime_dependency_added": false,
+    "live_state_imported": false,
+    "manifest_digest_pinned": true,
+    "paths_unique_sorted_and_safe": true,
+    "behavior_and_authority_classification_closed": true,
+    "network_absent_from_runtime_and_ci": true,
+    "matrix_org_and_carriers_absent": true
+  },
+  "evidence": [
+    "provenance/tribe-bridge-v1.json",
+    "schemas/provenance/v1/tribe-import.schema.json",
+    "tools/check_tribe_provenance.py",
+    "tests/test_dm050_tribe_provenance.py"
+  ]
+}

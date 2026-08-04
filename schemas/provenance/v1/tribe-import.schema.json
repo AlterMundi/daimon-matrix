@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/provenance/v1/tribe-import.schema.json",
+  "title": "Tribe Bridge absorption provenance V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "upstream", "policy", "items"],
+  "properties": {
+    "schema": {"const": "tribe-import-manifest/v1"},
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "commit_date", "license_status", "license_paths"],
+      "properties": {
+        "repository": {"const": "https://github.com/nicoechaniz/tribe-bridge"},
+        "commit": {"$ref": "#/$defs/git_hash"},
+        "tree": {"$ref": "#/$defs/git_hash"},
+        "commit_date": {"type": "string", "format": "date-time"},
+        "license_status": {"const": "no_license_detected"},
+        "license_paths": {"const": []}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["copy_allowed", "authorization_required_for_copy", "source_imported", "runtime_dependency_added", "live_state_imported", "reuse_mode"],
+      "properties": {
+        "copy_allowed": {"const": false},
+        "authorization_required_for_copy": {"const": true},
+        "source_imported": {"const": false},
+        "runtime_dependency_added": {"const": false},
+        "live_state_imported": {"const": false},
+        "reuse_mode": {"const": "behavioral_reference_only"}
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/item"}
+    }
+  },
+  "$defs": {
+    "git_hash": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "card": {"type": "string", "pattern": "^DM-[0-9]{3}$"},
+    "token": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$"},
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "git_blob_sha1", "sha256", "size", "artifact_kind", "classification", "destination_cards", "behaviors", "rationale", "copy_allowed"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$", "maxLength": 256},
+        "git_blob_sha1": {"$ref": "#/$defs/git_hash"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "artifact_kind": {"enum": ["manifest", "operations_doc", "schema", "source", "specification", "test"]},
+        "classification": {"enum": ["behavioral_reference_only", "superseded"]},
+        "destination_cards": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/card"}},
+        "behaviors": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 512},
+        "copy_allowed": {"const": false}
+      }
+    }
+  }
+}
