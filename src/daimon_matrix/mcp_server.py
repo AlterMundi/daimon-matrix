@@ -1,0 +1,589 @@
+"""Closed MCP 2026-07-28 stdio adapter for the authenticated local runtime."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import copy
+import hashlib
+import json
+import os
+import sys
+import uuid
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any, Final, cast
+
+import anyio
+import mcp_types as types
+from mcp.server.context import ServerRequestContext
+from mcp.server.lowlevel import Server
+from mcp.server.runner import _serve_modern_stream
+from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import MCPError
+
+from .canonical import canonical_bytes
+from .client import (
+    ClientConfig,
+    ClientError,
+    LocalClient,
+    load_prepared_request,
+    read_capability_key,
+    store_prepared_request,
+)
+from .local_api import MAX_FRAME_BYTES
+
+MCP_PROTOCOL_VERSION: Final = "2026-07-28"
+MCP_RESOURCE_MEDIA_TYPE: Final = "application/vnd.daimon-matrix+json"
+
+_UUID = {"type": "string", "format": "uuid", "maxLength": 36}
+_NULLABLE_UUID = {"anyOf": [_UUID, {"type": "null"}]}
+_NULLABLE_TEXT = {
+    "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}]
+}
+_OPERATION = {"operation_id": _UUID}
+
+
+def _object_schema(
+    properties: Mapping[str, Any], required: Sequence[str] = ()
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {**copy.deepcopy(dict(properties)), **copy.deepcopy(_OPERATION)},
+        "required": list(required),
+        "additionalProperties": False,
+    }
+
+
+TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
+    "daimon_status": ("runtime.status", _object_schema({}), True),
+    "we_heads": ("we.heads", _object_schema({}), True),
+    "we_diff": (
+        "we.diff",
+        _object_schema(
+            {
+                "after": _NULLABLE_UUID,
+                "kind": _NULLABLE_TEXT,
+                "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+                "subject": _NULLABLE_TEXT,
+            }
+        ),
+        True,
+    ),
+    "we_preview": (
+        "we.preview",
+        _object_schema(
+            {"events": {"type": "array", "maxItems": 256, "items": {"type": "object"}}},
+            ("events",),
+        ),
+        True,
+    ),
+    "we_projection_get": ("we.projection.get", _object_schema({}), True),
+    "we_observe": (
+        "we.observe",
+        _object_schema(
+            {
+                "subject": {"type": "string", "minLength": 1, "maxLength": 256},
+                "payload": {"type": "object"},
+                "sensitivity": {"enum": ["personal", "private", "shareable"]},
+                "causal_parents": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": _UUID,
+                    "uniqueItems": True,
+                },
+                "occurred_at_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                },
+                "event_id": _NULLABLE_UUID,
+            },
+            ("subject", "payload"),
+        ),
+        False,
+    ),
+    "we_decide": (
+        "we.decide",
+        _object_schema(
+            {
+                "target_event_id": _UUID,
+                "decision": {"enum": ["adopt", "reject", "defer", "revert"]},
+                "reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+                "supersedes": _NULLABLE_UUID,
+                "sensitivity": {"enum": ["personal", "private", "shareable"]},
+                "occurred_at_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                },
+                "event_id": _NULLABLE_UUID,
+            },
+            ("target_event_id", "decision", "reason"),
+        ),
+        False,
+    ),
+    "we_projection_rebuild": (
+        "we.projection.rebuild",
+        _object_schema({}),
+        False,
+    ),
+    "we_sync_request": (
+        "we.sync.request",
+        _object_schema(
+            {
+                "request_id": _UUID,
+                "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+            },
+            ("request_id",),
+        ),
+        False,
+    ),
+    "we_sync_serve": (
+        "we.sync.serve",
+        _object_schema(
+            {
+                "request": {"type": "object"},
+                "transport": {
+                    "type": "object",
+                    "properties": {
+                        "scheme": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "principal_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                        },
+                    },
+                    "required": ["scheme", "principal_id"],
+                    "additionalProperties": False,
+                },
+            },
+            ("request", "transport"),
+        ),
+        False,
+    ),
+    "we_sync_pull": (
+        "we.sync.pull",
+        _object_schema(
+            {
+                "delta": {"type": "object"},
+                "transport": {
+                    "type": "object",
+                    "properties": {
+                        "scheme": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "principal_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                        },
+                    },
+                    "required": ["scheme", "principal_id"],
+                    "additionalProperties": False,
+                },
+            },
+            ("delta", "transport"),
+        ),
+        False,
+    ),
+    "we_sync_validate_receipt": (
+        "we.sync.validate-receipt",
+        _object_schema(
+            {
+                "receipt": {"type": "object"},
+                "transport": {
+                    "type": "object",
+                    "properties": {
+                        "scheme": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "principal_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                        },
+                    },
+                    "required": ["scheme", "principal_id"],
+                    "additionalProperties": False,
+                },
+            },
+            ("receipt", "transport"),
+        ),
+        False,
+    ),
+}
+
+_DEFAULTS: Final[dict[str, Any]] = {
+    "after": None,
+    "causal_parents": [],
+    "event_id": None,
+    "kind": None,
+    "limit": 100,
+    "occurred_at_ms": None,
+    "sensitivity": "personal",
+    "subject": None,
+    "supersedes": None,
+}
+
+
+def _public_response(response: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(value) for key, value in response.items() if key != "auth"
+    }
+
+
+def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | None]:
+    if name not in TOOL_CONTRACTS:
+        raise MCPError(types.METHOD_NOT_FOUND, "Unknown Daimon tool", name)
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, Mapping):
+        raise MCPError(types.INVALID_PARAMS, "Tool arguments must be an object")
+    schema = TOOL_CONTRACTS[name][1]
+    allowed = set(schema["properties"])
+    required = set(schema.get("required", []))
+    if not required <= set(arguments) or not set(arguments) <= allowed:
+        raise MCPError(types.INVALID_PARAMS, "Tool arguments violate the closed schema")
+    params = {
+        key: copy.deepcopy(value)
+        for key, value in arguments.items()
+        if key != "operation_id"
+    }
+    method = TOOL_CONTRACTS[name][0]
+    expected = {
+        "runtime.status": set(),
+        "we.heads": set(),
+        "we.diff": {"after", "kind", "limit", "subject"},
+        "we.preview": {"events"},
+        "we.observe": {
+            "causal_parents",
+            "event_id",
+            "occurred_at_ms",
+            "payload",
+            "sensitivity",
+            "subject",
+        },
+        "we.decide": {
+            "decision",
+            "event_id",
+            "occurred_at_ms",
+            "reason",
+            "sensitivity",
+            "supersedes",
+            "target_event_id",
+        },
+        "we.projection.get": set(),
+        "we.projection.rebuild": set(),
+        "we.sync.request": {"limit", "request_id"},
+        "we.sync.serve": {"request", "transport"},
+        "we.sync.pull": {"delta", "transport"},
+        "we.sync.validate-receipt": {"receipt", "transport"},
+    }[method]
+    for field in expected - set(params):
+        params[field] = copy.deepcopy(_DEFAULTS[field])
+    operation_id = arguments.get("operation_id")
+    if operation_id is not None:
+        try:
+            if str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError
+        except (AttributeError, TypeError, ValueError) as exception:
+            raise MCPError(
+                types.INVALID_PARAMS, "operation_id must be a canonical UUID"
+            ) from exception
+    canonical_bytes(params)
+    return method, params, operation_id
+
+
+class DaimonMcp:
+    """MCP handlers with no authority beyond one typed local client."""
+
+    def __init__(self, client: LocalClient, request_dir: Path) -> None:
+        self.client = client
+        self.request_dir = Path(os.path.abspath(request_dir))
+        info = self.request_dir.lstat()
+        if (
+            not self.request_dir.is_dir()
+            or self.request_dir.is_symlink()
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+        ):
+            raise ClientError("request_store_parent_not_owner_only")
+
+    def _request_id(self, operation_id: str) -> tuple[str, Path]:
+        request_id = operation_id
+        marker = f"explicit:{operation_id}"
+        name = hashlib.sha256(marker.encode()).hexdigest() + ".json"
+        return request_id, self.request_dir / name
+
+    def _prepare_operation(
+        self, method: str, params: Mapping[str, Any], operation_id: str | None
+    ) -> dict[str, Any]:
+        if operation_id is None:
+            return self.client.prepare(method, params)
+        request_id, request_path = self._request_id(operation_id)
+        if request_path.exists():
+            return load_prepared_request(
+                request_path,
+                self.client.config.capability,
+                method=method,
+                params=params,
+            )
+        request = self.client.prepare(method, params, request_id=request_id)
+        try:
+            store_prepared_request(request_path, request)
+            return request
+        except ClientError as exception:
+            if str(exception) != "request_file_exists":
+                raise
+        return load_prepared_request(
+            request_path,
+            self.client.config.capability,
+            method=method,
+            params=params,
+        )
+
+    async def list_tools(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        params: types.PaginatedRequestParams | None,
+    ) -> types.ListToolsResult:
+        del ctx
+        if params is not None and params.cursor is not None:
+            raise MCPError(types.INVALID_PARAMS, "Pagination is not supported")
+        tools = []
+        for name, (method, schema, read_only) in TOOL_CONTRACTS.items():
+            tools.append(
+                types.Tool(
+                    name=name,
+                    description=f"Typed Daimon operation {method}",
+                    input_schema=copy.deepcopy(schema),
+                    annotations=types.ToolAnnotations(
+                        read_only_hint=read_only,
+                        destructive_hint=name == "we_decide",
+                        idempotent_hint=read_only,
+                        open_world_hint=False,
+                    ),
+                )
+            )
+        return types.ListToolsResult(tools=tools, ttl_ms=0, cache_scope="private")
+
+    async def call_tool(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        del ctx
+        method, method_params, operation_id = _tool_params(
+            params.name, params.arguments
+        )
+        request = self._prepare_operation(method, method_params, operation_id)
+        try:
+            response = await anyio.to_thread.run_sync(self.client.send, request)
+        except ClientError as exception:
+            raise MCPError(
+                types.INTERNAL_ERROR, "Daimon runtime unavailable"
+            ) from exception
+        public = _public_response(response)
+        return types.CallToolResult(
+            content=[
+                types.TextContent(
+                    text=json.dumps(public, ensure_ascii=False, sort_keys=True)
+                )
+            ],
+            structured_content=public,
+            is_error=not bool(response["ok"]),
+        )
+
+    def _resource_index(self) -> dict[str, tuple[str, str | None]]:
+        return {
+            "daimon:contract/server": ("Daimon server descriptor", None),
+            "daimon:contract/tools": ("Closed MCP tool contract", None),
+            "daimon:contract/local-api": ("DM-024 local protocol descriptor", None),
+            "daimon:runtime/status": ("Redacted runtime status", "daimon_status"),
+            "daimon:we/heads": ("Signed Weave heads", "we_heads"),
+            "daimon:we/projection": (
+                "Authorized local projection",
+                "we_projection_get",
+            ),
+        }
+
+    async def list_resources(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        params: types.PaginatedRequestParams | None,
+    ) -> types.ListResourcesResult:
+        del ctx
+        if params is not None and params.cursor is not None:
+            raise MCPError(types.INVALID_PARAMS, "Pagination is not supported")
+        resources = [
+            types.Resource(
+                name=title,
+                uri=uri,
+                description=title,
+                mime_type=MCP_RESOURCE_MEDIA_TYPE,
+            )
+            for uri, (title, _) in self._resource_index().items()
+        ]
+        return types.ListResourcesResult(
+            resources=resources, ttl_ms=0, cache_scope="private"
+        )
+
+    async def read_resource(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        params: types.ReadResourceRequestParams,
+    ) -> types.ReadResourceResult:
+        del ctx
+        resources = self._resource_index()
+        if params.uri not in resources:
+            raise MCPError(types.INVALID_PARAMS, "Unknown Daimon resource")
+        tool = resources[params.uri][1]
+        if params.uri == "daimon:contract/server":
+            document: Any = {
+                "schema": "dm.mcp.server/v1",
+                "protocol": MCP_PROTOCOL_VERSION,
+                "server": copy.deepcopy(dict(self.client.config.expected_server)),
+            }
+        elif params.uri == "daimon:contract/tools":
+            document = {
+                "schema": "dm.mcp.tools/v1",
+                "protocol": MCP_PROTOCOL_VERSION,
+                "tools": [
+                    {"name": name, "method": value[0], "input_schema": value[1]}
+                    for name, value in TOOL_CONTRACTS.items()
+                ],
+            }
+        elif params.uri == "daimon:contract/local-api":
+            document = {
+                "schema": "dm.local.protocol-index/v1",
+                "frame_max_bytes": MAX_FRAME_BYTES,
+                "methods": sorted(value[0] for value in TOOL_CONTRACTS.values()),
+            }
+        else:
+            assert tool is not None
+            method, method_params, operation_id = _tool_params(tool, {})
+            request = self._prepare_operation(method, method_params, operation_id)
+            response = await anyio.to_thread.run_sync(self.client.send, request)
+            document = _public_response(response)
+        raw = canonical_bytes(document)
+        envelope = {
+            "schema": "dm.mcp.resource/v1",
+            "uri": params.uri,
+            "media_type": MCP_RESOURCE_MEDIA_TYPE,
+            "content_sha256": hashlib.sha256(raw).hexdigest(),
+            "provenance": copy.deepcopy(dict(self.client.config.expected_server)),
+            "document": document,
+        }
+        return types.ReadResourceResult(
+            contents=[
+                types.TextResourceContents(
+                    uri=params.uri,
+                    mime_type=MCP_RESOURCE_MEDIA_TYPE,
+                    text=canonical_bytes(envelope).decode(),
+                )
+            ],
+            ttl_ms=0,
+            cache_scope="private",
+        )
+
+    def server(self) -> Server[Any]:
+        return Server(
+            "daimon-matrix",
+            version="0.0.0",
+            description="Closed owner-local Daimon Matrix adapter",
+            on_list_tools=self.list_tools,
+            on_call_tool=self.call_tool,
+            on_list_resources=self.list_resources,
+            on_read_resource=self.read_resource,
+        )
+
+
+class _BoundedStdin:
+    """Strict UTF-8 newline reader that rejects frames above the local bound."""
+
+    def __init__(self) -> None:
+        self.failed = False
+
+    def __aiter__(self) -> _BoundedStdin:
+        return self
+
+    async def __anext__(self) -> str:
+        if self.failed:
+            raise StopAsyncIteration
+        raw = cast(
+            bytes,
+            await anyio.to_thread.run_sync(
+                sys.stdin.buffer.readline, MAX_FRAME_BYTES + 2
+            ),
+        )
+        if not raw:
+            raise StopAsyncIteration
+        if len(raw) > MAX_FRAME_BYTES + 1 or not raw.endswith(b"\n"):
+            self.failed = True
+            return "{\n"
+        try:
+            text = raw.decode("utf-8", errors="strict")
+            json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            self.failed = True
+            return "{\n"
+        return text
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate MCP JSON key")
+        result[key] = value
+    return result
+
+
+async def _run_stdio(server: Server[Any]) -> None:
+    async with (
+        stdio_server(stdin=_BoundedStdin()) as (read_stream, write_stream),  # type: ignore[arg-type]
+        server.lifespan(server) as lifespan_context,
+    ):
+        try:
+            await _serve_modern_stream(
+                server,
+                read_stream,
+                write_stream,
+                lifespan_state=lifespan_context,
+                raise_exceptions=False,
+            )
+        finally:
+            await write_stream.aclose()
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="daimon-mcp", description=__doc__)
+    result.add_argument("--socket", type=Path, required=True)
+    result.add_argument("--client-config", type=Path, required=True)
+    result.add_argument("--capability-key-fd", type=int, required=True)
+    result.add_argument("--request-dir", type=Path, required=True)
+    result.add_argument("--timeout", type=float, default=5.0)
+    return result
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    try:
+        args = parser().parse_args(argv)
+        key = read_capability_key(args.capability_key_fd)
+        config = ClientConfig.load(args.client_config, key)
+        bridge = DaimonMcp(
+            LocalClient(args.socket, config, args.timeout), args.request_dir
+        )
+        asyncio.run(_run_stdio(bridge.server()))
+        return 0
+    except (ClientError, OSError, ValueError) as exception:
+        print(str(exception), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+__all__ = ["MCP_PROTOCOL_VERSION", "TOOL_CONTRACTS", "DaimonMcp", "main", "parser"]

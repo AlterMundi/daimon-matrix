@@ -1,10 +1,10 @@
 # Package scaffold and reproducible builds
 
-DM-020 introduced an intentionally behavior-free package scaffold. DM-021 and
-DM-022 add identity/custody and the independent Weave ledger while preserving
-the same closed reproducible artifact boundary. The package still contains no
-daemon, RPC, CLI/MCP, remote transport, adapter, deployment, provider, or live
-state.
+DM-020 introduced the closed package scaffold. DM-021 through DM-025 add
+identity/custody, the independent Weave ledger, hosted daemon, authenticated
+client, CLI and MCP stdio adapter while preserving the explicit reproducible
+artifact boundary. The package contains no remote carrier, Matrix.org client,
+deployment/provider integration or live state.
 
 ## Supported interpreter baseline
 
@@ -40,8 +40,8 @@ observable install path.
 
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
-identity, keystore, Weave, ledger, sync, and projection modules, `__init__.py`,
-and `py.typed`.
+identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI and MCP
+modules, `__init__.py`, and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 
@@ -49,8 +49,8 @@ The checker rejects absolute/traversing paths, links and special archive
 members, generated `egg-info`, bytecode/caches, SQLite or WAL state, private
 keys, credentials, messages, experimental modules, and every unexpected file.
 It independently verifies wheel `RECORD` hashes/sizes, metadata name/version,
-Python requirement, the exact `cryptography` runtime dependency, pure-Python
-tag, source-byte identity, and fixed timestamps.
+Python requirement, exact `cryptography` and `mcp==2.0.0` runtime dependency
+metadata, pure-Python tag, source-byte identity, and fixed timestamps.
 
 ## Installed smoke test
 
@@ -58,6 +58,7 @@ Install only the built wheel into an empty environment:
 
 ```bash
 python -m venv /tmp/daimon-matrix-wheel-smoke
+/tmp/daimon-matrix-wheel-smoke/bin/python -m pip install mcp==2.0.0
 /tmp/daimon-matrix-wheel-smoke/bin/python -m pip install --no-deps \
   dist/daimon_matrix-0.0.0-py3-none-any.whl
 /tmp/daimon-matrix-wheel-smoke/bin/python -c \
@@ -65,11 +66,11 @@ python -m venv /tmp/daimon-matrix-wheel-smoke
 ```
 
 Use a fresh disposable path rather than an existing operator environment. No
-artifact from DM-020 is published, deployed, or given a credential.
+artifact is published, deployed, or given a credential by this check.
 
 ## Security and rollback
 
 Run `python tools/scan_secrets.py . dist` before accepting artifacts. A failed
 or non-reproducible build is never published. Rollback is a source revert and
-removal of local generated artifacts; this scaffold has no identity, canonical
-state, migration, network, or deployment effect.
+removal of local generated artifacts; the check has no identity, live-state,
+network-carrier or deployment effect.

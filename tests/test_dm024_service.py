@@ -339,6 +339,46 @@ class HostedServiceTests(RootLedgerFixture):
             canonical_bytes(self.service_a.handle(request)), canonical_bytes(response)
         )
 
+    def test_exact_durable_retry_survives_freshness_window(self) -> None:
+        now = [NOW]
+        capability = create_capability(
+            key("durable-retry"),
+            client_id="client:durable-retry",
+            methods=["we.observe"],
+            not_before_ms=NOW - 1,
+            not_after_ms=NOW + 100_000,
+        )
+        service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {capability.capability_id: capability},
+            lambda: now[0],
+        )
+        request = create_request(
+            capability,
+            request_id=rpc_id(41),
+            issued_at_ms=NOW,
+            method="we.observe",
+            params=self.observe_params("late-exact-retry"),
+            nonce=b"r" * 16,
+        )
+        first = service.handle(request)
+        now[0] = NOW + 31_000
+        self.assertEqual(
+            canonical_bytes(service.handle(request)), canonical_bytes(first)
+        )
+        never_seen = create_request(
+            capability,
+            request_id=rpc_id(42),
+            issued_at_ms=NOW,
+            method="we.observe",
+            params=self.observe_params("never-seen-stale"),
+            nonce=b"s" * 16,
+        )
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            service.handle(never_seen)
+        self.assertEqual(len(self.ledger_a.events()), 1)
+
     def test_schema_v2_to_v3_preserves_canonical_events(self) -> None:
         original = self.append(self.ledger_a, "legion", "migration")
         with closing(sqlite3.connect(self.ledger_a.path)) as database:

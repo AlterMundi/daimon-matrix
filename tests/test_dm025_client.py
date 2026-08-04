@@ -1,0 +1,168 @@
+from __future__ import annotations
+
+import copy
+import os
+import threading
+import time
+import unittest
+import uuid
+
+from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.client import (
+    CLIENT_CONFIG_SCHEMA,
+    ClientConfig,
+    ClientError,
+    LocalClient,
+    load_json_document,
+    load_prepared_request,
+    read_capability_key,
+    store_prepared_request,
+)
+from daimon_matrix.daemon import serve_forever
+from daimon_matrix.runtime import load_runtime
+from tests.test_dm022_ledger import NOW
+from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
+
+
+class ClientFixture(RuntimeFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.state_root, _, self.capability = self.make_bundle()
+        self.runtime = load_runtime(
+            self.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+        )
+        self.stop = threading.Event()
+        self.thread = threading.Thread(
+            target=serve_forever,
+            kwargs={"runtime": self.runtime, "stop": self.stop},
+            daemon=True,
+        )
+        self.thread.start()
+        for _ in range(100):
+            if self.runtime.socket_path.exists():
+                break
+            time.sleep(0.01)
+        self.config_path = self.state_root / "client.json"
+        self.config_value = {
+            "schema": CLIENT_CONFIG_SCHEMA,
+            "capability": self.capability.descriptor,
+            "expected_server": self.origins["legion"],
+        }
+        self.config_path.write_bytes(canonical_bytes(self.config_value))
+        self.config_path.chmod(0o600)
+
+    def tearDown(self) -> None:
+        self.stop.set()
+        self.thread.join(timeout=3)
+        super().tearDown()
+
+    def client(self) -> LocalClient:
+        key = bytearray(self.capability.key)
+        config = ClientConfig.load(self.config_path, key)
+        self.assertEqual(key, bytearray(32))
+        return LocalClient(
+            self.runtime.socket_path,
+            config,
+            clock=lambda: NOW,
+            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000001"),
+            nonce_factory=lambda size: b"n" * size,
+        )
+
+
+class LocalClientTests(ClientFixture):
+    def test_typed_client_verifies_response_and_retries_exact_bytes(self) -> None:
+        client = self.client()
+        request = client.prepare(
+            "we.observe",
+            {
+                "subject": "client-observation",
+                "payload": {"summary": "client-observation"},
+                "sensitivity": "personal",
+                "causal_parents": [],
+                "occurred_at_ms": NOW,
+                "event_id": None,
+            },
+        )
+        first = client.send(request)
+        second = client.send(request)
+        self.assertEqual(canonical_bytes(first), canonical_bytes(second))
+        self.assertEqual(len(self.runtime.service.ledger.events()), 1)
+        _, status = client.runtime_status(
+            request_id="40000000-0000-4000-8000-000000000002"
+        )
+        self.assertTrue(status["ok"])
+
+    def test_config_key_socket_and_response_binding_fail_closed(self) -> None:
+        self.config_path.chmod(0o644)
+        with self.assertRaisesRegex(ClientError, "client_config_not_owner_only"):
+            ClientConfig.load(self.config_path, bytearray(self.capability.key))
+        self.config_path.chmod(0o600)
+
+        duplicate = b'{"schema":"x","schema":"x"}'
+        with self.assertRaisesRegex(ClientError, "duplicate_json_key"):
+            load_json_document(duplicate)
+
+        read_descriptor, write_descriptor = os.pipe()
+        os.write(write_descriptor, self.capability.key)
+        os.close(write_descriptor)
+        supplied = read_capability_key(read_descriptor)
+        self.assertEqual(supplied, bytearray(self.capability.key))
+
+        wrong = copy.deepcopy(self.config_value)
+        wrong["expected_server"]["principal_id"] = "compaii@wrong"
+        self.config_path.write_bytes(canonical_bytes(wrong))
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+            clock=lambda: NOW,
+        )
+        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
+            client.runtime_status()
+
+        self.runtime.socket_path.chmod(0o666)
+        with self.assertRaisesRegex(ClientError, "daemon_socket_untrusted"):
+            self.client().runtime_status()
+
+    def test_public_surface_has_no_arbitrary_method_call(self) -> None:
+        client = self.client()
+        self.assertFalse(hasattr(client, "call"))
+        with self.assertRaisesRegex(ClientError, "unsupported_client_method"):
+            client.prepare("identity.rotate", {})
+
+    def test_owner_only_request_file_is_an_exact_operation_token(self) -> None:
+        client = self.client()
+        params = {
+            "subject": "durable-client-token",
+            "payload": {"summary": "durable-client-token"},
+            "sensitivity": "personal",
+            "causal_parents": [],
+            "occurred_at_ms": NOW,
+            "event_id": None,
+        }
+        request = client.prepare("we.observe", params)
+        path = self.state_root / "retry.json"
+        store_prepared_request(path, request)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        loaded = load_prepared_request(
+            path,
+            self.capability,
+            method="we.observe",
+            params=params,
+        )
+        self.assertEqual(canonical_bytes(loaded), canonical_bytes(request))
+        with self.assertRaisesRegex(ClientError, "request_file_exists"):
+            store_prepared_request(path, request)
+        with self.assertRaisesRegex(ClientError, "request_operation_mismatch"):
+            load_prepared_request(
+                path,
+                self.capability,
+                method="we.observe",
+                params={**params, "subject": "different"},
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -37,10 +37,17 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["name"], "daimon-matrix")
         self.assertEqual(project["version"], "0.0.0")
         self.assertEqual(project["requires-python"], ">=3.11")
-        self.assertEqual(project["dependencies"], ["cryptography>=46.0.7,<47"])
+        self.assertEqual(
+            project["dependencies"], ["cryptography>=46.0.7,<47", "mcp==2.0.0"]
+        )
         self.assertEqual(project["license"], "MIT")
         self.assertEqual(
-            project["scripts"], {"daimon-matrixd": "daimon_matrix.daemon:main"}
+            project["scripts"],
+            {
+                "daimon": "daimon_matrix.cli:main",
+                "daimon-matrixd": "daimon_matrix.daemon:main",
+                "daimon-mcp": "daimon_matrix.mcp_server:main",
+            },
         )
 
     def test_supported_versions_and_backend_are_explicit(self) -> None:
@@ -99,7 +106,12 @@ class PackageMetadataTests(unittest.TestCase):
         }
         self.assertEqual(
             development,
-            {"-r requirements-build.txt", "mypy==2.3.0", "ruff==0.16.1"},
+            {
+                "-r requirements-build.txt",
+                "mcp==2.0.0",
+                "mypy==2.3.0",
+                "ruff==0.16.1",
+            },
         )
 
 
@@ -128,11 +140,14 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
                 "src/daimon_matrix/canonical.py",
+                "src/daimon_matrix/cli.py",
+                "src/daimon_matrix/client.py",
                 "src/daimon_matrix/daemon.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/keystore.py",
                 "src/daimon_matrix/ledger.py",
                 "src/daimon_matrix/local_api.py",
+                "src/daimon_matrix/mcp_server.py",
                 "src/daimon_matrix/projections.py",
                 "src/daimon_matrix/py.typed",
                 "src/daimon_matrix/runtime.py",
@@ -146,11 +161,14 @@ class ArtifactBoundaryTests(unittest.TestCase):
             {
                 "daimon_matrix/__init__.py",
                 "daimon_matrix/canonical.py",
+                "daimon_matrix/cli.py",
+                "daimon_matrix/client.py",
                 "daimon_matrix/daemon.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/keystore.py",
                 "daimon_matrix/ledger.py",
                 "daimon_matrix/local_api.py",
+                "daimon_matrix/mcp_server.py",
                 "daimon_matrix/projections.py",
                 "daimon_matrix/py.typed",
                 "daimon_matrix/runtime.py",

@@ -44,7 +44,9 @@ typed Python package implementing canonical identity artifacts, plural
 embodiment/incarnation authorization, control recovery, history binding, and
 encrypted custody. The package also owns the root-authorized independent Weave
 ledger, replay-safe sync, deterministic local projections, and the installed
-`daimon-matrixd` owner-local runtime API. Cluster remains its
+`daimon-matrixd` owner-local runtime API. The installed `daimon` CLI and
+modern-only `daimon-mcp` stdio adapter now consume that exact authenticated
+boundary; neither has direct state or signing authority. Cluster remains its
 lifecycle/state-volume host and its provisional `weave/` code is a migration
 oracle rather than a second permanent protocol. Tribe Bridge remains a
 transport input until absorption. There is no supported single-awake-identity

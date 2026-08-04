@@ -37,11 +37,14 @@ SDIST_FILES: Final = frozenset(
         "pyproject.toml",
         "src/daimon_matrix/__init__.py",
         "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/cli.py",
+        "src/daimon_matrix/client.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
+        "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/runtime.py",
@@ -54,11 +57,14 @@ WHEEL_FILES: Final = frozenset(
     {
         "daimon_matrix/__init__.py",
         "daimon_matrix/canonical.py",
+        "daimon_matrix/cli.py",
+        "daimon_matrix/client.py",
         "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py",
+        "daimon_matrix/mcp_server.py",
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
         "daimon_matrix/runtime.py",
@@ -171,7 +177,10 @@ def _check_metadata(data: bytes, source: str) -> None:
         raise PackageCheckError(
             f"{source}: wrong Requires-Python: {message['Requires-Python']!r}"
         )
-    if message.get_all("Requires-Dist") != ["cryptography<47,>=46.0.7"]:
+    if message.get_all("Requires-Dist") != [
+        "cryptography<47,>=46.0.7",
+        "mcp==2.0.0",
+    ]:
         raise PackageCheckError(f"{source}: runtime dependency contract mismatch")
     if message["License-Expression"] != "MIT":
         raise PackageCheckError(
@@ -224,11 +233,14 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
     for relative in (
         "src/daimon_matrix/__init__.py",
         "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/cli.py",
+        "src/daimon_matrix/client.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
+        "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/runtime.py",
@@ -282,7 +294,10 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     _assert_exact(set(files), WHEEL_FILES, "wheel")
     _check_metadata(files[f"{DIST_INFO}/METADATA"], "wheel METADATA")
     if files[f"{DIST_INFO}/entry_points.txt"] != (
-        b"[console_scripts]\ndaimon-matrixd = daimon_matrix.daemon:main\n"
+        b"[console_scripts]\n"
+        b"daimon = daimon_matrix.cli:main\n"
+        b"daimon-matrixd = daimon_matrix.daemon:main\n"
+        b"daimon-mcp = daimon_matrix.mcp_server:main\n"
     ):
         raise PackageCheckError("wheel console entry point mismatch")
     wheel_text = files[f"{DIST_INFO}/WHEEL"].decode("utf-8")
@@ -313,11 +328,14 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     source_map = {
         "daimon_matrix/__init__.py": "src/daimon_matrix/__init__.py",
         "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
+        "daimon_matrix/cli.py": "src/daimon_matrix/cli.py",
+        "daimon_matrix/client.py": "src/daimon_matrix/client.py",
         "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",
+        "daimon_matrix/mcp_server.py": "src/daimon_matrix/mcp_server.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
         "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
