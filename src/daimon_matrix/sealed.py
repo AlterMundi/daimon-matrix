@@ -33,6 +33,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.hpke import AEAD, KDF, KEM, Suite
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .communication import CommunicationError, _message_payload, _resolution_payload
 from .identity import VerificationError, verify_embodiment_credential
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .weave import RootAuthority, WeaveProtocolError, verify_event
@@ -73,9 +74,9 @@ class RecipientTarget:
 class DisclosureAuthorization:
     """Closed result of an upstream disclosure decision.
 
-    DM-054 will construct this value from a signed scope-resolution event.  DM-051
-    accepts no roster or route and validates that this exact result matches the
-    event, sender and concrete recipients before doing cryptography.
+    DM-054 constructs this value from a signed DM-052 resolution event. DM-051
+    accepts no transport roster and validates that the result matches the event,
+    sender and concrete active credentials before doing cryptography.
     """
 
     value: Mapping[str, Any]
@@ -106,6 +107,86 @@ class DisclosureAuthorization:
         }
         _validate_authorization(value, at_ms=authorized_at_ms)
         return cls(copy.deepcopy(value))
+
+    @classmethod
+    def from_resolution_event(
+        cls,
+        *,
+        event: Mapping[str, Any],
+        resolution_event: Mapping[str, Any],
+        authority: RootAuthority,
+        expires_at_ms: int,
+        authorization_id: str | None = None,
+    ) -> DisclosureAuthorization:
+        """Bind one signed same-being resolution to exact recipient credentials."""
+
+        try:
+            message = verify_event(event, authority)
+            resolution = verify_event(resolution_event, authority)
+            message_payload = _message_payload(message)
+            intent = cast(Mapping[str, Any], message_payload["intent"])
+            payload, targets = _resolution_payload(
+                resolution,
+                message_id=cast(str, message["event_id"]),
+                scope=cast(str, intent["scope"]),
+            )
+        except (CommunicationError, WeaveProtocolError) as exception:
+            raise _reject() from exception
+        if (
+            payload["scope"] not in {"/me", "/we"}
+            or message_payload["reply"] is not None
+            or resolution["origin"] != message["origin"]
+        ):
+            raise _reject()
+        recipients: list[dict[str, Any]] = []
+        keys: list[tuple[str, str]] = []
+        for raw_target in targets:
+            target = _closed(
+                raw_target,
+                {
+                    "evidence_cursor",
+                    "receipt_origin_embodiment_id",
+                    "recipient_id",
+                    "recipient_type",
+                    "scope_kind",
+                },
+            )
+            embodiment_id = _text(target["recipient_id"], maximum=240)
+            if (
+                target["scope_kind"] != "we"
+                or target["recipient_type"] != "embodiment"
+                or target["receipt_origin_embodiment_id"] != embodiment_id
+            ):
+                raise _reject()
+            members = [
+                row
+                for row in authority.manifest.value["embodiments"]
+                if row["embodiment_id"] == embodiment_id and row["status"] == "active"
+            ]
+            if len(members) != 1:
+                raise _reject()
+            descriptor = recipient_descriptor(
+                RecipientTarget(
+                    authority,
+                    cast(str, members[0]["embodiment_credential_id"]),
+                ),
+                at_ms=resolution["occurred_at_ms"],
+            )
+            keys.append((cast(str, target["recipient_type"]), embodiment_id))
+            recipients.append(descriptor)
+        if keys != sorted(set(keys)):
+            raise _reject()
+        return cls.synthetic(
+            event=message,
+            sender=sender_descriptor(
+                message, authority, at_ms=resolution["occurred_at_ms"]
+            ),
+            recipients=recipients,
+            evidence_hash=resolution["content_hash"],
+            authorized_at_ms=resolution["occurred_at_ms"],
+            expires_at_ms=expires_at_ms,
+            authorization_id=authorization_id,
+        )
 
 
 def _reject() -> SealedDeliveryError:

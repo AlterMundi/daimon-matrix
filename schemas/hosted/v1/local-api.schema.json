@@ -61,6 +61,12 @@
         {"properties": {"method": {"const": "communication.route-ack"}, "params": {"$ref": "#/$defs/communicationRouteAckParams"}}},
         {"properties": {"method": {"const": "route.inspect"}, "params": {"$ref": "#/$defs/routeInspectParams"}}},
         {"properties": {"method": {"const": "route.submit"}, "params": {"$ref": "#/$defs/routeSubmitParams"}}},
+        {"properties": {"method": {"const": "scope.me"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "scope.resolve"}, "params": {"$ref": "#/$defs/scopeResolveParams"}}},
+        {"properties": {"method": {"const": "scope.tribe"}, "params": {"$ref": "#/$defs/scopeTribeParams"}}},
+        {"properties": {"method": {"const": "scope.we"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "scope.we.diff"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "scope.we.sync-plan"}, "params": {"$ref": "#/$defs/scopeSyncPlanParams"}}},
         {"properties": {"method": {"const": "runtime.status"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.heads"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.preview"}, "params": {"$ref": "#/$defs/previewParams"}}},
@@ -176,6 +182,28 @@
         "deadline_ms": {"$ref": "#/$defs/uint"},
         "envelope": {"type": "string", "minLength": 1, "maxLength": 6990507, "pattern": "^[A-Za-z0-9_-]+$"},
         "leg_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "scopeResolveParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "scope", "tribe_ref"],
+      "properties": {
+        "request_id": {"type": "string", "format": "uuid"},
+        "scope": {"enum": ["/me", "/we", "/tribe"]},
+        "tribe_ref": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]}
+      }
+    },
+    "scopeTribeParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tribe_ref"],
+      "properties": {"tribe_ref": {"type": "string", "minLength": 1, "maxLength": 256}}
+    },
+    "scopeSyncPlanParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "limit"],
+      "properties": {
+        "request_id": {"type": "string", "format": "uuid"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256}
       }
     },
     "transport": {

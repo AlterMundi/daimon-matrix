@@ -1,0 +1,35 @@
+{
+  "schema": "dm-054-invariant-report/v1",
+  "scope": "root-authorized-scope-resolution",
+  "deployment": "carrier-independent-synthetic-loopback",
+  "invariants": {
+    "me_is_exactly_local": true,
+    "we_membership_manifest_only": true,
+    "route_evidence_cannot_widen": true,
+    "cluster_snapshot_exactly_bound": true,
+    "cluster_mutation_absent": true,
+    "fanout_ed25519_origin_authenticated": true,
+    "fanout_bounded_deadline_and_partial": true,
+    "fanout_exact_replay_and_conflict": true,
+    "no_single_voice_selection": true,
+    "diff_payload_free_and_origin_retaining": true,
+    "sync_one_request_per_origin": true,
+    "sync_import_not_adoption": true,
+    "tribe_external_verifier_required": true,
+    "tribe_membership_and_grants_separate": true,
+    "dm052_target_parity": true,
+    "dm052_semantic_validation_reused_by_sealing": true,
+    "relationship_ids_not_embodiment_ids": true,
+    "daemon_cli_mcp_closed": true,
+    "buzz_telegram_matrix_org_absent": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm054-scope-resolution.json",
+    "docs/dm054-scope-resolution.md",
+    "schemas/relationships/v1/tribe.schema.json",
+    "schemas/scopes/v1/resolution.schema.json",
+    "src/daimon_matrix/relationships.py",
+    "src/daimon_matrix/scopes.py",
+    "tests/test_dm054_scopes.py"
+  ]
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import stat
 import threading
 import time
 import unittest
@@ -42,8 +43,13 @@ class ClientFixture(RuntimeFixture):
         )
         self.thread.start()
         for _ in range(100):
-            if self.runtime.socket_path.exists():
-                break
+            try:
+                info = self.runtime.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600:
+                    break
             time.sleep(0.01)
         self.config_path = self.state_root / "client.json"
         self.config_value = {
@@ -94,6 +100,36 @@ class LocalClientTests(ClientFixture):
             request_id="40000000-0000-4000-8000-000000000002"
         )
         self.assertTrue(status["ok"])
+        _, me = client.scope_me(request_id="40000000-0000-4000-8000-000000000003")
+        _, topology = client.scope_we(request_id="40000000-0000-4000-8000-000000000004")
+        _, difference = client.scope_diff(
+            request_id="40000000-0000-4000-8000-000000000005"
+        )
+        _, plan = client.scope_sync_plan(
+            {
+                "request_id": "40000000-0000-4000-8000-000000000006",
+                "limit": 8,
+            },
+            request_id="40000000-0000-4000-8000-000000000007",
+        )
+        _, resolution = client.scope_resolve(
+            {
+                "request_id": "40000000-0000-4000-8000-000000000008",
+                "scope": "/we",
+                "tribe_ref": None,
+            },
+            request_id="40000000-0000-4000-8000-000000000009",
+        )
+        _, absent_tribe = client.scope_tribe(
+            "dm:tribe:v1:absent",
+            request_id="40000000-0000-4000-8000-000000000010",
+        )
+        self.assertEqual(me["result"]["schema"], "dm.scope.me/v1")
+        self.assertEqual(topology["result"]["schema"], "dm.scope.we/v1")
+        self.assertEqual(difference["result"]["schema"], "dm.scope.we-diff/v1")
+        self.assertEqual(plan["result"]["schema"], "dm.scope.sync-plan/v1")
+        self.assertEqual(resolution["result"]["scope"], "/we")
+        self.assertEqual(absent_tribe["error"]["code"], "tribe_not_configured")
 
     def test_config_key_socket_and_response_binding_fail_closed(self) -> None:
         self.config_path.chmod(0o644)

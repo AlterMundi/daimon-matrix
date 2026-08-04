@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.3",
+  "suite_version": "DM-026.4",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -424,6 +424,48 @@
       "required": true
     },
     {
+      "id": "scope_dm052_sync_parity",
+      "owners": ["DM-023", "DM-051", "DM-052", "DM-054"],
+      "specifications": ["specs/scope-resolution.md", "specs/weave-protocol.md"],
+      "setup": "Two independent root-bound ledgers and one exact same-being manifest.",
+      "stimulus": "Resolve /we targets, feed them into DM-052, and build one frozen DM-023 request per remote origin.",
+      "fault": "Relationship identifiers and embodiment identifiers are deliberately kept in different recipient lanes.",
+      "expected": "DM-052 accepts the exact resolver targets and every sync target retains its own deterministic request without adoption.",
+      "evidence": ["tests.test_dm054_scopes.ScopeResolutionTests.test_me_we_diff_and_sync_plan_preserve_exact_authority", "tests.test_dm054_scopes.ScopeResolutionTests.test_resolution_targets_match_dm052_semantics"],
+      "cleanup": "Remove isolated ledgers and communication projections.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "scope_root_resolution",
+      "owners": ["DM-021", "DM-053", "DM-054"],
+      "specifications": ["specs/adapter-contracts.md", "specs/scope-resolution.md"],
+      "setup": "Root-bound manifest, exact local origin, injected Cluster snapshot and deterministic route inspection.",
+      "stimulus": "Resolve /me, /we and payload-free differences through direct and real daemon surfaces.",
+      "fault": "Absent relationship authority, substituted body binding and closed-schema endpoint injection.",
+      "expected": "Membership comes only from the manifest, body evidence stays exact, and route availability never widens authority.",
+      "evidence": ["tests.test_dm054_scopes.HostedScopeSurfaceTests.test_authenticated_real_daemon_frame_exposes_safe_scope_methods", "tests.test_dm054_scopes.ScopeResolutionTests.test_body_and_tribe_fail_closed_without_external_authority", "tests.test_dm054_scopes.ScopeSchemaTests.test_published_scope_and_tribe_documents_are_closed"],
+      "cleanup": "Remove sockets, synthetic authority and isolated state.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "scope_signed_partial_fanout",
+      "owners": ["DM-021", "DM-054"],
+      "specifications": ["specs/scope-resolution.md"],
+      "setup": "Two active embodiments with independent signing custody and durable scope exchange journals.",
+      "stimulus": "Fan out a bounded /me request, replay concurrently and after deadline, then present timeout and competing bytes.",
+      "fault": "Invalid signature binding, changed request/response under the same key, unavailable route and response loss.",
+      "expected": "Validated replies retain exact origins; exact bytes replay; conflicts fail; missing, refused and unavailable remain distinct partial outcomes.",
+      "evidence": ["tests.test_dm054_scopes.SignedFanoutTests.test_bounded_refusal_and_changed_request_id_conflict", "tests.test_dm054_scopes.SignedFanoutTests.test_concurrent_duplicate_requests_freeze_one_response", "tests.test_dm054_scopes.SignedFanoutTests.test_signed_partial_fanout_exact_replay_and_conflict", "tests.test_dm054_scopes.SignedFanoutTests.test_timeout_unavailable_and_signature_binding_are_explicit"],
+      "cleanup": "Remove isolated SQLite journals and signing fixtures.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
       "id": "sqlite_delete_full_integrity",
       "owners": ["DM-022", "DM-026"],
       "specifications": ["docs/dm024-hosted-runtime.md"],
@@ -461,6 +503,20 @@
       "expected": "Heads converge byte-identically with zero duplicate insert and durable conflict on competing IDs.",
       "evidence": ["tests.test_dm023_sync.SyncTransactionTests.test_partition_resume_and_exact_request_and_receipt_replay", "tests.test_dm023_sync.SyncTransactionTests.test_request_and_page_id_conflicts_are_durable", "tests.test_dm023_sync.SyncTransactionTests.test_transaction_rechecks_cursor_regression_before_any_mutation"],
       "cleanup": "Temporary ledgers and journals are removed.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "tribe_verified_snapshot",
+      "owners": ["DM-054", "DM-071"],
+      "specifications": ["specs/scope-resolution.md", "specs/tribe-relationships.md"],
+      "setup": "Content-derived tribe declaration with externally verified membership lineage and separately attenuated grants.",
+      "stimulus": "Resolve active membership and time-bounded grants, then reject absent verifier, forked founder epoch and invalid attenuation.",
+      "fault": "Transport-like data attempts to substitute for invitation acceptance, lineage or grant authority.",
+      "expected": "Only the injected verifier can accept relationship history; expiry, membership loss, fork and broadening fail closed.",
+      "evidence": ["tests.test_dm024_runtime.RuntimeBundleTests.test_explicit_cluster_reader_and_verified_tribe_snapshot_load", "tests.test_dm054_scopes.ScopeResolutionTests.test_external_history_verifier_owns_membership_forks_and_attenuation"],
+      "cleanup": "Remove public snapshots and isolated runtime custody.",
       "platform": "all",
       "ci_lane": "complete",
       "required": true

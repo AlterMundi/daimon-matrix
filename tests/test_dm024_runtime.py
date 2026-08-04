@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -18,7 +19,7 @@ from jsonschema import (  # type: ignore[import-untyped]
     FormatChecker,
 )
 
-from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.daemon import (
     DaemonError,
     acquire_lock,
@@ -39,8 +40,10 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
+from daimon_matrix.relationships import tribe_ref
 from daimon_matrix.runtime import RuntimeError, load_runtime
-from daimon_matrix.service import METHODS
+from daimon_matrix.scopes import BODY_SNAPSHOT_SCHEMA
+from daimon_matrix.service import METHODS, SCOPE_METHODS
 from daimon_matrix.weave import BeingManifest
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed, transport
 
@@ -61,7 +64,7 @@ class RuntimeFixture(RootLedgerFixture):
         capability = create_capability(
             seed("dm024-capability"),
             client_id="client:runtime-test",
-            methods=sorted(METHODS),
+            methods=sorted(METHODS | SCOPE_METHODS),
             not_before_ms=now_ms - 60_000,
             not_after_ms=now_ms + 60_000,
         )
@@ -104,6 +107,7 @@ class RuntimeFixture(RootLedgerFixture):
                 }
             ],
             "routing": None,
+            "scopes": None,
         }
         path = state_root / "runtime.json"
         path.write_bytes(canonical_bytes(bundle))
@@ -250,6 +254,92 @@ class RuntimeBundleTests(RuntimeFixture):
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
             )
+
+    def test_explicit_cluster_reader_and_verified_tribe_snapshot_load(self) -> None:
+        state_root, bundle, capability = self.make_bundle(state_name="scopes")
+        declaration = {
+            "created_at_ms": NOW - 100,
+            "founder_principal_id": "compaii@legion",
+            "nonce": b64url(b"r" * 32),
+            "policy_ref": "policy:founder-v1",
+        }
+        reference = tribe_ref(declaration)
+        snapshot = {
+            "schema": "dm.tribe-snapshot/v1",
+            "tribe_ref": reference,
+            "declaration": declaration,
+            "founder_epoch": 1,
+            "founder_principal_id": "compaii@legion",
+            "lineage_head_ref": "dm:tribe-lineage:v1:runtime",
+            "verified_at_ms": NOW,
+            "members": [
+                {
+                    "tribe_ref": reference,
+                    "principal_id": "compaii@legion",
+                    "embodiment_id": "embodiment:legion",
+                    "membership_ref": "dm:membership:v1:legion",
+                    "state": "active",
+                }
+            ],
+            "grants": [],
+        }
+        relationships = state_root / "tribes.json"
+        relationships.write_bytes(
+            canonical_bytes(
+                {"schema": "dm.tribe-snapshot-set/v1", "snapshots": [snapshot]}
+            )
+        )
+        relationships.chmod(0o600)
+        bundle["scopes"] = {
+            "body_capabilities": ["incus.inspect/v1"],
+            "relationships_filename": "tribes.json",
+        }
+        bundle_path = state_root / "runtime.json"
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        with self.assertRaisesRegex(RuntimeError, "runtime_tribe_verifier_required"):
+            load_runtime(
+                state_root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: NOW,
+            )
+
+        def body_reader(
+            body_ref: str, embodiment_id: str, incarnation_id: str
+        ) -> dict[str, Any]:
+            return {
+                "schema": BODY_SNAPSHOT_SCHEMA,
+                "body_ref": body_ref,
+                "embodiment_id": embodiment_id,
+                "incarnation_id": incarnation_id,
+                "observed_at_ms": NOW,
+                "state": "running",
+                "resource_fences": [],
+            }
+
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            body_reader=body_reader,
+            tribe_verifier=lambda _value: None,
+        )
+        for index, method, params in (
+            (91, "scope.me", {}),
+            (92, "scope.tribe", {"tribe_ref": reference}),
+        ):
+            request = create_request(
+                capability,
+                request_id=f"30000000-0000-4000-8000-{index:012d}",
+                issued_at_ms=NOW,
+                method=method,
+                params=params,
+                nonce=index.to_bytes(16, "big"),
+            )
+            response = runtime.service.handle(request)
+            self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["tribe_ref"], reference)
 
     def test_route_profile_requires_exact_private_custody_and_secret(self) -> None:
         route_secret = seed("dm053-runtime-route")
@@ -422,11 +512,16 @@ class UnixDaemonTests(RuntimeFixture):
         )
         thread.start()
         for _ in range(100):
-            if runtime.socket_path.exists():
-                break
+            try:
+                info = runtime.socket_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600:
+                    break
             time.sleep(0.01)
         self.assertTrue(runtime.socket_path.exists())
-        self.assertEqual(runtime.socket_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(stat.S_IMODE(runtime.socket_path.lstat().st_mode), 0o600)
         request = create_request(
             capability,
             request_id="30000000-0000-4000-8000-000000000002",

@@ -1,0 +1,24 @@
+{
+  "schema": "dm.scope.fixtures/v1",
+  "cases": [
+    {"id": "active-target-without-principal", "expected": "successful-partial-unavailable"},
+    {"id": "body-binding-substitution", "expected": "body_snapshot_rejected"},
+    {"id": "carrier-connection-failure", "expected": "successful-partial-unavailable"},
+    {"id": "concurrent-request-replay", "expected": "one-byte-identical-response"},
+    {"id": "dm052-malformed-resolution", "expected": "sealed_delivery_rejected"},
+    {"id": "dm052-target-parity", "expected": "accepted-semantic-legs"},
+    {"id": "fanout-partial-timeout", "expected": "responded-missing-unavailable-distinct"},
+    {"id": "forked-founder-epoch", "expected": "tribe_snapshot_unverified"},
+    {"id": "grant-not-attenuated", "expected": "tribe_snapshot_unverified"},
+    {"id": "manifest-only-membership", "expected": "route-cannot-widen"},
+    {"id": "relationship-vs-embodiment-id", "expected": "separate-dm052-lanes"},
+    {"id": "response-after-deadline-replay", "expected": "cached-exact-only"},
+    {"id": "same-request-changed-bytes", "expected": "scope_request_conflict"},
+    {"id": "same-response-changed-bytes", "expected": "scope_response_conflict"},
+    {"id": "signed-origin-substitution", "expected": "scope_response_binding_mismatch"},
+    {"id": "sync-request-per-origin", "expected": "deterministic-independent-request"},
+    {"id": "tribe-verifier-absent", "expected": "tribe_verifier_required"},
+    {"id": "unknown-schema-field", "expected": "closed-schema-rejection"},
+    {"id": "zero-route", "expected": "successful-partial-unavailable"}
+  ]
+}

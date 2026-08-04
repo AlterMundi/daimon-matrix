@@ -45,6 +45,8 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/py.typed"),
     Path("src/daimon_matrix/runtime.py"),
     Path("src/daimon_matrix/routes.py"),
+    Path("src/daimon_matrix/relationships.py"),
+    Path("src/daimon_matrix/scopes.py"),
     Path("src/daimon_matrix/sealed.py"),
     Path("src/daimon_matrix/service.py"),
     Path("src/daimon_matrix/sync.py"),

@@ -7,7 +7,7 @@
   "required": [
     "schema", "control_artifacts", "control_head", "manifest", "credentials",
     "incarnations", "binding", "binding_activation", "provisional_history",
-    "local_origin", "ledger", "socket", "keystore", "capabilities", "routing"
+    "local_origin", "ledger", "socket", "keystore", "capabilities", "routing", "scopes"
   ],
   "properties": {
     "schema": {"const": "dm.runtime.bundle/v1"},
@@ -64,6 +64,24 @@
           "properties": {
             "filename": {"$ref": "#/$defs/filename"},
             "profile": {"type": "object"}
+          }
+        }
+      ]
+    },
+    "scopes": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["body_capabilities", "relationships_filename"],
+          "properties": {
+            "body_capabilities": {
+              "type": "array", "maxItems": 256, "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1, "maxLength": 128}
+            },
+            "relationships_filename": {
+              "anyOf": [{"type": "null"}, {"$ref": "#/$defs/filename"}]
+            }
           }
         }
       ]

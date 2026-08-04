@@ -24,6 +24,11 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .relationships import (
+    RelationshipError,
+    SnapshotVerifier,
+    VerifiedTribeSnapshot,
+)
 from .routes import (
     DirectHTTPProvider,
     HubProvider,
@@ -34,6 +39,7 @@ from .routes import (
     RouteError,
     RouteProfile,
 )
+from .scopes import BodyReader, ScopeError, ScopeResolver
 from .service import SERVICE_METHODS, HostedWeave
 from .weave import (
     BeingManifest,
@@ -172,6 +178,8 @@ def load_runtime(
     password_reader: PasswordReader,
     *,
     clock: Clock,
+    body_reader: BodyReader | None = None,
+    tribe_verifier: SnapshotVerifier | None = None,
 ) -> HostedRuntime:
     """Verify all public/secret bindings before exposing a hosted service."""
 
@@ -195,6 +203,7 @@ def load_runtime(
             "manifest",
             "provisional_history",
             "routing",
+            "scopes",
             "schema",
             "socket",
         },
@@ -408,6 +417,53 @@ def load_runtime(
             binding.provider_ref for binding in route_profile.routes if binding.enabled
         }:
             raise RuntimeError("runtime_route_provider_missing")
+    body_capabilities: tuple[str, ...] = ()
+    tribes: dict[str, VerifiedTribeSnapshot] = {}
+    scopes_bundle = bundle["scopes"]
+    if scopes_bundle is not None:
+        scope_value = _closed(
+            scopes_bundle, {"body_capabilities", "relationships_filename"}
+        )
+        capabilities_value = scope_value["body_capabilities"]
+        if (
+            not isinstance(capabilities_value, list)
+            or len(capabilities_value) > 256
+            or capabilities_value != sorted(set(capabilities_value))
+            or not all(
+                isinstance(item, str) and 1 <= len(item.encode()) <= 128
+                for item in capabilities_value
+            )
+        ):
+            raise RuntimeError("invalid_scope_configuration")
+        body_capabilities = tuple(capabilities_value)
+        relationship_name = scope_value["relationships_filename"]
+        if relationship_name is not None:
+            if tribe_verifier is None:
+                raise RuntimeError("runtime_tribe_verifier_required")
+            relationship_path = _safe_file(root, relationship_name, must_exist=True)
+            if relationship_path.name in filenames:
+                raise RuntimeError("runtime_filename_collision")
+            filenames.add(relationship_path.name)
+            relationship_set = _closed(
+                _read_bundle(relationship_path), {"schema", "snapshots"}
+            )
+            snapshots = relationship_set["snapshots"]
+            if (
+                relationship_set["schema"] != "dm.tribe-snapshot-set/v1"
+                or not isinstance(snapshots, list)
+                or len(snapshots) > 256
+            ):
+                raise RuntimeError("invalid_tribe_snapshot_set")
+            try:
+                for raw_snapshot in snapshots:
+                    snapshot = VerifiedTribeSnapshot.from_value(
+                        raw_snapshot, verifier=tribe_verifier
+                    )
+                    if snapshot.ref in tribes:
+                        raise RuntimeError("duplicate_tribe_snapshot")
+                    tribes[snapshot.ref] = snapshot
+            except RelationshipError as exception:
+                raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
     if set(contents.secrets) != required_slots:
         raise RuntimeError("unexpected_runtime_secret_slot")
     seed = contents.secrets.get(signing_slot)
@@ -460,6 +516,17 @@ def load_runtime(
                 raise RuntimeError("runtime_route_provider_rejected") from exception
             providers[binding.provider_ref] = instance
         router = RouteCoordinator(communication, route_profile, providers, clock=clock)
+    try:
+        scopes = ScopeResolver(
+            ledger,
+            clock=clock,
+            router=router,
+            body_capabilities=body_capabilities,
+            body_reader=body_reader if scopes_bundle is not None else None,
+            tribes=tribes,
+        )
+    except ScopeError as exception:
+        raise RuntimeError("runtime_scope_configuration_rejected") from exception
     service = HostedWeave(
         ledger,
         signer,
@@ -467,6 +534,7 @@ def load_runtime(
         clock,
         communication=communication,
         router=router,
+        scopes=scopes,
     )
     ledger.integrity_check()
     final_root = root.lstat()
