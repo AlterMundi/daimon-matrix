@@ -452,7 +452,15 @@ class RecipientEncryptionTests(SealedFixture):
 
     def test_two_isolated_receiver_processes_execute_real_decryption(self) -> None:
         event, targets, authorization, raw = self.envelope()
-        program = """
+        bootstrap = (
+            "import importlib.util,sys\n"
+            f"source_root={str(ROOT / 'src')!r}\n"
+            "if importlib.util.find_spec('daimon_matrix') is None:\n"
+            "    sys.path.insert(0,source_root)\n"
+        )
+        program = (
+            bootstrap
+            + """
 import base64,json,sys
 from pathlib import Path
 from daimon_matrix.identity import ControlState
@@ -475,6 +483,7 @@ custody=KeystoreDeliveryCustody(EncryptedKeystore(Path(b['keystore'])),lambda:by
 event=open_event(base64.urlsafe_b64decode(b['envelope']+'='*(-len(b['envelope'])%4)),sender_authority=authority,local_target=local,recipient_targets=targets,authorization=DisclosureAuthorization(b['authorization']),custody=custody,at_ms=b['at_ms'])
 print(event['event_id'])
 """
+        )
         recipient_ids = [target.credential_id for target in targets]
         for label in ("legion", "daimonmatrix"):
             credential = self.credentials[self.targets[label].credential_id]
@@ -623,18 +632,18 @@ class HistoricalInteropTests(unittest.TestCase):
         self.assertEqual(KEM.X25519.enc_length(), 32)
 
     def test_installed_module_exposes_real_hpke_profile(self) -> None:
+        program = (
+            "import importlib.util,sys;"
+            f"source_root={str(ROOT / 'src')!r};"
+            "sys.path.insert(0,source_root) "
+            "if importlib.util.find_spec('daimon_matrix') is None else None;"
+            "import cryptography,daimon_matrix.sealed as s;"
+            "assert cryptography.__version__=='50.0.0';"
+            "assert s.PROFILE.startswith('HPKE-X25519');"
+            "print(s.SCHEMA)"
+        )
         result = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                "-c",
-                (
-                    "import cryptography,daimon_matrix.sealed as s;"
-                    "assert cryptography.__version__=='50.0.0';"
-                    "assert s.PROFILE.startswith('HPKE-X25519');"
-                    "print(s.SCHEMA)"
-                ),
-            ],
+            [sys.executable, "-I", "-c", program],
             check=True,
             capture_output=True,
             text=True,
