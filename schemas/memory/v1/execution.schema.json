@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/execution.schema.json",
+  "title": "Durable memory plan execution result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "plan_id", "event"],
+  "properties": {
+    "schema": {"const": "dm.memory.execution/v1"},
+    "plan_id": {"type": "string", "pattern": "^dm:memory-plan:v1:[A-Za-z0-9_-]{43}$"},
+    "event": {"$ref": "../../weave/v1/event.schema.json"}
+  }
+}

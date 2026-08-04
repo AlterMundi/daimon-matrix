@@ -52,6 +52,7 @@ EVENT_KINDS: Final = frozenset(
         "adoption.decided",
         "projection.receipted",
         "lifecycle.announced",
+        "memory.recorded",
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -829,6 +830,15 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
                 raise WeaveProtocolError("invalid_projection_receipt") from exception
             if position["holder_embodiment_id"] != origin["embodiment_id"]:
                 raise WeaveProtocolError("invalid_projection_receipt")
+    if value["kind"] == "memory.recorded":
+        from .memory_policy import MemoryPolicyError, validate_memory_record
+
+        try:
+            record = validate_memory_record(payload)
+        except MemoryPolicyError as exception:
+            raise WeaveProtocolError("invalid_memory_record") from exception
+        if record["predecessor_event_id"] != value["supersedes"]:
+            raise WeaveProtocolError("invalid_memory_record")
     return value
 
 

@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "b1009a5a7998b7e266459fbc9bf9405b2af4a56ad51a37f1d84e298f14e5652b"
+    "ac992bed3f1b545f66149c7a2c737b0559c280a1b93f037db99c2ba053be8394"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -50,6 +50,14 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "ledger_concurrent_sequence",
         "ledger_oversize_atomicity",
         "mcp_modern_closed_surface",
+        "memory_body_authority",
+        "memory_category_provenance",
+        "memory_deterministic_vectors",
+        "memory_installed_surface",
+        "memory_lane_fork",
+        "memory_policy_succession",
+        "memory_review_precedence",
+        "memory_stale_exact_once",
         "plural_membership",
         "projection_determinism",
         "projection_rebuild_disposable_cache",

@@ -26,6 +26,13 @@ from .local_api import (
     create_response,
     verify_response,
 )
+from .memory_policy import (
+    MemoryExecutionError,
+    MemoryPolicyError,
+    MemoryPolicyExecutor,
+    evaluate_memory_candidate,
+    memory_checkpoint,
+)
 from .projections import ProjectionEngine, ProjectionError
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
@@ -64,6 +71,7 @@ COMMUNICATION_METHODS: Final = frozenset(
     }
 )
 ROUTE_METHODS: Final = frozenset({"route.inspect", "route.submit"})
+MEMORY_METHODS: Final = frozenset({"memory.evaluate", "memory.execute"})
 SCOPE_METHODS: Final = frozenset(
     {
         "scope.me",
@@ -74,7 +82,9 @@ SCOPE_METHODS: Final = frozenset(
         "scope.we.sync-plan",
     }
 )
-SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS | ROUTE_METHODS | SCOPE_METHODS
+SERVICE_METHODS: Final = (
+    METHODS | COMMUNICATION_METHODS | MEMORY_METHODS | ROUTE_METHODS | SCOPE_METHODS
+)
 
 Clock = Callable[[], int]
 
@@ -331,6 +341,24 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.retryable},
             )
+        except MemoryPolicyError:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": "memory_artifact_rejected", "retryable": False},
+            )
+        except MemoryExecutionError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": str(exception), "retryable": False},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -410,6 +438,42 @@ class HostedWeave:
                 scope=scope,
                 request_id=_uuid(value["request_id"]),
                 tribe_ref=tribe_ref,
+            )
+        if method == "memory.evaluate":
+            value = _closed(params, {"candidate", "policy"})
+            if not isinstance(value["candidate"], Mapping) or not isinstance(
+                value["policy"], Mapping
+            ):
+                raise ServiceError("invalid_params")
+            evaluated_at_ms = self.clock()
+            checkpoint = memory_checkpoint(
+                self.ledger,
+                value["candidate"],
+                captured_at_ms=evaluated_at_ms,
+            )
+            return evaluate_memory_candidate(
+                value["policy"],
+                value["candidate"],
+                checkpoint,
+                evaluated_at_ms=evaluated_at_ms,
+            )
+        if method == "memory.execute":
+            value = _closed(params, {"candidate", "plan", "policy"})
+            if any(
+                not isinstance(value[field], Mapping)
+                for field in ("candidate", "plan", "policy")
+            ):
+                raise ServiceError("invalid_params")
+            return MemoryPolicyExecutor(
+                self.ledger,
+                self.signer,
+                self.clock,
+            ).execute(
+                value["plan"],
+                value["policy"],
+                value["candidate"],
+                client_id=client_id,
+                request_id=request_id,
             )
         if method == "route.inspect":
             value = _closed(params, {"leg_id"})
@@ -771,6 +835,7 @@ class HostedWeave:
 
 __all__ = [
     "COMMUNICATION_METHODS",
+    "MEMORY_METHODS",
     "METHODS",
     "SCOPE_METHODS",
     "SERVICE_METHODS",

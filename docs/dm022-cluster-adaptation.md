@@ -1,14 +1,14 @@
 # DM-022 Daimon Cluster adaptation contract
 
-Status: required downstream work after the DM-022 Matrix ledger merges.
-Tracked in `nicoechaniz/daimon-cluster#48` under hardening umbrella #46.
+Status: implemented downstream. `nicoechaniz/daimon-cluster#48` was closed by
+PR #49, merged as `676495e852e6772a60de8221271ee9fc976f77ce`.
 
-The reconciled Cluster `weave/` package at main `54a30fa` proved the walking
-skeleton and remains the compatibility oracle. It is not a second permanent
-ledger implementation. The installed `daimon-matrix` package owns canonical
-event validation and SQLite ledger behavior; Cluster hosts it.
+The reconciled historical Cluster `weave/` package proved the walking skeleton.
+Its frozen fixture remains a compatibility oracle, but executable duplication
+was removed. The installed `daimon-matrix` package owns canonical event
+validation and SQLite behavior; Cluster hosts the exact pinned package.
 
-## Cluster changes
+## Implemented Cluster contract
 
 1. Pin an exact reviewed `daimon-matrix` artifact and run its ledger/service
    under the embodiment's dedicated owner-only state directory. Do not vendor
@@ -67,6 +67,12 @@ event validation and SQLite ledger behavior; Cluster hosts it.
   exact cached RPC response;
 - ensure Cluster logs, status, snapshots, argv and environment contain no
   password, signing seed or local capability key.
+
+The implementation pins Matrix
+`73767504b777d0d0c9132a341959f486afce99f1`, including DM-080's exact body
+evaluation time. Its installed two-process relocation/restart suite is the
+downstream evidence for this contract. It does not by itself claim the final
+real Incus multi-host rebirth drill.
 
 Tribe transport integration is deliberately not part of this adaptation. It
 will call the same Matrix sync API in DM-050–DM-055.

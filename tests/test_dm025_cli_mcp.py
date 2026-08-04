@@ -21,7 +21,7 @@ from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import MAX_FRAME_BYTES
 from daimon_matrix.mcp_server import TOOL_CONTRACTS
 from daimon_matrix.runtime import load_runtime
-from daimon_matrix.service import METHODS, SCOPE_METHODS
+from daimon_matrix.service import MEMORY_METHODS, METHODS, SCOPE_METHODS
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +220,24 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "/we",
             ],
             ["scope", "tribe", "--tribe-ref", "dm:tribe:v1:test"],
+            [
+                "memory",
+                "evaluate",
+                "--policy",
+                str(document),
+                "--candidate",
+                str(document),
+            ],
+            [
+                "memory",
+                "execute",
+                "--policy",
+                str(document),
+                "--candidate",
+                str(document),
+                "--plan",
+                str(document),
+            ],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -259,7 +277,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         methods = {
             _method_params(cli_parser().parse_args(prefix + row))[0] for row in commands
         }
-        self.assertEqual(methods, set(METHODS | SCOPE_METHODS))
+        self.assertEqual(methods, set(MEMORY_METHODS | METHODS | SCOPE_METHODS))
 
     def test_mcp_modern_stdio_lists_closed_surface_and_calls_daemon(self) -> None:
         frames = [
@@ -300,11 +318,13 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 20)
         self.assertEqual(
             {item["name"] for item in tools},
             {
                 "daimon_status",
+                "memory_evaluate",
+                "memory_execute",
                 "scope_me",
                 "scope_we",
                 "scope_we_diff",
@@ -329,7 +349,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 item["description"].removeprefix("Typed Daimon operation ")
                 for item in tools
             },
-            set(METHODS | SCOPE_METHODS),
+            set(MEMORY_METHODS | METHODS | SCOPE_METHODS),
         )
         self.assertTrue(responses[3]["result"]["structuredContent"]["ok"])
         self.assertNotIn("auth", responses[3]["result"]["structuredContent"])

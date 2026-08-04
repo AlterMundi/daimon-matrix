@@ -35,7 +35,7 @@
     "previous_event_id": {"type": ["string", "null"], "format": "uuid"},
     "occurred_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "causal_parents": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}},
-    "kind": {"enum": ["experience.observed", "skill.proposed", "preference.proposed", "configuration.proposed", "adoption.decided", "projection.receipted", "lifecycle.announced"]},
+    "kind": {"enum": ["experience.observed", "skill.proposed", "preference.proposed", "configuration.proposed", "adoption.decided", "projection.receipted", "lifecycle.announced", "memory.recorded"]},
     "subject": {"type": "string", "minLength": 1, "maxLength": 256},
     "payload": {
       "type": "object",
@@ -111,6 +111,14 @@
               "target_event_id": {"type": "string", "format": "uuid"}
             }
           }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "memory.recorded"}}, "required": ["kind"]},
+      "then": {
+        "properties": {
+          "payload": {"$ref": "../../memory/v1/record.schema.json"}
         }
       }
     }

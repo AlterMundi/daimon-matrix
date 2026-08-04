@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/record.schema.json",
+  "title": "Append-only Matrix memory record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "memory_id", "sequence", "operation", "predecessor_event_id", "predecessor_hash", "category", "author_me_id", "context", "content_ref", "evidence_refs", "policy_id", "candidate_id", "decision_id", "predecessor_decision_id"],
+  "properties": {
+    "schema": {"const": "dm.memory.record/v1"},
+    "memory_id": {"type": "string", "format": "uuid"},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "operation": {"enum": ["assert", "correct", "retract"]},
+    "predecessor_event_id": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
+    "predecessor_hash": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]},
+    "category": {"$ref": "#/$defs/category"},
+    "author_me_id": {"$ref": "#/$defs/scoped"},
+    "context": {"$ref": "#/$defs/scoped"},
+    "content_ref": {"anyOf": [{"type": "null"}, {"$ref": "content-ref.schema.json"}]},
+    "evidence_refs": {"type": "array", "uniqueItems": true, "maxItems": 256, "items": {"$ref": "#/$defs/scoped"}},
+    "policy_id": {"type": "string", "pattern": "^dm:memory-policy:v1:[A-Za-z0-9_-]{43}$"},
+    "candidate_id": {"type": "string", "pattern": "^dm:memory-candidate:v1:[A-Za-z0-9_-]{43}$"},
+    "decision_id": {"type": "string", "pattern": "^dm:memory-decision:v1:[A-Za-z0-9_-]{43}$"},
+    "predecessor_decision_id": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^dm:memory-decision:v1:[A-Za-z0-9_-]{43}$"}]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"operation": {"const": "retract"}}, "required": ["operation"]},
+      "then": {"properties": {"content_ref": {"type": "null"}}},
+      "else": {"properties": {"content_ref": {"$ref": "content-ref.schema.json"}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "assert"}}, "required": ["operation"]},
+      "then": {"properties": {"sequence": {"const": 1}, "predecessor_event_id": {"type": "null"}, "predecessor_hash": {"type": "null"}}},
+      "else": {"properties": {"sequence": {"minimum": 2}, "predecessor_event_id": {"type": "string"}, "predecessor_hash": {"type": "string"}, "predecessor_decision_id": {"type": "string"}}}
+    }
+  ],
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "category": {"enum": ["external-reference", "incarnation-state", "peer-attributed", "personal-experience", "personal-insight", "personal-skill", "species-inheritance", "tribal-knowledge"]}
+  }
+}
