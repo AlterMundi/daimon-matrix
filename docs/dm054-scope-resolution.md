@@ -19,6 +19,14 @@ embodiment and incarnation equal the local Matrix origin. Lifecycle state and
 resource-fence observations are evidence; they cannot change identity,
 membership, adoption or signing authority.
 
+Matrix owns the snapshot evaluation coordinate. It passes the exact
+`evaluated_at_ms` to the owner-local body reader as its fourth argument, and
+the adapter binds its registry/fence observation to that value. This prevents
+an honest read from becoming intermittently “future” merely because the wall
+clock crossed a millisecond between Matrix evaluation and the callback. A
+returned timestamp greater than the supplied coordinate still fails closed;
+there is no skew tolerance or three-argument compatibility path.
+
 `scope.we` enumerates every manifest incarnation in deterministic
 `(embodiment_id, incarnation_id)` order. Active, retired, local, available,
 unavailable and unconfigured are distinct facts. There may be many active
@@ -114,7 +122,8 @@ Daimon Cluster remains the body/lifecycle side. Its follow-up adapter must:
    body/embodiment/incarnation;
 2. provide a read-only `dm.cluster-body-snapshot/v1` with exactly `schema`,
    `body_ref`, `embodiment_id`, `incarnation_id`, `observed_at_ms`, `state` and
-   `resource_fences`;
+   `resource_fences`, binding `observed_at_ms` to the evaluation coordinate
+   supplied as the body reader's fourth argument;
 3. derive those identity bindings from Cluster’s verified registry and current
    incarnation, never from instance names or reachability;
 4. expose only resource-scoped fence observations and perform no mutation for

@@ -305,14 +305,17 @@ class RuntimeBundleTests(RuntimeFixture):
             )
 
         def body_reader(
-            body_ref: str, embodiment_id: str, incarnation_id: str
+            body_ref: str,
+            embodiment_id: str,
+            incarnation_id: str,
+            evaluated_at_ms: int,
         ) -> dict[str, Any]:
             return {
                 "schema": BODY_SNAPSHOT_SCHEMA,
                 "body_ref": body_ref,
                 "embodiment_id": embodiment_id,
                 "incarnation_id": incarnation_id,
-                "observed_at_ms": NOW,
+                "observed_at_ms": evaluated_at_ms,
                 "state": "running",
                 "resource_fences": [],
             }

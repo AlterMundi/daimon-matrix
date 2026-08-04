@@ -50,7 +50,7 @@ MAX_FANOUT_TARGETS: Final = 256
 MAX_RESPONSE_BYTES: Final = 1024 * 1024
 MAX_DEADLINE_SPAN_MS: Final = 60_000
 Clock = Callable[[], int]
-BodyReader = Callable[[str, str, str], Mapping[str, Any]]
+BodyReader = Callable[[str, str, str, int], Mapping[str, Any]]
 
 
 class PeerCall(Protocol):
@@ -282,6 +282,7 @@ class ScopeResolver:
                     origin["body_ref"],
                     origin["embodiment_id"],
                     origin["incarnation_id"],
+                    now,
                 )
             except (ScopeError, ValueError) as exception:
                 raise ScopeError("body_snapshot_rejected") from exception

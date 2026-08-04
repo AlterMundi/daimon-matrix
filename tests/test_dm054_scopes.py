@@ -129,14 +129,18 @@ class ScopeFixture(RootLedgerFixture):
         self.store_b.initialize()
 
     def body_snapshot(
-        self, body_ref: str, embodiment_id: str, incarnation_id: str
+        self,
+        body_ref: str,
+        embodiment_id: str,
+        incarnation_id: str,
+        evaluated_at_ms: int,
     ) -> dict[str, Any]:
         return {
             "schema": BODY_SNAPSHOT_SCHEMA,
             "body_ref": body_ref,
             "embodiment_id": embodiment_id,
             "incarnation_id": incarnation_id,
-            "observed_at_ms": self.now,
+            "observed_at_ms": evaluated_at_ms,
             "state": "running",
             "resource_fences": [],
         }
@@ -360,8 +364,15 @@ class ScopeResolutionTests(ScopeFixture):
         )
 
     def test_body_and_tribe_fail_closed_without_external_authority(self) -> None:
-        def wrong_body(_body: str, embodiment: str, incarnation: str) -> dict[str, Any]:
-            value = self.body_snapshot("cluster:wrong", embodiment, incarnation)
+        def wrong_body(
+            _body: str,
+            embodiment: str,
+            incarnation: str,
+            evaluated_at_ms: int,
+        ) -> dict[str, Any]:
+            value = self.body_snapshot(
+                "cluster:wrong", embodiment, incarnation, evaluated_at_ms
+            )
             return value
 
         resolver = ScopeResolver(
@@ -373,6 +384,51 @@ class ScopeResolutionTests(ScopeFixture):
             resolver.tribe(tribe_ref="dm:tribe:v1:absent")
         with self.assertRaisesRegex(RelationshipError, "tribe_verifier_required"):
             VerifiedTribeSnapshot.from_value({}, verifier=None)
+
+    def test_matrix_owns_body_snapshot_evaluation_time(self) -> None:
+        received: list[int] = []
+
+        def coordinated(
+            body_ref: str,
+            embodiment_id: str,
+            incarnation_id: str,
+            evaluated_at_ms: int,
+        ) -> dict[str, Any]:
+            received.append(evaluated_at_ms)
+            return {
+                **self.body_snapshot(
+                    body_ref, embodiment_id, incarnation_id, evaluated_at_ms
+                ),
+                "observed_at_ms": evaluated_at_ms,
+            }
+
+        resolver = ScopeResolver(
+            self.ledger_a,
+            clock=lambda: NOW,
+            body_reader=coordinated,
+        )
+        self.assertEqual(resolver.me()["evaluated_at_ms"], NOW)
+        self.assertEqual(received, [NOW])
+
+        def future(
+            body_ref: str,
+            embodiment_id: str,
+            incarnation_id: str,
+            evaluated_at_ms: int,
+        ) -> dict[str, Any]:
+            return {
+                **self.body_snapshot(
+                    body_ref, embodiment_id, incarnation_id, evaluated_at_ms
+                ),
+                "observed_at_ms": evaluated_at_ms + 1,
+            }
+
+        with self.assertRaisesRegex(ScopeError, "body_snapshot_rejected"):
+            ScopeResolver(
+                self.ledger_a,
+                clock=lambda: NOW,
+                body_reader=future,
+            ).me()
 
     def test_external_history_verifier_owns_membership_forks_and_attenuation(
         self,
