@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/hosted/v1/local-api.schema.json",
+  "title": "Daimon Matrix owner-local authenticated API V1",
+  "oneOf": [
+    {"$ref": "#/$defs/capability"},
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/response"}
+  ],
+  "$defs": {
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "auth": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alg", "key_id", "value"],
+      "properties": {
+        "alg": {"const": "HMAC-SHA256"},
+        "key_id": {"type": "string", "pattern": "^dm:local-key:v1:[A-Za-z0-9_-]{43}$"},
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      }
+    },
+    "capability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "capability_id", "client_id", "key_id", "methods", "not_before_ms", "not_after_ms", "status"],
+      "properties": {
+        "schema": {"const": "dm.local.capability/v1"},
+        "capability_id": {"type": "string", "pattern": "^dm:local-capability:v1:[A-Za-z0-9_-]{43}$"},
+        "client_id": {"type": "string", "pattern": "^[A-Za-z0-9._@:-]{1,128}$"},
+        "key_id": {"type": "string", "pattern": "^dm:local-key:v1:[A-Za-z0-9_-]{43}$"},
+        "methods": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,127}$"}},
+        "not_before_ms": {"$ref": "#/$defs/uint"},
+        "not_after_ms": {"$ref": "#/$defs/uint"},
+        "status": {"enum": ["active", "revoked"]}
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "client_id", "capability_id", "issued_at_ms", "nonce", "method", "params", "auth"],
+      "properties": {
+        "schema": {"const": "dm.local.request/v1"},
+        "request_id": {"type": "string", "format": "uuid"},
+        "client_id": {"type": "string"},
+        "capability_id": {"type": "string"},
+        "issued_at_ms": {"$ref": "#/$defs/uint"},
+        "nonce": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22}$"},
+        "method": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,127}$"},
+        "params": {"type": "object"},
+        "auth": {"$ref": "#/$defs/auth"}
+      },
+      "allOf": [{"oneOf": [
+        {"properties": {"method": {"const": "runtime.status"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "we.heads"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "we.preview"}, "params": {"$ref": "#/$defs/previewParams"}}},
+        {"properties": {"method": {"const": "we.sync.request"}, "params": {"$ref": "#/$defs/syncRequestParams"}}},
+        {"properties": {"method": {"const": "we.sync.serve"}, "params": {"$ref": "#/$defs/syncServeParams"}}},
+        {"properties": {"method": {"const": "we.sync.pull"}, "params": {"$ref": "#/$defs/syncPullParams"}}},
+        {"properties": {"method": {"const": "we.sync.validate-receipt"}, "params": {"$ref": "#/$defs/syncReceiptParams"}}},
+        {"properties": {"method": {"const": "we.observe"}, "params": {"$ref": "#/$defs/observeParams"}}},
+        {"properties": {"method": {"const": "we.decide"}, "params": {"$ref": "#/$defs/decideParams"}}},
+        {"properties": {"method": {"const": "we.diff"}, "params": {"$ref": "#/$defs/diffParams"}}},
+        {"properties": {"method": {"const": "we.projection.get"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "we.projection.rebuild"}, "params": {"$ref": "#/$defs/empty"}}}
+      ]}]
+    },
+    "empty": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "transport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scheme", "principal_id"],
+      "properties": {
+        "scheme": {"type": "string", "minLength": 1, "maxLength": 128},
+        "principal_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "previewParams": {
+      "type": "object", "additionalProperties": false, "required": ["events"],
+      "properties": {"events": {"type": "array", "maxItems": 256, "items": {"type": "object"}}}
+    },
+    "syncRequestParams": {
+      "type": "object", "additionalProperties": false, "required": ["request_id", "limit"],
+      "properties": {"request_id": {"type": "string", "format": "uuid"}, "limit": {"type": "integer", "minimum": 1, "maximum": 256}}
+    },
+    "syncServeParams": {
+      "type": "object", "additionalProperties": false, "required": ["request", "transport"],
+      "properties": {"request": {"type": "object"}, "transport": {"$ref": "#/$defs/transport"}}
+    },
+    "syncPullParams": {
+      "type": "object", "additionalProperties": false, "required": ["delta", "transport"],
+      "properties": {"delta": {"type": "object"}, "transport": {"$ref": "#/$defs/transport"}}
+    },
+    "syncReceiptParams": {
+      "type": "object", "additionalProperties": false, "required": ["receipt", "transport"],
+      "properties": {"receipt": {"type": "object"}, "transport": {"$ref": "#/$defs/transport"}}
+    },
+    "observeParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["subject", "payload", "sensitivity", "causal_parents", "occurred_at_ms", "event_id"],
+      "properties": {
+        "subject": {"type": "string", "minLength": 1, "maxLength": 256},
+        "payload": {"type": "object"},
+        "sensitivity": {"enum": ["personal", "private", "shareable"]},
+        "causal_parents": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "format": "uuid"}},
+        "occurred_at_ms": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/uint"}]},
+        "event_id": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]}
+      }
+    },
+    "decideParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target_event_id", "decision", "reason", "supersedes", "sensitivity", "occurred_at_ms", "event_id"],
+      "properties": {
+        "target_event_id": {"type": "string", "format": "uuid"},
+        "decision": {"enum": ["adopt", "reject", "defer", "revert"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "supersedes": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
+        "sensitivity": {"enum": ["personal", "private", "shareable"]},
+        "occurred_at_ms": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/uint"}]},
+        "event_id": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]}
+      }
+    },
+    "diffParams": {
+      "type": "object", "additionalProperties": false, "required": ["after", "kind", "limit", "subject"],
+      "properties": {
+        "after": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
+        "kind": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 128}]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+        "subject": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]}
+      }
+    },
+    "response": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "request_hash", "server", "completed_at_ms", "ok", "result", "error", "auth"],
+      "properties": {
+        "schema": {"const": "dm.local.response/v1"},
+        "request_id": {"type": "string", "format": "uuid"},
+        "request_hash": {"$ref": "#/$defs/hash"},
+        "server": {"$ref": "#/$defs/origin"},
+        "completed_at_ms": {"$ref": "#/$defs/uint"},
+        "ok": {"type": "boolean"},
+        "result": {"anyOf": [{"type": "null"}, {"type": "object"}]},
+        "error": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/error"}]},
+        "auth": {"$ref": "#/$defs/auth"}
+      },
+      "allOf": [{"oneOf": [
+        {"properties": {"ok": {"const": true}, "result": {"type": "object"}, "error": {"type": "null"}}},
+        {"properties": {"ok": {"const": false}, "result": {"type": "null"}, "error": {"$ref": "#/$defs/error"}}}
+      ]}]
+    },
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"type": "string"},
+        "embodiment_id": {"type": "string"},
+        "incarnation_id": {"type": "string"},
+        "principal_id": {"type": "string"}
+      }
+    },
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+        "retryable": {"type": "boolean"}
+      }
+    }
+  }
+}

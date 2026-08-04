@@ -35,6 +35,17 @@ event validation and SQLite ledger behavior; Cluster hosts it.
    issued/outbound/inbound sync journals and a disposable projection cache.
    Snapshot/quiesce must preserve all canonical ledger and sync-journal tables;
    the projection cache may be rebuilt but must not be substituted for them.
+8. DM-024 upgrades the ledger additively to schema 3 and installs
+   `daimon-matrixd`. On the daimonmatrix host (the VPS) and every other host,
+   Cluster creates/mounts one `0700` state root per embodiment, passes the
+   keystore password through an inherited descriptor, waits for the ready
+   descriptor, and supervises the process. It does not proxy a network port or
+   parse the local HMAC protocol.
+9. Cluster snapshots the public runtime bundle, encrypted custody and complete
+   SQLite database together after quiesce. The `.daimon-matrixd.lock` and AF_UNIX
+   socket are host-local runtime objects, never portable snapshot contents.
+   Restore must let Matrix validate authority, custody high-water and ledger
+   metadata before marking the embodiment healthy.
 
 ## Required downstream tests
 
@@ -48,6 +59,11 @@ event validation and SQLite ledger behavior; Cluster hosts it.
 - reject revoked/stale authorization, wrong body binding, manifest downgrade,
   unsafe state paths and stale resource fences;
 - keep the live effect-truth tests from reconciliation commit `53a0f75` green.
+- start the installed `daimon-matrixd`, prove descriptor-only unlock, owner-only
+  socket and second-writer refusal, then quiesce/restart without changing an
+  exact cached RPC response;
+- ensure Cluster logs, status, snapshots, argv and environment contain no
+  password, signing seed or local capability key.
 
 Tribe transport integration is deliberately not part of this adaptation. It
 will call the same Matrix sync API in DM-050–DM-055.
