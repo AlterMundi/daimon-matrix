@@ -1,4 +1,4 @@
 # DM-011 conformance vectors: generation and offline verification only.
-# Portable bounded requirement (not an exact environment pin).
-cryptography>=43,<47
+# Production HPKE is exact-pinned; JSON Schema remains a bounded test tool.
+cryptography==50.0.0
 jsonschema>=4.23,<5

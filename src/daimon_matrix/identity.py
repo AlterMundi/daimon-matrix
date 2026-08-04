@@ -903,13 +903,17 @@ def verify_embodiment_credential(
         raise VerificationError("credential is outside its validity interval")
     if body["purposes"] != sorted(set(body["purposes"])) or not body["purposes"]:
         raise VerificationError("credential purposes must be sorted and non-empty")
-    _descriptor_public(body["encryption_key"], "X25519")
+    encryption_public = _descriptor_public(body["encryption_key"], "X25519")
     signing_public = _descriptor_public(body["signing_key"], "Ed25519")
     forbidden_publics = _policy_publics(authority_policy) | _policy_publics(
         state.recovery_policy
     )
-    if signing_public in forbidden_publics:
-        raise VerificationError("embodiment key aliases root/recovery material")
+    if (
+        signing_public in forbidden_publics
+        or encryption_public in forbidden_publics
+        or encryption_public == signing_public
+    ):
+        raise VerificationError("embodiment key aliases another key purpose")
     principals = body["transport_principals"]
     if principals != sorted(
         principals,
@@ -924,7 +928,7 @@ def verify_embodiment_credential(
         public = _descriptor_public(principal["key"], "Ed25519")
         if marker in seen_principals or public in seen_transport_keys:
             raise VerificationError("transport principal is duplicated or aliased")
-        if public == signing_public or public in forbidden_publics:
+        if public in (signing_public, encryption_public) or public in forbidden_publics:
             raise VerificationError("transport key aliases identity key material")
         seen_principals.add(marker)
         seen_transport_keys.add(public)

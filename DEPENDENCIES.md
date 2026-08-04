@@ -3,8 +3,12 @@
 The runtime dependency boundary is explicit and tested in distribution
 metadata:
 
-- `cryptography>=46.0.7,<47` supplies Ed25519/X25519 and encrypted custody
-  primitives (Apache-2.0 OR BSD-3-Clause).
+- `cryptography==50.0.0` supplies Ed25519/X25519, encrypted custody and the
+  official RFC 9180 HPKE implementation (Apache-2.0 OR BSD-3-Clause). DM-051
+  pins representative release hashes in
+  `provenance/cryptography-hpke-v1.json`; `uv.lock` pins the complete artifact
+  set. An upgrade requires the identity/custody suite, frozen DM-011 KAT and
+  DM-051 recipient-encryption suite on Python 3.11–3.14.
 - Official `mcp==2.0.0` supplies final MCP `2026-07-28` models, stdio and server
   dispatch (MIT). It pins `mcp-types==2.0.0`; the adapter exposes none of the
   SDK's HTTP, OAuth, application, prompt, sampling, elicitation or subscription

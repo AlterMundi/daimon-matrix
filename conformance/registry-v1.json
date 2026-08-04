@@ -228,6 +228,48 @@
       "required": true
     },
     {
+      "id": "recipient_encryption_isolation",
+      "owners": ["DM-051"],
+      "specifications": ["docs/dm051-recipient-encryption.md"],
+      "setup": "One root-bound being, two active embodiments, distinct encrypted keystores and one opaque canonical envelope.",
+      "stimulus": "Seal one dm.we.v1 event to two exact credentials and open it in two isolated receiver processes.",
+      "fault": "A non-recipient and carrier possess the complete public envelope but no authorized private operation.",
+      "expected": "Both intended embodiments recover identical verified event bytes; carrier and non-recipient learn no plaintext.",
+      "evidence": ["tests.test_dm051_sealed.RecipientEncryptionTests.test_direct_recipient_and_nonrecipient_have_one_stable_failure", "tests.test_dm051_sealed.RecipientEncryptionTests.test_two_isolated_receiver_processes_execute_real_decryption", "tests.test_dm051_sealed.RecipientEncryptionTests.test_two_recipients_independently_open_same_canonical_event"],
+      "cleanup": "Close receiver processes and remove synthetic encrypted keystores and envelope.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "recipient_encryption_retry",
+      "owners": ["DM-051"],
+      "specifications": ["docs/dm051-recipient-encryption.md"],
+      "setup": "Owner-only DELETE/FULL SQLite outbox and one authorized sealing plan.",
+      "stimulus": "Retry an exact request, conflict it, fail before commit and independently reseal the same logical event.",
+      "fault": "Response loss, competing plan bytes and interruption before durable envelope commit.",
+      "expected": "Exact request returns identical ciphertext; conflict and precommit failure add no state; reseal uses fresh delivery crypto.",
+      "evidence": ["tests.test_dm051_sealed.DurableEnvelopeTests.test_concurrent_exact_request_commits_one_envelope", "tests.test_dm051_sealed.DurableEnvelopeTests.test_retry_conflict_and_precommit_failure_are_durable", "tests.test_dm051_sealed.RecipientEncryptionTests.test_reseal_keeps_event_but_refreshes_every_delivery_secret"],
+      "cleanup": "Close SQLite connections and remove temporary outbox and keystores.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "recipient_encryption_tamper",
+      "owners": ["DM-011", "DM-021", "DM-051"],
+      "specifications": ["docs/dm021-migration-map.md", "docs/dm051-recipient-encryption.md"],
+      "setup": "Pinned PyCA HPKE, frozen DM-011 wrap KAT and one root-bound V1 delivery.",
+      "stimulus": "Open the KAT, mutate protected fields/wrap/payload/signature, revoke a recipient and fail the CSPRNG.",
+      "fault": "Downgrade, malformed canonical bytes, stale authority, cryptographic tampering and randomness failure.",
+      "expected": "The official HPKE path opens the KAT; every V1 fault rejects uniformly before plaintext or unauthorized private use.",
+      "evidence": ["tests.test_dm051_sealed.HistoricalInteropTests.test_pinned_pyca_hpke_opens_frozen_dm011_wrap", "tests.test_dm051_sealed.RecipientEncryptionTests.test_csprng_failure_never_returns_an_envelope", "tests.test_dm051_sealed.RecipientEncryptionTests.test_revoked_recipient_is_rejected_before_private_operation", "tests.test_dm051_sealed.RecipientEncryptionTests.test_rotation_selects_only_new_manifested_recipient_key", "tests.test_dm051_sealed.RecipientEncryptionTests.test_tampering_and_noncanonical_inputs_fail_before_plaintext", "tests.test_dm051_sealed.RecipientEncryptionTests.test_wrong_authorization_expiry_and_custody_slot_fail_closed"],
+      "cleanup": "Discard synthetic keys, ciphertext and mutated in-memory documents.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
       "id": "revocation_history_cutoff",
       "owners": ["DM-021", "DM-022"],
       "specifications": ["specs/identity-continuity.md", "specs/identity-root-v1.md"],

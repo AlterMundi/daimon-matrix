@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "6b9f100eae82e4d0972a1eca48d0641aa5c75d6888df4fb205f4e9e6531d1a89"
+    "f5f0ea3c66f6383d2e1835ff9f3c0fbf2ad7149aa954313f92298aedaa0b0613"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -48,6 +48,9 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "projection_determinism",
         "projection_rebuild_disposable_cache",
         "purpose_key_separation",
+        "recipient_encryption_isolation",
+        "recipient_encryption_retry",
+        "recipient_encryption_tamper",
         "revocation_history_cutoff",
         "rpc_auth_conflict",
         "rpc_exact_durable_replay",

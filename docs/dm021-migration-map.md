@@ -20,7 +20,7 @@ single-awake-body model.
 | per-event origin signature and causal validation | retained | `dm.we.v1` plus incarnation authorization |
 | revocation generation and exact high-waters | retained | embodiment cutoff and control generation |
 | root/operational/transport purpose separation | retained and strengthened | V1 verifier rejects public-key aliasing |
-| HPKE/sealed-delivery vectors | transport evidence only | input to DM-050–DM-055 recipient encryption |
+| HPKE/sealed-delivery vectors | retained KAT, replaced runtime wire | `dm.sealed-delivery/v1` in DM-051 |
 | presence lease, wake receipt, witness and presence TTL | retired singleton behavior | no Matrix successor |
 | “one active body per `/me`” | retired and forbidden | plurality regression gate |
 | overlapping presence as split brain | retired and forbidden | only same-resource Cluster fence conflicts |

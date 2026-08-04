@@ -165,6 +165,20 @@ class PluralAuthorizationTests(IdentityFixture):
         with self.assertRaises(VerificationError):
             verify_embodiment_credential(aliased, self.state, at_ms=NOW)
 
+        encryption_alias = create_embodiment_credential(
+            self.state,
+            self.root,
+            seed("encryption-alias-signing"),
+            ed25519_public(self.root[0]),
+            embodiment_id="embodiment:encryption-alias",
+            body_ref="cluster:encryption-alias:body",
+            purposes=["messages"],
+            valid_from_ms=NOW - 1,
+            valid_until_ms=NOW + 1,
+        )
+        with self.assertRaises(VerificationError):
+            verify_embodiment_credential(encryption_alias, self.state, at_ms=NOW)
+
 
 class IncarnationAndRevocationTests(IdentityFixture):
     def test_restart_changes_incarnation_not_embodiment(self) -> None:
