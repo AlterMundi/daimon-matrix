@@ -45,6 +45,7 @@ class PackageMetadataTests(unittest.TestCase):
             project["scripts"],
             {
                 "daimon": "daimon_matrix.cli:main",
+                "daimon-conformance": "daimon_matrix.conformance:main",
                 "daimon-matrixd": "daimon_matrix.daemon:main",
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
             },
@@ -142,6 +143,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/canonical.py",
                 "src/daimon_matrix/cli.py",
                 "src/daimon_matrix/client.py",
+                "src/daimon_matrix/conformance.py",
                 "src/daimon_matrix/daemon.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/keystore.py",
@@ -163,6 +165,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/canonical.py",
                 "daimon_matrix/cli.py",
                 "daimon_matrix/client.py",
+                "daimon_matrix/conformance.py",
                 "daimon_matrix/daemon.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/keystore.py",

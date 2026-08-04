@@ -49,7 +49,9 @@ modern-only `daimon-mcp` stdio adapter now consume that exact authenticated
 boundary; neither has direct state or signing authority. Cluster remains its
 lifecycle/state-volume host and its provisional `weave/` code is a migration
 oracle rather than a second permanent protocol. Tribe Bridge remains a
-transport input until absorption. There is no supported single-awake-identity
-or distinct-identities-as-`/we` model.
+transport input until absorption. The installed `daimon-conformance` gate binds
+the local implementation and reproducible artifacts to a closed 22-scenario
+report; it does not yet certify remote delivery or rebirth. There is no
+supported single-awake-identity or distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.
