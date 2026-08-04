@@ -51,13 +51,17 @@ contains carrier-neutral recipient encryption and the same-ledger logical
 message, per-recipient receipt, claim and cursor layer. It also contains
 explicit-profile local IPC, authenticated HTTP and opaque hub providers with
 durable carrier inboxes; all are disabled until configured and no live carrier
-is deployed. Cluster remains its
+is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
+`/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
+fan-out independent of any live carrier. Cluster remains its
 lifecycle/state-volume host and its provisional `weave/` code is a migration
 oracle rather than a second permanent protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 33-scenario
+the local implementation and reproducible artifacts to a closed 37-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
-live remote delivery or rebirth. There is no
+live remote delivery or rebirth. DM-054 specifies the exact Cluster adapter
+needed for that future drill, but DM-071 consent/root discovery and live
+DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

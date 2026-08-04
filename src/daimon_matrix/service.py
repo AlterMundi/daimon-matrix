@@ -28,6 +28,7 @@ from .local_api import (
 )
 from .projections import ProjectionEngine, ProjectionError
 from .routes import RouteCoordinator, RouteError
+from .scopes import ScopeError, ScopeResolver
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
 
@@ -63,7 +64,17 @@ COMMUNICATION_METHODS: Final = frozenset(
     }
 )
 ROUTE_METHODS: Final = frozenset({"route.inspect", "route.submit"})
-SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS | ROUTE_METHODS
+SCOPE_METHODS: Final = frozenset(
+    {
+        "scope.me",
+        "scope.resolve",
+        "scope.tribe",
+        "scope.we",
+        "scope.we.diff",
+        "scope.we.sync-plan",
+    }
+)
+SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS | ROUTE_METHODS | SCOPE_METHODS
 
 Clock = Callable[[], int]
 
@@ -138,6 +149,7 @@ class HostedWeave:
     clock: Clock
     communication: CommunicationStore | None = None
     router: RouteCoordinator | None = None
+    scopes: ScopeResolver | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -167,6 +179,12 @@ class HostedWeave:
         communication.initialize()
         if self.router is not None and self.router.store is not communication:
             raise ServiceError("route_store_mismatch")
+        scopes = self.scopes
+        if scopes is None:
+            scopes = ScopeResolver(self.ledger, clock=self.clock, router=self.router)
+            object.__setattr__(self, "scopes", scopes)
+        elif scopes.ledger is not self.ledger or scopes.router is not self.router:
+            raise ServiceError("scope_resolver_mismatch")
 
     @property
     def origin(self) -> dict[str, str]:
@@ -304,6 +322,15 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.retryable},
             )
+        except ScopeError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -349,6 +376,41 @@ class HostedWeave:
         communication = self.communication
         if communication is None:  # established in __post_init__
             raise ServiceError("communication_unavailable")
+        scopes = self.scopes
+        if scopes is None:  # established in __post_init__
+            raise ServiceError("scope_resolver_absent")
+        if method == "scope.me":
+            _closed(params, set())
+            return scopes.me()
+        if method == "scope.we":
+            _closed(params, set())
+            return scopes.we()
+        if method == "scope.we.diff":
+            _closed(params, set())
+            return scopes.diff()
+        if method == "scope.we.sync-plan":
+            value = _closed(params, {"limit", "request_id"})
+            return scopes.sync_plan(
+                request_id=_uuid(value["request_id"]),
+                limit=_uint(value["limit"], minimum=1, maximum=256),
+            )
+        if method == "scope.tribe":
+            value = _closed(params, {"tribe_ref"})
+            tribe_ref = _optional_text(value["tribe_ref"], 256)
+            if tribe_ref is None:
+                raise ServiceError("invalid_params")
+            return scopes.tribe(tribe_ref=tribe_ref)
+        if method == "scope.resolve":
+            value = _closed(params, {"request_id", "scope", "tribe_ref"})
+            scope = _optional_text(value["scope"], 32)
+            tribe_ref = _optional_text(value["tribe_ref"], 256)
+            if scope is None:
+                raise ServiceError("invalid_params")
+            return scopes.resolution(
+                scope=scope,
+                request_id=_uuid(value["request_id"]),
+                tribe_ref=tribe_ref,
+            )
         if method == "route.inspect":
             value = _closed(params, {"leg_id"})
             if self.router is None:
@@ -697,6 +759,7 @@ class HostedWeave:
 __all__ = [
     "COMMUNICATION_METHODS",
     "METHODS",
+    "SCOPE_METHODS",
     "SERVICE_METHODS",
     "HostedWeave",
     "ServiceError",

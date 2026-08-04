@@ -64,6 +64,16 @@ owner-only custody document and HMAC route credentials live only in declared
 profile/origin/provider/secret bindings before constructing a provider.
 Neither method is added to the human CLI or MCP surface.
 
+DM-054 adds safe `scope.me`, `scope.we`, `scope.we.diff`,
+`scope.we.sync-plan`, `scope.resolve` and `scope.tribe` methods. Their authority
+is the exact root manifest or an externally verified tribe snapshot; route
+availability cannot alter membership. The runtime bundle has an explicit
+nullable `scopes` section for sorted body capabilities and an owner-only tribe
+snapshot file. A Cluster reader is injected and must return an exactly bound
+`dm.cluster-body-snapshot/v1`; a relationship file is unusable without an
+injected history verifier. Live fan-out and carrier dispatch remain outside the
+general daemon surface.
+
 ## Replay and crash semantics
 
 Ledger schema V3 journals `(client_id, request_id, request_hash, method)` and the

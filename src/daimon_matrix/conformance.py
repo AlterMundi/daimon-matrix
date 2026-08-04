@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "df01277980fbc029ebe7c0f037a9f11ad40fe16850037c4f3dd141ff5641afd9"
+    "ab9c09f858867e7c546cf90ee529eff6d9e8864d171afa65e48555cc2870fab3"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -62,9 +62,13 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "route_provider_state",
         "rpc_auth_conflict",
         "rpc_exact_durable_replay",
+        "scope_dm052_sync_parity",
+        "scope_root_resolution",
+        "scope_signed_partial_fanout",
         "sqlite_delete_full_integrity",
         "sync_import_not_adoption",
         "sync_resume_cursor",
+        "tribe_verified_snapshot",
     }
 )
 _ID = re.compile(r"^[a-z][a-z0-9_]{2,63}$")

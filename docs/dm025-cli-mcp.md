@@ -32,6 +32,10 @@ The installed `daimon` families are exactly `daemon status`; `we heads`,
 `validate-receipt`. Structured documents come from an explicit file or `-`
 stdin. There is no inline generic RPC option.
 
+DM-054 adds `scope me`, `we`, `diff`, `sync-plan`, `resolve` and `tribe`.
+These read or freeze an exact plan; they cannot run peer fan-out, seal,
+dispatch, adopt, mutate Cluster, or select an arbitrary method.
+
 `--json` emits one canonical `dm.cli.result/v1` line. The response authentication
 tag is verified internally and omitted from presentation. Human output carries
 the method, outcome and RPC request ID. Exit 0 is success, 2 is local
@@ -49,11 +53,12 @@ modern runner directly, so legacy `initialize` and missing/wrong modern
 envelopes fail before daemon dispatch. Input is strict UTF-8 with duplicate-key
 and 2 MiB line rejection. Stdout is reserved for MCP frames.
 
-The twelve advertised tools map one-to-one to the twelve DM-024 methods. Every
+The eighteen advertised tools map one-to-one to twelve DM-024 methods plus six
+DM-054 scope methods. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
-identity selector, capability or key is model-controlled. The six fixed
+identity selector, capability or key is model-controlled. The eight fixed
 `daimon:` resources expose public contract descriptors or capability-authorized
-redacted status, heads and projection results. Resource envelopes bind media
+redacted status, scope, heads and projection results. Resource envelopes bind media
 type, SHA-256, expected-origin provenance and canonical content; no `file:` URI
 or local path is returned. Prompts, sampling, roots, elicitation,
 subscriptions, templates and server-initiated requests are absent.

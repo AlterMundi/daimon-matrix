@@ -10,8 +10,8 @@
     "protocol": {"const": "2026-07-28"},
     "tools": {
       "type": "array",
-      "minItems": 12,
-      "maxItems": 12,
+      "minItems": 18,
+      "maxItems": 18,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -20,7 +20,9 @@
         "properties": {
           "name": {
             "enum": [
-              "daimon_status", "we_heads", "we_diff", "we_preview",
+              "daimon_status", "scope_me", "scope_we", "scope_we_diff",
+              "scope_we_sync_plan", "scope_resolve", "scope_tribe",
+              "we_heads", "we_diff", "we_preview",
               "we_projection_get", "we_observe", "we_decide",
               "we_projection_rebuild", "we_sync_request", "we_sync_serve",
               "we_sync_pull", "we_sync_validate_receipt"
@@ -28,7 +30,9 @@
           },
           "method": {
             "enum": [
-              "runtime.status", "we.heads", "we.diff", "we.preview",
+              "runtime.status", "scope.me", "scope.we", "scope.we.diff",
+              "scope.we.sync-plan", "scope.resolve", "scope.tribe",
+              "we.heads", "we.diff", "we.preview",
               "we.projection.get", "we.observe", "we.decide",
               "we.projection.rebuild", "we.sync.request", "we.sync.serve",
               "we.sync.pull", "we.sync.validate-receipt"

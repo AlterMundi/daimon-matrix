@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/relationships/v1/tribe.schema.json",
+  "title": "Externally verified tribe snapshot and resolution V1",
+  "oneOf": [{"$ref": "#/$defs/snapshot"}, {"$ref": "#/$defs/resolution"}],
+  "$defs": {
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "text": {"type": "string", "minLength": 1, "maxLength": 256},
+    "declaration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["created_at_ms", "founder_principal_id", "nonce", "policy_ref"],
+      "properties": {
+        "created_at_ms": {"$ref": "#/$defs/uint"},
+        "founder_principal_id": {"$ref": "#/$defs/text"},
+        "nonce": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+        "policy_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "member": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tribe_ref", "principal_id", "embodiment_id", "membership_ref", "state"],
+      "properties": {
+        "tribe_ref": {"$ref": "#/$defs/text"},
+        "principal_id": {"$ref": "#/$defs/text"},
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "membership_ref": {"$ref": "#/$defs/text"},
+        "state": {"enum": ["active", "left", "expelled"]}
+      }
+    },
+    "grant": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tribe_ref", "grant_ref", "controller_principal_id", "grantee_principal_id", "resource_ref", "operations", "not_before_ms", "not_after_ms", "parent_grant_ref", "revoked"],
+      "properties": {
+        "tribe_ref": {"$ref": "#/$defs/text"},
+        "grant_ref": {"$ref": "#/$defs/text"},
+        "controller_principal_id": {"$ref": "#/$defs/text"},
+        "grantee_principal_id": {"$ref": "#/$defs/text"},
+        "resource_ref": {"$ref": "#/$defs/text"},
+        "operations": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "not_before_ms": {"$ref": "#/$defs/uint"},
+        "not_after_ms": {"$ref": "#/$defs/uint"},
+        "parent_grant_ref": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]},
+        "revoked": {"type": "boolean"}
+      }
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "tribe_ref", "declaration", "founder_epoch", "founder_principal_id", "lineage_head_ref", "verified_at_ms", "members", "grants"],
+      "properties": {
+        "schema": {"const": "dm.tribe-snapshot/v1"},
+        "tribe_ref": {"$ref": "#/$defs/text"},
+        "declaration": {"$ref": "#/$defs/declaration"},
+        "founder_epoch": {"$ref": "#/$defs/uint"},
+        "founder_principal_id": {"$ref": "#/$defs/text"},
+        "lineage_head_ref": {"$ref": "#/$defs/text"},
+        "verified_at_ms": {"$ref": "#/$defs/uint"},
+        "members": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/member"}},
+        "grants": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/grant"}}
+      }
+    },
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "tribe_ref", "lineage_head_ref", "founder_epoch", "requester_principal_id", "members", "grants", "evaluated_at_ms"],
+      "properties": {
+        "schema": {"const": "dm.tribe-resolution/v1"},
+        "tribe_ref": {"$ref": "#/$defs/text"},
+        "lineage_head_ref": {"$ref": "#/$defs/text"},
+        "founder_epoch": {"$ref": "#/$defs/uint"},
+        "requester_principal_id": {"$ref": "#/$defs/text"},
+        "members": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/member"}},
+        "grants": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/grant"}},
+        "evaluated_at_ms": {"$ref": "#/$defs/uint"}
+      }
+    }
+  }
+}

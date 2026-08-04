@@ -1392,8 +1392,31 @@ class RouteCoordinator:
             raise RouteError("route_profile_disabled")
         leg = self.store.leg(leg_id)
         self._locality_gate(cast(str, leg["message_id"]))
+        return {
+            "schema": "dm.route-inspection/v1",
+            "profile_id": self.profile.profile_id,
+            "policy_version": POLICY_VERSION,
+            "leg_id": leg_id,
+            "candidates": self._inspect_candidates(cast(str, leg["recipient_id"])),
+        }
+
+    def inspect_recipient(self, *, recipient_id: str) -> dict[str, Any]:
+        """Inspect one already-authorized recipient without creating an attempt."""
+
+        if not self.profile.enabled:
+            raise RouteError("route_profile_disabled")
+        _text(recipient_id, "invalid_route_recipient")
+        return {
+            "schema": "dm.route-recipient-inspection/v1",
+            "profile_id": self.profile.profile_id,
+            "policy_version": POLICY_VERSION,
+            "recipient_id": recipient_id,
+            "candidates": self._inspect_candidates(recipient_id),
+        }
+
+    def _inspect_candidates(self, recipient_id: str) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        for binding in self.profile.candidates(cast(str, leg["recipient_id"])):
+        for binding in self.profile.candidates(recipient_id):
             provider = self.providers.get(binding.provider_ref)
             if provider is None:
                 status: Mapping[str, Any] = {
@@ -1413,13 +1436,7 @@ class RouteCoordinator:
                     "evidence_ref": status["evidence_ref"],
                 }
             )
-        return {
-            "schema": "dm.route-inspection/v1",
-            "profile_id": self.profile.profile_id,
-            "policy_version": POLICY_VERSION,
-            "leg_id": leg_id,
-            "candidates": candidates,
-        }
+        return candidates
 
     def dispatch(
         self, *, leg_id: str, envelope: bytes, deadline_ms: int

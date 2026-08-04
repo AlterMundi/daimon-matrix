@@ -56,6 +56,25 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     command = (args.family, args.command)
     if command == ("daemon", "status"):
         return "runtime.status", {}
+    if command == ("scope", "me"):
+        return "scope.me", {}
+    if command == ("scope", "we"):
+        return "scope.we", {}
+    if command == ("scope", "diff"):
+        return "scope.we.diff", {}
+    if command == ("scope", "sync-plan"):
+        return "scope.we.sync-plan", {
+            "request_id": args.scope_request_id,
+            "limit": args.limit,
+        }
+    if command == ("scope", "resolve"):
+        return "scope.resolve", {
+            "request_id": args.scope_request_id,
+            "scope": args.scope,
+            "tribe_ref": args.tribe_ref,
+        }
+    if command == ("scope", "tribe"):
+        return "scope.tribe", {"tribe_ref": args.tribe_ref}
     if command == ("we", "heads"):
         return "we.heads", {}
     if command == ("we", "diff"):
@@ -141,6 +160,25 @@ def parser() -> argparse.ArgumentParser:
     daemon = families.add_parser("daemon", help="hosted daemon operations")
     daemon_commands = daemon.add_subparsers(dest="command", required=True)
     daemon_commands.add_parser("status", help="redacted integrity and counts")
+
+    scope = families.add_parser("scope", help="root-authorized viewpoint and audience")
+    scope_commands = scope.add_subparsers(dest="command", required=True)
+    scope_commands.add_parser("me", help="exact local embodiment viewpoint")
+    scope_commands.add_parser("we", help="same-being manifest topology")
+    scope_commands.add_parser("diff", help="payload-free local projection summary")
+    sync_plan = scope_commands.add_parser(
+        "sync-plan", help="one exact DM-023 request per active remote origin"
+    )
+    sync_plan.add_argument("--scope-request-id", required=True)
+    sync_plan.add_argument("--limit", type=int, default=100)
+    resolve = scope_commands.add_parser(
+        "resolve", help="authoritative target plan for /me, /we, or /tribe"
+    )
+    resolve.add_argument("--scope-request-id", required=True)
+    resolve.add_argument("--scope", choices=("/me", "/we", "/tribe"), required=True)
+    resolve.add_argument("--tribe-ref")
+    tribe = scope_commands.add_parser("tribe", help="one verified tribe snapshot")
+    tribe.add_argument("--tribe-ref", required=True)
 
     we = families.add_parser("we", help="local Weave ledger and projection")
     we_commands = we.add_subparsers(dest="command", required=True)

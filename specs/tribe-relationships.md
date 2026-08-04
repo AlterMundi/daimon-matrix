@@ -40,3 +40,21 @@ Tribe Bridge authenticates and carries membership artifacts but does not
 decide them. A signed directory entry or audience cannot create `tribe_ref`
 membership. Conversely `/we` may use direct Tribe delivery without creating a
 tribe.
+
+## Snapshot consumption boundary
+
+DM-054 consumes a closed `dm.tribe-snapshot/v1`; it does not manufacture the
+history. The snapshot binds the content-derived declaration, current founder
+epoch, lineage head, every retained active/left/expelled membership and every
+resource grant. A mandatory injected verifier proves signatures,
+invitation/acceptance pairing, single-use invitations, voluntary leave,
+expulsion, founder-transfer acceptance, fork freedom, revocation and parent
+grant attenuation. Structural validity without that verification grants
+nothing.
+
+Resolution requires the requester to be an active member. It returns active
+members and only unrevoked grants whose interval contains the evaluation time
+and whose grantee is the requester. The verifier remains responsible for
+controller continuity and the full parent chain. DM-071 owns live root
+discovery and consent; until then, only explicitly verified synthetic or
+externally supplied snapshots are usable.

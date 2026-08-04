@@ -354,6 +354,38 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("runtime.status", {}, request_id=request_id)
 
+    def scope_me(
+        self, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("scope.me", {}, request_id=request_id)
+
+    def scope_we(
+        self, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("scope.we", {}, request_id=request_id)
+
+    def scope_diff(
+        self, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("scope.we.diff", {}, request_id=request_id)
+
+    def scope_sync_plan(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("scope.we.sync-plan", params, request_id=request_id)
+
+    def scope_resolve(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("scope.resolve", params, request_id=request_id)
+
+    def scope_tribe(
+        self, tribe_ref: str, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "scope.tribe", {"tribe_ref": tribe_ref}, request_id=request_id
+        )
+
     def we_heads(
         self, *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

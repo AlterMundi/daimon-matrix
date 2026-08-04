@@ -57,6 +57,40 @@ def _object_schema(
 
 TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     "daimon_status": ("runtime.status", _object_schema({}), True),
+    "scope_me": ("scope.me", _object_schema({}), True),
+    "scope_we": ("scope.we", _object_schema({}), True),
+    "scope_we_diff": ("scope.we.diff", _object_schema({}), True),
+    "scope_we_sync_plan": (
+        "scope.we.sync-plan",
+        _object_schema(
+            {
+                "request_id": _UUID,
+                "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+            },
+            ("request_id",),
+        ),
+        False,
+    ),
+    "scope_resolve": (
+        "scope.resolve",
+        _object_schema(
+            {
+                "request_id": _UUID,
+                "scope": {"enum": ["/me", "/we", "/tribe"]},
+                "tribe_ref": _NULLABLE_TEXT,
+            },
+            ("request_id", "scope"),
+        ),
+        True,
+    ),
+    "scope_tribe": (
+        "scope.tribe",
+        _object_schema(
+            {"tribe_ref": {"type": "string", "minLength": 1, "maxLength": 256}},
+            ("tribe_ref",),
+        ),
+        True,
+    ),
     "we_heads": ("we.heads", _object_schema({}), True),
     "we_diff": (
         "we.diff",
@@ -222,6 +256,7 @@ _DEFAULTS: Final[dict[str, Any]] = {
     "sensitivity": "personal",
     "subject": None,
     "supersedes": None,
+    "tribe_ref": None,
 }
 
 
@@ -251,6 +286,12 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
     method = TOOL_CONTRACTS[name][0]
     expected = {
         "runtime.status": set(),
+        "scope.me": set(),
+        "scope.we": set(),
+        "scope.we.diff": set(),
+        "scope.we.sync-plan": {"limit", "request_id"},
+        "scope.resolve": {"request_id", "scope", "tribe_ref"},
+        "scope.tribe": {"tribe_ref"},
         "we.heads": set(),
         "we.diff": {"after", "kind", "limit", "subject"},
         "we.preview": {"events"},
@@ -399,6 +440,8 @@ class DaimonMcp:
             "daimon:contract/tools": ("Closed MCP tool contract", None),
             "daimon:contract/local-api": ("DM-024 local protocol descriptor", None),
             "daimon:runtime/status": ("Redacted runtime status", "daimon_status"),
+            "daimon:scope/me": ("Exact local embodiment viewpoint", "scope_me"),
+            "daimon:scope/we": ("Same-being manifest topology", "scope_we"),
             "daimon:we/heads": ("Signed Weave heads", "we_heads"),
             "daimon:we/projection": (
                 "Authorized local projection",

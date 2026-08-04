@@ -14,6 +14,14 @@ Fences are scoped to `resource_ref`, not being or principal. A mutation names
 the current fence generation and observed precondition. Stale generations fail
 closed. Presence and reachability are never accepted as fences.
 
+The DM-054 read adapter returns exactly `dm.cluster-body-snapshot/v1` with the
+requested `body_ref`, `embodiment_id`, `incarnation_id`, observation time,
+`running|stopped|unavailable` state and bounded resource-fence observations.
+All three identity bindings must match the Matrix local origin. The read has no
+mutation or fence-acquisition authority; substitution fails before `/me`
+returns. The concrete Cluster implementation checklist is in
+`docs/dm054-scope-resolution.md`.
+
 ## Communication transport adapter
 
 The transport accepts an already-authorized immutable

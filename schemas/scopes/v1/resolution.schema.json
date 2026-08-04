@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/scopes/v1/resolution.schema.json",
+  "title": "Daimon Matrix root-authorized scope documents V1",
+  "oneOf": [
+    {"$ref": "#/$defs/me"},
+    {"$ref": "#/$defs/we"},
+    {"$ref": "#/$defs/diff"},
+    {"$ref": "#/$defs/resolution"},
+    {"$ref": "#/$defs/syncPlan"},
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/response"},
+    {"$ref": "#/$defs/fanout"},
+    {"$ref": "#/$defs/bodySnapshot"}
+  ],
+  "$defs": {
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "format": "uuid", "maxLength": 36},
+    "text": {"type": "string", "minLength": 1, "maxLength": 256},
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/text"},
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "principal_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "signature": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alg", "kid", "value"],
+      "properties": {
+        "alg": {"const": "Ed25519"},
+        "kid": {"type": "string", "minLength": 1, "maxLength": 128},
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+      }
+    },
+    "key": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "key_id", "public"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "public": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      }
+    },
+    "transportPrincipal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "principal_id", "scheme"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "principal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "scheme": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "head": {
+      "type": "object", "additionalProperties": false,
+      "required": ["incarnation_id", "max_sequence", "tip_event_id", "tip_hash"],
+      "properties": {
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "max_sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "tip_event_id": {"$ref": "#/$defs/uuid"},
+        "tip_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "heads": {
+      "type": "array", "maxItems": 256,
+      "items": {"$ref": "#/$defs/head"}
+    },
+    "headsDocument": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "sender", "heads"],
+      "properties": {
+        "schema": {"const": "dm.we.heads/v1"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "sender": {"$ref": "#/$defs/origin"},
+        "heads": {"$ref": "#/$defs/heads"}
+      }
+    },
+    "projectionEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "kind", "subject", "origin", "state", "decision_event_id", "local_decision_chain", "remote_decision_event_ids", "projection_receipt_ids", "remote_projection_receipt_ids", "invalid_projection_receipt_ids"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/uuid"},
+        "kind": {"type": "string", "minLength": 1},
+        "subject": {"type": "string"},
+        "origin": {"$ref": "#/$defs/origin"},
+        "state": {"enum": ["pending", "adopted", "rejected", "deferred", "reverted", "failed"]},
+        "decision_event_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/uuid"}]},
+        "local_decision_chain": {"$ref": "#/$defs/eventIds"},
+        "remote_decision_event_ids": {"$ref": "#/$defs/eventIds"},
+        "projection_receipt_ids": {"$ref": "#/$defs/eventIds"},
+        "remote_projection_receipt_ids": {"$ref": "#/$defs/eventIds"},
+        "invalid_projection_receipt_ids": {"$ref": "#/$defs/eventIds"}
+      }
+    },
+    "eventIds": {
+      "type": "array", "uniqueItems": true,
+      "items": {"$ref": "#/$defs/uuid"}
+    },
+    "projection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "local_embodiment_id", "entries", "projection_hash"],
+      "properties": {
+        "schema": {"const": "dm.we.projection/v1"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "local_embodiment_id": {"$ref": "#/$defs/text"},
+        "entries": {"type": "array", "maxItems": 65536, "items": {"$ref": "#/$defs/projectionEntry"}},
+        "projection_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "bodySnapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "body_ref", "embodiment_id", "incarnation_id", "observed_at_ms", "state", "resource_fences"],
+      "properties": {
+        "schema": {"const": "dm.cluster-body-snapshot/v1"},
+        "body_ref": {"$ref": "#/$defs/text"},
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "observed_at_ms": {"$ref": "#/$defs/uint"},
+        "state": {"enum": ["running", "stopped", "unavailable"]},
+        "resource_fences": {
+          "type": "array", "maxItems": 256,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["resource_ref", "epoch"],
+            "properties": {
+              "resource_ref": {"$ref": "#/$defs/text"},
+              "epoch": {"$ref": "#/$defs/uint"}
+            }
+          }
+        }
+      }
+    },
+    "me": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "evaluated_at_ms", "origin", "credential_ref", "incarnation_authorization_ref", "body_capabilities", "body", "heads", "effective"],
+      "properties": {
+        "schema": {"const": "dm.scope.me/v1"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "evaluated_at_ms": {"$ref": "#/$defs/uint"},
+        "origin": {"$ref": "#/$defs/origin"},
+        "credential_ref": {"$ref": "#/$defs/text"},
+        "incarnation_authorization_ref": {"$ref": "#/$defs/text"},
+        "body_capabilities": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "body": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/bodySnapshot"}]},
+        "heads": {"$ref": "#/$defs/headsDocument"},
+        "effective": {"$ref": "#/$defs/projection"}
+      }
+    },
+    "routeCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider_ref", "route_ref", "route_class", "available", "status", "evidence_ref"],
+      "properties": {
+        "provider_ref": {"$ref": "#/$defs/text"},
+        "route_ref": {"$ref": "#/$defs/text"},
+        "route_class": {"enum": ["local", "direct-anyvpn", "direct", "hub", "gateway"]},
+        "available": {"type": "boolean"},
+        "status": {"type": "string", "minLength": 1, "maxLength": 128},
+        "evidence_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "routeInspection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "profile_id", "policy_version", "recipient_id", "candidates"],
+      "properties": {
+        "schema": {"const": "dm.route-recipient-inspection/v1"},
+        "profile_id": {"$ref": "#/$defs/text"},
+        "policy_version": {"$ref": "#/$defs/text"},
+        "recipient_id": {"$ref": "#/$defs/text"},
+        "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/routeCandidate"}}
+      }
+    },
+    "topology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "manifest_status", "transport_principals", "availability", "route", "evidence_ref"],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/text"},
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "manifest_status": {"enum": ["active", "retired"]},
+        "transport_principals": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/transportPrincipal"}},
+        "availability": {"enum": ["local", "available", "unavailable", "unconfigured", "retired"]},
+        "route": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/routeInspection"}]},
+        "evidence_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "we": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "evaluated_at_ms", "local_origin", "embodiments", "partial"],
+      "properties": {
+        "schema": {"const": "dm.scope.we/v1"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "evaluated_at_ms": {"$ref": "#/$defs/uint"},
+        "local_origin": {"$ref": "#/$defs/origin"},
+        "embodiments": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/topology"}},
+        "partial": {"type": "boolean"}
+      }
+    },
+    "diff": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "local_embodiment_id", "projection_hash", "origin_summaries", "entries"],
+      "properties": {
+        "schema": {"const": "dm.scope.we-diff/v1"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "local_embodiment_id": {"$ref": "#/$defs/text"},
+        "projection_hash": {"$ref": "#/$defs/hash"},
+        "origin_summaries": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/originSummary"}},
+        "entries": {"type": "array", "maxItems": 65536, "items": {"$ref": "#/$defs/projectionEntry"}}
+      }
+    },
+    "originSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["embodiment_id", "states"],
+      "properties": {
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "states": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "pending": {"$ref": "#/$defs/uint"},
+            "adopted": {"$ref": "#/$defs/uint"},
+            "rejected": {"$ref": "#/$defs/uint"},
+            "deferred": {"$ref": "#/$defs/uint"},
+            "reverted": {"$ref": "#/$defs/uint"},
+            "failed": {"$ref": "#/$defs/uint"}
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope_kind", "recipient_type", "recipient_id", "receipt_origin_embodiment_id", "evidence_cursor"],
+      "properties": {
+        "scope_kind": {"enum": ["we", "relationship"]},
+        "recipient_type": {"enum": ["embodiment", "relationship"]},
+        "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "receipt_origin_embodiment_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "evidence_cursor": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "being_ref", "manifest_hash", "scope", "tribe_ref", "evaluated_at_ms", "origin", "targets", "resolution_hash"],
+      "properties": {
+        "schema": {"const": "dm.scope-resolution/v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "scope": {"enum": ["/me", "/we", "/tribe"]},
+        "tribe_ref": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]},
+        "evaluated_at_ms": {"$ref": "#/$defs/uint"},
+        "origin": {"$ref": "#/$defs/origin"},
+        "targets": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/target"}},
+        "resolution_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "syncTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["embodiment_id", "incarnation_id", "availability", "evidence_ref", "request"],
+      "properties": {
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "availability": {"enum": ["available", "unavailable", "unconfigured"]},
+        "evidence_ref": {"$ref": "#/$defs/text"},
+        "request": {"$ref": "#/$defs/syncRequest"}
+      }
+    },
+    "syncRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "being_ref", "manifest_hash", "requester", "heads", "limit"],
+      "properties": {
+        "schema": {"const": "dm.we.sync-request/v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "requester": {"$ref": "#/$defs/origin"},
+        "heads": {"$ref": "#/$defs/heads"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256}
+      }
+    },
+    "syncPlan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "plan_id", "targets", "partial"],
+      "properties": {
+        "schema": {"const": "dm.scope.sync-plan/v1"},
+        "plan_id": {"$ref": "#/$defs/uuid"},
+        "targets": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/syncTarget"}},
+        "partial": {"type": "boolean"}
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "being_ref", "manifest_hash", "requester", "scope", "issued_at_ms", "deadline_ms", "max_response_bytes", "content_hash", "signature"],
+      "properties": {
+        "schema": {"const": "dm.scope.request/v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "requester": {"$ref": "#/$defs/origin"},
+        "scope": {"const": "/me"},
+        "issued_at_ms": {"$ref": "#/$defs/uint"},
+        "deadline_ms": {"$ref": "#/$defs/uint"},
+        "max_response_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "content_hash": {"$ref": "#/$defs/hash"},
+        "signature": {"$ref": "#/$defs/signature"}
+      }
+    },
+    "response": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request_id", "request_hash", "being_ref", "manifest_hash", "responder", "completed_at_ms", "status", "content", "error", "content_hash", "signature"],
+      "properties": {
+        "schema": {"const": "dm.scope.response/v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "request_hash": {"$ref": "#/$defs/hash"},
+        "being_ref": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "responder": {"$ref": "#/$defs/origin"},
+        "completed_at_ms": {"$ref": "#/$defs/uint"},
+        "status": {"enum": ["responded", "refused"]},
+        "content": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/me"}]},
+        "error": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 128}]},
+        "content_hash": {"$ref": "#/$defs/hash"},
+        "signature": {"$ref": "#/$defs/signature"}
+      }
+    },
+    "fanoutTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_ids"],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/text"},
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "principal_ids": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "fanoutOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target", "availability", "evidence_ref", "state", "response"],
+      "properties": {
+        "target": {"$ref": "#/$defs/fanoutTarget"},
+        "availability": {"enum": ["available", "unavailable", "unconfigured"]},
+        "evidence_ref": {"$ref": "#/$defs/text"},
+        "state": {"enum": ["responded", "refused", "missing", "unavailable"]},
+        "response": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/response"}]},
+        "error": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "fanout": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "request", "local", "outcomes", "partial", "completed_at_ms"],
+      "properties": {
+        "schema": {"const": "dm.scope.fanout/v1"},
+        "request": {"$ref": "#/$defs/request"},
+        "local": {"$ref": "#/$defs/me"},
+        "outcomes": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/fanoutOutcome"}},
+        "partial": {"type": "boolean"},
+        "completed_at_ms": {"$ref": "#/$defs/uint"}
+      }
+    }
+  }
+}

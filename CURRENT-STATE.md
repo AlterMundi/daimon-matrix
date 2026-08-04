@@ -45,10 +45,10 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current twelve methods and `daimon:` resources, and
+bytes, MCP exposes only the current eighteen methods and `daimon:` resources, and
 legacy MCP and Matrix.org transports remain absent. Cluster's next host
 adapter supervises the process. DM-026 closes the local release gate with a
-33-scenario invariant registry and deterministic installed conformance report;
+37-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, Cluster effects or rebirth. DM-050 begins absorbing
 Tribe transport behind the same boundary. DM-050 pins the current public Tribe
@@ -76,5 +76,9 @@ opaque durable hub/inbox leases, ambiguous-response retry and a generic
 gateway edge disabled by default. Provider endpoints and route secrets remain
 in owner-only custody and are absent from results. CI uses loopback providers
 only; Buzz and Telegram remain unselected future gateway implementations.
-DM-054 owns current scope resolution and the `/me`, `/we`, `/we.sync`, and
-`/tribe` surface, so DM-053 does not yet make those user operations live.
+DM-054 now owns current scope resolution and the `/me`, `/we`, `/we.diff`,
+per-origin `/we.sync` planning and verified `/tribe` surfaces. It adds
+purpose-separated signed partial fan-out with durable exact replay, real daemon
+and CLI/MCP reads, DM-051/052 target parity, and an exact read-only Cluster
+snapshot contract. No live carrier is selected: Tribe Bridge integration is
+DM-055, while cross-being root discovery and consent remain DM-071.
