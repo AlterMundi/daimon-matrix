@@ -57,6 +57,84 @@ def _object_schema(
 
 TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     "daimon_status": ("runtime.status", _object_schema({}), True),
+    "curator_enqueue": (
+        "curator.enqueue",
+        _object_schema({"item": {"type": "object"}}, ("item",)),
+        False,
+    ),
+    "curator_claim": (
+        "curator.claim",
+        _object_schema(
+            {
+                "item_id": {
+                    "type": "string",
+                    "pattern": "^dm:curator-item:v1:[A-Za-z0-9_-]{43}$",
+                },
+                "claim_id": _UUID,
+                "expected_generation": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2**53 - 1,
+                },
+                "lease_until_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2**53 - 1,
+                },
+                "fence_evidence": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+            },
+            (
+                "item_id",
+                "claim_id",
+                "expected_generation",
+                "lease_until_ms",
+                "fence_evidence",
+            ),
+        ),
+        False,
+    ),
+    "curator_complete": (
+        "curator.complete",
+        _object_schema(
+            {
+                "claim_id": _UUID,
+                "expected_generation": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2**53 - 1,
+                },
+                "outcome": {"enum": ["completed", "proposed", "deferred", "failed"]},
+                "output_refs": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                },
+                "effect_receipt": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+            },
+            (
+                "claim_id",
+                "expected_generation",
+                "outcome",
+                "output_refs",
+                "effect_receipt",
+            ),
+        ),
+        False,
+    ),
+    "curator_inspect": (
+        "curator.inspect",
+        _object_schema(
+            {
+                "item_id": {
+                    "type": "string",
+                    "pattern": "^dm:curator-item:v1:[A-Za-z0-9_-]{43}$",
+                }
+            },
+            ("item_id",),
+        ),
+        True,
+    ),
     "memory_evaluate": (
         "memory.evaluate",
         _object_schema(

@@ -396,6 +396,28 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("memory.execute", params, request_id=request_id)
 
+    def curator_enqueue(
+        self, item: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("curator.enqueue", {"item": item}, request_id=request_id)
+
+    def curator_claim(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("curator.claim", params, request_id=request_id)
+
+    def curator_complete(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("curator.complete", params, request_id=request_id)
+
+    def curator_inspect(
+        self, item_id: str, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "curator.inspect", {"item_id": item_id}, request_id=request_id
+        )
+
     def we_heads(
         self, *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

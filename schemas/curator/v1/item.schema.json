@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator/v1/item.schema.json",
+  "title": "Content-addressed resource-scoped curator item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "item_id", "subject_me_id", "resource_ref", "work_kind", "input_ref", "input_hash", "coordination_mode", "required_authority", "effect_intent_hash", "queued_at_ms"],
+  "properties": {
+    "schema": {"const": "dm.curator.item/v1"},
+    "item_id": {"type": "string", "pattern": "^dm:curator-item:v1:[A-Za-z0-9_-]{43}$"},
+    "subject_me_id": {"$ref": "#/$defs/scoped"},
+    "resource_ref": {"$ref": "#/$defs/scoped"},
+    "work_kind": {"enum": ["memory-evaluation", "memory-proposal", "memory-projection", "publication"]},
+    "input_ref": {"$ref": "#/$defs/scoped"},
+    "input_hash": {"$ref": "#/$defs/hash"},
+    "coordination_mode": {"enum": ["queue-item", "resource-fence"]},
+    "required_authority": {"enum": ["daimon", "human"]},
+    "effect_intent_hash": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]},
+    "queued_at_ms": {"$ref": "#/$defs/uint"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"coordination_mode": {"const": "resource-fence"}}, "required": ["coordination_mode"]},
+      "then": {"properties": {"effect_intent_hash": {"$ref": "#/$defs/hash"}}},
+      "else": {"properties": {"effect_intent_hash": {"type": "null"}}}
+    }
+  ],
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+  }
+}

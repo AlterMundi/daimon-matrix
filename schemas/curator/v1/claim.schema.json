@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator/v1/claim.schema.json",
+  "title": "Resource-scoped curator claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "claim_id", "item_id", "resource_ref", "generation", "actor_origin", "issued_at_ms", "lease_until_ms", "resource_fence", "content_hash"],
+  "properties": {
+    "schema": {"const": "dm.curator.claim/v1"},
+    "claim_id": {"type": "string", "format": "uuid"},
+    "item_id": {"type": "string", "pattern": "^dm:curator-item:v1:[A-Za-z0-9_-]{43}$"},
+    "resource_ref": {"$ref": "#/$defs/scoped"},
+    "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "actor_origin": {"$ref": "#/$defs/origin"},
+    "issued_at_ms": {"$ref": "#/$defs/uint"},
+    "lease_until_ms": {"$ref": "#/$defs/uint"},
+    "resource_fence": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/fencePosition"}]},
+    "content_hash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/scoped"},
+        "embodiment_id": {"$ref": "#/$defs/scoped"},
+        "incarnation_id": {"$ref": "#/$defs/scoped"},
+        "principal_id": {"$ref": "#/$defs/scoped"}
+      }
+    },
+    "fencePosition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "resource_ref", "holder_embodiment_id", "epoch", "evidence_hash"],
+      "properties": {
+        "schema": {"const": "dm.cluster-resource-fence-position/v1"},
+        "resource_ref": {"$ref": "#/$defs/scoped"},
+        "holder_embodiment_id": {"$ref": "#/$defs/scoped"},
+        "epoch": {"$ref": "#/$defs/uint"},
+        "evidence_hash": {"$ref": "#/$defs/hash"}
+      }
+    }
+  }
+}

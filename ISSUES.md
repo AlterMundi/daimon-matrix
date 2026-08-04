@@ -12,9 +12,10 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
   request/response schemas.
 - Installed per-embodiment Weave ledger engine, synchronization mechanics,
   decisions, projections, and communications service.
-- Scope, memory, Tribe, and adapter conformance vectors. DM-030 memory policy,
-  schemas, vectors, hosted methods and exactly-once executor are implemented;
-  DM-031 through DM-036 own its actors and effects.
+- Scope, memory, Tribe, and adapter conformance vectors. DM-030 memory policy
+  and DM-031 resource-scoped curator coordination, schemas, vectors, hosted
+  methods and exactly-once/effect-truth guards are implemented; DM-032 through
+  DM-036 own workers, human decisions and projection/publication effects.
 - Root-authorized additional-embodiment, relocation, and disaster-rebirth
   acceptance on a fresh host (DM-078).
 

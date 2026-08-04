@@ -46,10 +46,10 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current twenty core/scope/memory methods and
+bytes, MCP exposes only the current twenty-four core/scope/memory/curator methods and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
-release gate with a 47-scenario invariant registry and deterministic installed conformance report;
+release gate with a 51-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, live Cluster effects or rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -111,5 +111,10 @@ transactional stale-state/idempotency guard. `memory.evaluate` and
 `memory.execute` are available through the authenticated daemon, typed client,
 CLI and MCP. Public vectors, schemas and eight release-blocking conformance
 scenarios cover environment determinism, review precedence,
-cross-embodiment forks and response-loss/restart exactly once. HMK/Wiki/model,
-human-review and public-effect integrations remain DM-031 through DM-036.
+cross-embodiment forks and response-loss/restart exactly once. DM-031 adds a
+durable per-item curator queue, generation CAS, exact actor origin, explicit
+human-review proposals, Cluster-verified resource-fence mode, and
+effect-truth-aware replay through daemon/client/CLI/MCP. It deliberately has no
+exclusive being-wide Librarian lease. The model worker, cryptographic human
+decision, HMK/Wiki projection and collective publisher remain DM-032 through
+DM-036.

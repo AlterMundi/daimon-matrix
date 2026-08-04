@@ -10,6 +10,7 @@ from typing import Any, Final
 
 from .canonical import CanonicalError, unb64url
 from .communication import CommunicationError, CommunicationStore
+from .curator import CuratorCoordinator, CuratorError
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
@@ -72,6 +73,9 @@ COMMUNICATION_METHODS: Final = frozenset(
 )
 ROUTE_METHODS: Final = frozenset({"route.inspect", "route.submit"})
 MEMORY_METHODS: Final = frozenset({"memory.evaluate", "memory.execute"})
+CURATOR_METHODS: Final = frozenset(
+    {"curator.claim", "curator.complete", "curator.enqueue", "curator.inspect"}
+)
 SCOPE_METHODS: Final = frozenset(
     {
         "scope.me",
@@ -83,7 +87,12 @@ SCOPE_METHODS: Final = frozenset(
     }
 )
 SERVICE_METHODS: Final = (
-    METHODS | COMMUNICATION_METHODS | MEMORY_METHODS | ROUTE_METHODS | SCOPE_METHODS
+    METHODS
+    | COMMUNICATION_METHODS
+    | CURATOR_METHODS
+    | MEMORY_METHODS
+    | ROUTE_METHODS
+    | SCOPE_METHODS
 )
 
 Clock = Callable[[], int]
@@ -140,6 +149,20 @@ def _event_ids(value: Any) -> list[str]:
     return [_uuid(item) for item in value]
 
 
+def _text_refs(value: Any) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) > 256
+        or value != sorted(set(value))
+        or any(
+            not isinstance(item, str) or not 1 <= len(item.encode("utf-8")) <= 256
+            for item in value
+        )
+    ):
+        raise ServiceError("invalid_params")
+    return list(value)
+
+
 def _transport(value: Any) -> Mapping[str, str]:
     transport = _closed(value, {"principal_id", "scheme"})
     for field in ("scheme", "principal_id"):
@@ -160,6 +183,7 @@ class HostedWeave:
     communication: CommunicationStore | None = None
     router: RouteCoordinator | None = None
     scopes: ScopeResolver | None = None
+    curator: CuratorCoordinator | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -195,6 +219,13 @@ class HostedWeave:
             object.__setattr__(self, "scopes", scopes)
         elif scopes.ledger is not self.ledger or scopes.router is not self.router:
             raise ServiceError("scope_resolver_mismatch")
+        curator = self.curator
+        if curator is None:
+            curator = CuratorCoordinator(self.ledger, self.clock)
+            object.__setattr__(self, "curator", curator)
+        elif curator.ledger is not self.ledger:
+            raise ServiceError("curator_ledger_mismatch")
+        curator.initialize()
 
     @property
     def origin(self) -> dict[str, str]:
@@ -246,13 +277,33 @@ class HostedWeave:
                 error={"code": "request_conflict", "retryable": False},
             )
         if cached is not None:
-            return verify_response(
+            verified = verify_response(
                 cached,
                 capability,
                 expected_request_id=request_id,
                 expected_request_hash=digest,
                 expected_server=self.origin,
             )
+            if method == "curator.complete" and verified["ok"]:
+                curator = self.curator
+                result = verified["result"]
+                if curator is None or not isinstance(result, Mapping):
+                    raise LocalApiError("invalid_local_response")
+                try:
+                    curator.verify_result_truth(result)
+                except CuratorError as exception:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={
+                            "code": exception.code,
+                            "retryable": exception.retryable,
+                        },
+                    )
+            return verified
         try:
             result = self._dispatch(
                 method,
@@ -358,6 +409,15 @@ class HostedWeave:
                 server=self.origin,
                 completed_at_ms=self.clock(),
                 error={"code": str(exception), "retryable": False},
+            )
+        except CuratorError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
             )
         except (LedgerError, LedgerStateError):
             response = create_response(
@@ -475,6 +535,74 @@ class HostedWeave:
                 client_id=client_id,
                 request_id=request_id,
             )
+        if method == "curator.enqueue":
+            value = _closed(params, {"item"})
+            if not isinstance(value["item"], Mapping):
+                raise ServiceError("invalid_params")
+            if self.curator is None:
+                raise ServiceError("curator_unavailable")
+            return self.curator.enqueue(
+                value["item"], client_id=client_id, request_id=request_id
+            )
+        if method == "curator.claim":
+            value = _closed(
+                params,
+                {
+                    "claim_id",
+                    "expected_generation",
+                    "fence_evidence",
+                    "item_id",
+                    "lease_until_ms",
+                },
+            )
+            fence_evidence = value["fence_evidence"]
+            if fence_evidence is not None and not isinstance(fence_evidence, Mapping):
+                raise ServiceError("invalid_params")
+            if self.curator is None:
+                raise ServiceError("curator_unavailable")
+            return self.curator.claim(
+                item_id=str(value["item_id"]),
+                claim_id=_uuid(value["claim_id"]),
+                expected_generation=_uint(value["expected_generation"]),
+                lease_until_ms=_uint(value["lease_until_ms"]),
+                fence_evidence=fence_evidence,
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "curator.complete":
+            value = _closed(
+                params,
+                {
+                    "claim_id",
+                    "effect_receipt",
+                    "expected_generation",
+                    "outcome",
+                    "output_refs",
+                },
+            )
+            effect_receipt = value["effect_receipt"]
+            if effect_receipt is not None and not isinstance(effect_receipt, Mapping):
+                raise ServiceError("invalid_params")
+            if not isinstance(value["outcome"], str):
+                raise ServiceError("invalid_params")
+            if self.curator is None:
+                raise ServiceError("curator_unavailable")
+            return self.curator.complete(
+                claim_id=_uuid(value["claim_id"]),
+                expected_generation=_uint(value["expected_generation"], minimum=1),
+                outcome=value["outcome"],
+                output_refs=_text_refs(value["output_refs"]),
+                effect_receipt=effect_receipt,
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "curator.inspect":
+            value = _closed(params, {"item_id"})
+            if not isinstance(value["item_id"], str):
+                raise ServiceError("invalid_params")
+            if self.curator is None:
+                raise ServiceError("curator_unavailable")
+            return self.curator.inspect(value["item_id"])
         if method == "route.inspect":
             value = _closed(params, {"leg_id"})
             if self.router is None:

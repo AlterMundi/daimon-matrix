@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.7",
+  "suite_version": "DM-026.8",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -155,6 +155,62 @@
       "cleanup": "Synthetic artifacts only.",
       "platform": "all",
       "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "curator_effect_truth",
+      "owners": ["DM-031", "DM-037"],
+      "specifications": ["specs/adapter-contracts.md", "specs/curator-coordination.md"],
+      "setup": "A resource-fenced curator item, exact actor-bound claim, adapter effect receipt and injected Cluster fence/effect observers.",
+      "stimulus": "Complete and replay one effect while changing intent, actor, fence or observed postcondition.",
+      "fault": "A cached successful effect contradicts or cannot verify current external state.",
+      "expected": "Only exact current intent, actor, fence and postcondition replay; discrepancy and unverifiable states fail distinctly without a blind success.",
+      "evidence": ["tests.test_dm031_curator.CuratorCoordinatorTests.test_authenticated_rpc_cache_rechecks_effect_truth_before_success", "tests.test_dm031_curator.CuratorCoordinatorTests.test_effect_receipt_binding_cannot_substitute_actor_intent_or_fence", "tests.test_dm031_curator.CuratorCoordinatorTests.test_effect_truth_is_verified_on_commit_and_every_replay", "tests.test_dm031_curator.CuratorCoordinatorTests.test_resource_effect_requires_current_exact_cluster_fence"],
+      "cleanup": "Remove synthetic fence evidence and isolated curator tables.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "curator_installed_retry",
+      "owners": ["DM-024", "DM-025", "DM-031"],
+      "specifications": ["docs/dm025-cli-mcp.md", "specs/curator-coordination.md"],
+      "setup": "Real owner-local daemon, installed-style CLI, durable request token and one queue-item claim.",
+      "stimulus": "Lose the completion response after dispatch, restart the daemon and replay the exact request file.",
+      "fault": "The durable completion commits before its authenticated response is delivered.",
+      "expected": "Restart discovers one exact item/result, the generation remains monotonic and no second completion is authored.",
+      "evidence": ["tests.test_dm031_curator.CuratorInstalledRuntimeTests.test_real_daemon_installed_cli_response_loss_restart_and_exactly_once"],
+      "cleanup": "Stop the fixture daemon and remove its owner-only state root and request token.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "curator_resource_cas",
+      "owners": ["DM-031"],
+      "specifications": ["specs/curator-coordination.md"],
+      "setup": "One root-bound ledger with independent immutable curator items and generation-zero resource heads.",
+      "stimulus": "Claim different resources concurrently, contend on one resource, expire/reclaim and complete from a stale generation.",
+      "fault": "A being-wide lease or stale worker would suppress valid plurality or duplicate one concrete effect.",
+      "expected": "Different resources proceed together; same-resource CAS has one winner; reclaim advances generation and stale completion fails.",
+      "evidence": ["tests.test_dm031_curator.CuratorCoordinatorTests.test_concurrent_same_item_claim_has_one_winner", "tests.test_dm031_curator.CuratorCoordinatorTests.test_different_resources_claim_concurrently_without_global_exclusion", "tests.test_dm031_curator.CuratorCoordinatorTests.test_expired_claim_reclaims_with_new_generation_and_stale_worker_loses", "tests.test_dm031_curator.CuratorCoordinatorTests.test_plural_embodiments_work_independently_and_cluster_selects_holder", "tests.test_dm031_curator.CuratorCoordinatorTests.test_same_resource_enqueue_and_claim_are_compare_and_swap"],
+      "cleanup": "Close SQLite handles and remove isolated queue state.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "curator_review_actor",
+      "owners": ["DM-030", "DM-031", "DM-033"],
+      "specifications": ["specs/curator-coordination.md", "specs/memory-boundaries.md"],
+      "setup": "A content-addressed human-authority queue item and an exact local embodiment claim.",
+      "stimulus": "Attempt automatic completion, then record an immutable proposal and inspect the rebuilt state.",
+      "fault": "A worker, queue row or display name attempts to become human authority or erase the acting embodiment.",
+      "expected": "Automatic completion refuses; proposal remains explicitly review-required and retains exact body, embodiment, incarnation and principal.",
+      "evidence": ["tests.test_dm031_curator.CuratorCoordinatorTests.test_human_work_can_only_propose_and_retains_actor", "tests.test_dm031_curator.CuratorCoordinatorTests.test_public_schemas_validate_runtime_artifacts_and_reject_unknown_fields", "tests.test_dm031_curator.CuratorVectorTests.test_vectors_validate_and_regenerate_byte_identically"],
+      "cleanup": "Remove synthetic queue artifacts and public-vector temporary roots.",
+      "platform": "all",
+      "ci_lane": "complete",
       "required": true
     },
     {

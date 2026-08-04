@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator/v1/enqueue-result.schema.json",
+  "title": "Curator enqueue result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "item", "state", "generation"],
+  "properties": {
+    "schema": {"const": "dm.curator.enqueue-result/v1"},
+    "item": {"$ref": "item.schema.json"},
+    "state": {"enum": ["queued", "claimed", "completed", "review-required", "deferred", "failed"]},
+    "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+  }
+}
