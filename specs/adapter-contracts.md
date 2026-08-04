@@ -22,6 +22,15 @@ mutation or fence-acquisition authority; substitution fails before `/me`
 returns. The concrete Cluster implementation checklist is in
 `docs/dm054-scope-resolution.md`.
 
+DM-037 adds the mutation-side evidence boundary without moving authority.
+`dm.cluster-resource-fence-evidence/v1` binds one body, holder embodiment and
+incarnation, resource, epoch, validity interval and opaque verification
+reference under a content hash. Matrix accepts it as current only through an
+injected Cluster verifier that checks signature, high-water and current holder
+state. A signed Matrix projection receipt embeds only the derived closed
+`dm.cluster-resource-fence-position/v1`; the historical position is evidence,
+not an eternal lease.
+
 ## Communication transport adapter
 
 The transport accepts an already-authorized immutable
@@ -56,6 +65,14 @@ Every projection supports:
 An idempotency key alone cannot replay a stale effect. A cached result is valid
 only while intent bytes, fence, and postcondition match. Secret values are
 never returned in previews, receipts, logs, or synchronized events.
+
+The exact adapter result is `dm.cluster-effect-receipt/v1`. It is converted to
+the canonical `projection.receipted` payload only after validating its target,
+decision, preview, intent, actor, optional fence, result, timing and bounded
+observed postcondition. Reconciliation returns `verified`,
+`effect-truth-discrepancy`, or `effect-truth-unverifiable`; only `verified` can
+serve a cached success. The contract and downstream hosting checklist are in
+`docs/dm037-cluster-effect-boundary.md`.
 
 Adapters negotiate exact protocol versions. Unknown or downgraded versions
 fail closed; this first release has no compatibility mode for prior ontology.

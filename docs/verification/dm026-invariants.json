@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 37,
-  "registry_sha256": "ab9c09f858867e7c546cf90ee529eff6d9e8864d171afa65e48555cc2870fab3",
+  "required_scenario_count": 38,
+  "registry_sha256": "4f7d73efaf3451533d4ef8d294900bc03a9049a8f96bb84fbdb1d4eed22da279",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -27,6 +27,7 @@
     "conformance/registry-v1.json",
     "docs/verification/dm053-invariants.json",
     "docs/verification/dm054-invariants.json",
+    "docs/verification/dm037-invariants.json",
     "schemas/conformance/v1/registry.schema.json",
     "schemas/conformance/v1/report.schema.json",
     "src/daimon_matrix/conformance.py",

@@ -20,6 +20,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .cluster import (
+    BODY_SNAPSHOT_SCHEMA,
+    ClusterEvidenceError,
+    validate_body_snapshot,
+)
 from .identity import VerificationError, verify_embodiment_credential
 from .ledger import Ledger
 from .projections import ProjectionEngine
@@ -37,7 +42,6 @@ SYNC_PLAN_SCHEMA: Final = "dm.scope.sync-plan/v1"
 FANOUT_SCHEMA: Final = "dm.scope.fanout/v1"
 REQUEST_SCHEMA: Final = "dm.scope.request/v1"
 RESPONSE_SCHEMA: Final = "dm.scope.response/v1"
-BODY_SNAPSHOT_SCHEMA: Final = "dm.cluster-body-snapshot/v1"
 REQUEST_DOMAIN: Final = b"daimon/scope-request/v1\x00"
 RESPONSE_DOMAIN: Final = b"daimon/scope-response/v1\x00"
 MAX_CAPABILITIES: Final = 256
@@ -218,54 +222,6 @@ def _verify_signed(
     return copy.deepcopy(dict(row))
 
 
-def _body_snapshot(
-    value: Any, *, body_ref: str, embodiment_id: str, incarnation_id: str
-) -> dict[str, Any]:
-    row = _closed(
-        value,
-        {
-            "body_ref",
-            "embodiment_id",
-            "incarnation_id",
-            "observed_at_ms",
-            "resource_fences",
-            "schema",
-            "state",
-        },
-        "body_snapshot_rejected",
-    )
-    if (
-        row["schema"] != BODY_SNAPSHOT_SCHEMA
-        or row["body_ref"] != body_ref
-        or row["embodiment_id"] != embodiment_id
-        or row["incarnation_id"] != incarnation_id
-        or row["state"] not in {"running", "stopped", "unavailable"}
-    ):
-        raise ScopeError("body_snapshot_rejected")
-    _uint(row["observed_at_ms"], "body_snapshot_rejected")
-    fences = row["resource_fences"]
-    if not isinstance(fences, list) or len(fences) > 256:
-        raise ScopeError("body_snapshot_rejected")
-    normalized_fences = []
-    for fence in fences:
-        item = _closed(fence, {"epoch", "resource_ref"}, "body_snapshot_rejected")
-        normalized_fences.append(
-            {
-                "resource_ref": _text(item["resource_ref"], "body_snapshot_rejected"),
-                "epoch": _uint(item["epoch"], "body_snapshot_rejected"),
-            }
-        )
-    if normalized_fences != sorted(
-        normalized_fences, key=lambda item: cast(str, item["resource_ref"])
-    ) or len({item["resource_ref"] for item in normalized_fences}) != len(
-        normalized_fences
-    ):
-        raise ScopeError("body_snapshot_rejected")
-    if len(canonical_bytes(row)) > MAX_RESPONSE_BYTES:
-        raise ScopeError("body_snapshot_rejected")
-    return copy.deepcopy(dict(row))
-
-
 @dataclass(frozen=True)
 class ScopeResolver:
     ledger: Ledger
@@ -327,14 +283,16 @@ class ScopeResolver:
                 raise ScopeError("body_snapshot_rejected") from exception
             if not isinstance(value, Mapping):
                 raise ScopeError("body_snapshot_rejected")
-            body = _body_snapshot(
-                value,
-                body_ref=origin["body_ref"],
-                embodiment_id=origin["embodiment_id"],
-                incarnation_id=origin["incarnation_id"],
-            )
-            if body["observed_at_ms"] > now:
-                raise ScopeError("body_snapshot_rejected")
+            try:
+                body = validate_body_snapshot(
+                    value,
+                    body_ref=origin["body_ref"],
+                    embodiment_id=origin["embodiment_id"],
+                    incarnation_id=origin["incarnation_id"],
+                    evaluated_at_ms=now,
+                )
+            except ClusterEvidenceError as exception:
+                raise ScopeError("body_snapshot_rejected") from exception
         member = self.authority.validate_origin(origin, require_active=True)
         return {
             "schema": ME_SCHEMA,

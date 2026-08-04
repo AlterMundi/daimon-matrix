@@ -125,6 +125,12 @@ Daimon Cluster remains the body/lifecycle side. Its follow-up adapter must:
 7. retire provisional `weave/fanout.py` authority once the Matrix adapter is
    wired, retaining it only as behavioral migration evidence.
 
+DM-037 now defines the exact fence/effect half of this adapter in
+`docs/dm037-cluster-effect-boundary.md`. Cluster #48 must consume that merged
+contract: body snapshots stay read-only, while effect replay separately
+requires live Cluster verification of the recorded fence and observed
+postcondition.
+
 Cluster must not mint a being, infer `/we` from running containers, collapse
 multiple active embodiments, treat presence as a fence, open Matrix custody,
 or write Matrix ledgers. The future cross-host rebirth drill must prove a new

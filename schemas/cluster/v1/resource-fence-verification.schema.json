@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/cluster/v1/resource-fence-verification.schema.json",
+  "title": "Daimon Cluster current fence verification V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "content_hash", "resource_ref", "holder_embodiment_id", "epoch", "verified_at_ms", "current"],
+  "properties": {
+    "schema": {"const": "dm.cluster-resource-fence-verification/v1"},
+    "content_hash": {"$ref": "#/$defs/hash"},
+    "resource_ref": {"$ref": "#/$defs/text"},
+    "holder_embodiment_id": {"$ref": "#/$defs/text"},
+    "epoch": {"$ref": "#/$defs/uint"},
+    "verified_at_ms": {"$ref": "#/$defs/uint"},
+    "current": {"type": "boolean"}
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 240},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

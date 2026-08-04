@@ -1,0 +1,19 @@
+{
+  "schema": "dm.cluster-effect-truth.fixtures/v1",
+  "cases": [
+    {"id": "body-origin-substitution", "expected": "body_snapshot_rejected"},
+    {"id": "body-future-observation", "expected": "body_snapshot_rejected"},
+    {"id": "different-resource-concurrency", "expected": "independent-current-fences"},
+    {"id": "effect-intent-changed", "expected": "effect-truth-discrepancy"},
+    {"id": "effect-postcondition-changed", "expected": "effect-truth-discrepancy"},
+    {"id": "fence-expired", "expected": "fence_not_current"},
+    {"id": "fence-high-water-regressed", "expected": "fence_not_current"},
+    {"id": "fence-holder-substitution", "expected": "fence_binding_mismatch"},
+    {"id": "fence-verifier-outage", "expected": "effect-truth-unverifiable"},
+    {"id": "postcondition-unavailable", "expected": "effect-truth-unverifiable"},
+    {"id": "projection-arbitrary-fence", "expected": "invalid_projection_receipt"},
+    {"id": "same-resource-stale-epoch", "expected": "effect-truth-discrepancy"},
+    {"id": "secret-path-endpoint-injection", "expected": "postcondition_disclosure_forbidden"},
+    {"id": "unknown-schema-field", "expected": "closed-schema-rejection"}
+  ]
+}

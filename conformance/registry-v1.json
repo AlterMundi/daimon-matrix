@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.4",
+  "suite_version": "DM-026.5",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -56,6 +56,20 @@
       "evidence": ["tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_cli_real_daemon_json_and_exact_retry", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_every_cli_command_maps_to_exactly_one_closed_method"],
       "cleanup": "Fixture stops daemon and removes its isolated state root.",
       "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "cluster_effect_truth",
+      "owners": ["DM-037"],
+      "specifications": ["docs/dm037-cluster-effect-boundary.md", "specs/adapter-contracts.md"],
+      "setup": "Closed Cluster body, resource-fence and effect-receipt evidence with an injected current-state verifier.",
+      "stimulus": "Validate, convert and reconcile exact receipts while mutating intent, fence epoch, holder and observed postcondition.",
+      "fault": "Cached idempotency evidence is replayed after current effect truth changes or becomes unavailable.",
+      "expected": "Only exact current truth verifies; contradictions and unavailable observation remain distinct and no Cluster fact grants Matrix authority.",
+      "evidence": ["tests.test_dm037_cluster_effects.ClusterEvidenceTests.test_different_resources_are_independent_and_stale_same_resource_fails", "tests.test_dm037_cluster_effects.ClusterEvidenceTests.test_replay_only_succeeds_while_effect_truth_matches", "tests.test_dm037_cluster_effects.ProjectionFenceContractTests.test_projection_event_accepts_only_exact_fence_position"],
+      "cleanup": "Synthetic evidence and temporary root-authorized ledgers only.",
+      "platform": "all",
       "ci_lane": "complete",
       "required": true
     },

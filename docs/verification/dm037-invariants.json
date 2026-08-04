@@ -1,0 +1,34 @@
+{
+  "schema": "dm-037-invariant-report/v1",
+  "scope": "cluster-evidence-effect-truth-boundary",
+  "deployment": "not-applicable-synthetic-contract",
+  "invariants": {
+    "body_snapshot_exact_closed_and_time_bound": true,
+    "body_snapshot_read_has_no_mutation_authority": true,
+    "fence_evidence_content_bound": true,
+    "fence_authority_remains_in_cluster": true,
+    "current_verification_injected_and_fail_closed": true,
+    "presence_never_substitutes_for_fence": true,
+    "projection_fence_position_closed": true,
+    "effect_receipt_binds_intent_decision_and_observation": true,
+    "verified_replay_requires_current_effect_truth": true,
+    "discrepancy_and_unverifiable_are_distinct": true,
+    "different_resources_remain_independent": true,
+    "same_resource_stale_epoch_rejected": true,
+    "postcondition_disclosure_rejected": true,
+    "matrix_event_authority_unchanged": true,
+    "generic_execution_surface_absent": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm037-cluster-effect-truth.json",
+    "docs/dm037-cluster-effect-boundary.md",
+    "schemas/cluster/v1/body-snapshot.schema.json",
+    "schemas/cluster/v1/effect-receipt.schema.json",
+    "schemas/cluster/v1/effect-reconciliation.schema.json",
+    "schemas/cluster/v1/resource-fence-evidence.schema.json",
+    "schemas/cluster/v1/resource-fence-verification.schema.json",
+    "schemas/weave/v1/event.schema.json",
+    "src/daimon_matrix/cluster.py",
+    "tests/test_dm037_cluster_effects.py"
+  ]
+}

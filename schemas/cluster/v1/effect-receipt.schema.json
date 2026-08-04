@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/cluster/v1/effect-receipt.schema.json",
+  "title": "Daimon Cluster effect receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "effect_id", "target_event_id", "decision_event_id", "adapter", "preview_hash", "intent_hash", "actor", "authority", "resource_fence", "result", "observed_postcondition", "started_at_ms", "completed_at_ms", "content_hash"],
+  "properties": {
+    "schema": {"const": "dm.cluster-effect-receipt/v1"},
+    "effect_id": {"type": "string", "format": "uuid"},
+    "target_event_id": {"type": "string", "format": "uuid"},
+    "decision_event_id": {"type": "string", "format": "uuid"},
+    "adapter": {"type": "string", "minLength": 1, "maxLength": 128},
+    "preview_hash": {"$ref": "#/$defs/hash"},
+    "intent_hash": {"$ref": "#/$defs/hash"},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+    "authority": {"enum": ["daimon", "human"]},
+    "resource_fence": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/fencePosition"}
+      ]
+    },
+    "result": {"enum": ["applied", "failed", "reconciled", "stale"]},
+    "observed_postcondition": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {"not": {"pattern": "(?:^|_)(?:address|api_key|bearer|credential|endpoint|password|passwd|path|private|secret|socket|token|url)(?:$|_)"}},
+      "additionalProperties": {"$ref": "#/$defs/postconditionValue"}
+    },
+    "started_at_ms": {"$ref": "#/$defs/uint"},
+    "completed_at_ms": {"$ref": "#/$defs/uint"},
+    "content_hash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "fencePosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "resource_ref", "holder_embodiment_id", "epoch", "evidence_hash"],
+      "properties": {
+        "schema": {"const": "dm.cluster-resource-fence-position/v1"},
+        "resource_ref": {"type": "string", "minLength": 1, "maxLength": 240},
+        "holder_embodiment_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "epoch": {"$ref": "#/$defs/uint"},
+        "evidence_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "postconditionValue": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "not": {"pattern": "(?:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|^(?:/|~[/\\\\]|file:|https?://))"}
+        },
+        {"type": "array", "items": {"$ref": "#/$defs/postconditionValue"}},
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {"not": {"pattern": "(?:^|_)(?:address|api_key|bearer|credential|endpoint|password|passwd|path|private|secret|socket|token|url)(?:$|_)"}},
+          "additionalProperties": {"$ref": "#/$defs/postconditionValue"}
+        }
+      ]
+    }
+  }
+}
