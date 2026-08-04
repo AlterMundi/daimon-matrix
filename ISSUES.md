@@ -6,12 +6,13 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
 ## Matrix-owned
 
 - Canonical ontology and cross-runtime authority map.
-- Being/embodiment/incarnation and future root binding.
+- Being-root custody/recovery, plural embodiment credentials, incarnation
+  authorization, and binding of provisional history in the V0.1 MVP.
 - `dm.we.v1` events, heads, deltas, decisions, projection receipts, and live
   request/response schemas.
 - Scope, memory, Tribe, and adapter conformance vectors.
-- Future root custody, recovery, embodiment credentials, keystore, and
-  provisional-history binding.
+- Root-authorized additional-embodiment, relocation, and disaster-rebirth
+  acceptance on a fresh host (DM-078).
 
 ## Cluster-owned
 
@@ -21,12 +22,16 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
 - HMK and external-identity adapters.
 - Dashboard, runbook, and two-host acceptance.
 
-## Tribe-owned
+## Transitional Tribe-owned
 
 - Typed encrypted Weave payloads.
 - Founder-only invitation, acceptance, expulsion, leave, and founder transfer.
 - Direct-principal routing and conformance fixtures.
 - Explicit separation of audience, `tribe_ref`, and `being_ref`.
+
+DM-050 through DM-055 move these responsibilities into `daimon-matrix` and
+remove the standalone runtime dependency before release. Matrix.org is not an
+implementation target or dependency.
 
 Closed cards whose acceptance encoded identity-wide body exclusion must be
 rewritten and reopened. Completion is evaluated only against current
