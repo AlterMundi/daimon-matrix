@@ -17,6 +17,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .cluster import (
+    ClusterEvidenceError,
+    validate_observed_postcondition,
+    validate_resource_fence_position,
+)
 from .identity import (
     ControlState,
     VerificationError,
@@ -812,11 +817,18 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
         completed = _uint(receipt["completed_at_ms"], "invalid_projection_receipt")
         if completed < started:
             raise WeaveProtocolError("invalid_projection_receipt")
-        if not isinstance(receipt["observed_postcondition"], Mapping):
-            raise WeaveProtocolError("invalid_projection_receipt")
+        try:
+            validate_observed_postcondition(receipt["observed_postcondition"])
+        except ClusterEvidenceError as exception:
+            raise WeaveProtocolError("invalid_projection_receipt") from exception
         fence = receipt["resource_fence"]
-        if fence is not None and not isinstance(fence, Mapping):
-            raise WeaveProtocolError("invalid_projection_receipt")
+        if fence is not None:
+            try:
+                position = validate_resource_fence_position(fence)
+            except ClusterEvidenceError as exception:
+                raise WeaveProtocolError("invalid_projection_receipt") from exception
+            if position["holder_embodiment_id"] != origin["embodiment_id"]:
+                raise WeaveProtocolError("invalid_projection_receipt")
     return value
 
 

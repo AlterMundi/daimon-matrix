@@ -48,9 +48,11 @@ closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
 bytes, MCP exposes only the current eighteen methods and `daimon:` resources, and
 legacy MCP and Matrix.org transports remain absent. Cluster's next host
 adapter supervises the process. DM-026 closes the local release gate with a
-37-scenario invariant registry and deterministic installed conformance report;
+38-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
-claiming remote delivery, Cluster effects or rebirth. DM-050 begins absorbing
+claiming remote delivery, live Cluster effects or rebirth. DM-037 defines
+closed Cluster body/fence/effect evidence and requires current effect-truth
+verification before replay. DM-050 begins absorbing
 Tribe transport behind the same boundary. DM-050 pins the current public Tribe
 head and its relevant blob/hash inventory, but imports no upstream bytes: no
 license is detected, so DM-051–DM-053 independently reimplement only classified

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/cluster/v1/effect-reconciliation.schema.json",
+  "title": "Daimon Cluster effect-truth reconciliation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "effect_id", "receipt_hash", "status", "reason"],
+  "properties": {
+    "schema": {"const": "dm.cluster-effect-reconciliation/v1"},
+    "effect_id": {"type": "string", "format": "uuid"},
+    "receipt_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "status": {"enum": ["verified", "effect-truth-discrepancy", "effect-truth-unverifiable"]},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 128}
+  }
+}

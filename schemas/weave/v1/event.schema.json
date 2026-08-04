@@ -93,12 +93,17 @@
               "completed_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
               "decision_event_id": {"type": "string", "format": "uuid"},
               "intent_hash": {"$ref": "#/$defs/hash"},
-              "observed_postcondition": {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonicalValue"}},
+              "observed_postcondition": {
+                "type": "object",
+                "maxProperties": 64,
+                "propertyNames": {"not": {"pattern": "(?:^|_)(?:address|api_key|bearer|credential|endpoint|password|passwd|path|private|secret|socket|token|url)(?:$|_)"}},
+                "additionalProperties": {"$ref": "#/$defs/postconditionValue"}
+              },
               "preview_hash": {"$ref": "#/$defs/hash"},
               "resource_fence": {
                 "anyOf": [
                   {"type": "null"},
-                  {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonicalValue"}}
+                  {"$ref": "#/$defs/resourceFencePosition"}
                 ]
               },
               "result": {"enum": ["applied", "failed", "reconciled", "stale"]},
@@ -112,6 +117,37 @@
   ],
   "$defs": {
     "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "resourceFencePosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "resource_ref", "holder_embodiment_id", "epoch", "evidence_hash"],
+      "properties": {
+        "schema": {"const": "dm.cluster-resource-fence-position/v1"},
+        "resource_ref": {"type": "string", "minLength": 1, "maxLength": 240},
+        "holder_embodiment_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "epoch": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "evidence_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "postconditionValue": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991},
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "not": {"pattern": "(?:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|^(?:/|~[/\\\\]|file:|https?://))"}
+        },
+        {"type": "array", "items": {"$ref": "#/$defs/postconditionValue"}},
+        {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {"not": {"pattern": "(?:^|_)(?:address|api_key|bearer|credential|endpoint|password|passwd|path|private|secret|socket|token|url)(?:$|_)"}},
+          "additionalProperties": {"$ref": "#/$defs/postconditionValue"}
+        }
+      ]
+    },
     "canonicalValue": {
       "anyOf": [
         {"type": "null"},
