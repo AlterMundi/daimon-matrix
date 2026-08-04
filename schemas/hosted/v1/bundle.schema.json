@@ -7,7 +7,7 @@
   "required": [
     "schema", "control_artifacts", "control_head", "manifest", "credentials",
     "incarnations", "binding", "binding_activation", "provisional_history",
-    "local_origin", "ledger", "socket", "keystore", "capabilities"
+    "local_origin", "ledger", "socket", "keystore", "capabilities", "routing"
   ],
   "properties": {
     "schema": {"const": "dm.runtime.bundle/v1"},
@@ -54,6 +54,19 @@
           "secret_slot": {"type": "string", "pattern": "^runtime\\.capability\\.v1:[A-Za-z0-9._:-]{1,128}$"}
         }
       }
+    },
+    "routing": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["filename", "profile"],
+          "properties": {
+            "filename": {"$ref": "#/$defs/filename"},
+            "profile": {"type": "object"}
+          }
+        }
+      ]
     }
   },
   "$defs": {

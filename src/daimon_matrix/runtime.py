@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .canonical import CanonicalError, canonical_bytes, unb64url
+from .communication import CommunicationStore
 from .identity import (
     ControlChain,
     VerificationError,
@@ -23,6 +24,16 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .routes import (
+    DirectHTTPProvider,
+    HubProvider,
+    LocalIPCProvider,
+    Provider,
+    RouteBinding,
+    RouteCoordinator,
+    RouteError,
+    RouteProfile,
+)
 from .service import SERVICE_METHODS, HostedWeave
 from .weave import (
     BeingManifest,
@@ -183,6 +194,7 @@ def load_runtime(
             "local_origin",
             "manifest",
             "provisional_history",
+            "routing",
             "schema",
             "socket",
         },
@@ -307,6 +319,95 @@ def load_runtime(
         ):
             raise RuntimeError("invalid_runtime_capability")
         capabilities[capability.capability_id] = capability
+
+    route_profile: RouteProfile | None = None
+    route_rows: list[tuple[RouteBinding, Mapping[str, Any], bytes]] = []
+    routing = bundle["routing"]
+    if routing is not None:
+        route_bundle = _closed(routing, {"filename", "profile"})
+        try:
+            route_profile = RouteProfile.from_value(route_bundle["profile"])
+        except RouteError as exception:
+            raise RuntimeError("runtime_route_profile_rejected") from exception
+        if (
+            route_profile.body_ref != local_origin["body_ref"]
+            or route_profile.principal_id != local_origin["principal_id"]
+        ):
+            raise RuntimeError("runtime_route_profile_origin_mismatch")
+        route_path = _safe_file(root, route_bundle["filename"], must_exist=True)
+        if route_path.name in filenames:
+            raise RuntimeError("runtime_filename_collision")
+        filenames.add(route_path.name)
+        private = _closed(_read_bundle(route_path), {"providers", "schema"})
+        if private["schema"] != "dm.route-custody/v1":
+            raise RuntimeError("unsupported_route_custody")
+        provider_rows = private["providers"]
+        if not isinstance(provider_rows, list) or len(provider_rows) > 256:
+            raise RuntimeError("invalid_route_custody")
+        seen_providers: set[str] = set()
+        for raw_provider in provider_rows:
+            provider = _closed(
+                raw_provider,
+                {
+                    "endpoint",
+                    "key_ref",
+                    "kind",
+                    "provider_ref",
+                    "route_ref",
+                    "secret_slot",
+                    "timeout_ms",
+                },
+            )
+            provider_ref = provider["provider_ref"]
+            route_ref = provider["route_ref"]
+            key_ref = provider["key_ref"]
+            kind = provider["kind"]
+            endpoint = provider["endpoint"]
+            slot = provider["secret_slot"]
+            timeout_ms = provider["timeout_ms"]
+            if (
+                not all(
+                    isinstance(value, str) and value
+                    for value in (provider_ref, route_ref, key_ref, endpoint, slot)
+                )
+                or kind not in {"local", "direct", "hub"}
+                or not isinstance(timeout_ms, int)
+                or isinstance(timeout_ms, bool)
+                or not 1 <= timeout_ms <= 30_000
+                or not slot.startswith("runtime.route.v1:")
+                or provider_ref in seen_providers
+                or slot in required_slots
+            ):
+                raise RuntimeError("invalid_route_custody")
+            bindings = [
+                binding
+                for binding in route_profile.routes
+                if binding.provider_ref == provider_ref
+                and binding.route_ref == route_ref
+            ]
+            if not bindings or len({binding.route_class for binding in bindings}) != 1:
+                raise RuntimeError("runtime_route_binding_missing")
+            binding = bindings[0]
+            if (
+                binding.credential_ref != key_ref
+                or (kind == "local" and binding.route_class != "local")
+                or (
+                    kind == "direct"
+                    and binding.route_class not in {"direct", "direct-anyvpn"}
+                )
+                or (kind == "hub" and binding.route_class != "hub")
+            ):
+                raise RuntimeError("runtime_route_binding_mismatch")
+            secret = contents.secrets.get(slot)
+            if secret is None or len(secret) != 32:
+                raise RuntimeError("missing_runtime_secret")
+            required_slots.add(slot)
+            seen_providers.add(provider_ref)
+            route_rows.append((binding, provider, secret))
+        if seen_providers != {
+            binding.provider_ref for binding in route_profile.routes if binding.enabled
+        }:
+            raise RuntimeError("runtime_route_provider_missing")
     if set(contents.secrets) != required_slots:
         raise RuntimeError("unexpected_runtime_secret_slot")
     seed = contents.secrets.get(signing_slot)
@@ -324,7 +425,49 @@ def load_runtime(
         local_origin=local_origin,
         clock=clock,
     )
-    service = HostedWeave(ledger, signer, capabilities, clock)
+    communication = CommunicationStore(ledger, clock=clock)
+    router: RouteCoordinator | None = None
+    if route_profile is not None:
+        providers: dict[str, Provider] = {}
+        for binding, provider, secret in route_rows:
+            common: dict[str, Any] = {
+                "provider_ref": binding.provider_ref,
+                "route_ref": binding.route_ref,
+                "route_class": binding.route_class,
+                "key_ref": binding.credential_ref,
+                "secret": secret,
+                "sender_principal": route_profile.principal_id,
+                "sender_body_ref": route_profile.body_ref,
+                "clock": clock,
+                "timeout_seconds": provider["timeout_ms"] / 1000,
+            }
+            try:
+                kind = provider["kind"]
+                if kind == "local":
+                    instance: Provider = LocalIPCProvider(
+                        socket_path=_safe_file(
+                            root, provider["endpoint"], must_exist=False
+                        ),
+                        **common,
+                    )
+                elif kind == "direct":
+                    instance = DirectHTTPProvider(
+                        endpoint=provider["endpoint"], **common
+                    )
+                else:
+                    instance = HubProvider(endpoint=provider["endpoint"], **common)
+            except (RouteError, TypeError, ValueError) as exception:
+                raise RuntimeError("runtime_route_provider_rejected") from exception
+            providers[binding.provider_ref] = instance
+        router = RouteCoordinator(communication, route_profile, providers, clock=clock)
+    service = HostedWeave(
+        ledger,
+        signer,
+        capabilities,
+        clock,
+        communication=communication,
+        router=router,
+    )
     ledger.integrity_check()
     final_root = root.lstat()
     identity = (root_info.st_dev, root_info.st_ino)

@@ -14,11 +14,21 @@ Fences are scoped to `resource_ref`, not being or principal. A mutation names
 the current fence generation and observed precondition. Stale generations fail
 closed. Presence and reachability are never accepted as fences.
 
-## Tribe transport adapter
+## Communication transport adapter
 
-The transport accepts typed payload bytes plus direct audience, authenticates
-the sender, encrypts recipients, and returns durable delivery/ACK receipts.
-It does not parse adoption semantics or assert same-being membership.
+The transport accepts an already-authorized immutable
+`dm.sealed-delivery/v1`, authenticates its body-bound route request and returns
+durable operational ACK or recipient-intake evidence. Recipient encryption and
+audience resolution finish before route selection. The provider cannot parse
+adoption semantics, add recipients, assert same-being membership, append the
+ledger, issue presence, mint membership or sign as `/me`.
+
+DM-053 orders configured local, anyVPN direct, other direct and opaque hub
+bindings deterministically. Endpoints and secrets remain provider-private;
+manifests and results expose only opaque references and fix every authority
+boolean to false. A route ACK never substitutes for a semantic receipt. The
+generic human-gateway edge is disabled by default; Buzz and Telegram remain
+unselected implementations rather than protocol dependencies.
 
 For `/we.sync`, the exact payload and authentication binding are specified in
 `docs/dm023-tribe-sync-contract.md`. Transport ACK, Matrix sync receipt, local

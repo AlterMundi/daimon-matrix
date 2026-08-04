@@ -99,8 +99,10 @@ operations rather than raw queue mutation.
 `RouteProvider.deliver` is the narrow fake/DM-018 boundary. If a provider effect
 may have happened but its response is lost, the attempt remains `accepted` and
 the same `attempt_id` is retried; ambiguity is never rewritten as failure. Only
-an explicit provider ACK changes route-attempt state. DM-053 will implement
-local, direct, hub and store-and-forward providers behind this interface.
+an explicit provider ACK changes route-attempt state. DM-053 now implements
+disabled-by-default local, direct, hub and store-and-forward providers behind
+this interface; its ACK/intake evidence still cannot terminate a leg without
+the signed DM-052 receipt event.
 
 Tribe's audited stable IDs, per-recipient rows, leases, ACK separation and crash
 retry were independently reimplemented. No Tribe source, schema, writable
@@ -117,4 +119,3 @@ the MVP.
 - `schemas/communication/v1/semantic-receipt.schema.json`
 - `conformance/fixtures/dm052-logical-communication.json`
 - `tests/test_dm052_communication.py`
-

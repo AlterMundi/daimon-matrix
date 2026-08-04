@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/gateway-edge.schema.json",
+  "title": "DM-053 disabled generic human gateway edge",
+  "oneOf": [
+    {"$ref": "#/$defs/policy"},
+    {"$ref": "#/$defs/render"},
+    {"$ref": "#/$defs/proposal"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9._:@/-]+$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["classifications", "destinations", "enabled", "gateway_ref", "max_chunk_bytes", "operations", "schema", "source_scopes"],
+      "properties": {
+        "schema": {"const": "dm.gateway-policy/v1"},
+        "gateway_ref": {"$ref": "#/$defs/id"},
+        "enabled": {"type": "boolean"},
+        "destinations": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "operations": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "classifications": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "source_scopes": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "max_chunk_bytes": {"type": "integer", "minimum": 64, "maximum": 16384}
+      }
+    },
+    "render": {
+      "type": "object", "additionalProperties": false,
+      "required": ["chunks", "classification", "destination", "gateway_ref", "message_id", "operation", "schema", "source_ref", "source_scope"],
+      "properties": {
+        "schema": {"const": "dm.gateway-render/v1"},
+        "gateway_ref": {"$ref": "#/$defs/id"},
+        "destination": {"$ref": "#/$defs/id"},
+        "operation": {"$ref": "#/$defs/id"},
+        "classification": {"$ref": "#/$defs/id"},
+        "source_scope": {"$ref": "#/$defs/id"},
+        "source_ref": {"$ref": "#/$defs/id"},
+        "message_id": {"type": "string", "format": "uuid"},
+        "chunks": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"type": "string"}}
+      }
+    },
+    "proposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authority", "body", "destination", "external_id", "gateway_ref", "observed_at_ms", "schema"],
+      "properties": {
+        "schema": {"const": "dm.gateway-proposal/v1"},
+        "authority": {"const": "external-source-only"},
+        "gateway_ref": {"$ref": "#/$defs/id"},
+        "destination": {"$ref": "#/$defs/id"},
+        "external_id": {"$ref": "#/$defs/id"},
+        "observed_at_ms": {"$ref": "#/$defs/uint"},
+        "body": {"type": "object", "additionalProperties": false, "required": ["text"], "properties": {"text": {"type": "string", "minLength": 1, "maxLength": 65536}}}
+      }
+    }
+  }
+}

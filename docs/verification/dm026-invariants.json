@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 29,
-  "registry_sha256": "0858842cb1f6a76ce59042f02fbfdad2f8ded864e7bce715512d26a3a14f952e",
+  "required_scenario_count": 33,
+  "registry_sha256": "df01277980fbc029ebe7c0f037a9f11ad40fe16850037c4f3dd141ff5641afd9",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -20,10 +20,12 @@
     "artifact_hashes_verified": true,
     "report_written_atomically_owner_only": true,
     "installed_wheel_exercised": true,
-    "matrix_org_cluster_tribe_and_carriers_absent": true
+    "matrix_org_cluster_tribe_and_live_gateways_absent": true,
+    "synthetic_local_direct_hub_routes_exercised": true
   },
   "evidence": [
     "conformance/registry-v1.json",
+    "docs/verification/dm053-invariants.json",
     "schemas/conformance/v1/registry.schema.json",
     "schemas/conformance/v1/report.schema.json",
     "src/daimon_matrix/conformance.py",

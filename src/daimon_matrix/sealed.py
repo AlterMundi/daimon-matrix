@@ -533,6 +533,97 @@ def _validate_envelope(
     return value
 
 
+def inspect_delivery(raw: bytes, *, at_ms: int) -> dict[str, Any]:
+    """Validate the carrier-visible structure without claiming recipient intake.
+
+    A route has neither disclosure authority nor recipient private keys.  This
+    parser therefore proves only canonical framing, bounded fields, expiry and
+    the immutable delivery digest.  ``open_event`` remains the authoritative
+    recipient-side signature, disclosure and decryption gate.
+    """
+
+    try:
+        value = _closed(
+            _parse(raw),
+            {
+                "schema",
+                "profile",
+                "delivery_id",
+                "event_id",
+                "event_hash",
+                "sensitivity",
+                "authorization_id",
+                "evidence_hash",
+                "issued_at_ms",
+                "expires_at_ms",
+                "sender",
+                "recipients",
+                "payload",
+                "signature",
+            },
+        )
+        if value["schema"] != SCHEMA or value["profile"] != PROFILE:
+            raise _reject()
+        _uuid(value["delivery_id"])
+        _uuid(value["event_id"])
+        _hex_hash(value["event_hash"])
+        _uuid(value["authorization_id"])
+        _hex_hash(value["evidence_hash"])
+        if value["sensitivity"] not in {"personal", "private", "shareable"}:
+            raise _reject()
+        issued = _uint(value["issued_at_ms"])
+        expires = _uint(value["expires_at_ms"])
+        if not issued <= at_ms < expires or expires - issued > MAX_TTL_MS:
+            raise _reject()
+        sender = _sender(value["sender"])
+        recipients = value["recipients"]
+        if (
+            not isinstance(recipients, list)
+            or not 1 <= len(recipients) <= MAX_RECIPIENTS
+        ):
+            raise _reject()
+        for row in recipients:
+            _recipient(row, wrapped=True)
+        if recipients != sorted(recipients, key=_recipient_key):
+            raise _reject()
+        if len({(row["being_ref"], row["embodiment_id"]) for row in recipients}) != len(
+            recipients
+        ):
+            raise _reject()
+        payload = _closed(value["payload"], {"nonce", "ciphertext"})
+        unb64url(cast(str, payload["nonce"]), length=12)
+        ciphertext = unb64url(cast(str, payload["ciphertext"]))
+        if not 16 <= len(ciphertext) <= MAX_EVENT_BYTES + 16:
+            raise _reject()
+        signature = _closed(value["signature"], {"alg", "kid", "role", "value"})
+        if (
+            signature["alg"] != "Ed25519"
+            or signature["role"] != "delivery-authorization"
+            or signature["kid"] != sender["signing_kid"]
+        ):
+            raise _reject()
+        unb64url(cast(str, signature["value"]), length=64)
+        return {
+            "schema": SCHEMA,
+            "delivery_id": value["delivery_id"],
+            "event_id": value["event_id"],
+            "event_hash": value["event_hash"],
+            "sensitivity": value["sensitivity"],
+            "issued_at_ms": issued,
+            "expires_at_ms": expires,
+            "sender": copy.deepcopy(sender),
+            "recipient_embodiment_ids": sorted(
+                str(row["embodiment_id"]) for row in recipients
+            ),
+            "envelope_sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+    except SealedDeliveryError:
+        raise
+    except (CanonicalError, KeyError, TypeError, ValueError) as exception:
+        raise _reject() from exception
+
+
 def seal_event(
     event: Mapping[str, Any],
     *,
@@ -885,6 +976,7 @@ __all__ = [
     "RecipientTarget",
     "SealedDeliveryConflict",
     "SealedDeliveryError",
+    "inspect_delivery",
     "open_event",
     "recipient_descriptor",
     "seal_event",

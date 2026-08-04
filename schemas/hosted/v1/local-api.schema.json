@@ -59,6 +59,8 @@
         {"properties": {"method": {"const": "communication.receipt.record"}, "params": {"$ref": "#/$defs/communicationReceiptParams"}}},
         {"properties": {"method": {"const": "communication.result"}, "params": {"$ref": "#/$defs/communicationResultParams"}}},
         {"properties": {"method": {"const": "communication.route-ack"}, "params": {"$ref": "#/$defs/communicationRouteAckParams"}}},
+        {"properties": {"method": {"const": "route.inspect"}, "params": {"$ref": "#/$defs/routeInspectParams"}}},
+        {"properties": {"method": {"const": "route.submit"}, "params": {"$ref": "#/$defs/routeSubmitParams"}}},
         {"properties": {"method": {"const": "runtime.status"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.heads"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.preview"}, "params": {"$ref": "#/$defs/previewParams"}}},
@@ -158,6 +160,22 @@
         "ack": {"type": "object"},
         "attempt_id": {"type": "string", "format": "uuid"},
         "failed": {"type": "boolean"}
+      }
+    },
+    "routeInspectParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["leg_id"],
+      "properties": {
+        "leg_id": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "routeSubmitParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadline_ms", "envelope", "leg_id"],
+      "properties": {
+        "deadline_ms": {"$ref": "#/$defs/uint"},
+        "envelope": {"type": "string", "minLength": 1, "maxLength": 6990507, "pattern": "^[A-Za-z0-9_-]+$"},
+        "leg_id": {"type": "string", "minLength": 1, "maxLength": 256}
       }
     },
     "transport": {

@@ -11,7 +11,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import (  # type: ignore[import-untyped]
     Draft202012Validator,
@@ -103,6 +103,7 @@ class RuntimeFixture(RootLedgerFixture):
                     "secret_slot": capability_slot,
                 }
             ],
+            "routing": None,
         }
         path = state_root / "runtime.json"
         path.write_bytes(canonical_bytes(bundle))
@@ -243,6 +244,88 @@ class RuntimeBundleTests(RuntimeFixture):
             },
         )
         with self.assertRaisesRegex(RuntimeError, "unexpected_runtime_secret_slot"):
+            load_runtime(
+                state_root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: NOW,
+            )
+
+    def test_route_profile_requires_exact_private_custody_and_secret(self) -> None:
+        route_secret = seed("dm053-runtime-route")
+        signing_slot = "runtime.signing.v1:local"
+        capability_slot = "runtime.capability.v1:runtime-test"
+        route_slot = "runtime.route.v1:local"
+        state_root, bundle, _ = self.make_bundle(
+            state_name="routes",
+            secrets={
+                signing_slot: self.signing_seeds["legion"],
+                capability_slot: seed("dm024-capability"),
+                route_slot: route_secret,
+            },
+        )
+        origin = self.origins["legion"]
+        bundle["routing"] = {
+            "filename": "route-custody.json",
+            "profile": {
+                "schema": "dm.route-profile/v1",
+                "profile_id": "route-profile:runtime",
+                "body_ref": origin["body_ref"],
+                "principal_id": origin["principal_id"],
+                "policy_version": "dm.route-policy/v1",
+                "enabled": True,
+                "local_recipient_ids": ["embodiment:daimonmatrix"],
+                "routes": [
+                    {
+                        "schema": "dm.route-binding/v1",
+                        "adapter_id": "adapter:local",
+                        "credential_ref": "credential:local",
+                        "enabled": True,
+                        "priority": 0,
+                        "provider_ref": "provider:local",
+                        "recipient_body_ref": origin["body_ref"],
+                        "recipient_id": "embodiment:daimonmatrix",
+                        "route_class": "local",
+                        "route_ref": "route:local",
+                    }
+                ],
+            },
+        }
+        custody = {
+            "schema": "dm.route-custody/v1",
+            "providers": [
+                {
+                    "endpoint": "recipient-route.sock",
+                    "key_ref": "credential:local",
+                    "kind": "local",
+                    "provider_ref": "provider:local",
+                    "route_ref": "route:local",
+                    "secret_slot": route_slot,
+                    "timeout_ms": 5_000,
+                }
+            ],
+        }
+        custody_path = state_root / "route-custody.json"
+        custody_path.write_bytes(canonical_bytes(custody))
+        custody_path.chmod(0o600)
+        bundle_path = state_root / "runtime.json"
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+        )
+        self.assertIsNotNone(runtime.service.router)
+        self.assertNotIn(route_secret, canonical_bytes(bundle))
+        self.assertNotIn(str(state_root).encode(), canonical_bytes(bundle))
+
+        changed = copy.deepcopy(custody)
+        cast(list[dict[str, Any]], changed["providers"])[0]["secret_slot"] = (
+            "runtime.route.v1:missing"
+        )
+        custody_path.write_bytes(canonical_bytes(changed))
+        with self.assertRaisesRegex(RuntimeError, "missing_runtime_secret"):
             load_runtime(
                 state_root,
                 "runtime.json",

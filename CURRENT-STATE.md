@@ -46,9 +46,9 @@ responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
 bytes, MCP exposes only the current twelve methods and `daimon:` resources, and
-legacy MCP/Matrix.org/network transports remain absent. Cluster's next host
+legacy MCP and Matrix.org transports remain absent. Cluster's next host
 adapter supervises the process. DM-026 closes the local release gate with a
-29-scenario invariant registry and deterministic installed conformance report;
+33-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, Cluster effects or rebirth. DM-050 begins absorbing
 Tribe transport behind the same boundary. DM-050 pins the current public Tribe
@@ -60,12 +60,21 @@ DM-051 now supplies the disabled, carrier-neutral
 `dm.sealed-delivery/v1` runtime: root-bound plural sender/recipient authority,
 fresh per-delivery payload encryption, independent RFC 9180 HPKE CEK wraps,
 typed encrypted-keystore operations and durable exact retry. The old DM-011 V0
-wire remains KAT evidence only. No live Tribe/local/direct/hub route is enabled.
+wire remains KAT evidence only. No live Tribe route or account is enabled.
 
 DM-052 now supplies the same-ledger logical communication reducer: signed
 message/thread identity, per-recipient semantic legs, route-attempt and intake
 receipt separation, lossless snapshot pages, disjoint claim leases, contiguous
 terminal-prefix cursors, queue compaction and rollback detection. Its dedicated
 authenticated RPC methods are available to purpose-limited adapters but no live
-carrier is enabled. DM-053 owns local/direct/hub providers; DM-054 owns current
-scope resolution and the `/me`, `/we`, `/we.sync`, and `/tribe` surface.
+carrier is enabled.
+
+DM-053 now supplies explicit per-embodiment route profiles, authority-free
+provider manifests, deterministic local/anyVPN/direct/hub selection,
+authenticated body-bound Unix/HTTP requests, recipient-validated intake,
+opaque durable hub/inbox leases, ambiguous-response retry and a generic
+gateway edge disabled by default. Provider endpoints and route secrets remain
+in owner-only custody and are absent from results. CI uses loopback providers
+only; Buzz and Telegram remain unselected future gateway implementations.
+DM-054 owns current scope resolution and the `/me`, `/we`, `/we.sync`, and
+`/tribe` surface, so DM-053 does not yet make those user operations live.

@@ -55,6 +55,15 @@ plans. These methods require an explicitly scoped adapter capability and remain
 absent from the general CLI/MCP surface. They do not enable a carrier, generic
 routing or live fan-out.
 
+DM-053 adds the equally purpose-limited `route.inspect` and `route.submit`
+methods. An absent route profile returns `route_profile_absent`; there is no
+host-wide default. An enabled profile is public authority-free configuration
+inside the runtime bundle, while provider endpoints live in a separate
+owner-only custody document and HMAC route credentials live only in declared
+`runtime.route.v1:*` keystore slots. The loader requires exact
+profile/origin/provider/secret bindings before constructing a provider.
+Neither method is added to the human CLI or MCP surface.
+
 ## Replay and crash semantics
 
 Ledger schema V3 journals `(client_id, request_id, request_hash, method)` and the
@@ -75,12 +84,14 @@ change this protocol.
 
 ## Transport boundary
 
-The absorbed Tribe runtime will authenticate a remote route and call the sync
-methods with exact `(scheme, principal_id)` evidence. Matrix rechecks that
-principal against DM-021 credentials. Telegram, Buzz or another carrier may be
-added later as a versioned adapter if it can supply the same authenticated
-transport evidence and preserve canonical payload bytes. No carrier becomes
-event authority, adoption authority or the source of Weave cursors.
+DM-053 providers authenticate exact `dm.transport-request/v1` bytes over local
+Unix or direct/hub HTTP round trips. The sender body, transport principal,
+opaque route reference, request lifetime and sealed-delivery digest are bound
+by a purpose-specific route credential. Recipient intake reopens the DM-051
+authority/cryptography gate before durable acceptance; hub acceptance does
+not. Telegram, Buzz or another human gateway may be added later only behind
+the disabled generic edge. No carrier becomes event, scope, adoption, receipt
+or Weave-cursor authority.
 
 Schemas are in `schemas/hosted/v1/`; runnable verification is in
 `tests/test_dm024_service.py` and `tests/test_dm024_runtime.py`.
