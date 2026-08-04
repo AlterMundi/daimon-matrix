@@ -76,10 +76,11 @@ post-compromise recovery.
 
 ## Carrier boundary
 
-The output is carrier-neutral immutable bytes. DM-052/DM-053 will add typed
-message storage and local/direct/hub delivery. Telegram and Buzz are possible
-future human-facing carrier/gateway adapters; neither is selected, imported or
-trusted by this card, and neither may define identity, scope or message state.
+The output is carrier-neutral immutable bytes. DM-052 now adds typed message
+storage and DM-053 adds disabled local/direct/hub providers. Telegram and Buzz
+are possible future human-facing carrier/gateway adapters; neither is selected,
+imported or trusted by this card, and neither may define identity, scope or
+message state.
 
 ## Evidence
 

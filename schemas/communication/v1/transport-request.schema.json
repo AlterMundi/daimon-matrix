@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/transport-request.schema.json",
+  "title": "DM-053 authenticated opaque transport exchange",
+  "oneOf": [
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/response"},
+    {"$ref": "#/$defs/intake"},
+    {"$ref": "#/$defs/claim"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9._:@/-]+$"},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "auth": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alg", "key_ref", "schema", "value"],
+      "properties": {
+        "schema": {"const": "dm.transport-auth/v1"},
+        "alg": {"const": "HMAC-SHA256"},
+        "key_ref": {"$ref": "#/$defs/id"},
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      }
+    },
+    "submission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempt_id", "deadline_ms", "delivery_id", "envelope", "envelope_sha256", "leg_id", "message_id", "recipient_id", "schema"],
+      "properties": {
+        "schema": {"const": "dm.route-submission/v1"},
+        "attempt_id": {"$ref": "#/$defs/uuid"},
+        "deadline_ms": {"$ref": "#/$defs/uint"},
+        "delivery_id": {"$ref": "#/$defs/uuid"},
+        "envelope": {"type": "string", "minLength": 1, "maxLength": 6990507, "pattern": "^[A-Za-z0-9_-]+$"},
+        "envelope_sha256": {"$ref": "#/$defs/hash"},
+        "leg_id": {"$ref": "#/$defs/id"},
+        "message_id": {"$ref": "#/$defs/uuid"},
+        "recipient_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["auth", "expires_at_ms", "issued_at_ms", "provider_ref", "request_id", "route_ref", "schema", "sender_body_ref", "sender_principal", "submission", "version"],
+      "properties": {
+        "schema": {"const": "dm.transport-request/v1"},
+        "version": {"const": "v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "issued_at_ms": {"$ref": "#/$defs/uint"},
+        "expires_at_ms": {"$ref": "#/$defs/uint"},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "route_ref": {"$ref": "#/$defs/id"},
+        "sender_principal": {"$ref": "#/$defs/id"},
+        "sender_body_ref": {"$ref": "#/$defs/id"},
+        "submission": {"$ref": "#/$defs/submission"},
+        "auth": {"$ref": "#/$defs/auth"}
+      }
+    },
+    "response": {
+      "type": "object", "additionalProperties": false,
+      "required": ["auth", "evidence_ref", "intake", "outcome", "provider_ref", "request_id", "request_sha256", "route_ref", "schema", "status", "version"],
+      "properties": {
+        "schema": {"const": "dm.transport-response/v1"},
+        "version": {"const": "v1"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "request_sha256": {"$ref": "#/$defs/hash"},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "route_ref": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["accepted", "refused"]},
+        "outcome": {"enum": ["recipient-intake", "hub-accepted", "refused"]},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "intake": {"oneOf": [{"$ref": "#/$defs/intake"}, {"type": "null"}]},
+        "auth": {"$ref": "#/$defs/auth"}
+      },
+      "oneOf": [
+        {"properties": {"status": {"const": "accepted"}, "outcome": {"const": "recipient-intake"}, "intake": {"$ref": "#/$defs/intake"}}},
+        {"properties": {"status": {"const": "accepted"}, "outcome": {"const": "hub-accepted"}, "intake": {"type": "null"}}},
+        {"properties": {"status": {"const": "refused"}, "outcome": {"const": "refused"}, "intake": {"type": "null"}}}
+      ]
+    },
+    "intake": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accepted_at_ms", "delivery_id", "envelope_sha256", "evidence_ref", "fence_ref", "presence_ref", "recipient_body_ref", "recipient_id", "schema"],
+      "properties": {
+        "schema": {"const": "dm.transport-intake/v1"},
+        "accepted_at_ms": {"$ref": "#/$defs/uint"},
+        "delivery_id": {"$ref": "#/$defs/uuid"},
+        "envelope_sha256": {"$ref": "#/$defs/hash"},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "presence_ref": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "fence_ref": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "recipient_body_ref": {"$ref": "#/$defs/id"},
+        "recipient_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["claim_id", "consumer_id", "items", "lease_until_ms", "recipient_id", "schema"],
+      "properties": {
+        "schema": {"const": "dm.opaque-inbox-claim/v1"},
+        "claim_id": {"$ref": "#/$defs/uuid"},
+        "consumer_id": {"$ref": "#/$defs/id"},
+        "lease_until_ms": {"$ref": "#/$defs/uint"},
+        "recipient_id": {"$ref": "#/$defs/id"},
+        "items": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/claimItem"}}
+      }
+    },
+    "claimItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["delivery_id", "envelope", "envelope_sha256", "sequence"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "delivery_id": {"$ref": "#/$defs/uuid"},
+        "envelope_sha256": {"$ref": "#/$defs/hash"},
+        "envelope": {"type": "string", "minLength": 1, "maxLength": 6990507, "pattern": "^[A-Za-z0-9_-]+$"}
+      }
+    }
+  }
+}

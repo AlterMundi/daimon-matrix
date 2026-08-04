@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/route-provider.schema.json",
+  "title": "DM-053 authority-free route provider records",
+  "oneOf": [
+    {"$ref": "#/$defs/manifest"},
+    {"$ref": "#/$defs/result"},
+    {"$ref": "#/$defs/inspection"},
+    {"$ref": "#/$defs/dispatch"}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9._:@/-]+$"},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "manifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authority", "limits", "operations", "provider_ref", "route_class", "route_ref", "schema", "versions"],
+      "properties": {
+        "schema": {"const": "dm.route-provider-manifest/v1"},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "route_ref": {"$ref": "#/$defs/id"},
+        "route_class": {"enum": ["local", "direct-anyvpn", "direct", "hub"]},
+        "versions": {"const": ["v1"]},
+        "operations": {"const": ["inspect", "submit"]},
+        "limits": {
+          "type": "object", "additionalProperties": false,
+          "required": ["max_input_bytes", "max_output_bytes", "max_runtime_ms"],
+          "properties": {
+            "max_input_bytes": {"type": "integer", "minimum": 1, "maximum": 5242880},
+            "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 5242880},
+            "max_runtime_ms": {"type": "integer", "minimum": 1, "maximum": 30000}
+          }
+        },
+        "authority": {
+          "type": "object", "additionalProperties": false,
+          "required": ["matrix_authority", "may_append_ledger", "may_issue_presence", "may_mint_membership", "may_sign_as_me"],
+          "properties": {
+            "matrix_authority": {"const": false},
+            "may_append_ledger": {"const": false},
+            "may_issue_presence": {"const": false},
+            "may_mint_membership": {"const": false},
+            "may_sign_as_me": {"const": false}
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempt_id", "evidence_ref", "intake", "outcome", "provider_ref", "route_ref", "schema", "status"],
+      "properties": {
+        "schema": {"const": "dm.route-provider-result/v1"},
+        "attempt_id": {"$ref": "#/$defs/uuid"},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "route_ref": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["accepted", "unavailable", "refused"]},
+        "outcome": {"enum": ["recipient-intake", "hub-accepted", "unavailable", "refused"]},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "intake": {"oneOf": [{"$ref": "#/$defs/intake"}, {"type": "null"}]}
+      },
+      "oneOf": [
+        {"properties": {"status": {"const": "accepted"}, "outcome": {"const": "recipient-intake"}, "intake": {"$ref": "#/$defs/intake"}}},
+        {"properties": {"status": {"const": "accepted"}, "outcome": {"const": "hub-accepted"}, "intake": {"type": "null"}}},
+        {"properties": {"status": {"const": "unavailable"}, "outcome": {"const": "unavailable"}, "intake": {"type": "null"}}},
+        {"properties": {"status": {"const": "refused"}, "outcome": {"const": "refused"}, "intake": {"type": "null"}}}
+      ]
+    },
+    "intake": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accepted_at_ms", "delivery_id", "envelope_sha256", "evidence_ref", "fence_ref", "presence_ref", "recipient_body_ref", "recipient_id", "schema"],
+      "properties": {
+        "schema": {"const": "dm.transport-intake/v1"},
+        "accepted_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "delivery_id": {"$ref": "#/$defs/uuid"},
+        "envelope_sha256": {"$ref": "#/$defs/hash"},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "presence_ref": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "fence_ref": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "recipient_body_ref": {"$ref": "#/$defs/id"},
+        "recipient_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["adapter_id", "available", "evidence_ref", "priority", "provider_ref", "route_class", "route_ref"],
+      "properties": {
+        "adapter_id": {"$ref": "#/$defs/id"},
+        "available": {"type": "boolean"},
+        "evidence_ref": {"$ref": "#/$defs/id"},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "route_class": {"enum": ["local", "direct-anyvpn", "direct", "hub"]},
+        "route_ref": {"$ref": "#/$defs/id"}
+      }
+    },
+    "attemptEvidence": {
+      "oneOf": [
+        {"$ref": "#/$defs/result"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["evidence_ref", "provider_ref", "route_ref", "status"],
+          "properties": {
+            "evidence_ref": {"$ref": "#/$defs/id"},
+            "provider_ref": {"$ref": "#/$defs/id"},
+            "route_ref": {"$ref": "#/$defs/id"},
+            "status": {"const": "unavailable"}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["attempt_id", "provider_ref", "route_ref", "status"],
+          "properties": {
+            "attempt_id": {"$ref": "#/$defs/uuid"},
+            "provider_ref": {"$ref": "#/$defs/id"},
+            "route_ref": {"$ref": "#/$defs/id"},
+            "status": {"const": "ambiguous"}
+          }
+        }
+      ]
+    },
+    "inspection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidates", "leg_id", "policy_version", "profile_id", "schema"],
+      "properties": {
+        "schema": {"const": "dm.route-inspection/v1"},
+        "profile_id": {"$ref": "#/$defs/id"},
+        "policy_version": {"const": "dm.route-policy/v1"},
+        "leg_id": {"$ref": "#/$defs/id"},
+        "candidates": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/candidate"}}
+      }
+    },
+    "dispatch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempts", "delivery_id", "leg_id", "policy_version", "profile_id", "schema", "selected", "status"],
+      "properties": {
+        "schema": {"const": "dm.route-dispatch/v1"},
+        "profile_id": {"$ref": "#/$defs/id"},
+        "policy_version": {"const": "dm.route-policy/v1"},
+        "leg_id": {"$ref": "#/$defs/id"},
+        "delivery_id": {"$ref": "#/$defs/uuid"},
+        "status": {"enum": ["accepted", "pending", "refused"]},
+        "selected": {"oneOf": [{"$ref": "#/$defs/result"}, {"type": "null"}]},
+        "attempts": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/attemptEvidence"}}
+      }
+    }
+  }
+}

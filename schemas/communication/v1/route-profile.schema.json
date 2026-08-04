@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/route-profile.schema.json",
+  "title": "DM-053 explicit route profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["body_ref", "enabled", "local_recipient_ids", "policy_version", "principal_id", "profile_id", "routes", "schema"],
+  "properties": {
+    "schema": {"const": "dm.route-profile/v1"},
+    "profile_id": {"$ref": "#/$defs/id"},
+    "body_ref": {"$ref": "#/$defs/id"},
+    "principal_id": {"$ref": "#/$defs/id"},
+    "policy_version": {"const": "dm.route-policy/v1"},
+    "enabled": {"type": "boolean"},
+    "local_recipient_ids": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "routes": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/binding"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9._:@/-]+$"},
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter_id", "credential_ref", "enabled", "priority", "provider_ref", "recipient_body_ref", "recipient_id", "route_class", "route_ref", "schema"],
+      "properties": {
+        "schema": {"const": "dm.route-binding/v1"},
+        "adapter_id": {"$ref": "#/$defs/id"},
+        "credential_ref": {"$ref": "#/$defs/id"},
+        "enabled": {"type": "boolean"},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "provider_ref": {"$ref": "#/$defs/id"},
+        "recipient_body_ref": {"$ref": "#/$defs/id"},
+        "recipient_id": {"$ref": "#/$defs/id"},
+        "route_class": {"enum": ["local", "direct-anyvpn", "direct", "hub"]},
+        "route_ref": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

@@ -931,6 +931,19 @@ class CommunicationStore:
                 "legs": [_row_document(item) for item in legs],
             }
 
+    def leg(self, leg_id: str) -> dict[str, Any]:
+        """Return one canonical semantic-leg projection for route selection."""
+
+        _text(leg_id, "invalid_leg_id", maximum=256)
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT * FROM communication_legs WHERE leg_id=?", (leg_id,)
+            ).fetchone()
+            if row is None:
+                raise CommunicationError("semantic_leg_not_known")
+            return _row_document(row)
+
     @staticmethod
     def _attempt_document(value: Any) -> Mapping[str, Any]:
         attempt = _closed(
@@ -1044,7 +1057,7 @@ class CommunicationStore:
                 ).fetchone()
                 if existing is not None:
                     if (
-                        existing["attempt_id"] == attempt_id
+                        existing["leg_id"] == attempt["leg_id"]
                         and existing["envelope_hash"] == envelope_hash
                     ):
                         database.commit()

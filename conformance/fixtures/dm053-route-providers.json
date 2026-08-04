@@ -1,0 +1,28 @@
+{
+  "schema": "dm.route.fixtures/v1",
+  "cases": [
+    {"id": "all-unavailable-new-deadline-recovery", "expected": "new-operational-attempt"},
+    {"id": "ambiguous-direct-hub-duplicate", "expected": "one-recipient-intake"},
+    {"id": "authenticated-refusal", "expected": "no-fallback"},
+    {"id": "candidate-input-reordering", "expected": "byte-identical-order"},
+    {"id": "changed-delivery-bytes", "expected": "quarantined-before-network"},
+    {"id": "concurrent-inbox-claims", "expected": "disjoint-complete-pages"},
+    {"id": "daemon-local-api-loopback", "expected": "authenticated-route-surface"},
+    {"id": "direct-http-loopback", "expected": "authenticated-intake"},
+    {"id": "gateway-disabled", "expected": "gateway_render_refused"},
+    {"id": "gateway-enabled-shareable", "expected": "authority-validated-escaped-bounded-attributed"},
+    {"id": "hub-ack", "expected": "accepted-nonterminal"},
+    {"id": "hub-terminal-compaction-gate", "expected": "reject-without-terminal-evidence"},
+    {"id": "inbox-restart-lease-reclaim", "expected": "stable-sequence-and-exact-old-claim-replay"},
+    {"id": "inbox-same-time-over-100", "expected": "lossless-stable-sequences"},
+    {"id": "local-unix-loopback", "expected": "authenticated-intake"},
+    {"id": "localhost-mixed-audience", "expected": "zero-external-effect"},
+    {"id": "missing-route-profile", "expected": "route_profile_absent"},
+    {"id": "presence-fence-stale-or-substituted", "expected": "authenticated-refusal-before-intake"},
+    {"id": "provider-extra-endpoint-field", "expected": "invalid_provider_result"},
+    {"id": "provider-outcome-coherence", "expected": "invalid_provider_result"},
+    {"id": "request-id-different-bytes", "expected": "transport_request_conflict"},
+    {"id": "route-unroutable", "expected": "accepted-leg-preserved-for-policy"},
+    {"id": "unavailable-direct-hub", "expected": "deterministic-fallback"}
+  ]
+}

@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from .canonical import CanonicalError, unb64url
 from .communication import CommunicationError, CommunicationStore
 from .ledger import (
     SCHEMA_VERSION,
@@ -26,6 +27,7 @@ from .local_api import (
     verify_response,
 )
 from .projections import ProjectionEngine, ProjectionError
+from .routes import RouteCoordinator, RouteError
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
 
@@ -60,7 +62,8 @@ COMMUNICATION_METHODS: Final = frozenset(
         "communication.route-ack",
     }
 )
-SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS
+ROUTE_METHODS: Final = frozenset({"route.inspect", "route.submit"})
+SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS | ROUTE_METHODS
 
 Clock = Callable[[], int]
 
@@ -134,6 +137,7 @@ class HostedWeave:
     capabilities: Mapping[str, LocalCapability]
     clock: Clock
     communication: CommunicationStore | None = None
+    router: RouteCoordinator | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -161,6 +165,8 @@ class HostedWeave:
         elif communication.ledger is not self.ledger:
             raise ServiceError("communication_ledger_mismatch")
         communication.initialize()
+        if self.router is not None and self.router.store is not communication:
+            raise ServiceError("route_store_mismatch")
 
     @property
     def origin(self) -> dict[str, str]:
@@ -289,6 +295,15 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.retryable},
             )
+        except RouteError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -334,6 +349,24 @@ class HostedWeave:
         communication = self.communication
         if communication is None:  # established in __post_init__
             raise ServiceError("communication_unavailable")
+        if method == "route.inspect":
+            value = _closed(params, {"leg_id"})
+            if self.router is None:
+                raise ServiceError("route_profile_absent")
+            return self.router.inspect(leg_id=value["leg_id"])
+        if method == "route.submit":
+            value = _closed(params, {"deadline_ms", "envelope", "leg_id"})
+            if self.router is None:
+                raise ServiceError("route_profile_absent")
+            try:
+                envelope = unb64url(value["envelope"])
+            except (CanonicalError, TypeError, ValueError) as exception:
+                raise ServiceError("invalid_params") from exception
+            return self.router.dispatch(
+                leg_id=value["leg_id"],
+                envelope=envelope,
+                deadline_ms=_uint(value["deadline_ms"]),
+            )
         if method == "communication.accept":
             value = _closed(params, {"message_event_id", "resolution_event_id"})
             return communication.accept(

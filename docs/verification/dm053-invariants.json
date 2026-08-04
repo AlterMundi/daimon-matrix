@@ -1,0 +1,43 @@
+{
+  "schema": "dm-053-invariant-report/v1",
+  "scope": "synthetic-loopback-route-providers",
+  "deployment": "live-routes-disabled",
+  "invariants": {
+    "already_authorized_sealed_bytes_only": true,
+    "provider_authority_all_false": true,
+    "explicit_per_embodiment_profile": true,
+    "absent_profile_fails_closed": true,
+    "private_endpoint_and_secret_custody": true,
+    "deterministic_local_anyvpn_direct_hub_order": true,
+    "authenticated_body_and_digest_binding": true,
+    "recipient_validation_before_intake": true,
+    "hub_ack_is_not_recipient_intake": true,
+    "route_ack_is_not_semantic_receipt": true,
+    "ambiguous_response_retry_is_idempotent": true,
+    "direct_hub_duplicate_preserves_one_semantic_leg": true,
+    "changed_delivery_bytes_quarantine": true,
+    "stable_provider_sequences_and_disjoint_leases": true,
+    "concurrent_claims_and_restart_reclaim": true,
+    "terminal_evidence_required_for_compaction": true,
+    "current_presence_and_fence_gate_before_intake": true,
+    "local_socket_and_peer_rechecked_before_send": true,
+    "installed_daemon_route_surface": true,
+    "localhost_mixed_or_remote_zero_effect": true,
+    "gateway_disabled_by_default": true,
+    "enabled_gateway_requires_authority_validator": true,
+    "gateway_output_escaped_bounded_attributed": true,
+    "gateway_inbound_external_source_only": true,
+    "buzz_and_telegram_unselected": true,
+    "matrix_org_absent": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm053-route-providers.json",
+    "docs/dm053-route-providers.md",
+    "schemas/communication/v1/gateway-edge.schema.json",
+    "schemas/communication/v1/route-profile.schema.json",
+    "schemas/communication/v1/route-provider.schema.json",
+    "schemas/communication/v1/transport-request.schema.json",
+    "src/daimon_matrix/routes.py",
+    "tests/test_dm053_routes.py"
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.2",
+  "suite_version": "DM-026.3",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -337,6 +337,62 @@
       "cleanup": "Synthetic artifacts and ledgers are removed.",
       "platform": "all",
       "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "route_authenticated_loopbacks",
+      "owners": ["DM-018", "DM-051", "DM-052", "DM-053"],
+      "specifications": ["docs/dm053-route-providers.md", "specs/adapter-contracts.md"],
+      "setup": "Exact sealed delivery, purpose-specific route secret, recipient validator and owner-local Unix or loopback HTTP endpoint.",
+      "stimulus": "Submit through authenticated service, AF_UNIX and HTTP provider paths and verify the body-bound response.",
+      "fault": "A route could otherwise substitute bytes, leak its endpoint or claim semantic delivery from network acceptance.",
+      "expected": "Canonical request and response authentication bind the exact body digest; recipient validation precedes intake; results reveal no endpoint or secret and the semantic leg remains pending.",
+      "evidence": ["tests.test_dm053_routes.HostedRouteBoundaryTests.test_authenticated_service_routes_only_with_explicit_profile", "tests.test_dm053_routes.InboxAndProtocolTests.test_direct_http_loopback_uses_authenticated_canonical_exchange", "tests.test_dm053_routes.InboxAndProtocolTests.test_local_unix_round_trip_is_authenticated_and_leak_free"],
+      "cleanup": "Stop loopback listeners and remove provider-owned inboxes and sockets.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "route_deterministic_fallback",
+      "owners": ["DM-051", "DM-052", "DM-053"],
+      "specifications": ["docs/dm051-recipient-encryption.md", "docs/dm052-logical-communication.md", "docs/dm053-route-providers.md"],
+      "setup": "One accepted semantic leg and reordered local/direct/hub bindings under one explicit profile.",
+      "stimulus": "Exercise direct success, unavailable fallback, authenticated refusal, ambiguous response loss and retry.",
+      "fault": "Discovery order, response loss or hub fallback could duplicate intake or bypass a definitive rejection.",
+      "expected": "Class/priority/adapter ordering is stable; only unavailable or ambiguous outcomes fall back; exact retry produces one recipient intake and one semantic leg.",
+      "evidence": ["tests.test_dm053_routes.RouteSelectionTests.test_all_unavailable_stays_pending_and_new_deadline_can_recover", "tests.test_dm053_routes.RouteSelectionTests.test_ambiguous_direct_then_hub_and_retry_are_idempotent", "tests.test_dm053_routes.RouteSelectionTests.test_authenticated_recipient_refusal_stops_before_hub", "tests.test_dm053_routes.RouteSelectionTests.test_candidate_order_is_input_order_independent", "tests.test_dm053_routes.RouteSelectionTests.test_direct_success_records_route_ack_but_not_semantic_delivery", "tests.test_dm053_routes.RouteSelectionTests.test_missing_route_is_unroutable_without_provider_effect", "tests.test_dm053_routes.RouteSelectionTests.test_unavailable_direct_falls_back_to_hub_but_refusal_does_not"],
+      "cleanup": "Remove synthetic provider queues and operational route attempts.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "route_locality_gateway",
+      "owners": ["DM-012", "DM-053"],
+      "specifications": ["docs/dm053-route-providers.md", "specs/scope-resolution.md"],
+      "setup": "Localhost transport principal, mixed resolved audience and disabled generic human-gateway policy.",
+      "stimulus": "Attempt remote routing and gateway rendering, then explicitly enable an exact synthetic allowlist.",
+      "fault": "Alias or route metadata could turn locality into identity authority or mirror private/unescaped content.",
+      "expected": "Mixed or remote localhost scope has zero external effects; the gateway is disabled by default, enabling requires an authority validator, and output is escaped, bounded and attributed; inbound remains external-source-only.",
+      "evidence": ["tests.test_dm053_routes.GatewayBoundaryTests.test_gateway_allowlists_and_inbound_authority_fail_closed", "tests.test_dm053_routes.GatewayBoundaryTests.test_gateway_is_disabled_then_escaped_bounded_and_attributed", "tests.test_dm053_routes.RouteSelectionTests.test_localhost_mixed_or_remote_scope_has_zero_provider_effect"],
+      "cleanup": "Synthetic render records only; no live gateway account or carrier is contacted.",
+      "platform": "all",
+      "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "route_provider_state",
+      "owners": ["DM-018", "DM-024", "DM-053"],
+      "specifications": ["docs/dm024-hosted-runtime.md", "docs/dm053-route-providers.md"],
+      "setup": "Owner-only route custody, explicit per-embodiment profile, closed authority-free manifests and durable opaque inbox.",
+      "stimulus": "Load exact route secret slots, concurrently claim more than 100 equal-time items, restart, reclaim, replay, ACK, terminal-gated compact and present stale gates, conflicts or closed-shape violations.",
+      "fault": "Host defaults, missing secrets, fixed pages, reused identifiers, stale presence/fences or provider-supplied implementation fields could corrupt or expand authority.",
+      "expected": "Absent or mismatched custody fails closed; claims are stable and disjoint across concurrency and restart; exact replay is idempotent; compaction requires exact terminal evidence; stale intake gates and provider conflicts reject; schemas and manifests expose no authority or private handle.",
+      "evidence": ["tests.test_dm024_runtime.RuntimeBundleTests.test_route_profile_requires_exact_private_custody_and_secret", "tests.test_dm053_routes.InboxAndProtocolTests.test_concurrent_inbox_claims_are_disjoint", "tests.test_dm053_routes.InboxAndProtocolTests.test_delivery_and_request_conflicts_fail_closed", "tests.test_dm053_routes.InboxAndProtocolTests.test_inbox_claims_are_stable_disjoint_and_compactable", "tests.test_dm053_routes.InboxAndProtocolTests.test_inbox_restart_and_lease_expiry_reclaim_without_sequence_reset", "tests.test_dm053_routes.InboxAndProtocolTests.test_presence_and_fence_gate_must_be_complete_and_current", "tests.test_dm053_routes.ProviderNegativeTests.test_provider_result_is_closed_and_cannot_supply_endpoint", "tests.test_dm053_routes.ProviderNegativeTests.test_provider_status_outcome_and_intake_binding_are_coherent", "tests.test_dm053_routes.RouteSchemaTests.test_runtime_documents_match_closed_schemas"],
+      "cleanup": "Close SQLite handles and remove owner-only route custody and synthetic provider state.",
+      "platform": "all",
+      "ci_lane": "complete",
       "required": true
     },
     {
