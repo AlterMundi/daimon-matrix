@@ -5,7 +5,7 @@
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
   "required_scenario_count": 39,
-  "registry_sha256": "14691fedc05af4aee9a45e6cefd10d8b07182a296d488de280213f80498fd14d",
+  "registry_sha256": "b1009a5a7998b7e266459fbc9bf9405b2af4a56ad51a37f1d84e298f14e5652b",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,

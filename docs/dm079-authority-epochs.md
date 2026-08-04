@@ -76,7 +76,9 @@ fresh physical incarnation, installing the already signed V2 bundle, retaining
 the same per-embodiment volume and starting the daemon through descriptor-only
 custody. Matrix validates the epoch before binding its socket. Cluster registry
 equality is still required, and neither manifest nor incarnation authority
-substitutes for a current resource fence.
+substitutes for a current resource fence. Matrix also supplies the exact scope
+evaluation time to Cluster's body reader, so a restarted process cannot race
+an independently sampled millisecond while producing `/me`.
 
 Schemas are `schemas/weave/v1/authority-epoch.schema.json` and
 `schemas/hosted/v2/bundle.schema.json`. Core, corruption, downgrade, hosted
