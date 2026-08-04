@@ -34,14 +34,16 @@ MVP. To avoid ambiguity, documentation uses `daimon-matrix`, `Matrix.org`, and
 
 Start with [ONTOLOGY.md](ONTOLOGY.md), the
 [operational stack contract](specs/operational-stack-contract.md), and the
-[`dm.we.v1` protocol](specs/weave-protocol.md). Delivery order and acceptance
+[being-root contract](specs/identity-root-v1.md). Delivery order and acceptance
 are in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Status
 
-The repository contains specifications, schemas, conformance material, and the
-typed Python package scaffold from which the runtime is now built. Cluster
-Weave and Tribe Bridge remain integration inputs during migration. There is no
-supported single-awake-identity or distinct-identities-as-`/we` model.
+The repository contains specifications, schemas, conformance material, and a
+typed Python package implementing canonical identity artifacts, plural
+embodiment/incarnation authorization, control recovery, history binding, and
+encrypted custody. Cluster Weave and Tribe Bridge remain integration inputs
+during migration. There is no supported single-awake-identity or
+distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

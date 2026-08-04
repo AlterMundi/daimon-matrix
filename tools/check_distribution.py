@@ -36,12 +36,18 @@ SDIST_FILES: Final = frozenset(
         "README.md",
         "pyproject.toml",
         "src/daimon_matrix/__init__.py",
+        "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/identity.py",
+        "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/py.typed",
     }
 )
 WHEEL_FILES: Final = frozenset(
     {
         "daimon_matrix/__init__.py",
+        "daimon_matrix/canonical.py",
+        "daimon_matrix/identity.py",
+        "daimon_matrix/keystore.py",
         "daimon_matrix/py.typed",
         f"{DIST_INFO}/METADATA",
         f"{DIST_INFO}/RECORD",
@@ -148,8 +154,8 @@ def _check_metadata(data: bytes, source: str) -> None:
         raise PackageCheckError(
             f"{source}: wrong Requires-Python: {message['Requires-Python']!r}"
         )
-    if message.get_all("Requires-Dist"):
-        raise PackageCheckError(f"{source}: runtime dependencies are forbidden")
+    if message.get_all("Requires-Dist") != ["cryptography<47,>=46.0.7"]:
+        raise PackageCheckError(f"{source}: runtime dependency contract mismatch")
     if message["License-Expression"] != "MIT":
         raise PackageCheckError(
             f"{source}: wrong License-Expression: {message['License-Expression']!r}"
@@ -198,7 +204,13 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
 
     _assert_exact(set(files), SDIST_FILES, "sdist")
     _check_metadata(files["PKG-INFO"], "sdist PKG-INFO")
-    for relative in ("src/daimon_matrix/__init__.py", "src/daimon_matrix/py.typed"):
+    for relative in (
+        "src/daimon_matrix/__init__.py",
+        "src/daimon_matrix/canonical.py",
+        "src/daimon_matrix/identity.py",
+        "src/daimon_matrix/keystore.py",
+        "src/daimon_matrix/py.typed",
+    ):
         if files[relative] != (source_root / relative).read_bytes():
             raise PackageCheckError(f"sdist source drift: {relative}")
     return {
@@ -271,6 +283,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
 
     source_map = {
         "daimon_matrix/__init__.py": "src/daimon_matrix/__init__.py",
+        "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
+        "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
+        "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
     }
     for member, relative in source_map.items():

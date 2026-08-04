@@ -9,6 +9,10 @@ fields fail closed in closed V1 objects.
 
 ## Artifact families
 
+- `dm.identity.artifact/v1`: being genesis/control, plural embodiment and
+  incarnation authorization, provisional-history binding, and activation.
+- `dm.keystore/v1`: authenticated encrypted custody container; never a
+  synchronized artifact.
 - `being-manifest/v1`: provisional administrator configuration.
 - `dm.we.v1`: origin-retaining durable event.
 - `dm.we.heads/v1` and `dm.we.delta/v1`: bounded synchronization exchange.

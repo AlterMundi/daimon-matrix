@@ -32,5 +32,10 @@ complete authorization evidence. Pre-binding events retain their original
 signatures and identifiers; the binding adds continuity rather than rewriting
 history.
 
+The executable artifact, control-chain, credential, binding, and custody
+contract is [`identity-root-v1.md`](identity-root-v1.md). Transport principals,
+including Tribe keys, are explicitly bound to one embodiment credential and
+remain separate from being/root authority.
+
 Identity-control equivocation and compromised credentials fail closed.
 Different experience or preference branches do not.

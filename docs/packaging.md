@@ -38,16 +38,17 @@ observable install path.
 ## Artifact boundary
 
 The sdist may contain only its single normalized root plus `.gitignore`,
-`LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, `__init__.py`, and
-`py.typed`. The wheel may contain only the package namespace, typing marker,
-MIT license, and required `.dist-info` metadata/record files.
+`LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
+identity and keystore modules, `__init__.py`, and `py.typed`. The wheel may
+contain only those package modules, the typing marker, MIT license, and
+required `.dist-info` metadata/record files.
 
 The checker rejects absolute/traversing paths, links and special archive
 members, generated `egg-info`, bytecode/caches, SQLite or WAL state, private
 keys, credentials, messages, experimental modules, and every unexpected file.
 It independently verifies wheel `RECORD` hashes/sizes, metadata name/version,
-Python requirement, empty runtime dependencies, pure-Python tag, source-byte
-identity, and fixed timestamps.
+Python requirement, the exact `cryptography` runtime dependency, pure-Python
+tag, source-byte identity, and fixed timestamps.
 
 ## Installed smoke test
 
