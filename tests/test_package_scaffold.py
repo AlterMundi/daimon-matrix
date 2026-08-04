@@ -38,7 +38,7 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["version"], "0.0.0")
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(
-            project["dependencies"], ["cryptography>=46.0.7,<47", "mcp==2.0.0"]
+            project["dependencies"], ["cryptography==50.0.0", "mcp==2.0.0"]
         )
         self.assertEqual(project["license"], "MIT")
         self.assertEqual(
@@ -153,6 +153,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/projections.py",
                 "src/daimon_matrix/py.typed",
                 "src/daimon_matrix/runtime.py",
+                "src/daimon_matrix/sealed.py",
                 "src/daimon_matrix/service.py",
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/weave.py",
@@ -175,6 +176,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/projections.py",
                 "daimon_matrix/py.typed",
                 "daimon_matrix/runtime.py",
+                "daimon_matrix/sealed.py",
                 "daimon_matrix/service.py",
                 "daimon_matrix/sync.py",
                 "daimon_matrix/weave.py",

@@ -55,3 +55,10 @@ Tribe transport behind the same boundary. DM-050 pins the current public Tribe
 head and its relevant blob/hash inventory, but imports no upstream bytes: no
 license is detected, so DM-051–DM-053 independently reimplement only classified
 behavior under Daimon contracts.
+
+DM-051 now supplies the disabled, carrier-neutral
+`dm.sealed-delivery/v1` runtime: root-bound plural sender/recipient authority,
+fresh per-delivery payload encryption, independent RFC 9180 HPKE CEK wraps,
+typed encrypted-keystore operations and durable exact retry. The old DM-011 V0
+wire remains KAT evidence only. No live Tribe/local/direct/hub route is enabled;
+DM-052 and DM-053 own message state and delivery.

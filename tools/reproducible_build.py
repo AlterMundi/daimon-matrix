@@ -43,6 +43,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/projections.py"),
     Path("src/daimon_matrix/py.typed"),
     Path("src/daimon_matrix/runtime.py"),
+    Path("src/daimon_matrix/sealed.py"),
     Path("src/daimon_matrix/service.py"),
     Path("src/daimon_matrix/sync.py"),
     Path("src/daimon_matrix/weave.py"),

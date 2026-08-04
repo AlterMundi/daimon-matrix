@@ -20,7 +20,9 @@ one concrete resource remains protected by a Daimon Cluster resource fence.
   canonical body. Signatures cover the same typed preimage. Root/recovery
   APIs sign only complete typed ceremonies; no arbitrary-byte custody signer
   is public.
-- The V1 dependency contract is `cryptography>=46.0.7,<47`.
+- The V1 dependency contract is `cryptography==50.0.0`. DM-051 raised and
+  pinned the shared dependency so the runtime uses PyCA's official RFC 9180
+  HPKE API; the identity primitives and frozen vectors remain unchanged.
 
 ## Being genesis
 

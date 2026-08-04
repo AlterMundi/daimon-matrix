@@ -49,6 +49,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/runtime.py",
+        "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/weave.py",
@@ -70,6 +71,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
         "daimon_matrix/runtime.py",
+        "daimon_matrix/sealed.py",
         "daimon_matrix/service.py",
         "daimon_matrix/sync.py",
         "daimon_matrix/weave.py",
@@ -180,7 +182,7 @@ def _check_metadata(data: bytes, source: str) -> None:
             f"{source}: wrong Requires-Python: {message['Requires-Python']!r}"
         )
     if message.get_all("Requires-Dist") != [
-        "cryptography<47,>=46.0.7",
+        "cryptography==50.0.0",
         "mcp==2.0.0",
     ]:
         raise PackageCheckError(f"{source}: runtime dependency contract mismatch")
@@ -247,6 +249,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/runtime.py",
+        "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/weave.py",
@@ -344,6 +347,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
         "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
+        "daimon_matrix/sealed.py": "src/daimon_matrix/sealed.py",
         "daimon_matrix/service.py": "src/daimon_matrix/service.py",
         "daimon_matrix/sync.py": "src/daimon_matrix/sync.py",
         "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",

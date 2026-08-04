@@ -1,0 +1,56 @@
+{
+  "schema": "dm.crypto-dependency/v1",
+  "name": "cryptography",
+  "version": "50.0.0",
+  "released": "2026-07-31",
+  "requires_python": "!=3.9.0,!=3.9.1,>=3.9",
+  "license_expression": "Apache-2.0 OR BSD-3-Clause",
+  "source": "https://github.com/pyca/cryptography",
+  "documentation": "https://cryptography.io/en/50.0.0/hazmat/primitives/hpke/",
+  "pypi_json": "https://pypi.org/pypi/cryptography/50.0.0/json",
+  "runtime_python": ["3.11", "3.12", "3.13", "3.14"],
+  "vulnerability_audit": {
+    "at": "2026-08-04",
+    "tool": "pip-audit 2.10.1",
+    "inputs": ["requirements-vectors.txt", "requirements-dev.txt"],
+    "result": "no-known-vulnerabilities"
+  },
+  "profile": {
+    "mode": "Base",
+    "kem": "DHKEM(X25519, HKDF-SHA256)",
+    "kdf": "HKDF-SHA256",
+    "aead": "ChaCha20Poly1305",
+    "api": "cryptography.hazmat.primitives.hpke.Suite"
+  },
+  "artifacts": [
+    {
+      "filename": "cryptography-50.0.0-cp311-abi3-macosx_11_0_arm64.whl",
+      "sha256": "031e2d5dd4bb9caa3ca9c82e5a197fd8ae680232cee62603d1a813f3f07e3d03"
+    },
+    {
+      "filename": "cryptography-50.0.0-cp311-abi3-manylinux_2_28_aarch64.whl",
+      "sha256": "a1b30560f2acc95aa8b2e06e716a13dbfc97314747b80d9707e307f77b40d6b3"
+    },
+    {
+      "filename": "cryptography-50.0.0-cp311-abi3-manylinux_2_28_x86_64.whl",
+      "sha256": "b42a28c1844fd9de8f3f7d540e36b66f3a9c83fceac7170ebc7a6a19edd9dcae"
+    },
+    {
+      "filename": "cryptography-50.0.0-cp311-abi3-win_amd64.whl",
+      "sha256": "bd1c592e4d5974f0d08d4888e432157adba757c66da0246918e43677fafa2d30"
+    },
+    {
+      "filename": "cryptography-50.0.0-cp314-cp314t-manylinux_2_28_x86_64.whl",
+      "sha256": "11b74db56cdbe3cdee6e3f6982ecb70334fa10dce99ed58bf7894aaaa3b2a037"
+    },
+    {
+      "filename": "cryptography-50.0.0.tar.gz",
+      "sha256": "eeac2acb5a20ed25e0ad6d1df9891a520b78b404266b6d11778f25d5d691a6c9"
+    }
+  ],
+  "notes": [
+    "uv.lock records the complete PyPI artifact set; this manifest names representative supported-platform artifacts and the sdist.",
+    "The production HPKE implementation is used directly and opens the immutable DM-011 V0 CEK-wrap vector.",
+    "No dependency source is vendored or copied into daimon-matrix."
+  ]
+}

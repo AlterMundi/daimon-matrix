@@ -1,0 +1,31 @@
+{
+  "schema": "dm-051-invariant-report/v1",
+  "deployment": "not-applicable-live-routes-disabled",
+  "profile": "dm.sealed-delivery/v1",
+  "dependency": "cryptography==50.0.0",
+  "invariants": {
+    "plural_root_authority_only": true,
+    "dm011_v0_historical_only": true,
+    "fresh_payload_cek_and_nonce": true,
+    "independent_hpke_wrap_per_recipient": true,
+    "complete_unsigned_envelope_signed": true,
+    "complete_recipient_set_revalidated_before_private_operation": true,
+    "opaque_carrier": true,
+    "stable_external_rejection": true,
+    "typed_keystore_operations": true,
+    "durable_exact_retry": true,
+    "changed_request_conflicts": true,
+    "plaintext_and_cek_not_persisted": true,
+    "live_route_disabled": true,
+    "matrix_org_absent": true,
+    "buzz_and_telegram_absent": true
+  },
+  "evidence": [
+    "docs/dm051-recipient-encryption.md",
+    "provenance/cryptography-hpke-v1.json",
+    "schemas/communication/v1/sealed-delivery.schema.json",
+    "schemas/communication/v1/disclosure-authorization-input.schema.json",
+    "src/daimon_matrix/sealed.py",
+    "tests/test_dm051_sealed.py"
+  ]
+}

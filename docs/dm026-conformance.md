@@ -7,7 +7,7 @@ Cluster lifecycle, external-effect, or rebirth certification.
 ## Closed evidence registry
 
 `conformance/registry-v1.json` is the canonical
-`dm.conformance.registry/v1`. Its 22 scenario identifiers are closed in both
+`dm.conformance.registry/v1`. Its 25 scenario identifiers are closed in both
 directions: a missing scenario, an unknown scenario, duplicate identifier,
 unknown field, unregistered evidence reference, or non-required release
 scenario fails validation. Each scenario names its owner cards,
@@ -34,8 +34,10 @@ The registry deliberately describes the implementation that exists:
   HLC or arrival-time winner;
 - import makes content known but does not adopt it;
 - “exactly once” means one canonical event, RPC response, or sync receipt; and
-- Cluster effects, Tribe delivery and carrier behavior are later integration
-  obligations.
+- DM-051 recipient-encryption and opaque-carrier behavior are local synthetic
+  evidence; live Tribe/direct/hub delivery remains a later integration
+  obligation; and
+- Cluster effects remain later integration obligations.
 
 ## Running the installed gate
 

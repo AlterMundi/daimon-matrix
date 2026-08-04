@@ -105,7 +105,7 @@ compatibility and conversation history are not.
 4. Signed and recipient-encrypted envelopes.
 5. Route providers: local, direct, hub/store-and-forward.
 6. Inbox cursor and idempotent ingestion.
-7. Optional gateways such as Telegram.
+7. Optional gateways such as Telegram or Buzz (both deferred and unselected).
 
 Gateways are edge adapters. They do not define identity, tribe membership,
 memory, or canonical message state.
