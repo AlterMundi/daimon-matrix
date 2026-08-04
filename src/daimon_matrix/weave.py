@@ -852,11 +852,8 @@ def verify_event(event: Any, authority: EventAuthority) -> Event:
         "signature",
     }
     value = _closed(event, fields, "invalid_event_fields")
-    selected: EventAuthority = (
-        authority.select(value)
-        if isinstance(authority, BoundHistoryAuthority)
-        else authority
-    )
+    selector = getattr(authority, "select", None)
+    selected: EventAuthority = selector(value) if callable(selector) else authority
     if len(_canonical(value)) > MAX_EVENT_BYTES:
         raise WeaveProtocolError("event_too_large")
     core = {

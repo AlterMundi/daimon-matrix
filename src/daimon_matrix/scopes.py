@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .cluster import (
     BODY_SNAPSHOT_SCHEMA,
@@ -233,7 +234,8 @@ class ScopeResolver:
 
     def __post_init__(self) -> None:
         if not isinstance(
-            self.ledger.authority, (RootAuthority, BoundHistoryAuthority)
+            self.ledger.authority,
+            (RootAuthority, RootHistoryAuthority, BoundHistoryAuthority),
         ):
             raise ScopeError("scope_requires_root_authority")
         if len(self.body_capabilities) > MAX_CAPABILITIES or list(
@@ -257,6 +259,8 @@ class ScopeResolver:
     def authority(self) -> RootAuthority:
         authority = self.ledger.authority
         if isinstance(authority, BoundHistoryAuthority):
+            return authority.active
+        if isinstance(authority, RootHistoryAuthority):
             return authority.active
         if isinstance(authority, RootAuthority):
             return authority

@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 38,
-  "registry_sha256": "4f7d73efaf3451533d4ef8d294900bc03a9049a8f96bb84fbdb1d4eed22da279",
+  "required_scenario_count": 39,
+  "registry_sha256": "14691fedc05af4aee9a45e6cefd10d8b07182a296d488de280213f80498fd14d",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -21,13 +21,18 @@
     "report_written_atomically_owner_only": true,
     "installed_wheel_exercised": true,
     "matrix_org_cluster_tribe_and_live_gateways_absent": true,
-    "synthetic_local_direct_hub_routes_exercised": true
+    "synthetic_local_direct_hub_routes_exercised": true,
+    "signed_authority_epoch_succession": true
   },
   "evidence": [
     "conformance/registry-v1.json",
     "docs/verification/dm053-invariants.json",
     "docs/verification/dm054-invariants.json",
     "docs/verification/dm037-invariants.json",
+    "docs/verification/dm079-invariants.json",
+    "docs/dm079-authority-epochs.md",
+    "schemas/hosted/v2/bundle.schema.json",
+    "schemas/weave/v1/authority-epoch.schema.json",
     "schemas/conformance/v1/registry.schema.json",
     "schemas/conformance/v1/report.schema.json",
     "src/daimon_matrix/conformance.py",

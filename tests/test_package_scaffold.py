@@ -140,6 +140,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "README.md",
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
+                "src/daimon_matrix/authority_epochs.py",
                 "src/daimon_matrix/canonical.py",
                 "src/daimon_matrix/cli.py",
                 "src/daimon_matrix/client.py",
@@ -168,6 +169,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             WHEEL_FILES,
             {
                 "daimon_matrix/__init__.py",
+                "daimon_matrix/authority_epochs.py",
                 "daimon_matrix/canonical.py",
                 "daimon_matrix/cli.py",
                 "daimon_matrix/client.py",

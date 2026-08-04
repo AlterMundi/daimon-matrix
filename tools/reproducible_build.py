@@ -30,6 +30,7 @@ BUILD_INPUTS: Final = (
     Path("README.md"),
     Path("pyproject.toml"),
     Path("src/daimon_matrix/__init__.py"),
+    Path("src/daimon_matrix/authority_epochs.py"),
     Path("src/daimon_matrix/canonical.py"),
     Path("src/daimon_matrix/cli.py"),
     Path("src/daimon_matrix/client.py"),

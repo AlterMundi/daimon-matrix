@@ -57,7 +57,7 @@ fan-out independent of any live carrier. Cluster remains its
 lifecycle/state-volume host and its provisional `weave/` code is a migration
 oracle rather than a second permanent protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 38-scenario
+the local implementation and reproducible artifacts to a closed 39-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
 live remote delivery or rebirth. DM-054 specifies the exact Cluster adapter
 needed for that future drill, and DM-037 now closes its fence/effect-truth

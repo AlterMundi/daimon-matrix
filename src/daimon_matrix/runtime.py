@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, canonical_bytes, unb64url
 from .communication import CommunicationStore
 from .identity import (
@@ -51,6 +52,7 @@ from .weave import (
 )
 
 BUNDLE_SCHEMA: Final = "dm.runtime.bundle/v1"
+BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -187,28 +189,32 @@ def load_runtime(
     _owner_directory(root)
     root_info = root.lstat()
     bundle_path = _safe_file(root, bundle_name, must_exist=True)
-    bundle = _closed(
-        _read_bundle(bundle_path),
-        {
-            "binding",
-            "binding_activation",
-            "capabilities",
-            "control_artifacts",
-            "control_head",
-            "credentials",
-            "incarnations",
-            "keystore",
-            "ledger",
-            "local_origin",
-            "manifest",
-            "provisional_history",
-            "routing",
-            "scopes",
-            "schema",
-            "socket",
-        },
-    )
-    if bundle["schema"] != BUNDLE_SCHEMA:
+    raw_bundle = _read_bundle(bundle_path)
+    if not isinstance(raw_bundle, Mapping):
+        raise RuntimeError("invalid_runtime_bundle")
+    schema = raw_bundle.get("schema")
+    fields = {
+        "binding",
+        "binding_activation",
+        "capabilities",
+        "control_artifacts",
+        "control_head",
+        "credentials",
+        "incarnations",
+        "keystore",
+        "ledger",
+        "local_origin",
+        "manifest",
+        "provisional_history",
+        "routing",
+        "scopes",
+        "schema",
+        "socket",
+    }
+    if schema == BUNDLE_SCHEMA_V2:
+        fields.add("authority_history")
+    bundle = _closed(raw_bundle, fields)
+    if schema not in {BUNDLE_SCHEMA, BUNDLE_SCHEMA_V2}:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
     if not isinstance(controls, list) or not 1 <= len(controls) <= 1024:
@@ -237,8 +243,31 @@ def load_runtime(
         credentials = _indexed(bundle["credentials"])
         incarnations = _indexed(bundle["incarnations"])
         active = RootAuthority(manifest, state, credentials, incarnations)
-        authority: RootAuthority | BoundHistoryAuthority = active
+        authority: RootAuthority | RootHistoryAuthority | BoundHistoryAuthority = active
+        if schema == BUNDLE_SCHEMA_V2:
+            authority_history = bundle["authority_history"]
+            if (
+                not isinstance(authority_history, list)
+                or not 1 <= len(authority_history) <= 256
+            ):
+                raise RuntimeError("invalid_authority_history")
+            historical_authorities = []
+            successors = []
+            for entry in authority_history:
+                epoch = _closed(entry, {"manifest", "successor"})
+                historical_authorities.append(
+                    RootAuthority(
+                        BeingManifest.from_value(epoch["manifest"]),
+                        state,
+                        credentials,
+                        incarnations,
+                    )
+                )
+                successors.append(epoch["successor"])
+            authority = RootHistoryAuthority(active, historical_authorities, successors)
         if history is not None:
+            if schema == BUNDLE_SCHEMA_V2:
+                raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
             public_keys = history_value["public_keys"]
             if not isinstance(public_keys, Mapping):
@@ -544,4 +573,10 @@ def load_runtime(
     return HostedRuntime(service, root, identity, socket_path)
 
 
-__all__ = ["BUNDLE_SCHEMA", "HostedRuntime", "RuntimeError", "load_runtime"]
+__all__ = [
+    "BUNDLE_SCHEMA",
+    "BUNDLE_SCHEMA_V2",
+    "HostedRuntime",
+    "RuntimeError",
+    "load_runtime",
+]

@@ -28,11 +28,12 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "4f7d73efaf3451533d4ef8d294900bc03a9049a8f96bb84fbdb1d4eed22da279"
+    "14691fedc05af4aee9a45e6cefd10d8b07182a296d488de280213f80498fd14d"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
         "adapter_storage_non_authority",
+        "authority_epoch_succession",
         "canonical_artifacts",
         "causal_quarantine_promotion",
         "cli_closed_retry_surface",

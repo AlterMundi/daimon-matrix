@@ -525,6 +525,13 @@ class HostedWeave:
         if method == "runtime.status":
             _closed(params, set())
             self.ledger.integrity_check()
+            accepted = tuple(
+                getattr(
+                    self.ledger.authority,
+                    "accepted_manifest_hashes",
+                    (self.ledger.authority.manifest.digest,),
+                )
+            )
             return {
                 "schema": "dm.runtime.status/v1",
                 "being_ref": self.ledger.authority.manifest.being_ref,
@@ -533,6 +540,12 @@ class HostedWeave:
                 "ledger_schema_version": SCHEMA_VERSION,
                 "integrity": "ok",
                 "counts": self.ledger.status_counts(),
+                "authority_epoch": {
+                    "schema": "dm.we.authority-epoch-status/v1",
+                    "active_manifest_hash": self.ledger.authority.manifest.digest,
+                    "accepted_manifest_hashes": list(accepted),
+                    "epoch_count": len(accepted),
+                },
             }
         if method == "we.heads":
             _closed(params, set())
