@@ -24,7 +24,8 @@ is explicitly outside the MVP.
    crash/rebuild invariants (DM-022 through DM-026).
 5. Integrate personal-memory policy/projections and Codex/Hermes embodiment
    adapters without granting harnesses identity authority (DM-030 through
-   DM-042).
+   DM-042). DM-030's evaluator and transactional executor are implemented;
+   DM-031 onward consume that frozen boundary.
 6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
    encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
    resolution; then remove the standalone runtime dependency (DM-050 through
@@ -32,7 +33,9 @@ is explicitly outside the MVP.
 7. Complete birth/species/source behavior and their synthetic acceptance
    journeys.
 8. Bind Matrix embodiment evidence to Cluster lifecycle and resource fences;
-   retain the reconciled effect-truth guarantees (DM-037).
+   retain the reconciled effect-truth guarantees (DM-037). The installed host
+   adapter and DM-080 evaluation-time binding are merged; real Incus/rebirth is
+   still completion evidence rather than inferred from the synthetic adapter.
 9. Run local, cross-host, recovery, revocation, and rebirth journeys with real
    processes, cryptography, encrypted state, transport, Cluster bodies, and
    separately authorized synthetic/live evidence.

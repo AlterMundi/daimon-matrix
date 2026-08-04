@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/content-ref.schema.json",
+  "title": "Content-addressed memory content reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "content_id", "sha256", "byte_length", "media_type", "classification"],
+  "properties": {
+    "schema": {"const": "dm.memory.content-ref/v1"},
+    "content_id": {"type": "string", "pattern": "^dm:memory-content:v1:[A-Za-z0-9_-]{43}$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "byte_length": {"type": "integer", "minimum": 1, "maximum": 16777216},
+    "media_type": {"type": "string", "pattern": "^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$", "maxLength": 128},
+    "classification": {"enum": ["public", "personal", "private", "protected"]}
+  }
+}

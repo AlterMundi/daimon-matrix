@@ -75,6 +75,17 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         }
     if command == ("scope", "tribe"):
         return "scope.tribe", {"tribe_ref": args.tribe_ref}
+    if command == ("memory", "evaluate"):
+        return "memory.evaluate", {
+            "policy": _bounded_file(args.policy),
+            "candidate": _bounded_file(args.candidate),
+        }
+    if command == ("memory", "execute"):
+        return "memory.execute", {
+            "policy": _bounded_file(args.policy),
+            "candidate": _bounded_file(args.candidate),
+            "plan": _bounded_file(args.plan),
+        }
     if command == ("we", "heads"):
         return "we.heads", {}
     if command == ("we", "diff"):
@@ -179,6 +190,22 @@ def parser() -> argparse.ArgumentParser:
     resolve.add_argument("--tribe-ref")
     tribe = scope_commands.add_parser("tribe", help="one verified tribe snapshot")
     tribe.add_argument("--tribe-ref", required=True)
+
+    memory = families.add_parser("memory", help="deterministic personal-memory policy")
+    memory_commands = memory.add_subparsers(dest="command", required=True)
+    evaluate = memory_commands.add_parser(
+        "evaluate", help="produce one content-addressed transition plan"
+    )
+    evaluate.add_argument("--policy", required=True, help="closed policy JSON file")
+    evaluate.add_argument(
+        "--candidate", required=True, help="closed candidate JSON file"
+    )
+    execute = memory_commands.add_parser(
+        "execute", help="commit one still-current eligible transition plan"
+    )
+    execute.add_argument("--policy", required=True, help="exact policy JSON file")
+    execute.add_argument("--candidate", required=True, help="exact candidate JSON file")
+    execute.add_argument("--plan", required=True, help="exact plan JSON file")
 
     we = families.add_parser("we", help="local Weave ledger and projection")
     we_commands = we.add_subparsers(dest="command", required=True)

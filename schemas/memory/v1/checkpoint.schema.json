@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/checkpoint.schema.json",
+  "title": "Exact Matrix memory evaluation checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "being_ref", "manifest_hash", "local_origin", "ledger_state_hash", "projection_hash", "evidence_refs", "body_evidence_state", "lane_state", "lane_event_ids", "lane_head", "captured_at_ms"],
+  "properties": {
+    "schema": {"const": "dm.memory.checkpoint/v1"},
+    "being_ref": {"$ref": "#/$defs/scoped"},
+    "manifest_hash": {"$ref": "#/$defs/hash"},
+    "local_origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/scoped"},
+        "embodiment_id": {"$ref": "#/$defs/scoped"},
+        "incarnation_id": {"$ref": "#/$defs/scoped"},
+        "principal_id": {"$ref": "#/$defs/scoped"}
+      }
+    },
+    "ledger_state_hash": {"$ref": "#/$defs/hash"},
+    "projection_hash": {"$ref": "#/$defs/hash"},
+    "evidence_refs": {"$ref": "#/$defs/refs"},
+    "body_evidence_state": {"enum": ["absent", "verified", "unavailable", "mismatch"]},
+    "lane_state": {"enum": ["empty", "linear", "forked"]},
+    "lane_event_ids": {"type": "array", "uniqueItems": true, "maxItems": 256, "items": {"type": "string", "format": "uuid"}},
+    "lane_head": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "content_hash", "memory_id", "sequence", "category", "author_me_id", "context", "decision_id"],
+          "properties": {
+            "event_id": {"type": "string", "format": "uuid"},
+            "content_hash": {"$ref": "#/$defs/hash"},
+            "memory_id": {"type": "string", "format": "uuid"},
+            "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+            "category": {"$ref": "#/$defs/category"},
+            "author_me_id": {"$ref": "#/$defs/scoped"},
+            "context": {"$ref": "#/$defs/scoped"},
+            "decision_id": {"type": "string", "pattern": "^dm:memory-decision:v1:[A-Za-z0-9_-]{43}$"}
+          }
+        }
+      ]
+    },
+    "captured_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"lane_state": {"const": "empty"}}, "required": ["lane_state"]},
+      "then": {"properties": {"lane_event_ids": {"maxItems": 0}, "lane_head": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"lane_state": {"const": "linear"}}, "required": ["lane_state"]},
+      "then": {"properties": {"lane_event_ids": {"minItems": 1}, "lane_head": {"type": "object"}}}
+    },
+    {
+      "if": {"properties": {"lane_state": {"const": "forked"}}, "required": ["lane_state"]},
+      "then": {"properties": {"lane_event_ids": {"minItems": 2}, "lane_head": {"type": "null"}}}
+    }
+  ],
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "refs": {"type": "array", "uniqueItems": true, "maxItems": 256, "items": {"$ref": "#/$defs/scoped"}},
+    "category": {"enum": ["external-reference", "incarnation-state", "peer-attributed", "personal-experience", "personal-insight", "personal-skill", "species-inheritance", "tribal-knowledge"]}
+  }
+}

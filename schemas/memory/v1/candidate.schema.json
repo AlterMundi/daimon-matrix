@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/candidate.schema.json",
+  "title": "Closed personal-memory candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "candidate_id", "subject_me_id", "author_me_id", "category", "derivation", "context", "content_ref", "evidence_refs", "classification", "consent", "safety", "contradiction", "effect", "lane", "body_evidence", "predecessor_decision_id"],
+  "properties": {
+    "schema": {"const": "dm.memory.candidate/v1"},
+    "candidate_id": {"type": "string", "pattern": "^dm:memory-candidate:v1:[A-Za-z0-9_-]{43}$"},
+    "subject_me_id": {"$ref": "#/$defs/scoped"},
+    "author_me_id": {"$ref": "#/$defs/scoped"},
+    "category": {"$ref": "#/$defs/category"},
+    "derivation": {"enum": ["body-occurrence", "external-source", "incarnation-observation", "local-synthesis", "peer-origin", "species-application", "tribe-retrieval"]},
+    "context": {"$ref": "#/$defs/scoped"},
+    "content_ref": {"anyOf": [{"type": "null"}, {"$ref": "content-ref.schema.json"}]},
+    "evidence_refs": {"$ref": "#/$defs/refs"},
+    "classification": {"enum": ["public", "personal", "private", "protected"]},
+    "consent": {"enum": ["granted", "unknown", "denied"]},
+    "safety": {"enum": ["clear", "uncertain", "unsafe"]},
+    "contradiction": {"enum": ["none", "ordinary", "sensitive"]},
+    "effect": {"enum": ["local-only", "public", "destructive"]},
+    "lane": {"$ref": "#/$defs/lane"},
+    "predecessor_decision_id": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^dm:memory-decision:v1:[A-Za-z0-9_-]{43}$"}]},
+    "body_evidence": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["body_ref", "embodiment_id", "incarnation_id", "session_ref", "lease_ref", "committed_cutoff_event_id"],
+          "properties": {
+            "body_ref": {"$ref": "#/$defs/scoped"},
+            "embodiment_id": {"$ref": "#/$defs/scoped"},
+            "incarnation_id": {"$ref": "#/$defs/scoped"},
+            "session_ref": {"$ref": "#/$defs/scoped"},
+            "lease_ref": {"$ref": "#/$defs/scoped"},
+            "committed_cutoff_event_id": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]}
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"lane": {"properties": {"operation": {"const": "retract"}}, "required": ["operation"]}}, "required": ["lane"]},
+      "then": {"properties": {"content_ref": {"type": "null"}}},
+      "else": {"properties": {"content_ref": {"$ref": "content-ref.schema.json"}}}
+    },
+    {
+      "if": {"properties": {"lane": {"properties": {"operation": {"const": "assert"}}, "required": ["operation"]}}, "required": ["lane"]},
+      "then": {"properties": {"lane": {"properties": {"sequence": {"const": 1}, "predecessor_event_id": {"type": "null"}, "predecessor_hash": {"type": "null"}}}}},
+      "else": {"properties": {"lane": {"properties": {"sequence": {"minimum": 2}, "predecessor_event_id": {"type": "string"}, "predecessor_hash": {"type": "string"}}}, "predecessor_decision_id": {"type": "string"}}}
+    }
+  ],
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "category": {"enum": ["external-reference", "incarnation-state", "peer-attributed", "personal-experience", "personal-insight", "personal-skill", "species-inheritance", "tribal-knowledge"]},
+    "refs": {"type": "array", "uniqueItems": true, "maxItems": 256, "items": {"$ref": "#/$defs/scoped"}},
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_id", "operation", "sequence", "predecessor_event_id", "predecessor_hash"],
+      "properties": {
+        "memory_id": {"type": "string", "format": "uuid"},
+        "operation": {"enum": ["assert", "correct", "retract"]},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "predecessor_event_id": {"anyOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
+        "predecessor_hash": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]}
+      }
+    }
+  }
+}

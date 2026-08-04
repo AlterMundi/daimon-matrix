@@ -23,9 +23,11 @@ incarnations, storage, lifecycle, and concrete resource fences. Tribe Bridge
 supplies transitional authenticated encrypted transport until DM-050–DM-055
 absorb it into this project.
 
-The existing administrator manifest and Cluster Weave canary are provisional
-evidence. DM-021 attaches that history to a Matrix root only through an exact
-root-authorized binding; Tribe keys are never Matrix root keys.
+Legacy administrator-manifest and Cluster Weave canary bytes remain provisional
+history only. DM-021 attaches them to a Matrix root through an exact
+root-authorized binding; Tribe keys are never Matrix root keys. The production
+Cluster host path runs the pinned installed Matrix package and no longer ships
+the provisional executable `weave/` implementation.
 
 This project is unrelated to the external Matrix.org communications protocol.
 Matrix.org clients, homeservers and federation are intentionally outside the
@@ -54,15 +56,17 @@ durable carrier inboxes; all are disabled until configured and no live carrier
 is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
 `/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
 fan-out independent of any live carrier. Cluster remains its
-lifecycle/state-volume host and its provisional `weave/` code is a migration
-oracle rather than a second permanent protocol. Tribe Bridge remains a
+lifecycle/state-volume host; frozen fixtures preserve the old canary as a
+migration oracle rather than a second protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 39-scenario
+the local implementation and reproducible artifacts to a closed 47-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
-live remote delivery or rebirth. DM-054 specifies the exact Cluster adapter
-needed for that future drill, and DM-037 now closes its fence/effect-truth
-evidence contract without claiming live effects. DM-071 consent/root discovery
-and live DM-055 carrier integration remain. There is no
+live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
+supervises one daemon per embodiment, preserves quiesced relocatable state and
+provides exact body/effect evidence. DM-030 supplies the deterministic memory
+policy, auditable decisions, fork-safe lanes and transactional exactly-once
+executor through daemon/CLI/MCP; external memory projection remains later work.
+DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

@@ -57,6 +57,26 @@ def _object_schema(
 
 TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     "daimon_status": ("runtime.status", _object_schema({}), True),
+    "memory_evaluate": (
+        "memory.evaluate",
+        _object_schema(
+            {"policy": {"type": "object"}, "candidate": {"type": "object"}},
+            ("policy", "candidate"),
+        ),
+        True,
+    ),
+    "memory_execute": (
+        "memory.execute",
+        _object_schema(
+            {
+                "policy": {"type": "object"},
+                "candidate": {"type": "object"},
+                "plan": {"type": "object"},
+            },
+            ("policy", "candidate", "plan"),
+        ),
+        False,
+    ),
     "scope_me": ("scope.me", _object_schema({}), True),
     "scope_we": ("scope.we", _object_schema({}), True),
     "scope_we_diff": ("scope.we.diff", _object_schema({}), True),
@@ -286,6 +306,8 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
     method = TOOL_CONTRACTS[name][0]
     expected = {
         "runtime.status": set(),
+        "memory.evaluate": {"candidate", "policy"},
+        "memory.execute": {"candidate", "plan", "policy"},
         "scope.me": set(),
         "scope.we": set(),
         "scope.we.diff": set(),

@@ -43,7 +43,7 @@ from daimon_matrix.local_api import (
 from daimon_matrix.relationships import tribe_ref
 from daimon_matrix.runtime import RuntimeError, load_runtime
 from daimon_matrix.scopes import BODY_SNAPSHOT_SCHEMA
-from daimon_matrix.service import METHODS, SCOPE_METHODS
+from daimon_matrix.service import MEMORY_METHODS, METHODS, SCOPE_METHODS
 from daimon_matrix.weave import BeingManifest
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed, transport
 
@@ -64,7 +64,7 @@ class RuntimeFixture(RootLedgerFixture):
         capability = create_capability(
             seed("dm024-capability"),
             client_id="client:runtime-test",
-            methods=sorted(METHODS | SCOPE_METHODS),
+            methods=sorted(MEMORY_METHODS | METHODS | SCOPE_METHODS),
             not_before_ms=now_ms - 60_000,
             not_after_ms=now_ms + 60_000,
         )

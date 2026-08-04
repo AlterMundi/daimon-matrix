@@ -31,6 +31,7 @@ from .weave import (
 
 SCHEMA_VERSION: Final = 3
 BUSY_TIMEOUT_MS: Final = 5_000
+STATE_DOMAIN: Final = b"daimon/ledger/state/v1\x00"
 
 Clock = Callable[[], int]
 UUIDFactory = Callable[[], uuid.UUID]
@@ -439,6 +440,41 @@ class Ledger:
         ).fetchone()
         return row
 
+    def _state_hash(self, database: sqlite3.Connection) -> str:
+        """Hash the complete accepted evidence set at one SQLite snapshot."""
+
+        accepted = tuple(
+            getattr(
+                self.authority,
+                "accepted_manifest_hashes",
+                (self.authority.manifest.digest,),
+            )
+        )
+        rows = database.execute(
+            "SELECT event_id, content_hash, status FROM events ORDER BY event_id"
+        ).fetchall()
+        value = {
+            "schema": "dm.ledger-state/v1",
+            "active_manifest_hash": self.authority.manifest.digest,
+            "accepted_manifest_hashes": list(accepted),
+            "events": [
+                {
+                    "event_id": str(row["event_id"]),
+                    "content_hash": str(row["content_hash"]),
+                    "status": str(row["status"]),
+                }
+                for row in rows
+            ],
+        }
+        return hashlib.sha256(STATE_DOMAIN + canonical_bytes(value)).hexdigest()
+
+    def state_hash(self) -> str:
+        """Return a content hash suitable for an optimistic evidence guard."""
+
+        self.initialize()
+        with self._database() as database:
+            return self._state_hash(database)
+
     @staticmethod
     def _dependencies(event: Mapping[str, Any]) -> set[str]:
         dependencies = set(event["causal_parents"])
@@ -549,10 +585,19 @@ class Ledger:
         supersedes: str | None = None,
         occurred_at_ms: int | None = None,
         event_id: str | None = None,
+        expected_state_hash: str | None = None,
     ) -> Event:
         """Author one event and its local-operation receipt in one transaction."""
 
         self._validate_rpc_identity(client_id, request_id, request_hash)
+        if expected_state_hash is not None and (
+            not isinstance(expected_state_hash, str)
+            or len(expected_state_hash) != 64
+            or any(
+                character not in "0123456789abcdef" for character in expected_state_hash
+            )
+        ):
+            raise LedgerError("invalid_expected_state_hash")
         self.initialize()
         try:
             with self._database() as database:
@@ -583,6 +628,11 @@ class Ledger:
                             raise LedgerStateError("local_operation_event_missing")
                         result: Event = json.loads(bytes(row["event_json"]))
                     else:
+                        if (
+                            expected_state_hash is not None
+                            and self._state_hash(database) != expected_state_hash
+                        ):
+                            raise LedgerStateError("ledger_state_changed")
                         result = self._append_local(
                             database,
                             kind=kind,

@@ -7,9 +7,10 @@ supported architecture.
 `daimon-matrix` currently supplies specifications, schemas, conformance
 vectors, and an installed Python runtime. Its V0.1 MVP owns being-root
 continuity, ledgers, scopes, synchronization, memory policy, and secure
-communication. The isolated Cluster `weave` module and Tribe Bridge v1 are
-transitional implementations and executable evidence to be absorbed or adapted
-behind those contracts. DM-021 now binds same-being membership to a Matrix
+communication. Tribe Bridge v1 remains transitional work to be absorbed behind
+those contracts. The former isolated Cluster `weave` implementation has been
+retired from the executable host path; only frozen compatibility evidence
+remains. DM-021 now binds same-being membership to a Matrix
 being root; the old administrator manifest is accepted only as explicitly
 bound historical evidence.
 
@@ -45,10 +46,10 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current eighteen methods and `daimon:` resources, and
-legacy MCP and Matrix.org transports remain absent. Cluster's next host
-adapter supervises the process. DM-026 closes the local release gate with a
-39-scenario invariant registry and deterministic installed conformance report;
+bytes, MCP exposes only the current twenty core/scope/memory methods and
+`daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
+The merged Cluster host adapter supervises the process. DM-026 closes the local
+release gate with a 47-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, live Cluster effects or rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -92,3 +93,23 @@ expands its accepted epoch set only after exact historical verification, and
 the old bundle becomes an explicit downgrade. This is the prerequisite for the
 fresh-host rebirth proof in DM-078, not a claim that production supervision or
 Incus relocation is already complete.
+
+DM-080 binds every Cluster body snapshot to the exact evaluation millisecond
+chosen inside Matrix and removes the check/use race found by installed-process
+tests. Daimon Cluster issue #48 was completed by PR #49 at
+`676495e852e6772a60de8221271ee9fc976f77ce`: it pins Matrix
+`73767504b777d0d0c9132a341959f486afce99f1`, verifies that pin at runtime,
+provides the exact body/fence/effect adapters, runs one owner-only daemon per
+embodiment, snapshots/restores quiesced portable state, and removed executable
+provisional `weave/` code. This is a production-shaped host adapter with
+synthetic process evidence, not yet the final real Incus rebirth drill.
+
+DM-030 implements the deterministic memory boundary: immutable policies,
+content/candidate/checkpoint/decision/plan records, exact body-session-lease
+evidence, provenance-preserving categories, fork-safe append-only lanes, and a
+transactional stale-state/idempotency guard. `memory.evaluate` and
+`memory.execute` are available through the authenticated daemon, typed client,
+CLI and MCP. Public vectors, schemas and eight release-blocking conformance
+scenarios cover environment determinism, review precedence,
+cross-embodiment forks and response-loss/restart exactly once. HMK/Wiki/model,
+human-review and public-effect integrations remain DM-031 through DM-036.

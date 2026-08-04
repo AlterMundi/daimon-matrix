@@ -386,6 +386,16 @@ class LocalClient:
             "scope.tribe", {"tribe_ref": tribe_ref}, request_id=request_id
         )
 
+    def memory_evaluate(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("memory.evaluate", params, request_id=request_id)
+
+    def memory_execute(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("memory.execute", params, request_id=request_id)
+
     def we_heads(
         self, *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

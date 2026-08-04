@@ -75,10 +75,11 @@ resource. Supplying fence evidence to reconcile such a receipt is a
 discrepancy. Different resource references are independent; a newer epoch or
 holder for the same resource invalidates replay of the older effect.
 
-## Required daimon-cluster adaptation
+## Implemented daimon-cluster adaptation
 
-The downstream implementation is `nicoechaniz/daimon-cluster#48`. It must pin
-the exact merged Matrix package and:
+The downstream implementation landed through `nicoechaniz/daimon-cluster#48`
+and PR #49 at `676495e852e6772a60de8221271ee9fc976f77ce`. It pins the exact
+merged Matrix package and:
 
 1. host one owner-only Matrix state root/process per registry-bound embodiment;
 2. inject side-effect-free exact body snapshots;
@@ -95,7 +96,8 @@ the exact merged Matrix package and:
 8. retire executable duplicate `weave/` code only after installed-runtime
    parity evidence.
 
-Cluster #48 does not by itself claim hardened inter-process fence CAS,
+The completed Cluster #48 adapter does not by itself claim hardened
+inter-process fence CAS,
 production supervision, real Incus relocation, a generic projection executor
 or live Tribe transport. Those remain separate follow-ups and must stay visible
 as unsupported rather than being inferred from this adapter boundary.

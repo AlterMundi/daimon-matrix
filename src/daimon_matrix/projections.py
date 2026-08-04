@@ -79,6 +79,7 @@ def _valid_projection_entry(entry: Any) -> bool:
             "experience.observed",
             "preference.proposed",
             "skill.proposed",
+            "memory.recorded",
         }
         and _projection_text(entry["subject"], 256)
         and entry["state"]

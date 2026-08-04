@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory/v1/policy.schema.json",
+  "title": "Immutable personal-memory policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "policy_id", "subject_me_id", "version", "predecessor_policy_id", "automatic_categories", "review_classifications", "max_content_bytes", "plan_ttl_ms"],
+  "properties": {
+    "schema": {"const": "dm.memory.policy/v1"},
+    "policy_id": {"type": "string", "pattern": "^dm:memory-policy:v1:[A-Za-z0-9_-]{43}$"},
+    "subject_me_id": {"$ref": "#/$defs/scoped"},
+    "version": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "predecessor_policy_id": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^dm:memory-policy:v1:[A-Za-z0-9_-]{43}$"}
+      ]
+    },
+    "automatic_categories": {"$ref": "#/$defs/categories"},
+    "review_classifications": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 4,
+      "items": {"enum": ["public", "personal", "private", "protected"]}
+    },
+    "max_content_bytes": {"type": "integer", "minimum": 1, "maximum": 16777216},
+    "plan_ttl_ms": {"type": "integer", "minimum": 1, "maximum": 86400000}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"version": {"const": 1}}, "required": ["version"]},
+      "then": {"properties": {"predecessor_policy_id": {"type": "null"}}},
+      "else": {"properties": {"predecessor_policy_id": {"type": "string"}}}
+    }
+  ],
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "categories": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 8,
+      "items": {"enum": ["external-reference", "incarnation-state", "peer-attributed", "personal-experience", "personal-insight", "personal-skill", "species-inheritance", "tribal-knowledge"]}
+    }
+  }
+}

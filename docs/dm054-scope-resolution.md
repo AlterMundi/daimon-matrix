@@ -114,9 +114,11 @@ are injected process adapters, not host-wide defaults. No new secret slot is
 introduced: scope request signatures reuse embodiment signing custody with a
 separate domain.
 
-## Required daimon-cluster adaptation
+## Implemented daimon-cluster host adaptation
 
-Daimon Cluster remains the body/lifecycle side. Its follow-up adapter must:
+Daimon Cluster remains the body/lifecycle side. Issue #48 and PR #49 implement
+the host/read side of this contract at
+`676495e852e6772a60de8221271ee9fc976f77ce`:
 
 1. supervise one `daimon-matrixd` process and owner-only state root per exact
    body/embodiment/incarnation;
@@ -131,12 +133,12 @@ Daimon Cluster remains the body/lifecycle side. Its follow-up adapter must:
 5. install the same root manifest and public credential set at each same-being
    runtime while keeping signing seeds independent;
 6. pass carrier bytes without rewriting scope, DM-023 or DM-052 documents; and
-7. retire provisional `weave/fanout.py` authority once the Matrix adapter is
-   wired, retaining it only as behavioral migration evidence.
+7. retire provisional executable `weave/` authority, retaining only frozen
+   behavioral migration evidence.
 
 DM-037 now defines the exact fence/effect half of this adapter in
-`docs/dm037-cluster-effect-boundary.md`. Cluster #48 must consume that merged
-contract: body snapshots stay read-only, while effect replay separately
+`docs/dm037-cluster-effect-boundary.md`. The merged Cluster adapter consumes
+that contract: body snapshots stay read-only, while effect replay separately
 requires live Cluster verification of the recorded fence and observed
 postcondition.
 
