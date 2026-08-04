@@ -17,6 +17,7 @@ from .ledger import (
     LedgerStateError,
 )
 from .local_api import (
+    MAX_CLOCK_SKEW_MS,
     LocalApiError,
     LocalCapability,
     authenticate_request,
@@ -153,10 +154,22 @@ class HostedWeave:
         )
         if capability is None:
             raise LocalApiError("authentication_failed")
-        request, digest = authenticate_request(value, capability, now_ms=self.clock())
+        now = self.clock()
+        request, digest = authenticate_request(
+            value, capability, now_ms=now, allow_stale=True
+        )
         client_id = capability.client_id
         request_id = request["request_id"]
         method = request["method"]
+        if now - request[
+            "issued_at_ms"
+        ] > MAX_CLOCK_SKEW_MS and not self.ledger.rpc_request_matches(
+            client_id=client_id,
+            request_id=request_id,
+            request_hash=digest,
+            method=method,
+        ):
+            raise LocalApiError("authentication_failed")
         try:
             cached = self.ledger.begin_rpc(
                 client_id=client_id,

@@ -53,6 +53,10 @@ fan-out method.
 Ledger schema V3 journals `(client_id, request_id, request_hash, method)` and the
 first exact authenticated response. An exact completed retry returns identical
 bytes. Reuse with different authenticated bytes records durable equivocation.
+An exact request already present in that journal may be retried after the
+ordinary freshness window while its capability remains active; an old request
+without the exact journal row is rejected before dispatch. This permits a
+durable CLI/MCP retry token without making stale requests generally valid.
 Observe/decide also atomically bind the request to the authored event, so a
 crash after semantic commit cannot author twice. DM-023 sync journals retain
 their own IDs, pages and receipts; transport IDs never substitute for them.

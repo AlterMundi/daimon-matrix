@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/clients/v1/mcp-tools.schema.json",
+  "title": "Daimon MCP 2026-07-28 closed tool index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "protocol", "tools"],
+  "properties": {
+    "schema": {"const": "dm.mcp.tools/v1"},
+    "protocol": {"const": "2026-07-28"},
+    "tools": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "method", "input_schema"],
+        "properties": {
+          "name": {
+            "enum": [
+              "daimon_status", "we_heads", "we_diff", "we_preview",
+              "we_projection_get", "we_observe", "we_decide",
+              "we_projection_rebuild", "we_sync_request", "we_sync_serve",
+              "we_sync_pull", "we_sync_validate_receipt"
+            ]
+          },
+          "method": {
+            "enum": [
+              "runtime.status", "we.heads", "we.diff", "we.preview",
+              "we.projection.get", "we.observe", "we.decide",
+              "we.projection.rebuild", "we.sync.request", "we.sync.serve",
+              "we.sync.pull", "we.sync.validate-receipt"
+            ]
+          },
+          "input_schema": {
+            "type": "object",
+            "required": ["type", "properties", "additionalProperties"],
+            "properties": {
+              "type": {"const": "object"},
+              "properties": {"type": "object"},
+              "required": {"type": "array", "items": {"type": "string"}},
+              "additionalProperties": {"const": false}
+            }
+          }
+        }
+      }
+    }
+  }
+}

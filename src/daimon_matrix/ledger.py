@@ -609,6 +609,30 @@ class Ledger:
             raise
         return result
 
+    def rpc_request_matches(
+        self,
+        *,
+        client_id: str,
+        request_id: str,
+        request_hash: str,
+        method: str,
+    ) -> bool:
+        """Return whether an authenticated stale retry already has a journal row."""
+
+        self._validate_rpc_identity(client_id, request_id, request_hash)
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT request_hash, method FROM rpc_requests "
+                "WHERE client_id=? AND request_id=?",
+                (client_id, request_id),
+            ).fetchone()
+        return bool(
+            row is not None
+            and row["request_hash"] == request_hash
+            and row["method"] == method
+        )
+
     def finish_rpc(
         self,
         *,

@@ -263,7 +263,11 @@ def create_request(
 
 
 def authenticate_request(
-    value: Any, capability: LocalCapability, *, now_ms: int
+    value: Any,
+    capability: LocalCapability,
+    *,
+    now_ms: int,
+    allow_stale: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Authenticate a request. All capability/auth failures share one error."""
 
@@ -303,7 +307,8 @@ def authenticate_request(
             or not capability.descriptor["not_before_ms"]
             <= now_ms
             <= capability.descriptor["not_after_ms"]
-            or abs(now_ms - issued) > MAX_CLOCK_SKEW_MS
+            or issued - now_ms > MAX_CLOCK_SKEW_MS
+            or (not allow_stale and now_ms - issued > MAX_CLOCK_SKEW_MS)
             or not isinstance(request["params"], Mapping)
         ):
             raise LocalApiError("authentication_failed")

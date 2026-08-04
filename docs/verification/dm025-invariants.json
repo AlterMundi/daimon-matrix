@@ -1,0 +1,35 @@
+{
+  "schema": "dm-025-invariant-report/v0",
+  "scope": "synthetic-local-state",
+  "deployment": "not-applicable",
+  "mcp_protocol": "2026-07-28",
+  "mcp_sdk": "mcp==2.0.0",
+  "cli_command_count": 12,
+  "mcp_tool_count": 12,
+  "mcp_resource_count": 6,
+  "invariants": {
+    "clients_use_daemon_only": true,
+    "closed_typed_method_surface": true,
+    "capability_key_enters_by_descriptor": true,
+    "owner_only_config_socket_and_retry_store": true,
+    "response_hmac_hash_id_and_origin_verified": true,
+    "exact_retry_token_is_durable": true,
+    "never_seen_stale_request_rejected": true,
+    "cli_json_auth_tag_redacted": true,
+    "mcp_modern_only": true,
+    "mcp_stdio_only": true,
+    "mcp_schemas_closed": true,
+    "mcp_resources_use_daimon_uris": true,
+    "model_text_remains_typed_data": true,
+    "matrix_org_and_carriers_absent": true
+  },
+  "evidence": [
+    "src/daimon_matrix/client.py",
+    "src/daimon_matrix/cli.py",
+    "src/daimon_matrix/mcp_server.py",
+    "tests/test_dm025_client.py",
+    "tests/test_dm025_cli_mcp.py",
+    "schemas/clients/v1/client.schema.json",
+    "schemas/clients/v1/mcp-tools.schema.json"
+  ]
+}

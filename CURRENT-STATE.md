@@ -43,5 +43,9 @@ DM-024 adds ledger schema V3, the closed authenticated local service and the
 installed `daimon-matrixd` AF_UNIX process. It loads exact root-bound public
 authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
-Cluster's next host adapter supervises this process; DM-025 adds human/agent
-clients, and DM-050 begins absorbing Tribe transport behind the same boundary.
+DM-025 adds the typed authenticated local client, installed `daimon` CLI and
+closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
+bytes, MCP exposes only the current twelve methods and `daimon:` resources, and
+legacy MCP/Matrix.org/network transports remain absent. Cluster's next host
+adapter supervises the process; DM-050 begins absorbing Tribe transport behind
+the same boundary.

@@ -21,9 +21,11 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = ["cryptography>=46.0.7,<47"]
+dependencies = ["cryptography>=46.0.7,<47", "mcp==2.0.0"]
 
 [project.scripts]
+daimon = "daimon_matrix.cli:main"
+daimon-mcp = "daimon_matrix.mcp_server:main"
 daimon-matrixd = "daimon_matrix.daemon:main"
 
 [project.urls]
