@@ -18,6 +18,9 @@ fields fail closed in closed V1 objects.
   exact DM-021 credential and incarnation artifacts.
 - `dm.we.v1`: origin-retaining durable event.
 - `dm.we.heads/v1` and `dm.we.delta/v1`: bounded synchronization exchange.
+- `dm.we.sync-request/v1` and `dm.we.sync-receipt/v1`: durable request and
+  receiver-authored completion evidence.
+- `dm.we.projection/v1`: deterministic disposable local decision view.
 - `dm.we.request/v1` and `dm.we.response/v1`: live fan-out.
 - `resource-fence/v1`: Cluster lease for one concrete resource.
 - `tribe-*/v1`: declaration, invitation, acceptance, membership change,

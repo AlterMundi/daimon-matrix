@@ -55,6 +55,61 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "adoption.decided"}}, "required": ["kind"]},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["target_event_id", "decision", "reason"],
+            "properties": {
+              "target_event_id": {"type": "string", "format": "uuid"},
+              "decision": {"enum": ["adopt", "reject", "defer", "revert"]},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 1024}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "projection.receipted"}}, "required": ["kind"]},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "actor", "adapter", "authority", "completed_at_ms",
+              "decision_event_id", "intent_hash", "observed_postcondition",
+              "preview_hash", "resource_fence", "result", "started_at_ms",
+              "target_event_id"
+            ],
+            "properties": {
+              "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+              "adapter": {"type": "string", "minLength": 1, "maxLength": 128},
+              "authority": {"enum": ["daimon", "human"]},
+              "completed_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+              "decision_event_id": {"type": "string", "format": "uuid"},
+              "intent_hash": {"$ref": "#/$defs/hash"},
+              "observed_postcondition": {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonicalValue"}},
+              "preview_hash": {"$ref": "#/$defs/hash"},
+              "resource_fence": {
+                "anyOf": [
+                  {"type": "null"},
+                  {"type": "object", "additionalProperties": {"$ref": "#/$defs/canonicalValue"}}
+                ]
+              },
+              "result": {"enum": ["applied", "failed", "reconciled", "stale"]},
+              "started_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+              "target_event_id": {"type": "string", "format": "uuid"}
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "canonicalValue": {

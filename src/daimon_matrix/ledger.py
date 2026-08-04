@@ -29,7 +29,7 @@ from .weave import (
     verify_event,
 )
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 BUSY_TIMEOUT_MS: Final = 5_000
 
 Clock = Callable[[], int]
@@ -242,6 +242,28 @@ class Ledger:
                     evidence_json BLOB NOT NULL,
                     detected_at_ms INTEGER NOT NULL
                 ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS outbound_sync (
+                    request_id TEXT PRIMARY KEY,
+                    request_hash TEXT NOT NULL,
+                    response_json BLOB NOT NULL
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS issued_sync (
+                    request_id TEXT PRIMARY KEY,
+                    request_hash TEXT NOT NULL,
+                    request_json BLOB NOT NULL
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS inbound_sync (
+                    peer_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    page_hash TEXT NOT NULL,
+                    receipt_json BLOB NOT NULL,
+                    PRIMARY KEY(peer_id, request_id)
+                ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS projection_cache (
+                    slot INTEGER PRIMARY KEY CHECK(slot=1),
+                    projection_hash TEXT NOT NULL,
+                    snapshot_json BLOB NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS events_kind_subject
                     ON events(kind, subject);
                 CREATE INDEX IF NOT EXISTS events_status
@@ -275,7 +297,13 @@ class Ledger:
                     sorted(expected.items()),
                 )
             elif rows != expected:
-                raise LedgerStateError("ledger_metadata_mismatch")
+                prior = {**expected, "schema_version": "1"}
+                if rows != prior:
+                    raise LedgerStateError("ledger_metadata_mismatch")
+                database.execute(
+                    "UPDATE metadata SET value=? WHERE key='schema_version'",
+                    (str(SCHEMA_VERSION),),
+                )
         _assert_owner_file(self.path)
 
     def integrity_check(self) -> None:
@@ -301,6 +329,9 @@ class Ledger:
             dependencies.add(event["previous_event_id"])
         if event["kind"] == "adoption.decided":
             dependencies.add(event["payload"]["target_event_id"])
+        if event["kind"] == "projection.receipted":
+            dependencies.add(event["payload"]["target_event_id"])
+            dependencies.add(event["payload"]["decision_event_id"])
         if event["supersedes"] is not None:
             dependencies.add(event["supersedes"])
         return dependencies
@@ -685,21 +716,20 @@ class Ledger:
             rows = database.execute(query).fetchall()
         return [json.loads(bytes(row["event_json"])) for row in rows]
 
-    def heads(self) -> list[dict[str, Any]]:
-        self.initialize()
-        with self._database() as database:
-            rows = database.execute(
-                """
-                SELECT e.incarnation_id, e.sequence, e.event_id, e.content_hash
-                FROM events e
-                JOIN (
-                    SELECT incarnation_id, MAX(sequence) AS sequence
-                    FROM events GROUP BY incarnation_id
-                ) h ON e.incarnation_id=h.incarnation_id
-                   AND e.sequence=h.sequence
-                ORDER BY e.incarnation_id
-                """
-            ).fetchall()
+    @staticmethod
+    def _heads(database: sqlite3.Connection) -> list[dict[str, Any]]:
+        rows = database.execute(
+            """
+            SELECT e.incarnation_id, e.sequence, e.event_id, e.content_hash
+            FROM events e
+            JOIN (
+                SELECT incarnation_id, MAX(sequence) AS sequence
+                FROM events GROUP BY incarnation_id
+            ) h ON e.incarnation_id=h.incarnation_id
+               AND e.sequence=h.sequence
+            ORDER BY e.incarnation_id
+            """
+        ).fetchall()
         return [
             {
                 "incarnation_id": row["incarnation_id"],
@@ -710,18 +740,18 @@ class Ledger:
             for row in rows
         ]
 
-    def delta(
-        self,
+    def heads(self) -> list[dict[str, Any]]:
+        self.initialize()
+        with self._database() as database:
+            return self._heads(database)
+
+    @staticmethod
+    def _remote_sequences(
+        database: sqlite3.Connection,
         remote_heads: Sequence[Mapping[str, Any]],
-        *,
-        limit: int = MAX_PAGE_EVENTS,
-    ) -> list[Event]:
-        if (
-            not isinstance(limit, int)
-            or isinstance(limit, bool)
-            or not 1 <= limit <= MAX_PAGE_EVENTS
-        ):
-            raise LedgerError("invalid_delta_limit")
+    ) -> dict[str, int]:
+        if len(remote_heads) > 256:
+            raise LedgerError("too_many_remote_heads")
         normalized: list[dict[str, Any]] = []
         seen: set[str] = set()
         fields = {"incarnation_id", "max_sequence", "tip_event_id", "tip_hash"}
@@ -755,47 +785,346 @@ class Ledger:
             normalized.append(dict(head))
         if normalized != sorted(normalized, key=lambda head: head["incarnation_id"]):
             raise LedgerError("remote_heads_not_sorted")
-        remote_sequences = {
-            head["incarnation_id"]: head["max_sequence"] for head in normalized
+        for head in normalized:
+            local = database.execute(
+                "SELECT event_id, content_hash FROM events "
+                "WHERE incarnation_id=? AND sequence=?",
+                (head["incarnation_id"], head["max_sequence"]),
+            ).fetchone()
+            if local is not None and (
+                local["event_id"] != head["tip_event_id"]
+                or local["content_hash"] != head["tip_hash"]
+            ):
+                raise LedgerEquivocationError(
+                    {
+                        "schema": "dm.we.equivocation/v1",
+                        "lane": "remote_head",
+                        "incarnation_id": head["incarnation_id"],
+                        "sequence": head["max_sequence"],
+                        "existing_event_id": local["event_id"],
+                        "existing_content_hash": local["content_hash"],
+                        "presented_event_id": head["tip_event_id"],
+                        "presented_content_hash": head["tip_hash"],
+                    }
+                )
+        return {
+            str(head["incarnation_id"]): int(head["max_sequence"])
+            for head in normalized
         }
 
-        self.initialize()
-        with self._database() as database:
-            for head in normalized:
-                local = database.execute(
-                    "SELECT event_id, content_hash FROM events "
-                    "WHERE incarnation_id=? AND sequence=?",
-                    (head["incarnation_id"], head["max_sequence"]),
-                ).fetchone()
-                if local is not None and (
-                    local["event_id"] != head["tip_event_id"]
-                    or local["content_hash"] != head["tip_hash"]
-                ):
-                    raise LedgerEquivocationError(
-                        {
-                            "schema": "dm.we.equivocation/v1",
-                            "lane": "remote_head",
-                            "incarnation_id": head["incarnation_id"],
-                            "sequence": head["max_sequence"],
-                            "existing_event_id": local["event_id"],
-                            "existing_content_hash": local["content_hash"],
-                            "presented_event_id": head["tip_event_id"],
-                            "presented_content_hash": head["tip_hash"],
-                        }
-                    )
+    @staticmethod
+    def _delta_page(
+        database: sqlite3.Connection,
+        remote_sequences: Mapping[str, int],
+        limit: int,
+    ) -> tuple[list[Event], bool]:
         result: list[Event] = []
-        for event in self.events():
+        rows = database.execute(
+            "SELECT event_json FROM events ORDER BY incarnation_id, sequence, event_id"
+        )
+        for row in rows:
+            event: Event = json.loads(bytes(row["event_json"]))
             if event["sequence"] <= remote_sequences.get(
                 event["origin"]["incarnation_id"], 0
             ):
                 continue
             candidate = [*result, event]
-            if len(page_bytes(candidate)) > MAX_PAGE_BYTES:
-                break
+            if len(result) == limit or len(page_bytes(candidate)) > MAX_PAGE_BYTES:
+                return result, True
             result.append(event)
-            if len(result) == limit:
-                break
+        return result, False
+
+    def delta(
+        self,
+        remote_heads: Sequence[Mapping[str, Any]],
+        *,
+        limit: int = MAX_PAGE_EVENTS,
+    ) -> list[Event]:
+        if (
+            not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= MAX_PAGE_EVENTS
+        ):
+            raise LedgerError("invalid_delta_limit")
+        self.initialize()
+        with self._database() as database:
+            remote_sequences = self._remote_sequences(database, remote_heads)
+            events, _ = self._delta_page(database, remote_sequences, limit)
+            return events
+
+    def delta_idempotent(
+        self,
+        *,
+        request_id: str,
+        request_hash: str,
+        remote_heads: Sequence[Mapping[str, Any]],
+        limit: int,
+    ) -> dict[str, Any]:
+        """Return one transactionally frozen page for a typed sync request."""
+
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    cached = database.execute(
+                        "SELECT request_hash, response_json FROM outbound_sync "
+                        "WHERE request_id=?",
+                        (request_id,),
+                    ).fetchone()
+                    if cached is not None:
+                        if cached["request_hash"] != request_hash:
+                            raise LedgerEquivocationError(
+                                {
+                                    "schema": "dm.we.equivocation/v1",
+                                    "lane": "sync_request",
+                                    "request_id": request_id,
+                                    "existing_request_hash": cached["request_hash"],
+                                    "presented_request_hash": request_hash,
+                                }
+                            )
+                        response: dict[str, Any] = json.loads(
+                            bytes(cached["response_json"])
+                        )
+                    else:
+                        remote_sequences = self._remote_sequences(
+                            database, remote_heads
+                        )
+                        events, more = self._delta_page(
+                            database, remote_sequences, limit
+                        )
+                        response = {
+                            "events": events,
+                            "more": more,
+                            "offered_heads": self._heads(database),
+                        }
+                        database.execute(
+                            "INSERT INTO outbound_sync VALUES (?, ?, ?)",
+                            (request_id, request_hash, canonical_bytes(response)),
+                        )
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
+        return response
+
+    def issued_request(self, request_id: str) -> tuple[str, dict[str, Any]] | None:
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT request_hash, request_json FROM issued_sync WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+        return (
+            None
+            if row is None
+            else (
+                str(row["request_hash"]),
+                json.loads(bytes(row["request_json"])),
+            )
+        )
+
+    def store_issued_request(
+        self,
+        *,
+        request_id: str,
+        request_hash: str,
+        request: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        raw = canonical_bytes(request)
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    existing = database.execute(
+                        "SELECT request_hash, request_json FROM issued_sync "
+                        "WHERE request_id=?",
+                        (request_id,),
+                    ).fetchone()
+                    if existing is not None:
+                        if (
+                            existing["request_hash"] != request_hash
+                            or bytes(existing["request_json"]) != raw
+                        ):
+                            raise LedgerEquivocationError(
+                                {
+                                    "schema": "dm.we.equivocation/v1",
+                                    "lane": "issued_sync_request",
+                                    "request_id": request_id,
+                                    "existing_request_hash": existing["request_hash"],
+                                    "presented_request_hash": request_hash,
+                                }
+                            )
+                        result: dict[str, Any] = json.loads(
+                            bytes(existing["request_json"])
+                        )
+                    else:
+                        database.execute(
+                            "INSERT INTO issued_sync VALUES (?, ?, ?)",
+                            (request_id, request_hash, raw),
+                        )
+                        result = copy.deepcopy(dict(request))
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
         return result
+
+    def ingest_idempotent(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        *,
+        source: str,
+        request_id: str,
+        page_hash: str,
+        receipt_base: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically ingest one page and persist its exact retry receipt."""
+
+        if not isinstance(source, str) or not 1 <= len(source.encode("utf-8")) <= 256:
+            raise LedgerError("invalid_peer_id")
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    cached = database.execute(
+                        "SELECT page_hash, receipt_json FROM inbound_sync "
+                        "WHERE peer_id=? AND request_id=?",
+                        (source, request_id),
+                    ).fetchone()
+                    if cached is not None:
+                        if cached["page_hash"] != page_hash:
+                            raise LedgerEquivocationError(
+                                {
+                                    "schema": "dm.we.equivocation/v1",
+                                    "lane": "sync_page",
+                                    "peer_id": source,
+                                    "request_id": request_id,
+                                    "existing_page_hash": cached["page_hash"],
+                                    "presented_page_hash": page_hash,
+                                }
+                            )
+                        receipt: dict[str, Any] = json.loads(
+                            bytes(cached["receipt_json"])
+                        )
+                    else:
+                        validated, missing, _ = self._plan(database, events)
+                        cursors = {
+                            str(row["incarnation_id"]): int(row["sequence"])
+                            for row in database.execute(
+                                "SELECT incarnation_id, sequence "
+                                "FROM peer_cursors WHERE peer_id=?",
+                                (source,),
+                            )
+                        }
+                        if any(
+                            event["sequence"]
+                            < cursors.get(event["origin"]["incarnation_id"], 0)
+                            for event in validated
+                        ):
+                            raise LedgerError("peer_cursor_regression")
+                        available_known = {
+                            str(row["event_id"])
+                            for row in database.execute(
+                                "SELECT event_id FROM events WHERE status='known'"
+                            )
+                        }
+                        for event in missing:
+                            dependencies = self._dependencies(event)
+                            status = (
+                                "known"
+                                if dependencies <= available_known
+                                else "incomplete"
+                            )
+                            self._insert(database, event, source=source, status=status)
+                            if status == "known":
+                                available_known.add(event["event_id"])
+                        self._promote(database)
+                        for page_event in validated:
+                            self._advance_cursor(database, source, page_event)
+                        incomplete = int(
+                            database.execute(
+                                "SELECT COUNT(*) FROM events WHERE status='incomplete'"
+                            ).fetchone()[0]
+                        )
+                        receipt_core = {
+                            **copy.deepcopy(dict(receipt_base)),
+                            "received": len(validated),
+                            "inserted": len(missing),
+                            "replayed": len(validated) - len(missing),
+                            "incomplete": incomplete,
+                            "achieved_heads": self._heads(database),
+                            "completed_at_ms": self.clock(),
+                        }
+                        receipt = {
+                            **receipt_core,
+                            "receipt_hash": hashlib.sha256(
+                                b"daimon/weave/sync-receipt/v1\x00"
+                                + canonical_bytes(receipt_core)
+                            ).hexdigest(),
+                        }
+                        database.execute(
+                            "INSERT INTO inbound_sync VALUES (?, ?, ?, ?)",
+                            (
+                                source,
+                                request_id,
+                                page_hash,
+                                canonical_bytes(receipt),
+                            ),
+                        )
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+            self._set_peer_state(source, "coherent", None)
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            self._set_peer_state(source, "quarantined", str(exception))
+            raise
+        except LedgerGapError as exception:
+            self._set_peer_state(source, "gap", str(exception))
+            raise
+        except WeaveProtocolError as exception:
+            self._set_peer_state(source, "quarantined", str(exception))
+            raise
+        return receipt
+
+    def replace_projection_cache(self, snapshot: Mapping[str, Any]) -> None:
+        raw = canonical_bytes(snapshot)
+        projection_hash = snapshot.get("projection_hash")
+        if not isinstance(projection_hash, str):
+            raise LedgerError("invalid_projection_snapshot")
+        self.initialize()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                database.execute(
+                    "INSERT INTO projection_cache VALUES (1, ?, ?) "
+                    "ON CONFLICT(slot) DO UPDATE SET "
+                    "projection_hash=excluded.projection_hash, "
+                    "snapshot_json=excluded.snapshot_json",
+                    (projection_hash, raw),
+                )
+                database.commit()
+            except BaseException:
+                database.rollback()
+                raise
+
+    def projection_cache(self) -> dict[str, Any] | None:
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT snapshot_json FROM projection_cache WHERE slot=1"
+            ).fetchone()
+        return None if row is None else json.loads(bytes(row["snapshot_json"]))
 
     def peer_cursors(self, peer_id: str | None = None) -> list[dict[str, Any]]:
         self.initialize()
@@ -833,50 +1162,15 @@ class Ledger:
     def diff(
         self, *, kind: str | None = None, subject: str | None = None
     ) -> list[dict[str, Any]]:
-        known = self.events(include_incomplete=False)
-        decisions: dict[str, Event] = {}
-        for event in known:
-            if (
-                event["kind"] == "adoption.decided"
-                and event["origin"]["embodiment_id"]
-                == self.local_origin["embodiment_id"]
-            ):
-                decisions[event["payload"]["target_event_id"]] = event
-        result: list[dict[str, Any]] = []
-        excluded = {
-            "adoption.decided",
-            "projection.receipted",
-            "lifecycle.announced",
-        }
-        for event in known:
-            if event["kind"] in excluded:
-                continue
-            if kind is not None and event["kind"] != kind:
-                continue
-            if subject is not None and event["subject"] != subject:
-                continue
-            decision = decisions.get(event["event_id"])
-            value = None if decision is None else decision["payload"]["decision"]
-            state = {
-                None: "pending",
-                "adopt": "adopted",
-                "reject": "rejected",
-                "defer": "deferred",
-                "revert": "reverted",
-            }[value]
-            result.append(
-                {
-                    "event_id": event["event_id"],
-                    "kind": event["kind"],
-                    "subject": event["subject"],
-                    "origin": event["origin"],
-                    "state": state,
-                    "decision_event_id": None
-                    if decision is None
-                    else decision["event_id"],
-                }
-            )
-        return result
+        from .projections import ProjectionEngine
+
+        entries = ProjectionEngine(self).snapshot()["entries"]
+        return [
+            entry
+            for entry in entries
+            if (kind is None or entry["kind"] == kind)
+            and (subject is None or entry["subject"] == subject)
+        ]
 
 
 __all__ = [

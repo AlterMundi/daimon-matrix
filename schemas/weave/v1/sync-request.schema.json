@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/sync-request.schema.json",
+  "title": "dm.we.sync-request/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "request_id", "being_ref", "manifest_hash", "requester", "heads", "limit"],
+  "properties": {
+    "schema": {"const": "dm.we.sync-request/v1"},
+    "request_id": {"type": "string", "format": "uuid"},
+    "being_ref": {"$ref": "heads.schema.json#/$defs/beingRef"},
+    "manifest_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "requester": {"$ref": "heads.schema.json#/$defs/origin"},
+    "heads": {"$ref": "heads.schema.json#/$defs/heads"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 256}
+  }
+}
