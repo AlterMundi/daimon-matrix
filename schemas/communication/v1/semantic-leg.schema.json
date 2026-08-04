@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/semantic-leg.schema.json",
+  "title": "Per-recipient semantic communication leg projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "leg_id", "message_id", "thread_id", "recipient_type",
+    "recipient_id", "receipt_origin_embodiment_id", "resolution_event_id",
+    "resolution_hash", "evidence_cursor", "sequence", "state",
+    "terminal_receipt_event_id", "terminal_receipt_hash"
+  ],
+  "properties": {
+    "schema": {"const": "dm.semantic-leg/v1"},
+    "leg_id": {"type": "string", "pattern": "^dm:semantic-leg:v1:[A-Za-z0-9_-]{43}$"},
+    "message_id": {"type": "string", "format": "uuid"},
+    "thread_id": {"type": "string", "format": "uuid"},
+    "recipient_type": {"enum": ["embodiment", "relationship"]},
+    "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "receipt_origin_embodiment_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "resolution_event_id": {"type": "string", "format": "uuid"},
+    "resolution_hash": {"$ref": "#/$defs/hash"},
+    "evidence_cursor": {"type": "string", "minLength": 1, "maxLength": 512},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "state": {
+      "enum": [
+        "accepted", "delivered", "failed:transport", "refused:policy",
+        "expired", "resolved:unroutable", "quarantined"
+      ]
+    },
+    "terminal_receipt_event_id": {"type": ["string", "null"], "format": "uuid"},
+    "terminal_receipt_hash": {
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]
+    }
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

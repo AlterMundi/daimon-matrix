@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/route-attempt.schema.json",
+  "title": "Disposable route attempt input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "attempt_id", "leg_id", "provider_ref", "route_ref",
+    "credential_ref", "body_ref", "deadline_ms"
+  ],
+  "properties": {
+    "schema": {"const": "dm.route-attempt/v1"},
+    "attempt_id": {"type": "string", "format": "uuid"},
+    "leg_id": {"type": "string", "pattern": "^dm:semantic-leg:v1:[A-Za-z0-9_-]{43}$"},
+    "provider_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "route_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "credential_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "body_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "deadline_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+  }
+}

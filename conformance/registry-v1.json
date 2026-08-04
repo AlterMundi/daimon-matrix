@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.1",
+  "suite_version": "DM-026.2",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -56,6 +56,62 @@
       "evidence": ["tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_cli_real_daemon_json_and_exact_retry", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_every_cli_command_maps_to_exactly_one_closed_method"],
       "cleanup": "Fixture stops daemon and removes its isolated state root.",
       "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "communication_cursor_contiguous",
+      "owners": ["DM-052"],
+      "specifications": ["docs/dm052-logical-communication.md"],
+      "setup": "One recipient queue with same-millisecond bursts, opaque snapshot pages and independent consumers.",
+      "stimulus": "Read more than 100 legs across pages, insert at a page boundary, claim concurrently and advance progress.",
+      "fault": "Tampered or cross-consumer cursor and a later terminal row above an earlier accepted row.",
+      "expected": "Every snapshot item appears once; claims are disjoint; durable progress advances only through the owned terminal prefix.",
+      "evidence": ["tests.test_dm052_communication.CursorAndRecoveryTests.test_concurrent_claims_are_disjoint_and_do_not_advance_cursor", "tests.test_dm052_communication.CursorAndRecoveryTests.test_cursor_advances_only_across_terminal_owned_prefix", "tests.test_dm052_communication.CursorAndRecoveryTests.test_page_replay_tamper_and_cross_consumer_binding", "tests.test_dm052_communication.CursorAndRecoveryTests.test_pages_are_lossless_across_large_same_millisecond_backlog"],
+      "cleanup": "Close SQLite connections and remove the isolated ledger and anchor.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "communication_fanout_receipts",
+      "owners": ["DM-011", "DM-012", "DM-052"],
+      "specifications": ["docs/dm052-logical-communication.md", "specs/scope-resolution.md"],
+      "setup": "Root-bound signed message and resolution events target two active embodiments.",
+      "stimulus": "Materialize fan-out, record independently signed intake receipts and validate a direct causal reply.",
+      "fault": "Wrong target, thread, causal parents or receipt origin plus every non-success terminal outcome.",
+      "expected": "Message and thread IDs stay fixed, each semantic recipient has one leg and only complete terminal vectors claim completion.",
+      "evidence": ["tests.test_dm052_communication.LogicalMessageTests.test_concurrent_exact_accept_materializes_one_leg", "tests.test_dm052_communication.LogicalMessageTests.test_direct_reply_is_signed_targeted_causal_and_same_thread", "tests.test_dm052_communication.LogicalMessageTests.test_every_terminal_outcome_is_exact_and_accepted_is_never_terminal", "tests.test_dm052_communication.LogicalMessageTests.test_fanout_preserves_ids_and_returns_per_recipient_terminal_vector", "tests.test_dm052_communication.LogicalMessageTests.test_resolution_and_receipt_require_signed_scope_and_causality"],
+      "cleanup": "Remove synthetic signed events, receipts and projection database.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "communication_route_replay",
+      "owners": ["DM-051", "DM-052"],
+      "specifications": ["docs/dm051-recipient-encryption.md", "docs/dm052-logical-communication.md"],
+      "setup": "One semantic leg with direct and hub attempts and stable delivery identifiers.",
+      "stimulus": "Replay exact delivery bytes, reseal under a new delivery ID and lose one provider response after its effect.",
+      "fault": "Same delivery ID changes bytes and route acceptance is presented as recipient intake.",
+      "expected": "Routes and reseals never duplicate the leg; conflicts quarantine; ambiguous provider effects retry by stable attempt; ACK is non-terminal.",
+      "evidence": ["tests.test_dm052_communication.LogicalMessageTests.test_response_loss_retries_one_stable_provider_effect", "tests.test_dm052_communication.LogicalMessageTests.test_route_ack_is_not_recipient_intake", "tests.test_dm052_communication.LogicalMessageTests.test_same_delivery_id_with_changed_bytes_is_quarantined", "tests.test_dm052_communication.LogicalMessageTests.test_semantic_dedup_ignores_routes_reseal_and_incarnation_details"],
+      "cleanup": "Remove fake-provider effects and isolated operational projections.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "communication_state_rollback_gc",
+      "owners": ["DM-023", "DM-052"],
+      "specifications": ["docs/dm052-logical-communication.md", "specs/weave-protocol.md"],
+      "setup": "Durable same-ledger communication projections with generation anchor, terminal receipt and advanced consumer.",
+      "stimulus": "Compact the terminal queue, restart, read canonical result, then restore a lower mutation counter.",
+      "fault": "Operational queue deletion and simulated SQLite rollback beneath the external generation anchor.",
+      "expected": "GC preserves message and receipt authority; restart succeeds; rollback fails closed and never reuses cursor state.",
+      "evidence": ["tests.test_dm052_communication.CursorAndRecoveryTests.test_restart_compaction_and_rollback_detection_preserve_authority", "tests.test_dm052_communication.LogicalMessageTests.test_terminal_receipt_replay_and_conflict", "tests.test_dm052_communication.PublicBoundaryAndSchemaTests.test_authenticated_service_exposes_logical_operations"],
+      "cleanup": "Remove isolated ledger, anchor and local capability.",
+      "platform": "all",
       "ci_lane": "complete",
       "required": true
     },

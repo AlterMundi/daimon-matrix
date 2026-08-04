@@ -1,0 +1,52 @@
+{
+  "schema": "dm-052-invariant-report/v1",
+  "deployment": "not-applicable-live-routes-disabled",
+  "store": "dm-023-ledger-same-sqlite",
+  "source_test_count": 209,
+  "installed_test_count": 66,
+  "registry_sha256": "0858842cb1f6a76ce59042f02fbfdad2f8ded864e7bce715512d26a3a14f952e",
+  "conformance_transcript_sha256": "5c9c2f4e97f41c353bc441e66796224ec08e0242476a0d3f62c0057ca79efcce",
+  "artifacts": {
+    "wheel_sha256": "97fa51fb9682967dc204b4ee609b86feb73db9db6158842a6ceffaf6fc70ad60",
+    "sdist_sha256": "966287f3c022deb475392a11c7b0345932b91f890adfa828e96c1e5de314cdf6",
+    "conformance_report_canonical_sha256": "06617af3c99329d0ea2f524e9c3e75556fc0c987571f5074760459dc961296f5",
+    "conformance_report_file_sha256": "35f92950dec643d94ea57ca5c3ce3de8b14886289a0229518453a6ed1f72d34b"
+  },
+  "invariants": {
+    "message_id_equals_event_id": true,
+    "thread_id_is_signed_and_stable": true,
+    "resolution_scope_and_message_are_signed_causal_evidence": true,
+    "plural_embodiment_semantic_keys": true,
+    "one_leg_per_semantic_recipient": true,
+    "route_and_delivery_ids_are_operational": true,
+    "exact_delivery_replay_is_idempotent": true,
+    "changed_delivery_bytes_quarantine": true,
+    "route_ack_is_not_intake": true,
+    "complete_terminal_receipt_vector": true,
+    "terminal_conflicts_quarantine": true,
+    "canonical_retry_survives_ciphertext_expiry": true,
+    "same_millisecond_pages_are_lossless": true,
+    "snapshot_page_cursor_is_opaque_and_bound": true,
+    "concurrent_claims_are_disjoint": true,
+    "claims_do_not_advance_progress": true,
+    "consumer_cursor_requires_terminal_prefix": true,
+    "sequence_and_generation_never_reset_silently": true,
+    "queue_gc_preserves_canonical_receipts": true,
+    "rollback_fails_closed_against_anchor": true,
+    "public_operations_use_authenticated_rpc": true,
+    "live_route_disabled": true,
+    "matrix_org_absent": true,
+    "buzz_and_telegram_absent": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm052-logical-communication.json",
+    "conformance/registry-v1.json",
+    "docs/dm052-logical-communication.md",
+    "schemas/communication/v1/logical-message.schema.json",
+    "schemas/communication/v1/route-attempt.schema.json",
+    "schemas/communication/v1/semantic-leg.schema.json",
+    "schemas/communication/v1/semantic-receipt.schema.json",
+    "src/daimon_matrix/communication.py",
+    "tests/test_dm052_communication.py"
+  ]
+}
