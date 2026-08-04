@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon-matrix.local/schemas/identity/v1/artifact.schema.json",
+  "title": "Daimon Matrix identity artifact V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "artifact_id", "body", "signatures"],
+  "properties": {
+    "schema": {"const": "dm.identity.artifact/v1"},
+    "kind": {
+      "enum": [
+        "genesis",
+        "root-rotation",
+        "recovery-policy",
+        "recovery",
+        "revocation",
+        "embodiment-credential",
+        "incarnation-authorization",
+        "history-binding",
+        "binding-activation"
+      ]
+    },
+    "artifact_id": {"type": "string", "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"},
+    "body": {"type": "object"},
+    "signatures": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/signature"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "genesis"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/genesis"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "root-rotation"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/rootRotation"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "recovery-policy"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/recoveryPolicy"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "recovery"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/recovery"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "revocation"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/revocation"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "embodiment-credential"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/embodimentCredential"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "incarnation-authorization"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/incarnationAuthorization"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "history-binding"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/historyBinding"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "binding-activation"}}},
+      "then": {"properties": {"body": {"$ref": "#/$defs/bindingActivation"}}}
+    }
+  ],
+  "$defs": {
+    "b64_32": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "public"],
+      "properties": {
+        "algorithm": {"enum": ["Ed25519", "X25519"]},
+        "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+        "public": {"$ref": "#/$defs/b64_32"}
+      }
+    },
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keys", "threshold"],
+      "properties": {
+        "keys": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/key"}},
+        "threshold": {"type": "integer", "minimum": 1, "maximum": 32}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "role", "value"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+        "role": {
+          "enum": [
+            "root-authorization",
+            "recovery-possession",
+            "new-root-possession",
+            "recovery-authorization",
+            "new-recovery-possession",
+            "embodiment-acceptance",
+            "incarnation-authorization"
+          ]
+        },
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+      }
+    },
+    "successor": {
+      "type": "object",
+      "required": ["being_ref", "control_generation", "control_sequence", "previous_control_head"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+        "control_generation": {"type": "integer", "minimum": 0},
+        "control_sequence": {"type": "integer", "minimum": 1},
+        "previous_control_head": {"type": "string", "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"}
+      }
+    },
+    "genesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "control_generation", "control_sequence", "core", "created_at_ms"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+        "control_generation": {"const": 0},
+        "control_sequence": {"const": 0},
+        "created_at_ms": {"type": "integer", "minimum": 0},
+        "core": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nonce", "protocol", "recovery", "root", "version"],
+          "properties": {
+            "nonce": {"$ref": "#/$defs/b64_32"},
+            "protocol": {"const": "daimon-matrix"},
+            "recovery": {"$ref": "#/$defs/threshold"},
+            "root": {"$ref": "#/$defs/threshold"},
+            "version": {"const": 1}
+          }
+        }
+      }
+    },
+    "rootRotation": {
+      "allOf": [
+        {"$ref": "#/$defs/successor"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["being_ref", "control_generation", "control_sequence", "previous_control_head", "replacement_root", "carry_forward_credentials"],
+          "properties": {
+            "being_ref": true,
+            "control_generation": true,
+            "control_sequence": true,
+            "previous_control_head": true,
+            "replacement_root": {"$ref": "#/$defs/threshold"},
+            "carry_forward_credentials": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^dm:identity:v1:"}}
+          }
+        }
+      ]
+    },
+    "recoveryPolicy": {
+      "allOf": [
+        {"$ref": "#/$defs/successor"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["being_ref", "control_generation", "control_sequence", "previous_control_head", "replacement_recovery"],
+          "properties": {
+            "being_ref": true,
+            "control_generation": true,
+            "control_sequence": true,
+            "previous_control_head": true,
+            "replacement_recovery": {"$ref": "#/$defs/threshold"}
+          }
+        }
+      ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "competing_control_heads", "control_generation", "control_sequence", "replacement_root", "revoked_embodiments"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
+        "competing_control_heads": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^dm:identity:v1:"}},
+        "control_generation": {"type": "integer", "minimum": 1},
+        "control_sequence": {"const": 0},
+        "replacement_root": {"$ref": "#/$defs/threshold"},
+        "revoked_embodiments": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "revocation": {
+      "allOf": [
+        {"$ref": "#/$defs/successor"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["being_ref", "control_generation", "control_sequence", "previous_control_head", "embodiment_id", "cutoff_incarnation_sequence", "revocation_generation"],
+          "properties": {
+            "being_ref": true,
+            "control_generation": true,
+            "control_sequence": true,
+            "previous_control_head": true,
+            "embodiment_id": {"type": "string"},
+            "cutoff_incarnation_sequence": {"type": "integer", "minimum": 0},
+            "revocation_generation": {"type": "integer", "minimum": 1}
+          }
+        }
+      ]
+    },
+    "transportPrincipal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "principal_id", "scheme"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "principal_id": {"type": "string", "minLength": 1},
+        "scheme": {"type": "string", "minLength": 1}
+      }
+    },
+    "embodimentCredential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "body_ref", "control_head", "embodiment_id", "encryption_key", "purposes", "revocation_generation", "signing_key", "transport_principals", "valid_from_ms", "valid_until_ms"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
+        "body_ref": {"type": "string", "minLength": 1},
+        "control_head": {"type": "string", "pattern": "^dm:identity:v1:"},
+        "embodiment_id": {"type": "string", "minLength": 1},
+        "encryption_key": {"$ref": "#/$defs/key"},
+        "purposes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "revocation_generation": {"type": "integer", "minimum": 0},
+        "signing_key": {"$ref": "#/$defs/key"},
+        "transport_principals": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/transportPrincipal"}},
+        "valid_from_ms": {"type": "integer", "minimum": 0},
+        "valid_until_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "incarnationAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "embodiment_credential_id", "embodiment_id", "incarnation_id", "incarnation_sequence", "started_at_ms"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
+        "embodiment_credential_id": {"type": "string", "pattern": "^dm:identity:v1:"},
+        "embodiment_id": {"type": "string", "minLength": 1},
+        "incarnation_id": {"type": "string", "minLength": 1},
+        "incarnation_sequence": {"type": "integer", "minimum": 0},
+        "started_at_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "historyHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content_hash", "event_id", "incarnation_id", "origin_embodiment_id", "sequence", "signer_key_id"],
+      "properties": {
+        "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "event_id": {"type": "string", "minLength": 1},
+        "incarnation_id": {"type": "string", "minLength": 1},
+        "origin_embodiment_id": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 0},
+        "signer_key_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "historyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_heads", "being_ref", "control_head", "manifest_hash", "manifest_revision", "provisional_being_ref"],
+      "properties": {
+        "accepted_heads": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/historyHead"}},
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
+        "control_head": {"type": "string", "pattern": "^dm:identity:v1:"},
+        "manifest_hash": {"$ref": "#/$defs/b64_32"},
+        "manifest_revision": {"type": "integer", "minimum": 0},
+        "provisional_being_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "bindingActivation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "binding_id", "control_head", "mode"],
+      "properties": {
+        "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
+        "binding_id": {"type": "string", "pattern": "^dm:identity:v1:"},
+        "control_head": {"type": "string", "pattern": "^dm:identity:v1:"},
+        "mode": {"const": "root-bound"}
+      }
+    }
+  }
+}

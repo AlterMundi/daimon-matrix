@@ -23,6 +23,8 @@ work, append-only event validation, the `/we.sync` walking skeleton, Cluster
 snapshot/quiesce/audit/failure drills, and Tribe's durable encrypted transport.
 Their authority boundaries are redefined by the current ontology.
 
-The provisional coordinated two-host journey passed. The next implementation
-gate is DM-021, followed by the local runtime narrow waist, Tribe absorption,
-Matrix↔Cluster integration, and a root-authorized multi-host rebirth drill.
+The provisional coordinated two-host journey passed. DM-021 implements the
+synthetic being-root/control, plural credentials, transport-principal binding,
+history binding, and encrypted custody gate. It is followed by the local
+runtime narrow waist, Tribe absorption, Matrix↔Cluster integration, and a
+root-authorized multi-host rebirth drill.

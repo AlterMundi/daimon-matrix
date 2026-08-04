@@ -1,0 +1,23 @@
+{
+  "schema": "dm.verification.identity-invariants/v1",
+  "card": "DM-021",
+  "production_secrets_used": false,
+  "invariants": [
+    {"id": "plural-embodiments", "test": "PluralAuthorizationTests.test_two_embodiments_are_valid_concurrently"},
+    {"id": "transport-is-not-being", "test": "PluralAuthorizationTests.test_body_key_and_principal_substitution_fail_closed"},
+    {"id": "purpose-separation", "test": "PluralAuthorizationTests.test_root_recovery_and_embodiment_keys_are_purpose_separated"},
+    {"id": "restart-is-new-incarnation", "test": "IncarnationAndRevocationTests.test_restart_changes_incarnation_not_embodiment"},
+    {"id": "revocation-cutoff", "test": "IncarnationAndRevocationTests.test_revocation_preserves_history_and_does_not_revoke_peer"},
+    {"id": "explicit-carry-forward", "test": "RotationAndRecoveryTests.test_rotation_requires_both_thresholds_and_explicit_carry_forward"},
+    {"id": "fork-quarantine", "test": "RotationAndRecoveryTests.test_competing_successors_quarantine_until_recovery_names_every_head"},
+    {"id": "recovery-preserves-revocations", "test": "RotationAndRecoveryTests.test_recovery_conservatively_merges_every_branch_revocation"},
+    {"id": "irrecoverable-without-thresholds", "test": "RotationAndRecoveryTests.test_loss_of_both_thresholds_cannot_recreate_the_being"},
+    {"id": "history-is-not-rewritten", "test": "ProvisionalBindingTests.test_binding_preserves_original_history_and_downgrade_fails"},
+    {"id": "authenticated-custody", "test": "EncryptedKeystoreTests.test_wrong_password_tamper_and_truncation_fail_closed"},
+    {"id": "owner-only-no-symlink", "test": "EncryptedKeystoreTests.test_unsafe_mode_and_symlink_fail_closed"},
+    {"id": "single-committing-writer", "test": "EncryptedKeystoreTests.test_concurrent_stale_writer_is_rejected"},
+    {"id": "atomic-replace", "test": "EncryptedKeystoreTests.test_interrupted_replace_preserves_previous_ciphertext"},
+    {"id": "fresh-host-rollback-reconciliation", "test": "EncryptedKeystoreTests.test_backup_restore_reconciles_public_high_water"},
+    {"id": "public-vector-oracle", "test": "DM021VectorTests"}
+  ]
+}

@@ -20,6 +20,7 @@ from tools.check_distribution import (
     PackageCheckError,
     validate_member,
 )
+from tools.reproducible_build import BUILD_INPUTS
 from tools.scan_secrets import SecretScanError, scan_archive, scan_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,12 +32,12 @@ class PackageMetadataTests(unittest.TestCase):
         with (ROOT / "pyproject.toml").open("rb") as stream:
             self.configuration: dict[str, Any] = tomllib.load(stream)
 
-    def test_public_metadata_and_empty_runtime_dependencies(self) -> None:
+    def test_public_metadata_and_runtime_dependency_boundary(self) -> None:
         project = self.configuration["project"]
         self.assertEqual(project["name"], "daimon-matrix")
         self.assertEqual(project["version"], "0.0.0")
         self.assertEqual(project["requires-python"], ">=3.11")
-        self.assertEqual(project["dependencies"], [])
+        self.assertEqual(project["dependencies"], ["cryptography>=46.0.7,<47"])
         self.assertEqual(project["license"], "MIT")
 
     def test_supported_versions_and_backend_are_explicit(self) -> None:
@@ -100,6 +101,19 @@ class PackageMetadataTests(unittest.TestCase):
 
 
 class ArtifactBoundaryTests(unittest.TestCase):
+    def test_reproducible_build_inputs_match_sdist_sources(self) -> None:
+        expected_sources = {
+            Path(path) for path in SDIST_FILES if path.startswith("src/daimon_matrix/")
+        }
+        self.assertEqual(
+            {
+                path
+                for path in BUILD_INPUTS
+                if path.parts[:2] == ("src", "daimon_matrix")
+            },
+            expected_sources,
+        )
+
     def test_allowlists_are_frozen(self) -> None:
         self.assertEqual(
             SDIST_FILES,
@@ -110,6 +124,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "README.md",
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
+                "src/daimon_matrix/canonical.py",
+                "src/daimon_matrix/identity.py",
+                "src/daimon_matrix/keystore.py",
                 "src/daimon_matrix/py.typed",
             },
         )
@@ -117,6 +134,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
             WHEEL_FILES,
             {
                 "daimon_matrix/__init__.py",
+                "daimon_matrix/canonical.py",
+                "daimon_matrix/identity.py",
+                "daimon_matrix/keystore.py",
                 "daimon_matrix/py.typed",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
                 "daimon_matrix-0.0.0.dist-info/RECORD",
