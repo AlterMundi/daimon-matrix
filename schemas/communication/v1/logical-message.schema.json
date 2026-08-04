@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v1/logical-message.schema.json",
+  "title": "Logical communication message projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "message_id", "event_hash", "thread_id", "author", "intent",
+    "resolution_event_id", "resolution_hash"
+  ],
+  "properties": {
+    "schema": {"const": "dm.logical-message/v1"},
+    "message_id": {"type": "string", "format": "uuid"},
+    "event_hash": {"$ref": "#/$defs/hash"},
+    "thread_id": {"type": "string", "format": "uuid"},
+    "author": {"$ref": "#/$defs/origin"},
+    "intent": {"$ref": "#/$defs/intent"},
+    "resolution_event_id": {"type": "string", "format": "uuid"},
+    "resolution_hash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "embodiment_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "incarnation_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "principal_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "scope", "thread_id"],
+      "properties": {
+        "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+        "scope": {"type": "string", "minLength": 1, "maxLength": 240},
+        "thread_id": {"type": "string", "format": "uuid"}
+      }
+    }
+  }
+}

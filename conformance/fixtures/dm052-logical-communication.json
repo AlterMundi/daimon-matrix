@@ -1,0 +1,20 @@
+{
+  "schema": "dm.communication.fixtures/v1",
+  "cases": [
+    {"id": "bulk-same-millisecond-over-100", "expected": "lossless-sequence-pages"},
+    {"id": "consumer-cross-binding", "expected": "cursor_rejected"},
+    {"id": "consumer-skip-nonterminal", "expected": "consumer_prefix_not_terminal"},
+    {"id": "cursor-tamper", "expected": "cursor_rejected"},
+    {"id": "delivery-changed-bytes", "expected": "delivery_id_conflict"},
+    {"id": "delivery-exact-replay", "expected": "idempotent"},
+    {"id": "direct-and-hub-same-leg", "expected": "one-semantic-leg"},
+    {"id": "direct-reply-missing-cause", "expected": "reply_parent_not_causal"},
+    {"id": "fanout-two-embodiments", "expected": "two-terminal-receipts"},
+    {"id": "page-boundary-insert", "expected": "snapshot-isolation"},
+    {"id": "recipient-incarnation-change", "expected": "same-semantic-key"},
+    {"id": "resolution-scope-causal-binding", "expected": "signed-exact-evidence"},
+    {"id": "response-loss-after-route-effect", "expected": "stable-attempt-replay"},
+    {"id": "sequence-rollback", "expected": "communication_state_rollback"},
+    {"id": "terminal-receipt-conflict", "expected": "quarantined"}
+  ]
+}

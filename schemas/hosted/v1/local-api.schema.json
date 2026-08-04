@@ -48,6 +48,17 @@
         "auth": {"$ref": "#/$defs/auth"}
       },
       "allOf": [{"oneOf": [
+        {"properties": {"method": {"const": "communication.accept"}, "params": {"$ref": "#/$defs/communicationAcceptParams"}}},
+        {"properties": {"method": {"const": "communication.attempt"}, "params": {"$ref": "#/$defs/communicationAttemptParams"}}},
+        {"properties": {"method": {"const": "communication.claim"}, "params": {"$ref": "#/$defs/communicationClaimParams"}}},
+        {"properties": {"method": {"const": "communication.compact"}, "params": {"$ref": "#/$defs/communicationCompactParams"}}},
+        {"properties": {"method": {"const": "communication.cursor.advance"}, "params": {"$ref": "#/$defs/communicationCursorParams"}}},
+        {"properties": {"method": {"const": "communication.delivery"}, "params": {"$ref": "#/$defs/communicationDeliveryParams"}}},
+        {"properties": {"method": {"const": "communication.page"}, "params": {"$ref": "#/$defs/communicationPageParams"}}},
+        {"properties": {"method": {"const": "communication.rebuild-plan"}, "params": {"$ref": "#/$defs/communicationMessageParams"}}},
+        {"properties": {"method": {"const": "communication.receipt.record"}, "params": {"$ref": "#/$defs/communicationReceiptParams"}}},
+        {"properties": {"method": {"const": "communication.result"}, "params": {"$ref": "#/$defs/communicationResultParams"}}},
+        {"properties": {"method": {"const": "communication.route-ack"}, "params": {"$ref": "#/$defs/communicationRouteAckParams"}}},
         {"properties": {"method": {"const": "runtime.status"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.heads"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.preview"}, "params": {"$ref": "#/$defs/previewParams"}}},
@@ -63,6 +74,92 @@
       ]}]
     },
     "empty": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+    "communicationAcceptParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["message_event_id", "resolution_event_id"],
+      "properties": {
+        "message_event_id": {"type": "string", "format": "uuid"},
+        "resolution_event_id": {"type": "string", "format": "uuid"}
+      }
+    },
+    "communicationAttemptParams": {
+      "type": "object", "additionalProperties": false, "required": ["attempt"],
+      "properties": {"attempt": {"type": "object"}}
+    },
+    "communicationClaimParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["claim_id", "consumer_id", "lease_until_ms", "limit", "recipient_id"],
+      "properties": {
+        "claim_id": {"type": "string", "format": "uuid"},
+        "consumer_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "lease_until_ms": {"$ref": "#/$defs/uint"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+        "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240}
+      }
+    },
+    "communicationCompactParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recipient_id", "through_sequence"],
+      "properties": {
+        "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "through_sequence": {"$ref": "#/$defs/uint"}
+      }
+    },
+    "communicationCursorParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["consumer_id", "recipient_id", "sequence"],
+      "properties": {
+        "consumer_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "sequence": {"$ref": "#/$defs/uint"}
+      }
+    },
+    "communicationDeliveryParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempt_id", "delivery_id", "envelope_hash"],
+      "properties": {
+        "attempt_id": {"type": "string", "format": "uuid"},
+        "delivery_id": {"type": "string", "format": "uuid"},
+        "envelope_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "communicationMessageParams": {
+      "type": "object", "additionalProperties": false, "required": ["message_id"],
+      "properties": {"message_id": {"type": "string", "format": "uuid"}}
+    },
+    "communicationPageParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["consumer_id", "cursor", "limit", "recipient_id", "request_id"],
+      "properties": {
+        "consumer_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "cursor": {"type": ["string", "null"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+        "recipient_id": {"type": "string", "minLength": 1, "maxLength": 240},
+        "request_id": {"type": "string", "format": "uuid"}
+      }
+    },
+    "communicationReceiptParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["receipt_event_id"],
+      "properties": {"receipt_event_id": {"type": "string", "format": "uuid"}}
+    },
+    "communicationResultParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["message_id", "require_terminal"],
+      "properties": {
+        "message_id": {"type": "string", "format": "uuid"},
+        "require_terminal": {"type": "boolean"}
+      }
+    },
+    "communicationRouteAckParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ack", "attempt_id", "failed"],
+      "properties": {
+        "ack": {"type": "object"},
+        "attempt_id": {"type": "string", "format": "uuid"},
+        "failed": {"type": "boolean"}
+      }
+    },
     "transport": {
       "type": "object", "additionalProperties": false,
       "required": ["scheme", "principal_id"],

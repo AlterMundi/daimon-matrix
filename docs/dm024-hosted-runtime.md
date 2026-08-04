@@ -42,11 +42,18 @@ Authentication, expiry, peer UID and method scope are checked before params or
 runtime membership are disclosed. Unauthenticated framing/auth failures close
 without a response. Authenticated failures use stable bounded codes.
 
-The closed registry is `runtime.status`; `we.heads`, `we.preview`, `we.diff`;
+The original closed registry is `runtime.status`; `we.heads`, `we.preview`, `we.diff`;
 `we.observe`, `we.decide`; `we.projection.get`, `we.projection.rebuild`; and the
 four DM-023 sync operations. There is no generic signing, secret retrieval,
 identity selection, TCP/HTTP, external effect, Tribe routing or live `/we`
 fan-out method.
+
+DM-052 extends the daemon registry with closed `communication.*` operations for
+message/leg projection, attempts, delivery replay, route ACKs, terminal
+receipts, pages, claims, cursor advancement, compaction and canonical rebuild
+plans. These methods require an explicitly scoped adapter capability and remain
+absent from the general CLI/MCP surface. They do not enable a carrier, generic
+routing or live fan-out.
 
 ## Replay and crash semantics
 

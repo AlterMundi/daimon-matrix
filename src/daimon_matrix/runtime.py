@@ -23,7 +23,7 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
-from .service import METHODS, HostedWeave
+from .service import SERVICE_METHODS, HostedWeave
 from .weave import (
     BeingManifest,
     BoundHistoryAuthority,
@@ -302,7 +302,7 @@ def load_runtime(
             raise RuntimeError("missing_runtime_secret")
         capability = LocalCapability.from_value(value["descriptor"], key)
         if (
-            not set(capability.methods) <= METHODS
+            not set(capability.methods) <= SERVICE_METHODS
             or capability.capability_id in capabilities
         ):
             raise RuntimeError("invalid_runtime_capability")

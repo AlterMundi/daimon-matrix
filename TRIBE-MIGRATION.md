@@ -110,6 +110,13 @@ compatibility and conversation history are not.
 Gateways are edge adapters. They do not define identity, tribe membership,
 memory, or canonical message state.
 
+DM-052 completes layer 3 and the transport-neutral queue/cursor portion of
+layer 6. It reimplements stable semantic keys, one row per recipient, exact
+replay, bounded claims and restart recovery inside the DM-023 ledger boundary.
+DM-053 will implement layer 5 and finish carrier-owned inbox mechanics. The
+standalone Tribe runtime remains transitional until that route replacement and
+DM-054 namespace integration pass their live gates.
+
 ## Replacement gates
 
 - V1/DM stores start empty and reject v0 envelopes or downgrade negotiation.

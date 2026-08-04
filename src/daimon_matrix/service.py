@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from .communication import CommunicationError, CommunicationStore
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
@@ -44,6 +45,22 @@ METHODS: Final = frozenset(
         "we.sync.validate-receipt",
     }
 )
+COMMUNICATION_METHODS: Final = frozenset(
+    {
+        "communication.accept",
+        "communication.attempt",
+        "communication.claim",
+        "communication.compact",
+        "communication.cursor.advance",
+        "communication.delivery",
+        "communication.page",
+        "communication.rebuild-plan",
+        "communication.receipt.record",
+        "communication.result",
+        "communication.route-ack",
+    }
+)
+SERVICE_METHODS: Final = METHODS | COMMUNICATION_METHODS
 
 Clock = Callable[[], int]
 
@@ -116,6 +133,7 @@ class HostedWeave:
     signer: EventSigner
     capabilities: Mapping[str, LocalCapability]
     clock: Clock
+    communication: CommunicationStore | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -126,7 +144,7 @@ class HostedWeave:
         for capability_id, capability in self.capabilities.items():
             if capability_id != capability.capability_id:
                 raise ServiceError("capability_index_mismatch")
-            if not set(capability.methods) <= METHODS:
+            if not set(capability.methods) <= SERVICE_METHODS:
                 raise ServiceError("unsupported_capability_method")
             marker = (capability.client_id, capability.capability_id)
             if marker in seen_clients:
@@ -136,6 +154,13 @@ class HostedWeave:
             self.ledger.local_origin, require_active=True
         )
         self.ledger.initialize()
+        communication = self.communication
+        if communication is None:
+            communication = CommunicationStore(self.ledger, clock=self.clock)
+            object.__setattr__(self, "communication", communication)
+        elif communication.ledger is not self.ledger:
+            raise ServiceError("communication_ledger_mismatch")
+        communication.initialize()
 
     @property
     def origin(self) -> dict[str, str]:
@@ -255,6 +280,15 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": "projection_invalid", "retryable": False},
             )
+        except CommunicationError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -297,6 +331,102 @@ class HostedWeave:
         request_id: str,
         request_hash: str,
     ) -> dict[str, Any]:
+        communication = self.communication
+        if communication is None:  # established in __post_init__
+            raise ServiceError("communication_unavailable")
+        if method == "communication.accept":
+            value = _closed(params, {"message_event_id", "resolution_event_id"})
+            return communication.accept(
+                message_event_id=_uuid(value["message_event_id"]),
+                resolution_event_id=_uuid(value["resolution_event_id"]),
+            )
+        if method == "communication.result":
+            value = _closed(params, {"message_id", "require_terminal"})
+            if not isinstance(value["require_terminal"], bool):
+                raise ServiceError("invalid_params")
+            return communication.result(
+                _uuid(value["message_id"]),
+                require_terminal=value["require_terminal"],
+            )
+        if method == "communication.rebuild-plan":
+            value = _closed(params, {"message_id"})
+            return communication.rebuild_plan(_uuid(value["message_id"]))
+        if method == "communication.attempt":
+            value = _closed(params, {"attempt"})
+            return communication.record_attempt(value["attempt"])
+        if method == "communication.claim":
+            value = _closed(
+                params,
+                {
+                    "claim_id",
+                    "consumer_id",
+                    "lease_until_ms",
+                    "limit",
+                    "recipient_id",
+                },
+            )
+            return communication.claim(
+                recipient_id=value["recipient_id"],
+                consumer_id=value["consumer_id"],
+                claim_id=_uuid(value["claim_id"]),
+                limit=_uint(value["limit"], minimum=1, maximum=256),
+                lease_until_ms=_uint(value["lease_until_ms"]),
+            )
+        if method == "communication.delivery":
+            value = _closed(params, {"attempt_id", "delivery_id", "envelope_hash"})
+            return communication.record_delivery(
+                attempt_id=_uuid(value["attempt_id"]),
+                delivery_id=_uuid(value["delivery_id"]),
+                envelope_hash=value["envelope_hash"],
+            )
+        if method == "communication.route-ack":
+            value = _closed(params, {"ack", "attempt_id", "failed"})
+            if not isinstance(value["ack"], Mapping) or not isinstance(
+                value["failed"], bool
+            ):
+                raise ServiceError("invalid_params")
+            return communication.record_route_ack(
+                attempt_id=_uuid(value["attempt_id"]),
+                ack=value["ack"],
+                failed=value["failed"],
+            )
+        if method == "communication.receipt.record":
+            value = _closed(params, {"receipt_event_id"})
+            return communication.record_receipt(_uuid(value["receipt_event_id"]))
+        if method == "communication.page":
+            value = _closed(
+                params,
+                {
+                    "consumer_id",
+                    "cursor",
+                    "limit",
+                    "recipient_id",
+                    "request_id",
+                },
+            )
+            cursor = value["cursor"]
+            if cursor is not None and not isinstance(cursor, str):
+                raise ServiceError("invalid_params")
+            return communication.page(
+                recipient_id=value["recipient_id"],
+                consumer_id=value["consumer_id"],
+                request_id=_uuid(value["request_id"]),
+                cursor=cursor,
+                limit=_uint(value["limit"], minimum=1, maximum=256),
+            )
+        if method == "communication.cursor.advance":
+            value = _closed(params, {"consumer_id", "recipient_id", "sequence"})
+            return communication.advance_consumer(
+                recipient_id=value["recipient_id"],
+                consumer_id=value["consumer_id"],
+                sequence=_uint(value["sequence"]),
+            )
+        if method == "communication.compact":
+            value = _closed(params, {"recipient_id", "through_sequence"})
+            return communication.compact(
+                recipient_id=value["recipient_id"],
+                through_sequence=_uint(value["through_sequence"]),
+            )
         if method == "runtime.status":
             _closed(params, set())
             self.ledger.integrity_check()
@@ -531,4 +661,10 @@ class HostedWeave:
         }
 
 
-__all__ = ["METHODS", "HostedWeave", "ServiceError"]
+__all__ = [
+    "COMMUNICATION_METHODS",
+    "METHODS",
+    "SERVICE_METHODS",
+    "HostedWeave",
+    "ServiceError",
+]
