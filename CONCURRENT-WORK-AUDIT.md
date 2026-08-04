@@ -2,14 +2,13 @@
 
 Status: complete for the work observed on 2026-07-31.
 
-> Semantic correction, 2026-08-01: references below to several simultaneous
-> CompAII principals as “incarnations of one `/me`” are historical audit
-> language and are superseded. They are candidate distinct `/me` identities in
-> one `/we`; each identity may have at most one awake body. The reuse evidence
-> remains valid under that corrected boundary. Other uses of “incarnation” in
-> credential, body-resource, or adaptation guidance below likewise map to
-> operational credentials, identities, or bodies according to context and are
-> not current normative terminology.
+> Semantic correction, 2026-08-04: references below to several simultaneous
+> CompAII principals as distinct beings or to one identity-wide awake body are
+> historical audit language and are superseded. One being may authorize plural
+> awake embodiments; each has distinct keys, state and attributable origin.
+> Tribe principals are transport principals and prove neither being membership
+> nor embodiment authority. Other uses of “incarnation” below describe a
+> concrete process start, never a competing identity or singleton lease.
 
 This audit is the evidence record for DM-000. It applies the classifications
 defined in `REVIEW-HANDOFF.md` to the active Tribe Bridge, HMK,
@@ -29,6 +28,13 @@ collective-memory, compaii-state, Wiki, and CompAII deployment work.
 - Do not migrate Tribe v0 messages or preserve v0 wire compatibility.
 - Tribe v0 containment was temporary and is now superseded by complete v0
   retirement and the v1 production cutover.
+
+DM-050 re-audited the public upstream at
+`b81a6838dd81167f7a8ffcae82cd7ebaadfa21e2`. Because that tree has no detected
+license or `LICENSE` path, no upstream bytes are copied. The exact 23-item
+hash/classification inventory is `provenance/tribe-bridge-v1.json`; reusable
+behavior is independently reimplemented while Tribe authority and wire types
+are superseded.
 
 ## Repository and worktree inventory
 

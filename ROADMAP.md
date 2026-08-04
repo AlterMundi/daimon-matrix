@@ -28,6 +28,9 @@
   and resource-scoped exclusion.
 - Tribe Bridge is a transitional source/runtime and is archived after
   DM-050–DM-055 replacement gates and the release handoff.
+- DM-050 preserves a hash-pinned behavioral/provenance inventory only; source
+  copying is prohibited unless a successor records explicit compatible
+  authorization. DM-051–DM-053 implement the replacement independently.
 - Matrix.org is not used by the MVP.
 
 The provisional Cluster/Tribe canary is retained as prior evidence, not as a

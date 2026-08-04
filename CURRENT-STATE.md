@@ -51,4 +51,7 @@ adapter supervises the process. DM-026 closes the local release gate with a
 22-scenario invariant registry and deterministic installed conformance report;
 it exercises real process, AF_UNIX, filesystem and SQLite paths without
 claiming remote delivery, Cluster effects or rebirth. DM-050 begins absorbing
-Tribe transport behind the same boundary.
+Tribe transport behind the same boundary. DM-050 pins the current public Tribe
+head and its relevant blob/hash inventory, but imports no upstream bytes: no
+license is detected, so DM-051–DM-053 independently reimplement only classified
+behavior under Daimon contracts.
