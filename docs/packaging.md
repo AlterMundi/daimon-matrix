@@ -40,7 +40,8 @@ observable install path.
 
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
-identity, keystore, Weave, and ledger modules, `__init__.py`, and `py.typed`.
+identity, keystore, Weave, ledger, sync, and projection modules, `__init__.py`,
+and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 

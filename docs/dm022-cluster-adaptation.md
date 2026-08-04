@@ -31,6 +31,10 @@ event validation and SQLite ledger behavior; Cluster hosts it.
 6. Retain the old implementation read-only until its golden fixture, canary
    event set, heads and cursor evidence import into the Matrix engine without
    rewriting. Remove executable duplication only after that parity receipt.
+7. DM-023 upgrades the hosted ledger schema additively from 1 to 2 with
+   issued/outbound/inbound sync journals and a disposable projection cache.
+   Snapshot/quiesce must preserve all canonical ledger and sync-journal tables;
+   the projection cache may be rebuilt but must not be substituted for them.
 
 ## Required downstream tests
 

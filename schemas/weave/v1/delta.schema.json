@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/delta.schema.json",
+  "title": "dm.we.delta/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "request_id", "request_hash", "being_ref", "manifest_hash",
+    "sender", "requester", "offered_heads", "events", "more", "page_hash"
+  ],
+  "properties": {
+    "schema": {"const": "dm.we.delta/v1"},
+    "request_id": {"type": "string", "format": "uuid"},
+    "request_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "being_ref": {"$ref": "heads.schema.json#/$defs/beingRef"},
+    "manifest_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "sender": {"$ref": "heads.schema.json#/$defs/origin"},
+    "requester": {"$ref": "heads.schema.json#/$defs/origin"},
+    "offered_heads": {"$ref": "heads.schema.json#/$defs/heads"},
+    "events": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "event.schema.json"}
+    },
+    "more": {"type": "boolean"},
+    "page_hash": {"$ref": "heads.schema.json#/$defs/hash"}
+  }
+}

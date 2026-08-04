@@ -20,6 +20,10 @@ The transport accepts typed payload bytes plus direct audience, authenticates
 the sender, encrypts recipients, and returns durable delivery/ACK receipts.
 It does not parse adoption semantics or assert same-being membership.
 
+For `/we.sync`, the exact payload and authentication binding are specified in
+`docs/dm023-tribe-sync-contract.md`. Transport ACK, Matrix sync receipt, local
+adoption, and projection effect receipt are four distinct facts.
+
 ## Projection adapter
 
 Every projection supports:

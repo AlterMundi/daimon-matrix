@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/heads.schema.json",
+  "title": "dm.we.heads/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "being_ref", "manifest_hash", "sender", "heads"],
+  "properties": {
+    "schema": {"const": "dm.we.heads/v1"},
+    "being_ref": {"$ref": "#/$defs/beingRef"},
+    "manifest_hash": {"$ref": "#/$defs/hash"},
+    "sender": {"$ref": "#/$defs/origin"},
+    "heads": {"$ref": "#/$defs/heads"}
+  },
+  "$defs": {
+    "beingRef": {
+      "type": "string",
+      "anyOf": [
+        {"pattern": "^being:[0-9a-f-]{36}$"},
+        {"pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"}
+      ]
+    },
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body_ref", "embodiment_id", "incarnation_id", "principal_id"],
+      "properties": {
+        "body_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "embodiment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "incarnation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "principal_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["incarnation_id", "max_sequence", "tip_event_id", "tip_hash"],
+      "properties": {
+        "incarnation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "max_sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "tip_event_id": {"type": "string", "format": "uuid"},
+        "tip_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "heads": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/head"}
+    }
+  }
+}

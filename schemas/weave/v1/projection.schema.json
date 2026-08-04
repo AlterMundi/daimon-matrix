@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/projection.schema.json",
+  "title": "dm.we.projection/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "being_ref", "manifest_hash", "local_embodiment_id", "entries", "projection_hash"],
+  "properties": {
+    "schema": {"const": "dm.we.projection/v1"},
+    "being_ref": {"$ref": "heads.schema.json#/$defs/beingRef"},
+    "manifest_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "local_embodiment_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id", "kind", "subject", "origin", "state", "decision_event_id",
+          "local_decision_chain", "remote_decision_event_ids", "projection_receipt_ids",
+          "remote_projection_receipt_ids", "invalid_projection_receipt_ids"
+        ],
+        "properties": {
+          "event_id": {"type": "string", "format": "uuid"},
+          "kind": {"type": "string"},
+          "subject": {"type": "string"},
+          "origin": {"$ref": "heads.schema.json#/$defs/origin"},
+          "state": {"enum": ["pending", "adopted", "rejected", "deferred", "reverted", "failed"]},
+          "decision_event_id": {"type": ["string", "null"], "format": "uuid"},
+          "local_decision_chain": {"$ref": "#/$defs/eventIds"},
+          "remote_decision_event_ids": {"$ref": "#/$defs/eventIds"},
+          "projection_receipt_ids": {"$ref": "#/$defs/eventIds"},
+          "remote_projection_receipt_ids": {"$ref": "#/$defs/eventIds"},
+          "invalid_projection_receipt_ids": {"$ref": "#/$defs/eventIds"}
+        }
+      }
+    },
+    "projection_hash": {"$ref": "heads.schema.json#/$defs/hash"}
+  },
+  "$defs": {
+    "eventIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "uuid"}
+    }
+  }
+}

@@ -62,11 +62,53 @@ signature rejects the complete page. A missing cross-origin causal parent is
 stored as `incomplete`; it cannot enter differences, decisions, or projections
 until the complete valid dependency closure arrives.
 
+The transport-neutral exchange is closed and typed. `dm.we.sync-request/v1`
+contains a UUID, exact requester origin, current complete heads and page limit.
+The requester journals those exact bytes before sending. The responder stores
+the first `dm.we.delta/v1` result under `(request_id, request_hash)` in the same
+SQLite transaction that freezes the offered heads and page. A retry therefore
+returns identical bytes even if new events have since been appended. Reusing
+the UUID for different request bytes is equivocation.
+
+A delta binds the request hash, sender and requester origins, exact offered
+heads, sorted events, `more`, and a domain-separated page hash. The receiver
+accepts only a response to one of its durably issued requests. It validates the
+whole document before atomically inserting events, advancing receiver-owned
+cursors, and storing `dm.we.sync-receipt/v1`. Response loss followed by retry
+returns the exact first receipt; no event or cursor transition is repeated.
+V1 sync is available only under root-bound authority; provisional history may
+be carried only after an active DM-021 binding admits its exact closure.
+Transport authentication and integrity MUST bind its authenticated caller to
+the request/delta origin. The inner sync hashes are replay/integrity evidence,
+not signatures and not a replacement for DM-024/DM-050 channel authentication.
+
 Import is not adoption. The local effective state is a projection of local
 `adoption.decided` events. Decisions are `adopt`, `reject`, `defer`, or
 `revert`, name the target event, and may supersede an earlier local decision.
 Other embodiments may synchronize those decisions as information; they never
 inherit their effect.
+
+## Deterministic local projection
+
+`dm.we.projection/v1` is a disposable content-addressed view over causally
+complete events. Only `adoption.decided` events authored by the local
+embodiment affect it. A later decision explicitly names the prior local
+decision for the same target through `supersedes`. Exactly one connected,
+non-forking chain is required; multiple roots, multiple successors, and
+cross-target references produce `failed`. Timestamps, incarnation names,
+arrival order and lexical hashes never choose a decision.
+
+Peer decisions and receipts remain sorted provenance. A local
+`projection.receipted` event binds target, adopted decision, adapter,
+preview/intent hashes, actor and authority, optional resource-fence evidence,
+result, timing, and observed postcondition. It records an effect; it does not
+make the effect eternally true. Adapter reconciliation remains mandatory. A
+projection cache may be deleted and atomically rebuilt without applying an
+external effect or changing canonical ledger bytes.
+
+A supersession edge is itself a causal dependency. Therefore a supersession
+cycle can never become causally complete and cannot enter the projection; the
+last complete state remains effective (or `pending` if there was none).
 
 ## Difference navigation
 

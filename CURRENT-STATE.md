@@ -33,3 +33,8 @@ DM-022 migrates the reviewed per-embodiment ledger mechanics from Cluster into
 the installed package. Root-bound ledgers verify DM-021 credential/incarnation
 evidence; an activated binding admits only the exact byte-preserved provisional
 history it names. Cluster continues to host process/state and resource fences.
+
+DM-023 builds the typed transport-neutral `/we.sync` transaction above that
+ledger: issued requests, frozen delta responses, cursor/ingest receipts and
+local projections are durable and replay-safe. Tribe remains only the channel
+that will carry and authenticate these exact bytes in DM-050–DM-055.

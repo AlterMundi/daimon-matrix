@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/sync-receipt.schema.json",
+  "title": "dm.we.sync-receipt/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "request_id", "request_hash", "page_hash", "being_ref",
+    "manifest_hash", "sender", "receiver", "more", "received", "inserted",
+    "replayed", "incomplete", "achieved_heads", "completed_at_ms", "receipt_hash"
+  ],
+  "properties": {
+    "schema": {"const": "dm.we.sync-receipt/v1"},
+    "request_id": {"type": "string", "format": "uuid"},
+    "request_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "page_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "being_ref": {"$ref": "heads.schema.json#/$defs/beingRef"},
+    "manifest_hash": {"$ref": "heads.schema.json#/$defs/hash"},
+    "sender": {"$ref": "heads.schema.json#/$defs/origin"},
+    "receiver": {"$ref": "heads.schema.json#/$defs/origin"},
+    "more": {"type": "boolean"},
+    "received": {"type": "integer", "minimum": 0, "maximum": 256},
+    "inserted": {"type": "integer", "minimum": 0, "maximum": 256},
+    "replayed": {"type": "integer", "minimum": 0, "maximum": 256},
+    "incomplete": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "achieved_heads": {"$ref": "heads.schema.json#/$defs/heads"},
+    "completed_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "receipt_hash": {"$ref": "heads.schema.json#/$defs/hash"}
+  }
+}

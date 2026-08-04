@@ -1,0 +1,22 @@
+{
+  "schema": "dm.verification.sync-projection-invariants/v1",
+  "card": "DM-023",
+  "production_secrets_used": false,
+  "invariants": [
+    {"id": "root-authority-required", "test": "SyncTransactionTests.test_sync_refuses_unbound_provisional_authority"},
+    {"id": "partition-resume-exact-replay", "test": "SyncTransactionTests.test_partition_resume_and_exact_request_and_receipt_replay"},
+    {"id": "durable-request-page-conflict", "test": "SyncTransactionTests.test_request_and_page_id_conflicts_are_durable"},
+    {"id": "transactional-cursor-regression", "test": "SyncTransactionTests.test_transaction_rechecks_cursor_regression_before_any_mutation"},
+    {"id": "corrupt-outbound-cache-fails-closed", "test": "SyncTransactionTests.test_corrupt_frozen_outbound_cache_fails_closed"},
+    {"id": "tamper-authority-head-rejection", "test": "SyncTransactionTests.test_tamper_authority_and_conflicting_heads_fail_without_insert"},
+    {"id": "closed-sync-projection-schemas", "test": "SyncTransactionTests.test_sync_and_projection_documents_match_closed_schemas"},
+    {"id": "decision-receipt-rebuild", "test": "ProjectionTests.test_local_decision_chain_remote_decision_receipt_and_rebuild"},
+    {"id": "cross-target-successor-forks-fail", "test": "ProjectionTests.test_cross_target_and_successor_forks_fail_without_implicit_winner"},
+    {"id": "incarnation-restart-reversal", "test": "ProjectionTests.test_reversal_continues_across_pre_authorized_incarnation_restart"},
+    {"id": "ambiguous-decisions-fail", "test": "ProjectionTests.test_ambiguous_local_decisions_fail_deterministically"},
+    {"id": "non-adopt-receipt-fails", "test": "ProjectionTests.test_receipt_for_non_adopted_decision_is_failed_provenance"},
+    {"id": "cycle-cannot-enter-projection", "test": "ProjectionTests.test_supersession_cycle_stays_incomplete_and_cannot_choose_state"},
+    {"id": "arrival-independent-projection", "test": "ProjectionTests.test_projection_digest_is_independent_of_valid_cross_origin_batching"},
+    {"id": "schema-migration-cache-integrity", "test": "ProjectionTests.test_cache_hash_validation_and_dm022_schema_migration"}
+  ]
+}

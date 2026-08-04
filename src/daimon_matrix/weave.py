@@ -51,6 +51,8 @@ EVENT_KINDS: Final = frozenset(
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
 SENSITIVITIES: Final = frozenset({"personal", "private", "shareable"})
+PROJECTION_RESULTS: Final = frozenset({"applied", "failed", "reconciled", "stale"})
+PROJECTION_AUTHORITIES: Final = frozenset({"daimon", "human"})
 
 _SECRET_NAMES: Final = re.compile(
     r"(?:^|_)(?:password|passwd|token|secret|private_key|api_key|bearer)(?:$|_)",
@@ -120,6 +122,16 @@ def _derived_ref(value: Any, prefix: str, error: str) -> str:
         unb64url(value.removeprefix(prefix), length=32)
     except CanonicalError as exception:
         raise WeaveProtocolError(error) from exception
+    return value
+
+
+def _hex_hash(value: Any, error: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise WeaveProtocolError(error)
     return value
 
 
@@ -315,6 +327,11 @@ class EventAuthority(Protocol):
     def public_key(self, event: Mapping[str, Any]) -> bytes:
         """Validate the event origin and return its authorized Ed25519 key."""
 
+    def validate_origin(
+        self, origin: Mapping[str, Any], *, require_active: bool = False
+    ) -> Mapping[str, Any]:
+        """Validate one configured origin without granting transport authority."""
+
 
 @dataclass(frozen=True)
 class ProvisionalAuthority:
@@ -325,14 +342,21 @@ class ProvisionalAuthority:
         if self.manifest.trust_mode != "provisional":
             raise WeaveProtocolError("provisional_authority_requires_v1_manifest")
 
-    def public_key(self, event: Mapping[str, Any]) -> bytes:
-        origin = event["origin"]
+    def validate_origin(
+        self, origin: Mapping[str, Any], *, require_active: bool = False
+    ) -> Mapping[str, Any]:
         member = self.manifest.member(origin["embodiment_id"])
+        if require_active and member["status"] != "active":
+            raise WeaveProtocolError("origin_not_active")
         if (
             member["principal_id"] != origin["principal_id"]
             or member["body_ref"] != origin["body_ref"]
         ):
             raise WeaveProtocolError("origin_manifest_mismatch")
+        return member
+
+    def public_key(self, event: Mapping[str, Any]) -> bytes:
+        self.validate_origin(event["origin"])
         public = self.public_keys.get(event["signature"]["kid"])
         if public is None:
             raise WeaveProtocolError("unknown_signing_key")
@@ -402,9 +426,7 @@ class RootAuthority:
 
     def public_key(self, event: Mapping[str, Any]) -> bytes:
         origin = event["origin"]
-        member = self.manifest.member(origin["embodiment_id"], origin["incarnation_id"])
-        if member["body_ref"] != origin["body_ref"]:
-            raise WeaveProtocolError("origin_manifest_mismatch")
+        member = self.validate_origin(origin)
         credential_body = self._verify_member(member, event["occurred_at_ms"])
         if (
             credential_body["embodiment_id"] != origin["embodiment_id"]
@@ -421,6 +443,26 @@ class RootAuthority:
         if event["signature"]["kid"] != signing["key_id"]:
             raise WeaveProtocolError("wrong_embodiment_signing_key")
         return unb64url(signing["public"], length=32)
+
+    def validate_origin(
+        self, origin: Mapping[str, Any], *, require_active: bool = False
+    ) -> Mapping[str, Any]:
+        member = self.manifest.member(origin["embodiment_id"], origin["incarnation_id"])
+        if require_active and member["status"] != "active":
+            raise WeaveProtocolError("origin_not_active")
+        if member["body_ref"] != origin["body_ref"]:
+            raise WeaveProtocolError("origin_manifest_mismatch")
+        incarnation = self.incarnations[member["incarnation_authorization_id"]]
+        credential_body = self._verify_member(
+            member, incarnation["body"]["started_at_ms"]
+        )
+        principals = {
+            principal["principal_id"]
+            for principal in credential_body["transport_principals"]
+        }
+        if origin["principal_id"] not in principals:
+            raise WeaveProtocolError("origin_principal_not_bound")
+        return member
 
 
 @dataclass(frozen=True)
@@ -529,6 +571,11 @@ class BoundHistoryAuthority:
 
     def public_key(self, event: Mapping[str, Any]) -> bytes:
         return self.select(event).public_key(event)
+
+    def validate_origin(
+        self, origin: Mapping[str, Any], *, require_active: bool = False
+    ) -> Mapping[str, Any]:
+        return self.active.validate_origin(origin, require_active=require_active)
 
 
 @dataclass(frozen=True)
@@ -682,6 +729,44 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
         if decision["decision"] not in DECISIONS:
             raise WeaveProtocolError("invalid_adoption_decision")
         _text(decision["reason"], "invalid_adoption_decision", maximum=1024)
+    if value["kind"] == "projection.receipted":
+        receipt = _closed(
+            payload,
+            {
+                "actor",
+                "adapter",
+                "authority",
+                "completed_at_ms",
+                "decision_event_id",
+                "intent_hash",
+                "observed_postcondition",
+                "preview_hash",
+                "resource_fence",
+                "result",
+                "started_at_ms",
+                "target_event_id",
+            },
+            "invalid_projection_receipt",
+        )
+        _uuid(receipt["target_event_id"], "invalid_projection_receipt")
+        _uuid(receipt["decision_event_id"], "invalid_projection_receipt")
+        _text(receipt["adapter"], "invalid_projection_receipt", maximum=128)
+        _hex_hash(receipt["preview_hash"], "invalid_projection_receipt")
+        _hex_hash(receipt["intent_hash"], "invalid_projection_receipt")
+        _text(receipt["actor"], "invalid_projection_receipt", maximum=128)
+        if receipt["authority"] not in PROJECTION_AUTHORITIES:
+            raise WeaveProtocolError("invalid_projection_receipt")
+        if receipt["result"] not in PROJECTION_RESULTS:
+            raise WeaveProtocolError("invalid_projection_receipt")
+        started = _uint(receipt["started_at_ms"], "invalid_projection_receipt")
+        completed = _uint(receipt["completed_at_ms"], "invalid_projection_receipt")
+        if completed < started:
+            raise WeaveProtocolError("invalid_projection_receipt")
+        if not isinstance(receipt["observed_postcondition"], Mapping):
+            raise WeaveProtocolError("invalid_projection_receipt")
+        fence = receipt["resource_fence"]
+        if fence is not None and not isinstance(fence, Mapping):
+            raise WeaveProtocolError("invalid_projection_receipt")
     return value
 
 
@@ -748,6 +833,8 @@ __all__ = [
     "EVENT_KINDS",
     "MAX_PAGE_BYTES",
     "MAX_PAGE_EVENTS",
+    "PROJECTION_AUTHORITIES",
+    "PROJECTION_RESULTS",
     "PROTOCOL",
     "SENSITIVITIES",
     "BeingManifest",
