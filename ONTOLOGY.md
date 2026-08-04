@@ -10,7 +10,7 @@ through any number of active embodiments.
 
 | Layer | Meaning | Identifier lifetime |
 |---|---|---|
-| being | continuity capable of having several embodiments | future Matrix root lifetime |
+| being | continuity capable of having several embodiments | Matrix being-root lifetime |
 | embodiment | one situated body through which the being acts | body lifetime |
 | incarnation | one runtime interval of that embodiment | process/start interval |
 | principal | transport-authenticated actor | Tribe key/directory interval |

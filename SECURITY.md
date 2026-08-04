@@ -11,8 +11,11 @@ versions.
 
 - Root `/me` keys are never committed, shared among collective members, or
   installed in ordinary bodies.
-- One `/me` may have at most one active body lease; overlapping valid leases
-  are split-brain evidence and are quarantined.
+- One being may authorize multiple simultaneously active embodiment
+  credentials. A second valid embodiment is not split-brain evidence.
+- Identity credentials never replace Cluster resource fences: incompatible
+  writes to the same concrete resource require one current fenced holder and
+  stale generations fail closed.
 - Runtime keys and credentials remain outside the public repository.
 - GitHub coordination uses dedicated ephemeral session keys. It must never
   reuse a Daimon root, operational, transport, SSH, signing, or encryption key;

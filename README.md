@@ -16,15 +16,21 @@ split-brain failure.
 
 ## Current architecture
 
-The first operational release does not require a Matrix runtime. Daimon
-Cluster manages bodies, incarnations, and resource fences; its isolated
-`weave` module implements `/we` and `/we.sync`; Tribe Bridge supplies
-authenticated encrypted transport. An identical administrator-installed
-being manifest supplies provisional same-being membership.
+The V0.1 MVP includes the `daimon-matrix` runtime. It owns being-root
+continuity, canonical state, `/me` and `/we` resolution, synchronization,
+memory policy, and secure communications. Daimon Cluster manages bodies,
+incarnations, storage, lifecycle, and concrete resource fences. Tribe Bridge
+supplies transitional authenticated encrypted transport until DM-050–DM-055
+absorb it into this project.
 
-Matrix remains the canonical specification and future cryptographic identity
-layer. The provisional history can be attached to a future Matrix root only by
-an explicit root-authorized binding. Tribe keys are never Matrix root keys.
+The existing administrator manifest and Cluster Weave canary are provisional
+evidence. DM-021 attaches that history to a Matrix root only through an exact
+root-authorized binding; Tribe keys are never Matrix root keys.
+
+This project is unrelated to the external Matrix.org communications protocol.
+Matrix.org clients, homeservers and federation are intentionally outside the
+MVP. To avoid ambiguity, documentation uses `daimon-matrix`, `Matrix.org`, and
+“daimonmatrix host” for the software, external protocol, and VPS.
 
 Start with [ONTOLOGY.md](ONTOLOGY.md), the
 [operational stack contract](specs/operational-stack-contract.md), and the
@@ -33,9 +39,9 @@ are in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Status
 
-The repository contains specifications, schemas, conformance material, and a
-typed Python package scaffold. The operational runtime lives in
-`daimon-cluster`; transport lives in `tribe-bridge`. There is no supported
-single-awake-identity or distinct-identities-as-`/we` model.
+The repository contains specifications, schemas, conformance material, and the
+typed Python package scaffold from which the runtime is now built. Cluster
+Weave and Tribe Bridge remain integration inputs during migration. There is no
+supported single-awake-identity or distinct-identities-as-`/we` model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

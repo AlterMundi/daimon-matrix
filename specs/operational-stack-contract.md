@@ -1,19 +1,20 @@
-# Operational stack contract: Matrix, Cluster, Weave, and Tribe
+# Operational stack contract: daimon-matrix, Cluster, Weave, and Tribe
 
-Status: normative for the first operational release.
+Status: normative for the V0.1 MVP and its provisional migration stage.
 
-This contract assigns authority without requiring a Daimon Matrix runtime.
-It is intentionally strict about the difference between operational trust and
-cryptographic identity.
+This contract assigns authority while the provisional Cluster/Tribe canary is
+migrated into the required `daimon-matrix` runtime. It is intentionally strict
+about the difference between operational trust and cryptographic identity.
+The external Matrix.org protocol is not part of this stack.
 
 ## Authority map
 
 | Component | Owns | Does not own |
 |---|---|---|
-| Matrix specification | ontology, canonical schemas, future being-root binding | current processes, transport, host resources |
+| `daimon-matrix` | ontology, being-root continuity, canonical schemas/state, scopes, synchronization, memory policy, communications | host resources and container lifecycle |
 | Cluster | bodies, embodiments, incarnations, resource fences, lifecycle evidence | being identity, memory meaning, Tribe governance |
-| Weave | per-embodiment ledger, `/we`, `/we.sync`, local adoption and projection receipts | transport directory, resource fencing, root identity |
-| Tribe Bridge | authenticated principals, encrypted delivery, audiences, ACKs | same-being membership, memory adoption, resource effects |
+| Weave | provisional per-embodiment ledger and reusable `/we.sync` evidence | transport directory, resource fencing, root identity |
+| Tribe Bridge | transitional authenticated principals, encrypted delivery, audiences, ACKs | same-being membership, memory adoption, resource effects |
 
 ## Provisional same-being manifest
 
@@ -28,19 +29,25 @@ traffic. A mismatch fails closed and reports both hashes. Incarnations are not
 manifest members: Cluster creates a fresh `incarnation_id` whenever the same
 body runtime starts.
 
-A future Matrix root binds the provisional history only through an explicit
+A Matrix root binds the provisional history only through an explicit
 root-authorized binding artifact naming the exact `being_ref`, manifest hash,
 and accepted event heads. Similar names, keys, memories, or routes never imply
 that binding. Tribe keys MUST NOT become Matrix root keys.
 
+After binding, Matrix credential verification replaces the administrator
+manifest as same-being authority. DM-050 through DM-055 replace the standalone
+Tribe Bridge runtime while preserving its recipient-encrypted delivery
+evidence. Neither migration changes Cluster's resource authority.
+
 ## End-to-end flow
 
 1. Cluster resolves the local body, embodiment, and current incarnation.
-2. Weave loads and hashes the local being manifest.
-3. Tribe authenticates and encrypts direct messages between configured
-   principals.
-4. Weave verifies the sender, manifest hash, event signature, origin chain,
-   bounds, and `being_ref` before adding data to `known` state.
+2. `daimon-matrix` verifies the being root, embodiment credential, incarnation
+   authorization, and any provisional-history binding.
+3. The Matrix communications layer authenticates and encrypts direct messages;
+   during migration, Tribe Bridge supplies that transport.
+4. Matrix verifies the sender, credential/revocation state, event signature,
+   origin chain, bounds, and `being_ref` before adding data to `known` state.
 5. Imported data is not effective until a local decision accepts it.
 6. An adapter previews a requested projection. High-impact effects require a
    human confirmation before application.
@@ -60,4 +67,3 @@ receive-implies-adopt, or identity-implies-resource-lock.
 - A cached effect result is reusable only if intent bytes, current fence, and
   observed postcondition still match.
 - No private key, password, bearer token, or secret value enters Weave.
-

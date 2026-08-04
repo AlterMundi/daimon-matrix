@@ -18,18 +18,19 @@ revision. A principal authenticates messages and event signatures but does not
 prove the being by itself. Manifest changes are installed explicitly and
 audited on every host; peers with different hashes do not synchronize.
 
-## Future Matrix identity
+## Matrix identity in the V0.1 MVP
 
-The future Matrix identity has an offline root and recovery policy. The root
+The Matrix identity has an offline root and recovery policy. The root
 authorizes a distinct credential for every embodiment. Incarnations use
 short-lived subordinate keys or sessions without changing the embodiment.
 Root material is never installed in ordinary bodies and is never replaced by
 Tribe transport keys.
 
-An explicit binding artifact names the provisional `being_ref`, manifest
-hash, accepted event heads, new Matrix identifier, and complete authorization
-evidence. Pre-binding events retain their original signatures and identifiers;
-the binding adds continuity rather than rewriting history.
+DM-021 implements an explicit binding artifact naming the provisional
+`being_ref`, manifest hash, accepted event heads, new Matrix identifier, and
+complete authorization evidence. Pre-binding events retain their original
+signatures and identifiers; the binding adds continuity rather than rewriting
+history.
 
 Identity-control equivocation and compromised credentials fail closed.
 Different experience or preference branches do not.

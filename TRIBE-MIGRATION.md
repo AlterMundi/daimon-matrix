@@ -6,6 +6,9 @@ The Tribe Bridge implementation will be absorbed into `daimon-matrix` as the
 first communications transport. `/tribe` remains a semantic relationship and
 audience scope above that transport.
 
+This absorption is part of the V0.1 MVP. It does not introduce or depend on
+the external Matrix.org protocol; “Matrix” below means `daimon-matrix` only.
+
 The normative V0 relationship, handshake, grant, descendant-delegation,
 revocation, birth-limit, and remote-knowledge contract is
 [`specs/tribe-relationships.md`](specs/tribe-relationships.md). This document
