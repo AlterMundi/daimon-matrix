@@ -53,6 +53,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/mcp_server.py"),
     Path("src/daimon_matrix/memory_policy.py"),
     Path("src/daimon_matrix/memory_projection.py"),
+    Path("src/daimon_matrix/multihost.py"),
     Path("src/daimon_matrix/peer_transport.py"),
     Path("src/daimon_matrix/publication.py"),
     Path("src/daimon_matrix/projections.py"),
@@ -68,6 +69,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/species_runner.py"),
     Path("src/daimon_matrix/sync.py"),
     Path("src/daimon_matrix/synthetic_birth.py"),
+    Path("src/daimon_matrix/synthetic_multihost.py"),
     Path("src/daimon_matrix/synthetic_species.py"),
     Path("src/daimon_matrix/weave.py"),
 )

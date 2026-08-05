@@ -51,9 +51,11 @@ bytes, MCP exposes only the current thirty-four closed methods and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-83-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
-SQLite paths without claiming remote delivery, live Cluster effects or
-rebirth. DM-037 defines
+86-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+SQLite paths. DM-070 extends that gate with two isolated installed processes,
+native encrypted peer exchange, partition/restart convergence, observer-local
+adoption, authority-epoch succession and injected Cluster fence truth. Neither
+card claims a live host cutover, live Cluster effects or rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
 verification before replay. DM-050 begins absorbing
 Tribe transport behind the same boundary. DM-050 pins the current public Tribe
@@ -95,8 +97,10 @@ outbox retry, concurrent inbound leases and exact response replay, direct
 DM-054/DM-023 dispatch, a connection-bounded HTTP(S) carrier and one-shot
 keystore loading. Fifteen focused tests cover real encrypted scope/sync,
 response loss, corruption, takeover, wrong-key and malformed-runtime rejection.
-No Matrix.org or Tribe wire is involved. This is reviewed local/installed-shaped
-evidence; the authorized two-host canary and live cutover are still pending.
+No Matrix.org or Tribe wire is involved. DM-070 now exercises this carrier
+between two isolated installed processes and binds the existing redacted
+cross-host canary as historical non-authority evidence. A fresh live cutover
+remains explicitly human-authorized.
 
 DM-060 implements birth as a new self-certifying being plus its first
 root-authorized embodiment/incarnation, not as singleton `/me` enrollment,
@@ -138,6 +142,15 @@ provides the exact body/fence/effect adapters, runs one owner-only daemon per
 embodiment, snapshots/restores quiesced portable state, and removed executable
 provisional `weave/` code. This is a production-shaped host adapter with
 synthetic process evidence, not yet the final real Incus rebirth drill.
+
+DM-070 supplies the deterministic multihost convergence acceptance journey for
+the Matrix side. Two root-authorized embodiments remain independently writable
+through a partition, converge immutable per-origin chains in both directions,
+retain observer-local adoption decisions, advance one incarnation to authority
+epoch N+1 and consume injected resource-scoped Cluster fence/effect truth. Its
+closed content-addressed receipt is produced by installed entry points and pins
+the exact Cluster host adapter and historical canary bytes. The names `legion`
+and `daimonmatrix` are fixture labels only: no live host or service is touched.
 
 DM-030 implements the deterministic memory boundary: immutable policies,
 content/candidate/checkpoint/decision/plan records, exact body-session-lease

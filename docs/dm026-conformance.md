@@ -8,7 +8,7 @@ Cluster lifecycle, external-effect, or rebirth certification.
 ## Closed evidence registry
 
 `conformance/registry-v1.json` is the canonical
-`dm.conformance.registry/v1`. Its 83 scenario identifiers are closed in both
+`dm.conformance.registry/v1`. Its 86 scenario identifiers are closed in both
 directions: a missing scenario, an unknown scenario, duplicate identifier,
 unknown field, unregistered evidence reference, or non-required release
 scenario fails validation. Each scenario names its owner cards,
@@ -36,8 +36,12 @@ The registry deliberately describes the implementation that exists:
 - import makes content known but does not adopt it;
 - “exactly once” means one canonical event, RPC response, or sync receipt; and
 - DM-051 recipient encryption, DM-053 routes and DM-055 native encrypted peer
-  scope/sync run through installed-shaped loopback and real HTTP; the live
-  two-host cutover remains an explicit human-authorized integration obligation;
+  scope/sync run through installed-shaped loopback and real HTTP;
+- DM-070 runs two isolated installed processes through partition, lost
+  responses, restart, bidirectional convergence, observer-local adoption,
+  authority-epoch succession and injected Cluster fence truth; its pinned
+  historical canary is read-only attribution, while a fresh live cutover
+  remains an explicit human-authorized integration obligation;
 - the generic human gateway is disabled and neither Buzz nor Telegram is
   selected; and
 - DM-033 human-review evidence uses synthetic purpose-separated keys and local
@@ -47,7 +51,7 @@ The registry deliberately describes the implementation that exists:
 - DM-061 species evidence locally verifies exact bundles, application recovery,
   fork rollback and deliberate child branching, while its subordinate registry
   maps all 124 normative DM-014 Section 14 rows to executable evidence; and
-- live remote Cluster effects remain later integration obligations.
+- live remote Cluster effects and rebirth remain later integration obligations.
 
 ## Running the installed gate
 

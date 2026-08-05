@@ -634,6 +634,48 @@
       "required": true
     },
     {
+      "id": "multihost_cluster_boundary",
+      "owners": ["DM-037", "DM-070"],
+      "specifications": ["docs/dm037-cluster-effect-boundary.md", "docs/dm070-multihost-convergence.md", "provenance/daimon-cluster-v1.json"],
+      "setup": "A current injected Cluster body/fence verifier plus content-addressed read-only pins to the redacted cross-host canary and installed-host contract.",
+      "stimulus": "Verify the exact holder and epoch, present a same-resource second holder and stale replay, then verify an independent resource and the pinned public files.",
+      "fault": "Historical evidence or Matrix attempts to become identity, event, adoption or fence authority; stale truth attempts idempotent replay.",
+      "expected": "Only current injected Cluster truth grants the resource fence; ordinary Matrix history still converges and historical pins remain redacted evidence with no authority.",
+      "evidence": ["tests.test_dm037_cluster_effects.ClusterEvidenceTests.test_fence_is_content_bound_and_requires_current_injected_verification", "tests.test_dm037_cluster_effects.ClusterEvidenceTests.test_replay_only_succeeds_while_effect_truth_matches", "tests.test_dm070_multihost.DM070PublishedContractTests.test_cluster_provenance_is_bounded_and_fail_closed"],
+      "cleanup": "Remove the synthetic fence map and read-only checkout; preserve the attributed historical receipt.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "multihost_process_convergence",
+      "owners": ["DM-021", "DM-023", "DM-055", "DM-070", "DM-079"],
+      "specifications": ["docs/dm070-multihost-convergence.md", "schemas/multihost/v1/receipt.schema.json", "specs/operational-stack-contract.md"],
+      "setup": "One synthetic root manifest, two active embodiments, disjoint custody/state and two installed Matrix daemon processes behind the native encrypted peer carrier.",
+      "stimulus": "Partition, append on both origins, heal one bounded page at a time, restart before and after receiver commit, converge both ways, replay, decide, reverse and advance one incarnation epoch.",
+      "fault": "Response loss and process restart occur at durable boundaries while old-incarnation writes, duplicate delivery and winner rules are attempted.",
+      "expected": "Per-origin signed chains converge byte-identically without shared writable state; replays are write-free, local decisions remain observer-relative and the authorized successor preserves every high-water.",
+      "evidence": ["tests.test_dm070_multihost.DM070InstalledJourneyTests.test_two_installed_processes_reproduce_exact_closed_receipt"],
+      "cleanup": "Stop both synthetic daemons and remove only their exact temporary state roots; no live host is contacted.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "multihost_receipt_fail_closed",
+      "owners": ["DM-026", "DM-070"],
+      "specifications": ["docs/dm070-multihost-convergence.md", "schemas/multihost/v1/receipt.schema.json"],
+      "setup": "The closed content-addressed DM-070 receipt, deterministic fixture, generated schema and negative vectors.",
+      "stimulus": "Substitute manifest epochs, custody IDs, direction labels, durable boundaries, projection results, fence outcomes, schedule order, paths and arbitrary winner metadata.",
+      "fault": "A valid-looking public report attempts to relabel or leak evidence and then recompute its outer hash.",
+      "expected": "Cross-field semantics reject before rehash; closed schemas reject additions; tampered IDs/hashes and private paths fail without mutating runtime evidence.",
+      "evidence": ["tests.test_dm070_multihost.DM070InstalledJourneyTests.test_closed_evidence_rejects_tamper_leak_and_winner_metadata", "tests.test_dm070_multihost.DM070InstalledJourneyTests.test_receipt_semantic_substitutions_fail_before_rehash", "tests.test_dm070_multihost.DM070PublishedContractTests.test_schema_vectors_index_and_generator_are_exact"],
+      "cleanup": "Discard only copied JSON mutations and fixture-owned empty roots.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
       "id": "peer_encrypted_protocol",
       "owners": ["DM-023", "DM-054", "DM-055"],
       "specifications": ["schemas/transport/v1/peer-envelope.schema.json", "specs/peer-transport-v1.md"],

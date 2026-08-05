@@ -29,6 +29,17 @@ bidirectional DM-023 synchronization, converged signed history and independent
 local adoption. Its validation receipt is integration evidence, not presence,
 a Cluster lifecycle receipt, a multihost transport ACK or a rebirth claim.
 
+DM-070 is the installed multihost convergence gate. It runs two isolated
+Matrix daemon processes with disjoint custody and state, partitions and resumes
+the native encrypted peer carrier, converges immutable per-origin chains,
+retains observer-local decisions, advances one signed incarnation epoch and
+injects current Cluster fence truth. Ordinary partition healing is additive
+set union of verified per-origin history. It never rewrites branches into a
+single global chain, elects an embodiment winner, treats process presence as
+membership, or lets a Cluster receipt authorize Matrix meaning. The full
+contract and the later Cluster pin-bump checklist are in
+`docs/dm070-multihost-convergence.md`.
+
 ## Provisional same-being manifest
 
 Before a Matrix root exists, an administrator installs the same canonical

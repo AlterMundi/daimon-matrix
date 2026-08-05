@@ -59,6 +59,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
+        "src/daimon_matrix/multihost.py",
         "src/daimon_matrix/peer_transport.py",
         "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
@@ -74,6 +75,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/species_runner.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
+        "src/daimon_matrix/synthetic_multihost.py",
         "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/weave.py",
     }
@@ -104,6 +106,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/mcp_server.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
+        "daimon_matrix/multihost.py",
         "daimon_matrix/peer_transport.py",
         "daimon_matrix/publication.py",
         "daimon_matrix/projections.py",
@@ -119,6 +122,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/species_runner.py",
         "daimon_matrix/sync.py",
         "daimon_matrix/synthetic_birth.py",
+        "daimon_matrix/synthetic_multihost.py",
         "daimon_matrix/synthetic_species.py",
         "daimon_matrix/weave.py",
         f"{DIST_INFO}/METADATA",
@@ -305,6 +309,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
+        "src/daimon_matrix/multihost.py",
         "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
@@ -316,6 +321,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/species_runner.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
+        "src/daimon_matrix/synthetic_multihost.py",
         "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/weave.py",
     ):
@@ -375,6 +381,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
+        b"daimon-synthetic-multihost = daimon_matrix.synthetic_multihost:main\n"
         b"daimon-synthetic-species = daimon_matrix.synthetic_species:main\n"
     ):
         raise PackageCheckError("wheel console entry point mismatch")
@@ -431,6 +438,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/memory_projection.py": (
             "src/daimon_matrix/memory_projection.py"
         ),
+        "daimon_matrix/multihost.py": "src/daimon_matrix/multihost.py",
         "daimon_matrix/publication.py": "src/daimon_matrix/publication.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
@@ -442,6 +450,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/species_runner.py": "src/daimon_matrix/species_runner.py",
         "daimon_matrix/sync.py": "src/daimon_matrix/sync.py",
         "daimon_matrix/synthetic_birth.py": "src/daimon_matrix/synthetic_birth.py",
+        "daimon_matrix/synthetic_multihost.py": (
+            "src/daimon_matrix/synthetic_multihost.py"
+        ),
         "daimon_matrix/synthetic_species.py": (
             "src/daimon_matrix/synthetic_species.py"
         ),

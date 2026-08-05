@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 83,
-  "registry_sha256": "3705cb9ca5487935b2a1082162b720f8d0d7e239706362b166b09b4269cd5370",
+  "required_scenario_count": 86,
+  "registry_sha256": "f9ebedc99ef4d3a1bd3d80862600b8bffb19c695e85b0eae5766cefc258e7773",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -23,6 +23,8 @@
     "matrix_org_cluster_tribe_and_live_gateways_absent": true,
     "synthetic_local_direct_hub_routes_exercised": true,
     "native_encrypted_peer_scope_sync_exercised": true,
+    "two_installed_process_multihost_convergence_exercised": true,
+    "multihost_receipt_and_cluster_provenance_fail_closed": true,
     "signed_authority_epoch_succession": true,
     "local_codex_hermes_plural_body_weave": true,
     "species_section14_complete_mapping": true
@@ -37,6 +39,8 @@
     "docs/verification/dm033-invariants.json",
     "docs/verification/dm042-invariants.json",
     "docs/verification/dm061-invariants.json",
+    "docs/verification/dm070-invariants.json",
+    "docs/dm070-multihost-convergence.md",
     "docs/dm079-authority-epochs.md",
     "schemas/hosted/v2/bundle.schema.json",
     "schemas/hosted/v3/bundle.schema.json",
