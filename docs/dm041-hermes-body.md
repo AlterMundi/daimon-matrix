@@ -47,9 +47,13 @@ provider behavior.
 The adapter accepts CPython `>=3.11,<3.14`. It hashes the resolved executable
 while preserving an owner-controlled virtual-environment launcher so the
 Hermes environment and dependencies are not silently replaced by the system
-interpreter. Source, executable and callback drift fail closed. A Hermes
-upgrade requires new provenance, schemas, vectors, real-import evidence and a
-DM-018 migration review; there is no best-effort compatibility mode.
+interpreter. The executable and each ancestor must be non-writable by an
+untrusted principal. A host whose package or tool cache is group-writable must
+stage the exact audited executable bytes below an owner-only directory before
+binding the plan; weakening the ancestor check is not supported. Source,
+executable and callback drift fail closed. A Hermes upgrade requires new
+provenance, schemas, vectors, real-import evidence and a DM-018 migration
+review; there is no best-effort compatibility mode.
 
 Matrix distributes no Hermes source or binary. Public CI checks out the exact
 commit and imports it without invoking a model or provider.

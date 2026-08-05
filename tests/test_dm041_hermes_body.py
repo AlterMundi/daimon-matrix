@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -95,19 +96,24 @@ def derived(kind: str, label: str) -> str:
 
 
 def supported_test_python(root: Path) -> Path:
-    """Use the runner below 3.14 and an inert version probe above the pin."""
+    """Stage the runner in a private tree or emulate the unsupported runner."""
 
     current = tuple(int(item) for item in platform.python_version_tuple()[:2])
-    if current < (3, 14):
-        return Path(sys.executable).resolve()
-    launcher = root / "synthetic-python-3.13"
-    launcher.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' "
-        '\'{"implementation":"cpython","version":[3,13,0]}\'\n',
-        encoding="utf-8",
-    )
-    launcher.chmod(0o700)
+    if current >= (3, 14):
+        launcher = root / "synthetic-python-3.13"
+        launcher.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' "
+            '\'{"implementation":"cpython","version":[3,13,0]}\'\n',
+            encoding="utf-8",
+        )
+    else:
+        # Hosted runners may install Python below a group-writable tool-cache
+        # ancestor. Production correctly rejects that mutable path, so tests
+        # stage the exact executable bytes below their owner-only root.
+        launcher = root / "audited-python"
+        shutil.copyfile(Path(sys.executable).resolve(), launcher)
+    launcher.chmod(0o500)
     return launcher
 
 
@@ -1346,7 +1352,7 @@ class RealHermesImportTests(unittest.TestCase):
             profile = profiles / "body"
             workspace = root / "workspace"
             workspace.mkdir(mode=0o700)
-            hermes_executable = Path(sys.executable).resolve()
+            hermes_executable = supported_test_python(root)
             client_config = root / "client.json"
             client_config.write_bytes(b"{}\n")
             client_config.chmod(0o600)
