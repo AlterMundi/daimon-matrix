@@ -10,7 +10,10 @@ DM-041 likewise adds the `daimon-hermes-body` verifier and external-provider
 implementation, but embeds no Hermes source/binary, virtual environment,
 profile, auth, session, prompt, memory database or provider output. Its public
 templates, schemas, vectors and provenance remain repository evidence rather
-than wheel runtime state. The package contains no remote carrier, Matrix.org
+than wheel runtime state. DM-042 packages the path-free local plural-body
+receipt verifier; its synthetic profiles, ledgers, vectors and validation
+harness remain repository/test evidence and never enter the wheel. The package
+contains no remote carrier, Matrix.org
 client, deployment/provider integration or live state.
 
 ## Supported interpreter baseline
@@ -48,7 +51,8 @@ observable install path.
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
 identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP,
-Codex-body, Hermes-body and conformance modules, `__init__.py`, and `py.typed`.
+Codex-body, Hermes-body, local-We and conformance modules, `__init__.py`, and
+`py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 

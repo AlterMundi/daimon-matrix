@@ -3,32 +3,32 @@
   "files": [
     {
       "name": "negative/bootstrap-short-signature.json",
-      "sha256": "a3ebbe25583dfecff31ed87babd69ab044bbe825f1aaf96b04501c24277519d8",
+      "sha256": "14ab1b747ce2a07ed04c96bc88a4351de9477f36aaf41bdb703111e53cae1873",
       "valid": false
     },
     {
       "name": "negative/plan-unknown-field.json",
-      "sha256": "7603aed3c0eb4fae31d136787c627b7bf5d8f0cb4683dee8ca4dd551deb76359",
+      "sha256": "a314cb5f4e33f51fd5810964b1c84f0d24f6cf2f7b4d939e394f6df35a61039d",
       "valid": false
     },
     {
       "name": "valid/bootstrap.json",
-      "sha256": "87f8f508c72ddcc1ddddb368fe86e65a70e1e596a6a03da6219bb841baecaf41",
+      "sha256": "62c9ba994acae88396fa5fbdc5f2a319813241abada0aeea0b5fda8f6cb694dd",
       "valid": true
     },
     {
       "name": "valid/launch-receipt.json",
-      "sha256": "92ac8d2647a2e735f0acfffd75015a55217eea2ecce67b85c24969a31e62eca4",
+      "sha256": "ff2bca4b42a9da8118a874627247074a0f898ddcf7018d8c561409afceb66bf4",
       "valid": true
     },
     {
       "name": "valid/plan.json",
-      "sha256": "b4a5081adf81957bee89df0580e0e88fb0a34fa700c16d96083dfc652e9551eb",
+      "sha256": "02abead7233b331eca25021d487cec23fd5684467931c00b9a39aeb3e70f1b42",
       "valid": true
     },
     {
       "name": "valid/runtime-handle.json",
-      "sha256": "ead05a19afd652a0a9e6f27456ecde45c98e88eac77a6814b6e75516bb61c534",
+      "sha256": "6cc7a90a6ffcec372539fc0c84ddd77c223cd86484ddfc43d676188204b54eb1",
       "valid": true
     }
   ],

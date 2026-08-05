@@ -1,0 +1,36 @@
+{
+  "schema": "dm.verification.invariants/v1",
+  "card": "DM-042",
+  "status": "implemented-synthetic",
+  "invariants": {
+    "matrix_means_daimon_matrix_not_matrix_org": true,
+    "one_root_being_authorizes_both_bodies": true,
+    "codex_and_hermes_public_state_machines_reach_active": true,
+    "model_and_live_provider_are_not_invoked": true,
+    "body_credentials_keys_sessions_capabilities_and_profiles_are_distinct": true,
+    "writable_sqlite_paths_and_inodes_are_distinct": true,
+    "both_bodies_author_signed_events": true,
+    "partitioned_events_are_initially_isolated": true,
+    "dm023_sync_is_bidirectional_and_exactly_replayable_after_restart": true,
+    "final_event_sets_and_heads_converge": true,
+    "import_is_not_adoption": true,
+    "codex_adopt_and_hermes_reject_remain_local": true,
+    "both_remote_decisions_remain_visible_evidence": true,
+    "launch_receipts_are_bound_to_exact_plans_and_profiles": true,
+    "validation_report_is_closed_deterministic_content_addressed_and_path_free": true,
+    "identity_storage_launch_decision_and_receipt_substitutions_fail_closed": true,
+    "matrix_org_live_compaii_multihost_cluster_tribe_and_rebirth_are_out_of_scope": true
+  },
+  "evidence": [
+    "docs/dm042-local-we.md",
+    "schemas/local-we/v1/validation.schema.json",
+    "specs/adapter-contracts.md",
+    "specs/operational-stack-contract.md",
+    "src/daimon_matrix/local_we.py",
+    "tests/test_dm042_local_we.py",
+    "tools/generate_dm042_vectors.py",
+    "vectors/local-we/v1/index.json",
+    "conformance/registry-v1.json"
+  ],
+  "deployment": "N/A: synthetic local integration only; multihost rebirth remains later roadmap work"
+}

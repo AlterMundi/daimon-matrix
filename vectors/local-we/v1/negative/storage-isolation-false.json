@@ -1,0 +1,102 @@
+{
+  "schema": "dm.local-we.validation/v1",
+  "being_ref": "dm:being:v1:OidT7bZklYAvZlKKKBtlsiPGquu0_u2lx0D3Bum9LEc",
+  "control_head": "dm:identity:v1:HtDBx7znEAqJLAmXR-nsLrk4ylkMvzcCMCAKUkdGzF8",
+  "manifest_hash": "8c23dad254dea39e4cd8df6336f483de9e2a2c458da64bf87142cf5686ee7dd7",
+  "observed_at_ms": 1800000000002,
+  "bodies": [
+    {
+      "harness": "codex",
+      "body_ref": "cluster:legion:compaii",
+      "embodiment_id": "embodiment:legion",
+      "incarnation_id": "incarnation:legion:0",
+      "principal_id": "compaii@legion",
+      "embodiment_credential_id": "dm:credential:v1:GTkjTomfxGMrzmmrl8CYI8vYvqEv-eOntGtjcPK2BBM",
+      "incarnation_authorization_id": "dm:authorization:v1:Kc2TjZYF_BorOCy8cHA24PxjH-ELGaXOK6pShdb-bPQ",
+      "signing_key_id": "dm:key:v1:57-Klr0swSaPDekuBkCK-J44MhEOyFr1ZFj4rSroNgI",
+      "encryption_key_id": "dm:key:v1:9F1R-QYgU14sipM_X2Kqn2DWXniTWF-sudui1qUdJj0",
+      "transport_key_ids": [
+        "dm:key:v1:cWnDx1-SpDF4ifHJr7xVH7jbx9L0FCo-X817nBehjng"
+      ],
+      "matrix_session_id": "dm:session:v1:ZTEIShhodF23MyCskVsBMUPzGJ_uSU2f0Pb4on3G5U8",
+      "matrix_high_water": "5b08e3fad7934be1a21de08b2bcb684074e8f207c11330fc6b60cf28e37d152f",
+      "capability_set_hash": "d739b723ef2a1e003f43cb9985b74991cb75d1c8f0ac22b6f08d7637b5031f21",
+      "profile_id": "dm:codex-profile:v1:Vh94aX2ddgWhVVWc3zdYutqKCSCWtanyFw2jJfZe-p0",
+      "launch_receipt_id": "dm:codex-launch-receipt:v1:GEOYDyw9n92TzZpB0O04brfv-MCese4CwR2de889MhE",
+      "ledger_heads_hash": "eedc51a1d0a815f662e9b4e003d356e10892bb92e3545260fe082e54bb5e9b5c",
+      "ledger_state_hash": "9d1147c882089bdd05e25efbd8d1aae419c40c5c9267dbed3511c7c3d6b9c383",
+      "projection_hash": "473f056de138dc25063331941bde31f263dbab9c7344459594b060f074812d93",
+      "decision": "adopt",
+      "decision_event_id": "42000000-0000-4000-8000-000000000003",
+      "state": "adopted",
+      "remote_decision_event_ids": [
+        "42000000-0000-4000-8000-000000000004"
+      ]
+    },
+    {
+      "harness": "hermes",
+      "body_ref": "cluster:daimonmatrix:compaii",
+      "embodiment_id": "embodiment:daimonmatrix",
+      "incarnation_id": "incarnation:daimonmatrix:0",
+      "principal_id": "compaii@daimonmatrix",
+      "embodiment_credential_id": "dm:credential:v1:mqdKU65vsZpqw8FW6QchUkwCIM4c_M6m0a0GojAqSQE",
+      "incarnation_authorization_id": "dm:authorization:v1:UWLEBOZz8rhZQ3H0VW3ugKW_BPu8oZcN4t0_qsEJQDw",
+      "signing_key_id": "dm:key:v1:q0fdw098xBhdTCQtH55ds69w6PsRq22Cz_EsgMM2eaY",
+      "encryption_key_id": "dm:key:v1:Z-8svxLGd-UViKstIRZ58r6gB5s4S_GfQV-iPqrtpMg",
+      "transport_key_ids": [
+        "dm:key:v1:KWKGqpqaNozLfOc3hltiyoVz_S7X-WJbgYGh39Uev10"
+      ],
+      "matrix_session_id": "dm:session:v1:H_CwmbTHM6j70f4E6IMKKNOA_H0epq9tInPj1TONJ0U",
+      "matrix_high_water": "5b08e3fad7934be1a21de08b2bcb684074e8f207c11330fc6b60cf28e37d152f",
+      "capability_set_hash": "02fa7c3ba394a903d0fa89f5bb9ae034d9349ca03fb8e259fe6e21bff7704fa4",
+      "profile_id": "dm:hermes-profile:v1:mnzS8_mlZhXKxiwjcjOa2aPEOtdXIxYxD_q96Ky0ORg",
+      "launch_receipt_id": "dm:hermes-launch:v1:aukWWZyG0crSpUUPSmBztu-SddlmuK73wzjyJPmLtBY",
+      "ledger_heads_hash": "eedc51a1d0a815f662e9b4e003d356e10892bb92e3545260fe082e54bb5e9b5c",
+      "ledger_state_hash": "9d1147c882089bdd05e25efbd8d1aae419c40c5c9267dbed3511c7c3d6b9c383",
+      "projection_hash": "368dc156292c23914c97733b09d6bff739e02a03506b18c7a5eeb6297595adde",
+      "decision": "reject",
+      "decision_event_id": "42000000-0000-4000-8000-000000000004",
+      "state": "rejected",
+      "remote_decision_event_ids": [
+        "42000000-0000-4000-8000-000000000003"
+      ]
+    }
+  ],
+  "sync": [
+    {
+      "sender_embodiment_id": "embodiment:daimonmatrix",
+      "receiver_embodiment_id": "embodiment:legion",
+      "request_id": "42000000-0000-4000-8000-000000000012",
+      "page_hash": "f18f30372609afdfade5122eee91dcbc5141d265ddca9fa5dc15de7760a708bd",
+      "receipt_hash": "66a78a5606c1d8dc29e9b1aa29b46bfe51ae4be7434e986c74469dc7944fce90",
+      "received": 2,
+      "inserted": 2,
+      "replayed": 0
+    },
+    {
+      "sender_embodiment_id": "embodiment:legion",
+      "receiver_embodiment_id": "embodiment:daimonmatrix",
+      "request_id": "42000000-0000-4000-8000-000000000011",
+      "page_hash": "06d38c59250713aafc111f4063c54ec6abd8ca324d4ec6eb8934de0107dfa333",
+      "receipt_hash": "02365cbe5ebb902060629df582f52c6af787f0770714967a0742c1ff8a925955",
+      "received": 2,
+      "inserted": 2,
+      "replayed": 0
+    }
+  ],
+  "event_set_hash": "9d1147c882089bdd05e25efbd8d1aae419c40c5c9267dbed3511c7c3d6b9c383",
+  "target_event_id": "42000000-0000-4000-8000-000000000001",
+  "storage_isolation": {
+    "capability_sets_distinct": true,
+    "credentials_distinct": true,
+    "encryption_keys_distinct": true,
+    "incarnations_distinct": true,
+    "ledger_files_distinct": false,
+    "matrix_sessions_distinct": true,
+    "principals_distinct": true,
+    "profile_roots_distinct": true,
+    "signing_keys_distinct": true,
+    "transport_keys_distinct": true
+  },
+  "report_id": "dm:local-we-validation:v1:eIVBnOI9U2h6S6Lq7qUFJSZju4avcuQ5pQml8R0h7vo"
+}

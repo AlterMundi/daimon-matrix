@@ -22,10 +22,15 @@ from daimon_matrix.canonical import b64url, canonical_bytes  # noqa: E402
 HASH_PATTERN = "^[0-9a-f]{64}$"
 DERIVED_PATTERN = "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
 BEING_PATTERN = "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+EMBODIMENT_PATTERN = "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+INCARNATION_PATTERN = "^incarnation:[A-Za-z0-9._:-]{1,240}$"
 TOKEN_PATTERN = "^[A-Za-z0-9._:-]{1,192}$"
 UINT = {"type": "integer", "minimum": 0, "maximum": 2**53 - 1}
 HASH = {"type": "string", "pattern": HASH_PATTERN}
 DERIVED = {"type": "string", "pattern": DERIVED_PATTERN}
+BODY_REF = {"type": "string", "minLength": 1, "maxLength": 256}
+EMBODIMENT = {"type": "string", "pattern": EMBODIMENT_PATTERN}
+INCARNATION = {"type": "string", "pattern": INCARNATION_PATTERN}
 
 
 def closed(
@@ -51,9 +56,9 @@ def contracts_schema() -> dict[str, Any]:
         {
             "schema": {"const": codex_body.BOOTSTRAP_SCHEMA},
             "being_ref": {"type": "string", "pattern": BEING_PATTERN},
-            "body_ref": DERIVED,
-            "embodiment_id": DERIVED,
-            "incarnation_id": DERIVED,
+            "body_ref": BODY_REF,
+            "embodiment_id": EMBODIMENT,
+            "incarnation_id": INCARNATION,
             "matrix_session_id": DERIVED,
             "matrix_high_water": HASH,
             "capability_set_hash": HASH,
@@ -124,9 +129,9 @@ def contracts_schema() -> dict[str, Any]:
             "matrix_mcp_binary_sha256": HASH,
             "hook_python_sha256": HASH,
             "being_ref": {"type": "string", "pattern": BEING_PATTERN},
-            "body_ref": DERIVED,
-            "embodiment_id": DERIVED,
-            "incarnation_id": DERIVED,
+            "body_ref": BODY_REF,
+            "embodiment_id": EMBODIMENT,
+            "incarnation_id": INCARNATION,
             "matrix_session_id": DERIVED,
             "workspace_ref": DERIVED,
             "files": {
@@ -202,9 +207,9 @@ def contracts_schema() -> dict[str, Any]:
             "matrix_binding": closed(
                 {
                     "being_ref": {"type": "string", "pattern": BEING_PATTERN},
-                    "body_ref": DERIVED,
-                    "embodiment_id": DERIVED,
-                    "incarnation_id": DERIVED,
+                    "body_ref": BODY_REF,
+                    "embodiment_id": EMBODIMENT,
+                    "incarnation_id": INCARNATION,
                     "matrix_session_id": DERIVED,
                     "matrix_high_water": HASH,
                 }
@@ -229,9 +234,9 @@ def contracts_schema() -> dict[str, Any]:
                 ]
             },
             "being_ref": {"type": "string", "pattern": BEING_PATTERN},
-            "body_ref": DERIVED,
-            "embodiment_id": DERIVED,
-            "incarnation_id": DERIVED,
+            "body_ref": BODY_REF,
+            "embodiment_id": EMBODIMENT,
+            "incarnation_id": INCARNATION,
             "matrix_session_id": DERIVED,
             "matrix_high_water": HASH,
             "thread_id": {"type": "string", "pattern": TOKEN_PATTERN},
@@ -264,9 +269,9 @@ def contracts_schema() -> dict[str, Any]:
             "observed_at_ms": UINT,
             "session_id": {"type": "string", "pattern": TOKEN_PATTERN},
             "model": {"type": "string", "pattern": TOKEN_PATTERN},
-            "body_ref": DERIVED,
-            "embodiment_id": DERIVED,
-            "incarnation_id": DERIVED,
+            "body_ref": BODY_REF,
+            "embodiment_id": EMBODIMENT,
+            "incarnation_id": INCARNATION,
             "matrix_session_id": DERIVED,
             "outcome": {"const": "observed"},
         }
@@ -320,9 +325,9 @@ def bootstrap_vector() -> dict[str, Any]:
     return {
         "schema": codex_body.BOOTSTRAP_SCHEMA,
         "being_ref": derived("being", "dm040-vector-being"),
-        "body_ref": derived("body", "dm040-vector-body"),
-        "embodiment_id": derived("embodiment", "dm040-vector-embodiment"),
-        "incarnation_id": derived("incarnation", "dm040-vector-incarnation"),
+        "body_ref": "cluster:synthetic:dm040-vector-body",
+        "embodiment_id": "embodiment:synthetic:dm040-vector-embodiment",
+        "incarnation_id": "incarnation:synthetic:dm040-vector-incarnation:0",
         "matrix_session_id": derived("session", "dm040-vector-session"),
         "matrix_high_water": hashlib.sha256(b"dm040-vector-high-water").hexdigest(),
         "capability_set_hash": hashlib.sha256(b"dm040-vector-capabilities").hexdigest(),

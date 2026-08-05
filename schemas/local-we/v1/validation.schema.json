@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.local/schemas/local-we/v1/validation.schema.json",
+  "title": "Daimon Matrix local plural-body validation v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "dm.local-we.validation/v1"
+    },
+    "being_ref": {
+      "type": "string",
+      "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "control_head": {
+      "type": "string",
+      "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "manifest_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "bodies": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "object",
+          "properties": {
+            "harness": {
+              "const": "codex"
+            },
+            "body_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "embodiment_id": {
+              "type": "string",
+              "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+            },
+            "incarnation_id": {
+              "type": "string",
+              "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+            },
+            "principal_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "embodiment_credential_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "incarnation_authorization_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "encryption_key_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "transport_key_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "matrix_session_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "matrix_high_water": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "capability_set_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "launch_receipt_id": {
+              "type": "string",
+              "pattern": "^dm:codex-launch-receipt:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "ledger_heads_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "ledger_state_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "projection_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "decision": {
+              "const": "adopt"
+            },
+            "decision_event_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "state": {
+              "const": "adopted"
+            },
+            "remote_decision_event_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          "required": [
+            "harness",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "principal_id",
+            "embodiment_credential_id",
+            "incarnation_authorization_id",
+            "signing_key_id",
+            "encryption_key_id",
+            "transport_key_ids",
+            "matrix_session_id",
+            "matrix_high_water",
+            "capability_set_hash",
+            "profile_id",
+            "launch_receipt_id",
+            "ledger_heads_hash",
+            "ledger_state_hash",
+            "projection_hash",
+            "decision",
+            "decision_event_id",
+            "state",
+            "remote_decision_event_ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "harness": {
+              "const": "hermes"
+            },
+            "body_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "embodiment_id": {
+              "type": "string",
+              "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+            },
+            "incarnation_id": {
+              "type": "string",
+              "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+            },
+            "principal_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "embodiment_credential_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "incarnation_authorization_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "encryption_key_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "transport_key_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "matrix_session_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "matrix_high_water": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "capability_set_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+            },
+            "launch_receipt_id": {
+              "type": "string",
+              "pattern": "^dm:hermes-launch:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "ledger_heads_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "ledger_state_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "projection_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "decision": {
+              "const": "reject"
+            },
+            "decision_event_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "state": {
+              "const": "rejected"
+            },
+            "remote_decision_event_ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          "required": [
+            "harness",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "principal_id",
+            "embodiment_credential_id",
+            "incarnation_authorization_id",
+            "signing_key_id",
+            "encryption_key_id",
+            "transport_key_ids",
+            "matrix_session_id",
+            "matrix_high_water",
+            "capability_set_hash",
+            "profile_id",
+            "launch_receipt_id",
+            "ledger_heads_hash",
+            "ledger_state_hash",
+            "projection_hash",
+            "decision",
+            "decision_event_id",
+            "state",
+            "remote_decision_event_ids"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "sync": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {
+          "sender_embodiment_id": {
+            "type": "string",
+            "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+          },
+          "receiver_embodiment_id": {
+            "type": "string",
+            "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "page_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "receipt_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "received": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "inserted": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "replayed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "sender_embodiment_id",
+          "receiver_embodiment_id",
+          "request_id",
+          "page_hash",
+          "receipt_hash",
+          "received",
+          "inserted",
+          "replayed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "event_set_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "target_event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "storage_isolation": {
+      "type": "object",
+      "properties": {
+        "capability_sets_distinct": {
+          "const": true
+        },
+        "credentials_distinct": {
+          "const": true
+        },
+        "encryption_keys_distinct": {
+          "const": true
+        },
+        "incarnations_distinct": {
+          "const": true
+        },
+        "ledger_files_distinct": {
+          "const": true
+        },
+        "matrix_sessions_distinct": {
+          "const": true
+        },
+        "principals_distinct": {
+          "const": true
+        },
+        "profile_roots_distinct": {
+          "const": true
+        },
+        "signing_keys_distinct": {
+          "const": true
+        },
+        "transport_keys_distinct": {
+          "const": true
+        }
+      },
+      "required": [
+        "capability_sets_distinct",
+        "credentials_distinct",
+        "encryption_keys_distinct",
+        "incarnations_distinct",
+        "ledger_files_distinct",
+        "matrix_sessions_distinct",
+        "principals_distinct",
+        "profile_roots_distinct",
+        "signing_keys_distinct",
+        "transport_keys_distinct"
+      ],
+      "additionalProperties": false
+    },
+    "report_id": {
+      "type": "string",
+      "pattern": "^dm:local-we-validation:v1:[A-Za-z0-9_-]{43}$"
+    }
+  },
+  "required": [
+    "schema",
+    "being_ref",
+    "control_head",
+    "manifest_hash",
+    "observed_at_ms",
+    "bodies",
+    "sync",
+    "event_set_hash",
+    "target_event_id",
+    "storage_isolation",
+    "report_id"
+  ],
+  "additionalProperties": false
+}

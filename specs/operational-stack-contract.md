@@ -23,6 +23,12 @@ Cluster supervises their processes and volumes; Matrix admits their exact body
 binding and receipts. Their local threads/sessions remain body state across
 park/rebirth and never become a continuity root.
 
+DM-042 is the single-host composition gate for those two runtimes. It requires
+two independently writable ledgers and custody sets under one root manifest,
+bidirectional DM-023 synchronization, converged signed history and independent
+local adoption. Its validation receipt is integration evidence, not presence,
+a Cluster lifecycle receipt, a multihost transport ACK or a rebirth claim.
+
 ## Provisional same-being manifest
 
 Before a Matrix root exists, an administrator installs the same canonical
@@ -58,6 +64,8 @@ Cluster's resource authority.
 4. Matrix verifies the sender, credential/revocation state, event signature,
    origin chain, bounds, and `being_ref` before adding data to `known` state.
 5. Imported data is not effective until a local decision accepts it.
+   Different embodiments may retain different decisions after their signed
+   event histories converge.
 6. An adapter previews a requested projection. High-impact effects require a
    human confirmation before application.
 7. The adapter records an immutable result receipt. Cluster supplies a

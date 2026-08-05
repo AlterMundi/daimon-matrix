@@ -8,6 +8,7 @@
     "cluster_is_lifecycle_and_resource_fence_authority": true,
     "native_binary_and_generated_protocol_are_exactly_pinned": true,
     "profile_is_fresh_owner_only_and_nonambient": true,
+    "bootstrap_identity_matches_root_manifest_v2_formats": true,
     "native_and_external_memory_are_disabled_and_quarantined": true,
     "effective_feature_overrides_fail_closed": true,
     "workspace_is_untrusted_and_multi_agent_is_disabled": true,

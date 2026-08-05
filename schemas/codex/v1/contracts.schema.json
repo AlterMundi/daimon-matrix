@@ -8,7 +8,8 @@
           "type": "string"
         },
         "body_ref": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "maxLength": 256,
+          "minLength": 1,
           "type": "string"
         },
         "capability_set_hash": {
@@ -20,7 +21,7 @@
           "type": "string"
         },
         "embodiment_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "expires_at_ms": {
@@ -29,7 +30,7 @@
           "type": "integer"
         },
         "incarnation_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "issued_at_ms": {
@@ -196,15 +197,16 @@
               "type": "string"
             },
             "body_ref": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "maxLength": 256,
+              "minLength": 1,
               "type": "string"
             },
             "embodiment_id": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
               "type": "string"
             },
             "incarnation_id": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
               "type": "string"
             },
             "matrix_high_water": {
@@ -356,11 +358,12 @@
       "additionalProperties": false,
       "properties": {
         "body_ref": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "maxLength": 256,
+          "minLength": 1,
           "type": "string"
         },
         "embodiment_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "event": {
@@ -372,7 +375,7 @@
           ]
         },
         "incarnation_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "matrix_session_id": {
@@ -432,7 +435,8 @@
               "type": "string"
             },
             "body_ref": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "maxLength": 256,
+              "minLength": 1,
               "type": "string"
             },
             "capability_set_hash": {
@@ -444,7 +448,7 @@
               "type": "string"
             },
             "embodiment_id": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
               "type": "string"
             },
             "expires_at_ms": {
@@ -453,7 +457,7 @@
               "type": "integer"
             },
             "incarnation_id": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
               "type": "string"
             },
             "issued_at_ms": {
@@ -616,7 +620,8 @@
           "type": "string"
         },
         "body_ref": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "maxLength": 256,
+          "minLength": 1,
           "type": "string"
         },
         "codex_binary_sha256": {
@@ -626,7 +631,7 @@
           "const": "0.146.0"
         },
         "embodiment_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "files": {
@@ -662,7 +667,7 @@
           "type": "string"
         },
         "incarnation_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "matrix_mcp_binary_sha256": {
@@ -716,11 +721,12 @@
           "type": "string"
         },
         "body_ref": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "maxLength": 256,
+          "minLength": 1,
           "type": "string"
         },
         "embodiment_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "generation": {
@@ -733,7 +739,7 @@
           "type": "string"
         },
         "incarnation_id": {
-          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
           "type": "string"
         },
         "matrix_high_water": {
