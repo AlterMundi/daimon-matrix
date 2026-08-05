@@ -1,0 +1,50 @@
+{
+  "schema": "dm.external-contract-provenance/v1",
+  "name": "collective-memory exchange v1",
+  "upstream": {
+    "repository": "https://github.com/Mar-IA-no/collective-memory",
+    "visibility": "public",
+    "commit": "d12d4d22b36a8bfe17676eaf033ad077ab26c44c",
+    "tree": "737ac80a749d9120607f3616a65ebb6a31b0f1e9",
+    "commit_date": "2026-08-05T04:31:05-03:00",
+    "license_expression": "MIT"
+  },
+  "policy": {
+    "source_imported": false,
+    "source_vendored": false,
+    "runtime_package_dependency_added": false,
+    "live_state_imported": false,
+    "reuse_mode": "exact_version_external_contract",
+    "public_ci_cross_repository_credential": false
+  },
+  "items": [
+    {
+      "path": "mapa/exchange.py",
+      "git_blob_sha1": "a06e3e050143f38e21efd01d1d86e0be0d8372fd",
+      "sha256": "c17bc07398c90f0a1e0c9c3db91b7918e3380e53495dfe51a700d65bcd9c49ae",
+      "size": 101617,
+      "use": "real isolated integration through injected source and publication transports; not imported"
+    },
+    {
+      "path": "schemas/exchange/v1/contracts.schema.json",
+      "git_blob_sha1": "eec67c309a17dde948d9f334c7f3fb718c77ced6",
+      "sha256": "0d33c09ad7ba8fa07358b8ce2ea5fb559fdcf80618dcc48a28a07fe4cf54df13",
+      "size": 17543,
+      "use": "exact upstream contract identity and comparison; Matrix schema is independently generated"
+    },
+    {
+      "path": "vectors/exchange/v1/index.json",
+      "git_blob_sha1": "c9be99ed06e4f5ea56ab7b50c3dacd422707dad4",
+      "sha256": "2aa1eaee32d02ffdba053d72ef42e3ad031bea7c7079c77e31b3774e44b275cf",
+      "size": 1571,
+      "use": "interop comparison; Matrix vectors are independently generated"
+    },
+    {
+      "path": "LICENSE",
+      "git_blob_sha1": "9cf106272ac3b56b0c4c80218e8fc10a664ca5f4",
+      "sha256": "508a77d2e7b51d98adeed32648ad124b7b30241a8e70b2e72c99f92d8e5874d1",
+      "size": 1036,
+      "use": "upstream license evidence"
+    }
+  ]
+}

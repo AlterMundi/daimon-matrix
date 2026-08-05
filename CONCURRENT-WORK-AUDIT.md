@@ -114,6 +114,15 @@ credential patterns, and prevent revocation from deleting an untracked target.
 Inbound collective knowledge is a separate attributed source/quarantine
 direction and must use the supported API or an atomic snapshot boundary.
 
+DM-036 resolves that pending boundary against the public MIT upstream commit
+`d12d4d22b36a8bfe17676eaf033ad077ab26c44c`, with closed schema SHA-256
+`0d33c09ad7ba8fa07358b8ce2ea5fb559fdcf80618dcc48a28a07fe4cf54df13`.
+The exact repository/tree/blob/license inventory is
+`provenance/collective-memory-exchange-v1.json`. No upstream source, database,
+WAL, corpus or live state is imported or vendored. Matrix uses two independent
+injected contracts: immutable export into quarantine and exact reviewed
+publication with fresh effect-truth reconciliation.
+
 ### compaii-state and Wiki
 
 Retain hash-pinned generations, staging, conflict checks, classified artifact

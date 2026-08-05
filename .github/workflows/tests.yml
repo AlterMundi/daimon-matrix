@@ -18,6 +18,11 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: nicoechaniz/collective-memory
+          ref: d12d4d22b36a8bfe17676eaf033ad077ab26c44c
+          path: .collective-memory-contract
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -34,10 +39,18 @@ jobs:
       - run: python -m ruff format --check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: python -m ruff check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
+      - run: python -m ruff format --check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
+      - run: python -m ruff check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
       - run: python tools/generate_dm041_vectors.py --check
       - run: python tools/generate_dm042_vectors.py --check
+      - run: python tools/generate_dm036_vectors.py --check
+        env:
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
       - run: python -m compileall -q coordination src tools tests
       - run: PYTHONPATH=src python -W error::ResourceWarning -m unittest discover -s tests -v
+        env:
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: nicoechaniz/hermes-memory-kit
@@ -89,12 +102,18 @@ jobs:
       - run: python tools/scan_secrets.py . dist/daimon_matrix-0.0.0.tar.gz dist/daimon_matrix-0.0.0-py3-none-any.whl
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: nicoechaniz/collective-memory
+          ref: d12d4d22b36a8bfe17676eaf033ad077ab26c44c
+          path: .collective-memory-contract
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
           path: .hmk-contract
       - name: Smoke-test the installed wheel
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
         run: |
           python -m venv "${RUNNER_TEMP}/dm020-wheel"
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install -r requirements-vectors.txt
@@ -103,6 +122,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import importlib.metadata as m; import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"; assert m.requires("daimon-matrix") == ["cryptography==50.0.0", "mcp==2.0.0"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.identity import create_genesis, verify_genesis; roots=[bytes([n])*32 for n in (1,2,3)]; recovery=[bytes([n])*32 for n in (4,5,6)]; artifact=create_genesis(roots,2,recovery,2,created_at_ms=1); assert verify_genesis(artifact).being_ref.startswith("dm:being:v1:")'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.ledger import Ledger; from daimon_matrix.weave import BeingManifest; assert Ledger and BeingManifest'
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.collective_memory import create_source_manifest, create_publisher_manifest; assert create_source_manifest()["adapter_id"] != create_publisher_manifest()["adapter_id"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.sealed import PROFILE; from cryptography.hazmat.primitives.hpke import Suite; assert PROFILE.startswith("HPKE-X25519") and Suite'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm022_ledger -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm023_sync -q
@@ -111,6 +131,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm033_human_review -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm034_memory_projection -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm035_publication.DM035PublicContractTests -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm036_collective_memory.DM036ContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-matrixd" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-conformance" --help

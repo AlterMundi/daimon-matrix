@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/collective-memory/v1/contracts.schema.json",
+  "title": "Daimon Matrix collective-memory adapter contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/sourceProfile"},
+    {"$ref": "#/$defs/sourcePreview"},
+    {"$ref": "#/$defs/sourceReceipt"},
+    {"$ref": "#/$defs/publisherProfile"},
+    {"$ref": "#/$defs/publisherRequest"},
+    {"$ref": "#/$defs/publisherAcceptance"}
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "hash"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index_generation", "ui_generation"],
+      "properties": {
+        "index_generation": {"type": ["string", "null"], "maxLength": 128},
+        "ui_generation": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "exportArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id", "logical_id", "media_type", "authors", "source_refs",
+        "license", "consent_scope", "classification", "predecessor_artifact_id",
+        "state", "content_hash", "content_length", "content_ref"
+      ],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/identifier"},
+        "logical_id": {"$ref": "#/$defs/identifier"},
+        "media_type": {"enum": ["text/markdown; charset=utf-8", "text/plain; charset=utf-8"]},
+        "authors": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "source_refs": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/sourceRef"}},
+        "license": {"$ref": "#/$defs/identifier"},
+        "consent_scope": {"$ref": "#/$defs/identifier"},
+        "classification": {"$ref": "#/$defs/identifier"},
+        "predecessor_artifact_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identifier"}]},
+        "state": {"enum": ["active", "tombstone"]},
+        "content_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]},
+        "content_length": {"type": "integer", "minimum": 0, "maximum": 2097152},
+        "content_ref": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "exportManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "generation_id", "manifest_hash", "body"],
+      "properties": {
+        "schema": {"const": "collective-export-manifest/v1"},
+        "generation_id": {"$ref": "#/$defs/identifier"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "producer_instance", "producer_release", "policy_version", "scope_id",
+            "projection", "created_at", "predecessor_generation", "state_digest",
+            "artifact_count", "total_content_bytes", "artifacts"
+          ],
+          "properties": {
+            "producer_instance": {"$ref": "#/$defs/identifier"},
+            "producer_release": {"$ref": "#/$defs/identifier"},
+            "policy_version": {"$ref": "#/$defs/identifier"},
+            "scope_id": {"$ref": "#/$defs/identifier"},
+            "projection": {"$ref": "#/$defs/projection"},
+            "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+            "predecessor_generation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identifier"}]},
+            "state_digest": {"$ref": "#/$defs/hash"},
+            "artifact_count": {"type": "integer", "minimum": 0, "maximum": 4096},
+            "total_content_bytes": {"type": "integer", "minimum": 0, "maximum": 67108864},
+            "artifacts": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/exportArtifact"}}
+          }
+        }
+      }
+    },
+    "sourceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema", "adapter_id", "contract_version", "upstream_commit",
+        "upstream_schema_sha256", "producer_instance", "producer_release",
+        "policy_version", "scope_id"
+      ],
+      "properties": {
+        "schema": {"const": "dm.collective-source.profile/v1"},
+        "adapter_id": {"const": "dm:adapter:v0:Sh-2fDC4rpFOZz_ddjWqLptoX2SgUUzJPKhe6XQOtj8"},
+        "contract_version": {"const": "v1"},
+        "upstream_commit": {"const": "d12d4d22b36a8bfe17676eaf033ad077ab26c44c"},
+        "upstream_schema_sha256": {"const": "0d33c09ad7ba8fa07358b8ce2ea5fb559fdcf80618dcc48a28a07fe4cf54df13"},
+        "producer_instance": {"$ref": "#/$defs/identifier"},
+        "producer_release": {"$ref": "#/$defs/identifier"},
+        "policy_version": {"$ref": "#/$defs/identifier"},
+        "scope_id": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "contentBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "content_hash", "content_length", "state"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/identifier"},
+        "content_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash"}]},
+        "content_length": {"type": "integer", "minimum": 0, "maximum": 2097152},
+        "state": {"enum": ["active", "tombstone"]}
+      }
+    },
+    "sourcePreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "preview_id", "preview_hash", "manifest", "content_bindings"],
+      "properties": {
+        "schema": {"const": "dm.collective-source.preview/v1"},
+        "preview_id": {"$ref": "#/$defs/identifier"},
+        "preview_hash": {"$ref": "#/$defs/hash"},
+        "manifest": {"$ref": "#/$defs/exportManifest"},
+        "content_bindings": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/contentBinding"}}
+      }
+    },
+    "sourceOutcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admitted_to_quarantine", "tombstoned", "personal_memory_assertions"],
+      "properties": {
+        "admitted_to_quarantine": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "tombstoned": {"type": "integer", "minimum": 0, "maximum": 4096},
+        "personal_memory_assertions": {"const": 0}
+      }
+    },
+    "sourceReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "receipt_id", "body"],
+      "properties": {
+        "schema": {"const": "dm.collective-source.receipt/v1"},
+        "receipt_id": {"$ref": "#/$defs/identifier"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter_id", "importer_version", "producer_instance", "producer_release",
+            "policy_version", "scope_id", "generation_id", "manifest_hash",
+            "predecessor_generation", "state_digest", "artifact_count",
+            "total_content_bytes", "outcomes", "preview_id", "preview_hash",
+            "source_log_hash", "import_event_id", "imported_at_ms", "decision",
+            "reason_codes"
+          ],
+          "properties": {
+            "adapter_id": {"const": "dm:adapter:v0:Sh-2fDC4rpFOZz_ddjWqLptoX2SgUUzJPKhe6XQOtj8"},
+            "importer_version": {"const": "daimon-matrix-collective-source/1.0.0"},
+            "producer_instance": {"$ref": "#/$defs/identifier"},
+            "producer_release": {"$ref": "#/$defs/identifier"},
+            "policy_version": {"$ref": "#/$defs/identifier"},
+            "scope_id": {"$ref": "#/$defs/identifier"},
+            "generation_id": {"$ref": "#/$defs/identifier"},
+            "manifest_hash": {"$ref": "#/$defs/hash"},
+            "predecessor_generation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identifier"}]},
+            "state_digest": {"$ref": "#/$defs/hash"},
+            "artifact_count": {"type": "integer", "minimum": 0, "maximum": 4096},
+            "total_content_bytes": {"type": "integer", "minimum": 0, "maximum": 67108864},
+            "outcomes": {"$ref": "#/$defs/sourceOutcomes"},
+            "preview_id": {"$ref": "#/$defs/identifier"},
+            "preview_hash": {"$ref": "#/$defs/hash"},
+            "source_log_hash": {"$ref": "#/$defs/hash"},
+            "import_event_id": {"type": "string", "format": "uuid"},
+            "imported_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+            "decision": {"const": "quarantined"},
+            "reason_codes": {"const": ["quarantined:initial-pull"]}
+          }
+        }
+      }
+    },
+    "publisherProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema", "adapter_id", "contract_version", "upstream_commit",
+        "upstream_schema_sha256", "requester_id", "policy_version", "target_ids"
+      ],
+      "properties": {
+        "schema": {"const": "dm.collective-publisher.profile/v1"},
+        "adapter_id": {"const": "dm:adapter:v0:Jsug9D2N641xJwE5Q_oLaHDy0wxT5knRJfxzV2ZEOXc"},
+        "contract_version": {"const": "v1"},
+        "upstream_commit": {"const": "d12d4d22b36a8bfe17676eaf033ad077ab26c44c"},
+        "upstream_schema_sha256": {"const": "0d33c09ad7ba8fa07358b8ce2ea5fb559fdcf80618dcc48a28a07fe4cf54df13"},
+        "requester_id": {"$ref": "#/$defs/identifier"},
+        "policy_version": {"$ref": "#/$defs/identifier"},
+        "target_ids": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}}
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "evidence_hash"],
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/identifier"},
+        "evidence_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "reviewRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "evidence_hash", "reviewer"],
+      "properties": {
+        "evidence_id": {"$ref": "#/$defs/identifier"},
+        "evidence_hash": {"$ref": "#/$defs/hash"},
+        "reviewer": {"$ref": "#/$defs/identifier"}
+      }
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "receipt_hash"],
+      "properties": {
+        "receipt_id": {"$ref": "#/$defs/identifier"},
+        "receipt_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "publisherRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "summary_id", "body"],
+      "properties": {
+        "schema": {"const": "dm.collective-publisher.request/v1"},
+        "summary_id": {"$ref": "#/$defs/identifier"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter_id", "publisher_version", "request_id", "request_hash", "plan_id",
+            "plan_hash", "idempotency_key", "requester_id", "subject_id", "target_id",
+            "action", "source_refs", "source_checkpoint", "classification", "policy_version",
+            "preview_id", "preview_hash", "content_hash", "content_length", "consent",
+            "review", "predecessor", "requested_at_ms"
+          ],
+          "properties": {
+            "adapter_id": {"const": "dm:adapter:v0:Jsug9D2N641xJwE5Q_oLaHDy0wxT5knRJfxzV2ZEOXc"},
+            "publisher_version": {"const": "daimon-matrix-collective-publisher/1.0.0"},
+            "request_id": {"$ref": "#/$defs/identifier"},
+            "request_hash": {"$ref": "#/$defs/hash"},
+            "plan_id": {"$ref": "#/$defs/identifier"},
+            "plan_hash": {"$ref": "#/$defs/hash"},
+            "idempotency_key": {"$ref": "#/$defs/identifier"},
+            "requester_id": {"$ref": "#/$defs/identifier"},
+            "subject_id": {"$ref": "#/$defs/identifier"},
+            "target_id": {"$ref": "#/$defs/identifier"},
+            "action": {"enum": ["publish", "successor", "tombstone"]},
+            "source_refs": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/sourceRef"}},
+            "source_checkpoint": {"$ref": "#/$defs/sourceRef"},
+            "classification": {"$ref": "#/$defs/identifier"},
+            "policy_version": {"$ref": "#/$defs/identifier"},
+            "preview_id": {"$ref": "#/$defs/identifier"},
+            "preview_hash": {"$ref": "#/$defs/hash"},
+            "content_hash": {"$ref": "#/$defs/hash"},
+            "content_length": {"type": "integer", "minimum": 1, "maximum": 1048576},
+            "consent": {"$ref": "#/$defs/evidenceRef"},
+            "review": {"$ref": "#/$defs/reviewRef"},
+            "predecessor": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/predecessor"}]},
+            "requested_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+          }
+        }
+      }
+    },
+    "providerReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "receipt_id", "receipt_hash", "body"],
+      "properties": {
+        "schema": {"const": "collective-publication-receipt/v1"},
+        "receipt_id": {"$ref": "#/$defs/identifier"},
+        "receipt_hash": {"$ref": "#/$defs/hash"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "transaction_id", "request_hash", "plan_id", "idempotency_key",
+            "target_id", "action", "before", "after", "source_refs",
+            "source_checkpoint", "classification", "policy_version", "consent",
+            "review", "projection", "committed_at", "status"
+          ],
+          "properties": {
+            "transaction_id": {"$ref": "#/$defs/identifier"},
+            "request_hash": {"$ref": "#/$defs/hash"},
+            "plan_id": {"$ref": "#/$defs/identifier"},
+            "idempotency_key": {"$ref": "#/$defs/identifier"},
+            "target_id": {"$ref": "#/$defs/identifier"},
+            "action": {"enum": ["publish", "successor", "tombstone"]},
+            "before": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/targetRecord"}]},
+            "after": {"$ref": "#/$defs/afterRecord"},
+            "source_refs": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/sourceRef"}},
+            "source_checkpoint": {"$ref": "#/$defs/sourceRef"},
+            "classification": {"$ref": "#/$defs/identifier"},
+            "policy_version": {"$ref": "#/$defs/identifier"},
+            "consent": {"$ref": "#/$defs/evidenceRef"},
+            "review": {"$ref": "#/$defs/evidenceRef"},
+            "projection": {"$ref": "#/$defs/receiptProjection"},
+            "committed_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+            "status": {"const": "committed"}
+          }
+        }
+      }
+    },
+    "targetRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "receipt_hash", "content_hash", "content_length", "state"],
+      "properties": {
+        "receipt_id": {"$ref": "#/$defs/identifier"},
+        "receipt_hash": {"$ref": "#/$defs/hash"},
+        "content_hash": {"$ref": "#/$defs/hash"},
+        "content_length": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "state": {"enum": ["active", "tombstone"]}
+      }
+    },
+    "afterRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content_hash", "content_length", "media_type", "state"],
+      "properties": {
+        "content_hash": {"$ref": "#/$defs/hash"},
+        "content_length": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "media_type": {"const": "text/markdown; charset=utf-8"},
+        "state": {"enum": ["active", "tombstone"]}
+      }
+    },
+    "receiptProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index_generation", "ui_generation", "index_content_hash"],
+      "properties": {
+        "index_generation": {"type": "string", "minLength": 1, "maxLength": 128},
+        "ui_generation": {"type": "string", "minLength": 1, "maxLength": 256},
+        "index_content_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "publisherAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "acceptance_id", "body"],
+      "properties": {
+        "schema": {"const": "dm.collective-publisher.acceptance/v1"},
+        "acceptance_id": {"$ref": "#/$defs/identifier"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adapter_id", "publisher_version", "request_event_id", "request_event_hash",
+            "request_id", "request_hash", "summary_id", "provider_receipt",
+            "reconciliation_state_hash", "accepted_at_ms"
+          ],
+          "properties": {
+            "adapter_id": {"const": "dm:adapter:v0:Jsug9D2N641xJwE5Q_oLaHDy0wxT5knRJfxzV2ZEOXc"},
+            "publisher_version": {"const": "daimon-matrix-collective-publisher/1.0.0"},
+            "request_event_id": {"type": "string", "format": "uuid"},
+            "request_event_hash": {"$ref": "#/$defs/hash"},
+            "request_id": {"$ref": "#/$defs/identifier"},
+            "request_hash": {"$ref": "#/$defs/hash"},
+            "summary_id": {"$ref": "#/$defs/identifier"},
+            "provider_receipt": {"$ref": "#/$defs/providerReceipt"},
+            "reconciliation_state_hash": {"$ref": "#/$defs/hash"},
+            "accepted_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+          }
+        }
+      }
+    }
+  }
+}

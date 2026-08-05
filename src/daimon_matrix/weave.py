@@ -60,6 +60,9 @@ EVENT_KINDS: Final = frozenset(
         "review.executed",
         "publication.requested",
         "publication.receipted",
+        "source.imported",
+        "collective.publication.requested",
+        "collective.publication.receipted",
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -907,6 +910,50 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
                     )
         except PublicationError as exception:
             raise WeaveProtocolError("invalid_publication_event") from exception
+    if value["kind"] == "source.imported":
+        from .collective_memory import CollectiveMemoryError, validate_source_receipt
+
+        try:
+            receipt = validate_source_receipt(payload)
+            if (
+                value["subject"] != value["being_ref"]
+                or receipt["body"]["import_event_id"] != value["event_id"]
+                or value["supersedes"] is not None
+            ):
+                raise CollectiveMemoryError("collective_source_event_mismatch")
+        except CollectiveMemoryError as exception:
+            raise WeaveProtocolError("invalid_collective_source_event") from exception
+    if value["kind"].startswith("collective.publication."):
+        from .collective_memory import (
+            CollectiveMemoryError,
+            validate_publisher_acceptance_payload,
+            validate_publisher_request_payload,
+        )
+
+        try:
+            if value["kind"] == "collective.publication.requested":
+                request = validate_publisher_request_payload(payload)
+                if (
+                    value["subject"] != value["being_ref"]
+                    or request["body"]["subject_id"] != value["being_ref"]
+                    or value["supersedes"] is not None
+                ):
+                    raise CollectiveMemoryError(
+                        "collective_publication_request_event_mismatch"
+                    )
+            else:
+                acceptance = validate_publisher_acceptance_payload(payload)
+                action = acceptance["body"]["provider_receipt"]["body"]["action"]
+                if value["subject"] != value["being_ref"] or (action == "publish") != (
+                    value["supersedes"] is None
+                ):
+                    raise CollectiveMemoryError(
+                        "collective_publication_acceptance_event_mismatch"
+                    )
+        except CollectiveMemoryError as exception:
+            raise WeaveProtocolError(
+                "invalid_collective_publication_event"
+            ) from exception
     return value
 
 

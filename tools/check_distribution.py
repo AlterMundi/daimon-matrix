@@ -42,6 +42,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/client.py",
         "src/daimon_matrix/cluster.py",
         "src/daimon_matrix/codex_body.py",
+        "src/daimon_matrix/collective_memory.py",
         "src/daimon_matrix/communication.py",
         "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/curator.py",
@@ -81,6 +82,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/client.py",
         "daimon_matrix/cluster.py",
         "daimon_matrix/codex_body.py",
+        "daimon_matrix/collective_memory.py",
         "daimon_matrix/communication.py",
         "daimon_matrix/conformance.py",
         "daimon_matrix/curator.py",
@@ -275,6 +277,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/cli.py",
         "src/daimon_matrix/client.py",
         "src/daimon_matrix/cluster.py",
+        "src/daimon_matrix/collective_memory.py",
         "src/daimon_matrix/communication.py",
         "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/curator.py",
@@ -390,6 +393,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/cli.py": "src/daimon_matrix/cli.py",
         "daimon_matrix/client.py": "src/daimon_matrix/client.py",
         "daimon_matrix/cluster.py": "src/daimon_matrix/cluster.py",
+        "daimon_matrix/collective_memory.py": (
+            "src/daimon_matrix/collective_memory.py"
+        ),
         "daimon_matrix/communication.py": "src/daimon_matrix/communication.py",
         "daimon_matrix/conformance.py": "src/daimon_matrix/conformance.py",
         "daimon_matrix/curator.py": "src/daimon_matrix/curator.py",

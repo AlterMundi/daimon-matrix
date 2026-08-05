@@ -114,6 +114,15 @@ adopts a shared target and Hermes locally rejects it. The published
 `dm.local-we.validation/v1` receipt is deterministic and path-free; the card is
 a synthetic single-host gate, not a Matrix.org, multihost Cluster or CompAII
 rebirth claim.
+DM-036 adds independent inbound and outbound `collective-memory` adapters over
+the exact public exchange-v1 contract. Immutable generations enter only an
+append-only source log plus `source.imported` quarantine evidence, with offline
+catch-up and ledger/source-log rebuild. Publication requires exact current
+Matrix source refs, recomputable checkpoints, subject consent, independent
+human review, deterministic final-byte secret scanning and fresh upstream
+effect truth. The directions have content-addressed DM-018 identities and no
+shared credential, store, queue, receipt or authority; the real-I/O lane uses
+only isolated synthetic corpus roots.
 DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 
