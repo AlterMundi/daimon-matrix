@@ -102,3 +102,25 @@ content. Rebuild re-derives and revalidates the embedded HMK plan immediately
 before its atomic namespace-only apply. HMK-native, Wiki and collective records
 are outside the selector. The closed contract, crash table, dry-run cutover and
 rollback procedure are normative in `docs/dm034-memory-projection.md`.
+
+### Reviewed publication
+
+DM-035 is a distinct outbound projection. Matrix owns source events, exact
+policy, independent Ed25519 review, deterministic rendering, queue intent and
+accepted receipt. The pinned `compaii-state` publisher owns only one configured
+Wiki/state/HMK transaction. Neither Wiki, state nor HMK can author or repair
+Matrix canonical state.
+
+The injected transport exposes only `manifest`, `plan`, `acquire`, `apply`,
+`reconcile` and `release` over closed logical documents. No path, SQL, Git
+handle, endpoint, credential or provider implementation object crosses the
+boundary. Matrix validates exact adapter/policy/HMK pins, every plan effect and
+the complete content-derived receipt, then requires fresh external
+`reconcile=verified` before ledger acceptance or cached replay.
+
+Queue items derive from canonical `publication.requested` events at an explicit
+cutoff. Target-scoped generation claims plus an owner-only process lock permit
+one writer. Successor, withdrawal and rollback are new reviewed monotonic
+transactions; they never erase audit history or lower a high-water. The exact
+contracts, crash matrix, private-provider CI split and rollback procedure are
+normative in `docs/dm035-publication.md`.

@@ -1,0 +1,74 @@
+{
+  "schema": "dm-035-invariant-report/v1",
+  "scope": "synthetic-isolated-reviewed-publication",
+  "deployment": "not-applicable",
+  "matrix_org_dependency": false,
+  "compaii_state_commit": "cf56e9de703f68f44b85fdf21f503d55a5557984",
+  "provider_api_version": "1.0.0",
+  "provider_contract_version": "v1",
+  "provider_policy_hash": "800929a4d56687ca224c5df767ab05c4c259acc75904530848683a92e2484b88",
+  "hmk_commit": "f10fd5c3089c0962920314c97e14bc024feffa7a",
+  "required_scenario_count": 67,
+  "registry_sha256": "e19cd679826a82b7d4c4736f429d65cdacabf168af590a68f29dde5ea2280147",
+  "full_test_count": 381,
+  "installed_dm035_test_count": 22,
+  "real_external_integration_count": 19,
+  "provider_dependency_test_count": 47,
+  "fault_windows": {
+    "provider": 13,
+    "matrix": 2,
+    "all_recovered_exactly_once": true
+  },
+  "contracts": {
+    "schema_sha256": "d3d4e63b2d793ec26f54df9bfa57ee81756504ad45e59b20362e5df2a4ef7c56",
+    "vector_index_sha256": "2fe50eb15ae009f487677f4eba2e28dc9478bb555d1b1e31cb7a84c86a74179b",
+    "two_seed_timezone_regeneration_byte_identical": true
+  },
+  "distribution": {
+    "builds": 2,
+    "byte_identical": true,
+    "wheel_sha256": "364fc1c6c0868b2dd268a356435101e8dd8b0381b68a66715c357d0e475d4e05",
+    "wheel_size": 225320,
+    "sdist_sha256": "ee64734737c226e363e3df05a148dd7d2322129069d101c8e8649d1208759615",
+    "sdist_size": 202905,
+    "installed_module_from_site_packages": true
+  },
+  "ci_boundary": {
+    "public_contract_and_model_conformance": true,
+    "production_credentials": false,
+    "private_cross_repository_token": false,
+    "real_provider_release_gate_separate": true,
+    "skipped_external_checkout_counted_as_pass": false
+  },
+  "invariants": {
+    "matrix_owns_source_policy_review_queue_and_acceptance": true,
+    "wiki_state_and_hmk_never_become_matrix_authority": true,
+    "independent_ed25519_review_binds_exact_rendered_bytes": true,
+    "final_render_scan_is_reject_only": true,
+    "logical_targets_expose_no_paths_sql_git_or_credentials": true,
+    "provider_and_hmk_commits_are_exact": true,
+    "provider_plan_is_non_mutating_closed_and_content_derived": true,
+    "queue_rebuild_uses_explicit_historical_cutoff": true,
+    "target_generation_claim_and_process_lock_are_single_writer": true,
+    "symlink_ancestor_and_unsafe_journal_are_rejected": true,
+    "provider_receipt_is_fully_bound_and_self_hashed": true,
+    "matrix_acceptance_rebinds_request_source_review_and_predecessor": true,
+    "cached_success_requires_current_provider_effect_truth": true,
+    "response_loss_and_every_commit_window_are_exactly_once": true,
+    "successor_withdrawal_and_rollback_are_monotonic": true,
+    "rollback_compensates_only_the_current_predecessor": true,
+    "unrelated_wiki_content_survives_failure_and_success": true,
+    "no_provider_source_or_live_state_is_imported": true,
+    "all_checked_in_evidence_is_synthetic": true
+  },
+  "evidence": [
+    "conformance/registry-v1.json",
+    "docs/dm035-publication.md",
+    "provenance/compaii-state-publisher-v1.json",
+    "schemas/publication/v1/contracts.schema.json",
+    "src/daimon_matrix/publication.py",
+    "tests/test_dm035_publication.py",
+    "tools/generate_dm035_vectors.py",
+    "vectors/publication/v1/index.json"
+  ]
+}
