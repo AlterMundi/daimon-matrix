@@ -115,7 +115,10 @@ def _bind_private_socket(listener: socket.socket, path: Path) -> None:
     removes that observable permission race, including during daemon restart.
     """
 
-    staged = path.with_name(f".dm-socket-{secrets.token_hex(8)}")
+    # Keep the private staging basename no longer than the public default
+    # ``matrix.sock``.  AF_UNIX budgets the complete path; a longer hidden
+    # basename made an otherwise valid relocated runtime fail only at bind.
+    staged = path.with_name(f".s-{secrets.token_urlsafe(6)}")
     if staged.exists() or staged.is_symlink():
         raise DaemonError("socket_staging_collision")
     try:
