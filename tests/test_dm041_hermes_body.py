@@ -101,6 +101,8 @@ def supported_test_python(root: Path) -> Path:
     current = tuple(int(item) for item in platform.python_version_tuple()[:2])
     if current >= (3, 14):
         launcher = root / "synthetic-python-3.13"
+        if launcher.exists():
+            launcher.chmod(0o700)
         launcher.write_text(
             "#!/bin/sh\n"
             "printf '%s\\n' "
@@ -472,6 +474,7 @@ class ContractAndProfileTests(HermesBodyFixture):
             return_value=("3", "14", "0"),
         ):
             synthetic = supported_test_python(self.root)
+            self.assertEqual(supported_test_python(self.root), synthetic)
         self.assertEqual(verify_hermes_python(synthetic)["version"], "3.13.0")
 
     def test_python_venv_launcher_is_preserved_and_target_is_bound(self) -> None:
