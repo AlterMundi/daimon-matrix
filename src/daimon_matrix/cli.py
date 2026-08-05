@@ -213,6 +213,27 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "receipt": _bounded_file(args.document),
             "transport": _transport(args),
         }
+    if command == ("species", "genesis-ingest"):
+        return "species.genesis.ingest", {"artifact": _bounded_file(args.artifact)}
+    if command == ("species", "release-ingest"):
+        return "species.release.ingest", {"artifact": _bounded_file(args.artifact)}
+    if command == ("species", "incoming"):
+        return "species.incoming", {
+            "expected_occupied_positions_hash": args.expected_occupied_positions_hash,
+            "page_index": args.page_index,
+            "selected_candidate_id": args.selected_candidate_id,
+        }
+    if command == ("species", "apply"):
+        return "species.apply", {
+            "operation_id": args.operation_id,
+            "snapshot": _bounded_file(args.snapshot),
+        }
+    if command == ("species", "rollback"):
+        return "species.rollback", {
+            "operation_id": args.operation_id,
+            "reason": args.reason,
+            "snapshot": _bounded_file(args.snapshot),
+        }
     raise ClientError("unsupported_cli_command")
 
 
@@ -259,6 +280,38 @@ def parser() -> argparse.ArgumentParser:
     resolve.add_argument("--tribe-ref")
     tribe = scope_commands.add_parser("tribe", help="one verified tribe snapshot")
     tribe.add_argument("--tribe-ref", required=True)
+
+    species = families.add_parser(
+        "species", help="DM-014 lineage verification and local application"
+    )
+    species_commands = species.add_subparsers(dest="command", required=True)
+    species_genesis = species_commands.add_parser(
+        "genesis-ingest", help="ingest one signed species genesis"
+    )
+    species_genesis.add_argument("--artifact", required=True)
+    species_release = species_commands.add_parser(
+        "release-ingest", help="ingest one signed species release"
+    )
+    species_release.add_argument("--artifact", required=True)
+    species_incoming = species_commands.add_parser(
+        "incoming", help="read one content-bound /species.incoming page"
+    )
+    species_incoming.add_argument("--selected-candidate-id")
+    species_incoming.add_argument("--page-index", type=int, default=0)
+    species_incoming.add_argument("--expected-occupied-positions-hash")
+    species_apply = species_commands.add_parser(
+        "apply", help="apply one complete verified compatible snapshot"
+    )
+    species_apply.add_argument("--operation-id", required=True)
+    species_apply.add_argument("--snapshot", required=True)
+    species_rollback = species_commands.add_parser(
+        "rollback", help="restore a prior applied runtime with frozen evidence"
+    )
+    species_rollback.add_argument("--operation-id", required=True)
+    species_rollback.add_argument(
+        "--reason", choices=("release-fork", "runtime-failure"), required=True
+    )
+    species_rollback.add_argument("--snapshot", required=True)
 
     memory = families.add_parser("memory", help="deterministic personal-memory policy")
     memory_commands = memory.add_subparsers(dest="command", required=True)

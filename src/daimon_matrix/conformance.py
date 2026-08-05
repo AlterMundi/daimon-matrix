@@ -27,8 +27,9 @@ REPORT_SCHEMA: Final = "dm.conformance.report/v1"
 TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
+MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "7c5ba873a00c27615a7f8b9b5a5ca57e2e54135863f6fb2431967cdf8ba767ec"
+    "3705cb9ca5487935b2a1082162b720f8d0d7e239706362b166b09b4269cd5370"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -107,6 +108,10 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "scope_dm052_sync_parity",
         "scope_root_resolution",
         "scope_signed_partial_fanout",
+        "species_application_recovery",
+        "species_branch_birth",
+        "species_compatibility_sandbox",
+        "species_registry_state",
         "sqlite_delete_full_integrity",
         "sync_import_not_adoption",
         "sync_resume_cursor",
@@ -316,7 +321,7 @@ def deterministic_schedule(
         not isinstance(rounds, int)
         or isinstance(rounds, bool)
         or not 1 <= rounds <= 1024
-        or not 1 <= len(actors) <= 256
+        or not 1 <= len(actors) <= MAX_EVIDENCE_TESTS
         or list(actors) != sorted(set(actors))
     ):
         raise ConformanceError("invalid_schedule_input")

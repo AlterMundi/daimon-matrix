@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 76,
-  "registry_sha256": "7ac3792dd31d3da09f4759b1d99fce6384cc9d36edb217deec262c850a8b5889",
+  "required_scenario_count": 83,
+  "registry_sha256": "3705cb9ca5487935b2a1082162b720f8d0d7e239706362b166b09b4269cd5370",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -24,7 +24,8 @@
     "synthetic_local_direct_hub_routes_exercised": true,
     "native_encrypted_peer_scope_sync_exercised": true,
     "signed_authority_epoch_succession": true,
-    "local_codex_hermes_plural_body_weave": true
+    "local_codex_hermes_plural_body_weave": true,
+    "species_section14_complete_mapping": true
   },
   "evidence": [
     "conformance/registry-v1.json",
@@ -35,6 +36,7 @@
     "docs/verification/dm079-invariants.json",
     "docs/verification/dm033-invariants.json",
     "docs/verification/dm042-invariants.json",
+    "docs/verification/dm061-invariants.json",
     "docs/dm079-authority-epochs.md",
     "schemas/hosted/v2/bundle.schema.json",
     "schemas/hosted/v3/bundle.schema.json",

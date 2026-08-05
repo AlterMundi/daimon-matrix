@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.15",
+  "suite_version": "DM-026.16",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -1049,6 +1049,62 @@
       "expected": "Validated replies retain exact origins; exact bytes replay; conflicts fail; missing, refused and unavailable remain distinct partial outcomes.",
       "evidence": ["tests.test_dm054_scopes.SignedFanoutTests.test_bounded_refusal_and_changed_request_id_conflict", "tests.test_dm054_scopes.SignedFanoutTests.test_concurrent_duplicate_requests_freeze_one_response", "tests.test_dm054_scopes.SignedFanoutTests.test_signed_partial_fanout_exact_replay_and_conflict", "tests.test_dm054_scopes.SignedFanoutTests.test_timeout_unavailable_and_signature_binding_are_explicit"],
       "cleanup": "Remove isolated SQLite journals and signing fixtures.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "species_application_recovery",
+      "owners": ["DM-061"],
+      "specifications": ["schemas/species/v0/contracts.schema.json", "specs/species-evolution.md"],
+      "setup": "A validated species lineage, exact local policy, content-bound incoming snapshots and an owner-local runtime pointer.",
+      "stimulus": "Bootstrap, page a path longer than 64 releases, inject crashes at every commit boundary, discover a late release fork and roll back.",
+      "fault": "Pointer switch, durable event, response loss or late fork occurs at an adversarial boundary.",
+      "expected": "Application is exact-once, every page belongs to one frozen registry cursor, recovery completes or rolls back truthfully, and a fork restores the last applied unforked ancestor without changing identity.",
+      "evidence": ["tests.test_dm061_species.DM061SpeciesTests.test_application_crash_after_durable_event_completes_exact_commit", "tests.test_dm061_species.DM061SpeciesTests.test_application_crashes_before_event_roll_back_unrecorded_pointer", "tests.test_dm061_species.DM061SpeciesTests.test_incoming_bootstrap_application_and_current_projection", "tests.test_dm061_species.DM061SpeciesTests.test_late_release_fork_rolls_runtime_back_to_last_applied_unforked_head", "tests.test_dm061_species.DM061SpeciesTests.test_over_64_release_path_requires_and_records_complete_bound_page_set"],
+      "cleanup": "Close the isolated registries and remove only fixture-owned pointers, journals and CAS files.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "species_branch_birth",
+      "owners": ["DM-061"],
+      "specifications": ["schemas/species/v0/synthetic.schema.json", "specs/species-evolution.md"],
+      "setup": "An accepted parent release, independently maintained incompatible child foundation and deterministic synthetic ceremony.",
+      "stimulus": "Declare the branch, validate child genesis and release zero, evaluate newborn and existing-carrier contexts, race a parent successor and replay missing or legacy birth references.",
+      "fault": "No-op divergence, forked parent relation, absent release bytes or a legacy label attempts to become species authority.",
+      "expected": "Only the exact incompatible declaration creates an attributable child; the newborn context is valid, an existing parent carrier never adopts it, forked relations quarantine provenance, and identity remains valid.",
+      "evidence": ["tests.test_dm061_species.DM061SpeciesTests.test_declared_branch_child_genesis_and_release_zero", "tests.test_dm061_species.DM061SpeciesTests.test_missing_or_legacy_birth_species_only_quarantines_provenance", "tests.test_dm061_species.DM061SpeciesTests.test_noop_branch_has_no_species_authority", "tests.test_dm061_species.DM061SpeciesTests.test_synthetic_species_report_is_reproducible_closed_and_secret_free"],
+      "cleanup": "Remove deterministic synthetic registry, CAS and report state; no live being or deployment is created.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "species_compatibility_sandbox",
+      "owners": ["DM-061"],
+      "specifications": ["provenance/wasi-runner-v0.json", "schemas/species/v0/contracts.schema.json", "specs/species-evolution.md"],
+      "setup": "Exact content-addressed genome, implementation bundle, suites, invariants and pinned deterministic Wasmtime runner profile.",
+      "stimulus": "Recompute compatibility and branch evidence locally, then substitute content bytes, a nondeterministic import, a no-op branch and schema-open artifacts.",
+      "fault": "Remote claims, mutable lookup, ambient randomness or semantic relabelling attempts to substitute for exact local verification.",
+      "expected": "Only locally recomputed exact bytes pass; forbidden imports and no-op branches fail closed; missing or mismatched content remains incomplete and cannot apply.",
+      "evidence": ["tests.test_dm061_species.DM061SpeciesTests.test_noop_branch_has_no_species_authority", "tests.test_dm061_species.DM061SpeciesTests.test_published_species_schema_accepts_closed_canonical_contracts", "tests.test_dm061_species.DM061SpeciesTests.test_runner_rejects_randomness_import", "tests.test_dm061_species.DM061SpeciesTests.test_wrong_content_bytes_remain_incomplete"],
+      "cleanup": "Discard only fixture-owned CAS bytes and sandbox directories.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "species_registry_state",
+      "owners": ["DM-061"],
+      "specifications": ["schemas/species/v0/contracts.schema.json", "specs/species-evolution.md"],
+      "setup": "Canonical genesis, release-zero, successor, fork and resolution artifacts under threshold maintainer policies.",
+      "stimulus": "Merge partial endorsements, replay exact and historical releases, ingest same-position siblings and descendants, resolve an epoch with fresh possession, then receive a late old-epoch sibling.",
+      "fault": "Arrival order, label, hash ordering, missing possession or a longer fork could otherwise select authority implicitly.",
+      "expected": "Endorsements merge by body, high-water never regresses, every fork and descendant quarantines without a winner, and only an exact fresh-possession resolution closes the epoch while late evidence stays superseded.",
+      "evidence": ["tests.test_dm061_species.DM061SpeciesTests.test_fork_resolution_closes_epoch_and_late_old_sibling_is_superseded", "tests.test_dm061_species.DM061SpeciesTests.test_fork_resolution_requires_fresh_possession_from_every_resulting_key", "tests.test_dm061_species.DM061SpeciesTests.test_genesis_partial_endorsements_merge_without_fork", "tests.test_dm061_species.DM061SpeciesTests.test_genesis_release_and_compatible_successor_replay", "tests.test_dm061_species.DM061SpeciesTests.test_historical_exact_replay_never_downgrades_accepted_head", "tests.test_dm061_species.DM061SpeciesTests.test_late_sibling_quarantines_descendants_without_lowering_high_water", "tests.test_dm061_species.DM061SpeciesTests.test_same_position_siblings_quarantine_without_hash_winner"],
+      "cleanup": "Close SQLite handles and remove the fixture-owned registry and content-addressed store.",
       "platform": "all",
       "ci_lane": "complete",
       "required": true

@@ -27,6 +27,7 @@ from daimon_matrix.service import (
     METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SPECIES_METHODS,
 )
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 
@@ -415,7 +416,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 29)
+        self.assertEqual(len(tools), 34)
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -437,6 +438,11 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "scope_we_sync_plan",
                 "scope_resolve",
                 "scope_tribe",
+                "species_genesis_ingest",
+                "species_release_ingest",
+                "species_incoming",
+                "species_apply",
+                "species_rollback",
                 "we_heads",
                 "we_diff",
                 "we_preview",
@@ -462,6 +468,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                     | METHODS
                     | REVIEW_METHODS
                     | SCOPE_METHODS
+                    | SPECIES_METHODS
                 )
                 - {"review.authorize", "review.revoke", "review.execute"}
             ),

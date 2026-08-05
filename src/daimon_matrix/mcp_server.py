@@ -298,6 +298,66 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         ),
         True,
     ),
+    "species_genesis_ingest": (
+        "species.genesis.ingest",
+        _object_schema({"artifact": {"type": "object"}}, ("artifact", "operation_id")),
+        False,
+    ),
+    "species_release_ingest": (
+        "species.release.ingest",
+        _object_schema({"artifact": {"type": "object"}}, ("artifact", "operation_id")),
+        False,
+    ),
+    "species_incoming": (
+        "species.incoming",
+        _object_schema(
+            {
+                "expected_occupied_positions_hash": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_-]{43}$",
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "page_index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2**53 - 1,
+                },
+                "selected_candidate_id": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "pattern": "^dm:species-release:v0:[A-Za-z0-9_-]{43}$",
+                        },
+                        {"type": "null"},
+                    ]
+                },
+            }
+        ),
+        True,
+    ),
+    "species_apply": (
+        "species.apply",
+        _object_schema({"snapshot": {"type": "object"}}, ("operation_id", "snapshot")),
+        False,
+    ),
+    "species_rollback": (
+        "species.rollback",
+        _object_schema(
+            {
+                "reason": {
+                    "type": "string",
+                    "enum": ["release-fork", "runtime-failure"],
+                },
+                "snapshot": {"type": "object"},
+            },
+            ("operation_id", "reason", "snapshot"),
+        ),
+        False,
+    ),
     "we_heads": ("we.heads", _object_schema({}), True),
     "we_diff": (
         "we.diff",
@@ -457,10 +517,13 @@ _DEFAULTS: Final[dict[str, Any]] = {
     "after": None,
     "causal_parents": [],
     "event_id": None,
+    "expected_occupied_positions_hash": None,
     "kind": None,
     "limit": 100,
     "occurred_at_ms": None,
+    "page_index": 0,
     "sensitivity": "personal",
+    "selected_candidate_id": None,
     "subject": None,
     "supersedes": None,
     "tribe_ref": None,
@@ -520,6 +583,15 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         "scope.we.sync-plan": {"limit", "request_id"},
         "scope.resolve": {"request_id", "scope", "tribe_ref"},
         "scope.tribe": {"tribe_ref"},
+        "species.genesis.ingest": {"artifact"},
+        "species.release.ingest": {"artifact"},
+        "species.incoming": {
+            "expected_occupied_positions_hash",
+            "page_index",
+            "selected_candidate_id",
+        },
+        "species.apply": {"snapshot"},
+        "species.rollback": {"reason", "snapshot"},
         "we.heads": set(),
         "we.diff": {"after", "kind", "limit", "subject"},
         "we.preview": {"events"},
@@ -558,6 +630,13 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
             raise MCPError(
                 types.INVALID_PARAMS, "operation_id must be a canonical UUID"
             ) from exception
+    if method in {"species.apply", "species.rollback"}:
+        if operation_id is None:
+            raise MCPError(
+                types.INVALID_PARAMS,
+                f"{method.replace('.', '_')} requires operation_id",
+            )
+        params["operation_id"] = operation_id
     canonical_bytes(params)
     return method, params, operation_id
 

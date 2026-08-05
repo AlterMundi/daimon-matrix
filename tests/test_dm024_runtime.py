@@ -50,6 +50,7 @@ from daimon_matrix.service import (
     METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SPECIES_METHODS,
 )
 from daimon_matrix.weave import BeingManifest
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed, transport
@@ -78,6 +79,7 @@ class RuntimeFixture(RootLedgerFixture):
                 | METHODS
                 | REVIEW_METHODS
                 | SCOPE_METHODS
+                | SPECIES_METHODS
             ),
             not_before_ms=now_ms - 60_000,
             not_after_ms=now_ms + 60_000,

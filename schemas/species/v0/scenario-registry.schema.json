@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/species/v0/scenario-registry.schema.json",
+  "title": "DM-014 Section 14 executable scenario registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cases", "schema", "source"],
+  "properties": {
+    "cases": {
+      "type": "array",
+      "minItems": 124,
+      "maxItems": 124,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "evidence", "required_result", "scenario"],
+        "properties": {
+          "case_id": {"type": "string", "pattern": "^dm014-section14-[0-9]{3}$"},
+          "evidence": {"type": "string", "pattern": "^tests\\.test_dm061_species\\.DM061SpeciesTests\\.test_[A-Za-z0-9_]+$"},
+          "required_result": {"type": "string", "minLength": 1, "maxLength": 512},
+          "scenario": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      }
+    },
+    "schema": {"const": "dm.species-section14-registry/v0"},
+    "source": {"const": "specs/species-evolution.md#14-required-positive-and-negative-scenarios"}
+  }
+}
