@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.11",
+  "suite_version": "DM-026.12",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -280,6 +280,48 @@
       "evidence": ["tests.test_dm024_runtime.UnixDaemonTests.test_real_socket_frame_replay_shutdown_and_single_writer", "tests.test_dm024_runtime.UnixDaemonTests.test_regular_file_is_not_removed_as_stale_socket"],
       "cleanup": "Stop fixture daemon and remove only its created socket.",
       "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "hermes_lifecycle_recovery",
+      "owners": ["DM-041"],
+      "specifications": ["docs/dm041-hermes-body.md", "specs/adapter-contracts.md"],
+      "setup": "Fresh verified Hermes profile, append-only runtime journal and synthetic Matrix handoff committer.",
+      "stimulus": "Launch through provider readiness, park with outstanding requests and explicitly resume a parked session.",
+      "fault": "Duplicate start, torn journal, unknown pending outcome, substituted park evidence and missing presence release.",
+      "expected": "Lifecycle effects are preceded by durable handles, blind replay is blocked and parked is accepted only from bound handoff plus relinquished-presence receipts.",
+      "evidence": ["tests.test_dm041_hermes_body.JournalAndReadyTests.test_journal_is_append_only_chained_and_torn_tail_fails", "tests.test_dm041_hermes_body.JournalAndReadyTests.test_journal_rejects_blind_duplicate_and_session_drift", "tests.test_dm041_hermes_body.JournalAndReadyTests.test_launch_uses_isolated_home_umask_and_receipted_ready", "tests.test_dm041_hermes_body.JournalAndReadyTests.test_park_receipt_is_matrix_bound_and_wake_is_explicit", "tests.test_dm041_hermes_body.JournalAndReadyTests.test_process_exit_after_ready_never_becomes_active"],
+      "cleanup": "Stop fake child handles and remove isolated profile, pipes and journal.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "hermes_profile_isolation",
+      "owners": ["DM-041"],
+      "specifications": ["docs/dm041-hermes-body.md"],
+      "setup": "Exact Hermes 0.19.0 source contract, signed synthetic bootstrap and fresh owner-only HERMES_HOME parent.",
+      "stimulus": "Render and repeatedly verify the closed profile, venv launcher, provider, SOUL, skill and compatibility inventory.",
+      "fault": "Broad mode, symlink, hard link, stale plugin backup, native memory artifact, existing profile and source/interpreter drift.",
+      "expected": "Only deterministic reviewed bytes are admitted, host/user state is preserved untouched and the child receives isolated HOME plus umask 077.",
+      "evidence": ["tests.test_dm041_hermes_body.ContractAndProfileTests.test_profile_is_deterministic_exclusive_and_native_memory_free", "tests.test_dm041_hermes_body.ContractAndProfileTests.test_profile_rejects_broad_modes_links_and_stale_plugin_backups", "tests.test_dm041_hermes_body.ContractAndProfileTests.test_profile_root_symlink_collision_is_never_followed_or_deleted", "tests.test_dm041_hermes_body.ContractAndProfileTests.test_python_venv_launcher_is_preserved_and_target_is_bound"],
+      "cleanup": "Remove only fixture-owned temporary roots.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "hermes_provider_boundary",
+      "owners": ["DM-030", "DM-034", "DM-041"],
+      "specifications": ["docs/dm041-hermes-body.md", "specs/memory-boundaries.md"],
+      "setup": "Authenticated fake Matrix client, exact body binding and bounded provenance-only current memory projection.",
+      "stimulus": "Initialize, prefetch, switch sessions and submit one explicit idempotent observation proposal.",
+      "fault": "Missing or stopped Cluster presence, wrong session, invalid Unicode, tampered author/projection, concurrent high-water drift, regression and daemon loss.",
+      "expected": "Only a current running body with a stable projection read discloses context; session failure disables the provider, ordinary turns author no memory and the exact event-bound receipt says not adopted.",
+      "evidence": ["tests.test_dm041_hermes_body.ProviderTests.test_current_cluster_presence_is_required", "tests.test_dm041_hermes_body.ProviderTests.test_explicit_observation_is_idempotent_proposal_not_memory", "tests.test_dm041_hermes_body.ProviderTests.test_invalid_unicode_and_tampered_projection_disclose_nothing", "tests.test_dm041_hermes_body.ProviderTests.test_prefetch_is_inert_bounded_current_and_turn_sync_is_noop", "tests.test_dm041_hermes_body.ProviderTests.test_session_switch_revalidates_presence_and_invalidates_on_failure", "tests.test_dm041_hermes_body.ProviderTests.test_stable_read_high_water_is_required", "tests.test_dm041_hermes_body.ProviderTests.test_wrong_session_expiry_and_high_water_regression_disclose_nothing", "tests.test_dm041_hermes_body.RealDaemonProviderTests.test_real_daemon_prefetch_and_exact_observation_retry"],
+      "cleanup": "Close inherited descriptors and remove synthetic daemon/profile state.",
+      "platform": "all",
       "ci_lane": "complete",
       "required": true
     },

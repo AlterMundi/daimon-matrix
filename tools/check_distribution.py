@@ -50,6 +50,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/human_review.py",
+        "src/daimon_matrix/hermes_body.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
@@ -87,6 +88,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/human_review.py",
+        "daimon_matrix/hermes_body.py",
         "daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py",
@@ -279,6 +281,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/human_review.py",
+        "src/daimon_matrix/hermes_body.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
@@ -346,6 +349,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
+        b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
@@ -393,6 +397,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/human_review.py": "src/daimon_matrix/human_review.py",
+        "daimon_matrix/hermes_body.py": "src/daimon_matrix/hermes_body.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",

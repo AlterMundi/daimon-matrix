@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -35,6 +37,7 @@ from .memory_policy import (
     evaluate_memory_candidate,
     memory_checkpoint,
 )
+from .memory_projection import MemoryProjectionError, current_memory_projection
 from .projections import ProjectionEngine, ProjectionError
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
@@ -74,6 +77,7 @@ COMMUNICATION_METHODS: Final = frozenset(
 )
 ROUTE_METHODS: Final = frozenset({"route.inspect", "route.submit"})
 MEMORY_METHODS: Final = frozenset({"memory.evaluate", "memory.execute"})
+BODY_METHODS: Final = frozenset({"memory.context"})
 CURATOR_METHODS: Final = frozenset(
     {"curator.claim", "curator.complete", "curator.enqueue", "curator.inspect"}
 )
@@ -100,7 +104,8 @@ SCOPE_METHODS: Final = frozenset(
     }
 )
 SERVICE_METHODS: Final = (
-    METHODS
+    BODY_METHODS
+    | METHODS
     | COMMUNICATION_METHODS
     | CURATOR_METHODS
     | MEMORY_METHODS
@@ -691,6 +696,34 @@ class HostedWeave:
                 checkpoint,
                 evaluated_at_ms=evaluated_at_ms,
             )
+        if method == "memory.context":
+            value = _closed(params, {"limit", "query"})
+            query = value["query"]
+            if not isinstance(query, str):
+                raise ServiceError("invalid_params")
+            normalized_query = unicodedata.normalize("NFC", query)
+            try:
+                query_bytes = normalized_query.encode("utf-8")
+            except UnicodeEncodeError as exception:
+                raise ServiceError("invalid_params") from exception
+            if not 1 <= len(query_bytes) <= 4096 or any(
+                ord(character) < 0x20 or ord(character) == 0x7F for character in query
+            ):
+                raise ServiceError("invalid_params")
+            limit = _uint(value["limit"], minimum=1, maximum=64)
+            try:
+                projection = current_memory_projection(self.ledger, limit=limit)
+            except MemoryProjectionError as exception:
+                raise ServiceError(
+                    exception.code, retryable=exception.retryable
+                ) from exception
+            return {
+                "schema": "dm.memory.context/v1",
+                "query_hash": hashlib.sha256(
+                    normalized_query.encode("utf-8")
+                ).hexdigest(),
+                "projection": projection,
+            }
         if method == "memory.execute":
             value = _closed(params, {"candidate", "plan", "policy"})
             if any(
@@ -1136,6 +1169,7 @@ class HostedWeave:
 
 
 __all__ = [
+    "BODY_METHODS",
     "COMMUNICATION_METHODS",
     "MEMORY_METHODS",
     "METHODS",

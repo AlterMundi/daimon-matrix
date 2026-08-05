@@ -77,6 +77,32 @@ serve a cached success. The contract and downstream hosting checklist are in
 Adapters negotiate exact protocol versions. Unknown or downgraded versions
 fail closed; this first release has no compatibility mode for prior ontology.
 
+## Hermes body adapter
+
+DM-041 adapts Hermes Agent 0.19.0 as a body runtime without moving identity,
+memory, presence or lifecycle authority into Hermes. Matrix supplies a signed
+bootstrap and an owner-local capability. Cluster supplies placement, body
+volume and the authoritative park/handoff committer. The adapter accepts an
+active launch only after the exact external Matrix memory provider verifies
+`runtime.status`, `/me`, a freshly observed running Cluster body snapshot,
+current memory projection and initial Weave high-water. Each projection read is
+bracketed by two scope reads and is disclosed only when the manifest and
+high-water remain stable.
+
+The managed profile is fresh, owner-only and nonambient. It contains one exact
+external provider and public role/skill, disables native/HMK memory and general
+plugins, isolates `HOME`, and exposes only `matrix_scope` plus an idempotent
+observation proposal. Its profile/launch evidence fixes every loaded Matrix
+module plus the reviewed public schema digests. Per-turn data is a bounded
+inert current-user sidecar;
+hooks and conversation history cannot author personal memory. The append-only
+`starting|active|parking|parked|failed` journal prevents blind lifecycle replay,
+and park becomes final only with bound Matrix handoff plus relinquished-presence
+receipts. The normative contract is `docs/dm041-hermes-body.md`.
+The observation receipt validates the complete authenticated daemon event,
+rebinds its sensitivity and post-effect high-water, and uses a hash domain
+distinct from launch receipts.
+
 DM-031 curator coordination never substitutes for this adapter contract. A
 `queue-item` claim is owner-local work ordering only. A `resource-fence` claim
 must embed the exact derived fence position accepted from the current injected

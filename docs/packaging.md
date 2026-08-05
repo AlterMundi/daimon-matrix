@@ -5,8 +5,13 @@ identity/custody, the independent Weave ledger, hosted daemon, authenticated
 client, CLI, MCP stdio adapter and local conformance runner while preserving
 the explicit reproducible artifact boundary. DM-040 adds the authority-safe
 Codex body adapter and `daimon-codex-body` contract checker; it packages only
-reviewed code and embeds no Codex binary, profile, auth, thread or memory. The package contains no remote
-carrier, Matrix.org client, deployment/provider integration or live state.
+reviewed code and embeds no Codex binary, profile, auth, thread or memory.
+DM-041 likewise adds the `daimon-hermes-body` verifier and external-provider
+implementation, but embeds no Hermes source/binary, virtual environment,
+profile, auth, session, prompt, memory database or provider output. Its public
+templates, schemas, vectors and provenance remain repository evidence rather
+than wheel runtime state. The package contains no remote carrier, Matrix.org
+client, deployment/provider integration or live state.
 
 ## Supported interpreter baseline
 
@@ -42,8 +47,8 @@ observable install path.
 
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
-identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP
-Codex-body and conformance modules, `__init__.py`, and `py.typed`.
+identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP,
+Codex-body, Hermes-body and conformance modules, `__init__.py`, and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 
@@ -66,6 +71,7 @@ python -m venv /tmp/daimon-matrix-wheel-smoke
 /tmp/daimon-matrix-wheel-smoke/bin/python -c \
   'import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"'
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-conformance --help
+/tmp/daimon-matrix-wheel-smoke/bin/daimon-hermes-body --help
 ```
 
 Use a fresh disposable path rather than an existing operator environment. No

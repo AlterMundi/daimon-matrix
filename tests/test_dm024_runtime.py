@@ -44,6 +44,7 @@ from daimon_matrix.relationships import tribe_ref
 from daimon_matrix.runtime import RuntimeError, load_runtime
 from daimon_matrix.scopes import BODY_SNAPSHOT_SCHEMA
 from daimon_matrix.service import (
+    BODY_METHODS,
     CURATOR_METHODS,
     MEMORY_METHODS,
     METHODS,
@@ -71,7 +72,8 @@ class RuntimeFixture(RootLedgerFixture):
             seed("dm024-capability"),
             client_id="client:runtime-test",
             methods=sorted(
-                CURATOR_METHODS
+                BODY_METHODS
+                | CURATOR_METHODS
                 | MEMORY_METHODS
                 | METHODS
                 | REVIEW_METHODS

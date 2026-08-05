@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "ffed57ffa7065b28d9cedc537c00d90068d49ecbbf3ffe3e4cfa3a81da9de80e"
+    "e0da2604420c0c0963211a8faabb92fd6b83965772f37d641e56f6ab02352510"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -52,6 +52,9 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "custody_disclosure_boundary",
         "daemon_fault_restart",
         "daemon_single_writer_socket",
+        "hermes_lifecycle_recovery",
+        "hermes_profile_isolation",
+        "hermes_provider_boundary",
         "ledger_atomic_equivocation",
         "ledger_concurrent_sequence",
         "ledger_oversize_atomicity",
