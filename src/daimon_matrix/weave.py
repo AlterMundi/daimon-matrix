@@ -60,6 +60,7 @@ EVENT_KINDS: Final = frozenset(
         "review.executed",
         "publication.requested",
         "publication.receipted",
+        "matrix/species-release-application",
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -907,6 +908,25 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
                     )
         except PublicationError as exception:
             raise WeaveProtocolError("invalid_publication_event") from exception
+    if value["kind"] == "matrix/species-release-application":
+        from .species import SpeciesError, SpeciesRegistry
+
+        try:
+            application = SpeciesRegistry.validate_application_payload(payload)
+        except SpeciesError as exception:
+            raise WeaveProtocolError("invalid_species_application_event") from exception
+        if (
+            value["subject"] != application["subject_me_id"]
+            or value["being_ref"] != application["subject_me_id"]
+            or value["supersedes"] is not None
+        ):
+            raise WeaveProtocolError("invalid_species_application_event")
+        predecessor = application["previous_application"]
+        if (
+            predecessor is not None
+            and predecessor["event_id"] not in value["causal_parents"]
+        ):
+            raise WeaveProtocolError("invalid_species_application_event")
     return value
 
 

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/species/v0/synthetic.schema.json",
+  "title": "DM-061 bounded synthetic Species report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["application", "branch", "fork", "parent", "runner", "schema", "synthetic", "verdict"],
+  "properties": {
+    "application": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bootstrap_operation_id", "forward_operation_id", "rollback_event_id", "rollback_operation_id", "serving_release_id"],
+      "properties": {
+        "bootstrap_operation_id": {"type": "string", "format": "uuid"},
+        "forward_operation_id": {"type": "string", "format": "uuid"},
+        "rollback_event_id": {"type": "string", "format": "uuid"},
+        "rollback_operation_id": {"type": "string", "format": "uuid"},
+        "serving_release_id": {"$ref": "#/$defs/releaseId"}
+      }
+    },
+    "branch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["breaking_delta_ids", "child_genesis_id", "child_release_id", "child_species_id", "declaration_release_id", "newborn_context", "parent_carrier_state"],
+      "properties": {
+        "breaking_delta_ids": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "child_genesis_id": {"$ref": "#/$defs/genesisId"},
+        "child_release_id": {"$ref": "#/$defs/releaseId"},
+        "child_species_id": {"$ref": "#/$defs/speciesId"},
+        "declaration_release_id": {"$ref": "#/$defs/releaseId"},
+        "newborn_context": {"const": "valid"},
+        "parent_carrier_state": {"const": "diverged"}
+      }
+    },
+    "fork": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accepted_head_id", "late_sibling_state", "projection_state"],
+      "properties": {
+        "accepted_head_id": {"$ref": "#/$defs/releaseId"},
+        "late_sibling_state": {"const": "quarantined"},
+        "projection_state": {"const": "quarantined"}
+      }
+    },
+    "parent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["genesis_id", "release_zero_id", "species_id"],
+      "properties": {
+        "genesis_id": {"$ref": "#/$defs/genesisId"},
+        "release_zero_id": {"$ref": "#/$defs/releaseId"},
+        "species_id": {"$ref": "#/$defs/speciesId"}
+      }
+    },
+    "runner": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package", "version"],
+      "properties": {
+        "package": {"const": "wasmtime==45.0.0"},
+        "version": {"const": "wasmtime-python/45.0.0-dm061.1"}
+      }
+    },
+    "schema": {"const": "dm.synthetic-species-report/v0"},
+    "synthetic": {"const": true},
+    "verdict": {"const": "pass"}
+  },
+  "$defs": {
+    "speciesId": {"type": "string", "pattern": "^dm:species:v0:[A-Za-z0-9_-]{43}$"},
+    "releaseId": {"type": "string", "pattern": "^dm:species-release:v0:[A-Za-z0-9_-]{43}$"},
+    "genesisId": {"type": "string", "pattern": "^dm:species-genesis:v0:[A-Za-z0-9_-]{43}$"}
+  }
+}

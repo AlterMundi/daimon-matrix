@@ -70,8 +70,11 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/scopes.py",
         "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
+        "src/daimon_matrix/species.py",
+        "src/daimon_matrix/species_runner.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
+        "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/weave.py",
     }
 )
@@ -112,8 +115,11 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/scopes.py",
         "daimon_matrix/sealed.py",
         "daimon_matrix/service.py",
+        "daimon_matrix/species.py",
+        "daimon_matrix/species_runner.py",
         "daimon_matrix/sync.py",
         "daimon_matrix/synthetic_birth.py",
+        "daimon_matrix/synthetic_species.py",
         "daimon_matrix/weave.py",
         f"{DIST_INFO}/METADATA",
         f"{DIST_INFO}/entry_points.txt",
@@ -224,6 +230,7 @@ def _check_metadata(data: bytes, source: str) -> None:
     if message.get_all("Requires-Dist") != [
         "cryptography==50.0.0",
         "mcp==2.0.0",
+        "wasmtime==45.0.0",
     ]:
         raise PackageCheckError(f"{source}: runtime dependency contract mismatch")
     if message["License-Expression"] != "MIT":
@@ -305,8 +312,11 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
+        "src/daimon_matrix/species.py",
+        "src/daimon_matrix/species_runner.py",
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
+        "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/weave.py",
     ):
         if files[relative] != (source_root / relative).read_bytes():
@@ -365,6 +375,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
+        b"daimon-synthetic-species = daimon_matrix.synthetic_species:main\n"
     ):
         raise PackageCheckError("wheel console entry point mismatch")
     wheel_text = files[f"{DIST_INFO}/WHEEL"].decode("utf-8")
@@ -427,8 +438,13 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
         "daimon_matrix/sealed.py": "src/daimon_matrix/sealed.py",
         "daimon_matrix/service.py": "src/daimon_matrix/service.py",
+        "daimon_matrix/species.py": "src/daimon_matrix/species.py",
+        "daimon_matrix/species_runner.py": "src/daimon_matrix/species_runner.py",
         "daimon_matrix/sync.py": "src/daimon_matrix/sync.py",
         "daimon_matrix/synthetic_birth.py": "src/daimon_matrix/synthetic_birth.py",
+        "daimon_matrix/synthetic_species.py": (
+            "src/daimon_matrix/synthetic_species.py"
+        ),
         "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",
     }
     for member, relative in source_map.items():

@@ -38,7 +38,8 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["version"], "0.0.0")
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(
-            project["dependencies"], ["cryptography==50.0.0", "mcp==2.0.0"]
+            project["dependencies"],
+            ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"],
         )
         self.assertEqual(project["license"], "MIT")
         self.assertEqual(
@@ -53,6 +54,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
                 "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
+                "daimon-synthetic-species": "daimon_matrix.synthetic_species:main",
             },
         )
 
@@ -179,8 +181,11 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/scopes.py",
                 "src/daimon_matrix/sealed.py",
                 "src/daimon_matrix/service.py",
+                "src/daimon_matrix/species.py",
+                "src/daimon_matrix/species_runner.py",
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/synthetic_birth.py",
+                "src/daimon_matrix/synthetic_species.py",
                 "src/daimon_matrix/weave.py",
             },
         )
@@ -222,8 +227,11 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/scopes.py",
                 "daimon_matrix/sealed.py",
                 "daimon_matrix/service.py",
+                "daimon_matrix/species.py",
+                "daimon_matrix/species_runner.py",
                 "daimon_matrix/sync.py",
                 "daimon_matrix/synthetic_birth.py",
+                "daimon_matrix/synthetic_species.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
                 "daimon_matrix-0.0.0.dist-info/entry_points.txt",

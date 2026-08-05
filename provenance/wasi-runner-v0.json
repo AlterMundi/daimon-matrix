@@ -1,0 +1,13 @@
+{
+  "artifact": "wasmtime-python",
+  "distribution": {
+    "filename": "wasmtime-45.0.0-py3-none-manylinux1_x86_64.whl",
+    "sha256": "5d1416ec6da8cd87c29e2e9eb074358c91839c2fff971fe428c8921eaae68e73"
+  },
+  "execution_model": "wasm32-wasi-preview1-deterministic/v0",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "project": "https://github.com/bytecodealliance/wasmtime",
+  "release": "https://github.com/bytecodealliance/wasmtime/releases/tag/v45.0.0",
+  "schema": "dm.species-runner-provenance/v0",
+  "version": "45.0.0"
+}

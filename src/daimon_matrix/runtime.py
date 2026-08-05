@@ -55,6 +55,7 @@ from .routes import (
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import RecipientTarget
 from .service import SERVICE_METHODS, HostedWeave
+from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
 from .weave import (
     BeingManifest,
@@ -68,6 +69,7 @@ from .weave import (
 BUNDLE_SCHEMA: Final = "dm.runtime.bundle/v1"
 BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
 BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
+BUNDLE_SCHEMA_V4: Final = "dm.runtime.bundle/v4"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -241,12 +243,19 @@ def load_runtime(
         "schema",
         "socket",
     }
-    if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
+    if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
         fields.add("authority_history")
-    if schema == BUNDLE_SCHEMA_V3:
+    if schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
         fields.add("peer_transport")
+    if schema == BUNDLE_SCHEMA_V4:
+        fields.add("species")
     bundle = _closed(raw_bundle, fields)
-    if schema not in {BUNDLE_SCHEMA, BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
+    if schema not in {
+        BUNDLE_SCHEMA,
+        BUNDLE_SCHEMA_V2,
+        BUNDLE_SCHEMA_V3,
+        BUNDLE_SCHEMA_V4,
+    }:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
     if not isinstance(controls, list) or not 1 <= len(controls) <= 1024:
@@ -276,7 +285,7 @@ def load_runtime(
         incarnations = _indexed(bundle["incarnations"])
         active = RootAuthority(manifest, state, credentials, incarnations)
         authority: RootAuthority | RootHistoryAuthority | BoundHistoryAuthority = active
-        if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
+        if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
             authority_history = bundle["authority_history"]
             if (
                 not isinstance(authority_history, list)
@@ -302,7 +311,7 @@ def load_runtime(
                     active, historical_authorities, successors
                 )
         if history is not None:
-            if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
+            if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
                 raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
             public_keys = history_value["public_keys"]
@@ -483,7 +492,10 @@ def load_runtime(
         }:
             raise RuntimeError("runtime_route_provider_missing")
     peer_configuration: Mapping[str, Any] | None = None
-    if schema == BUNDLE_SCHEMA_V3 and bundle["peer_transport"] is not None:
+    if (
+        schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}
+        and bundle["peer_transport"] is not None
+    ):
         peer_configuration = _closed(
             bundle["peer_transport"],
             {
@@ -574,6 +586,41 @@ def load_runtime(
                     tribes[snapshot.ref] = snapshot
             except RelationshipError as exception:
                 raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
+    species_context: SpeciesServiceContext | None = None
+    if schema == BUNDLE_SCHEMA_V4 and bundle["species"] is not None:
+        species_value = _closed(
+            bundle["species"],
+            {
+                "cas_filename",
+                "enrollment_release_id",
+                "local_policy_ref",
+                "pointer_filename",
+                "registry_filename",
+                "species_id",
+            },
+        )
+        species_files = [
+            _safe_file(root, species_value[field], must_exist=False)
+            for field in ("cas_filename", "pointer_filename", "registry_filename")
+        ]
+        if any(path.name in filenames for path in species_files) or len(
+            {path.name for path in species_files}
+        ) != len(species_files):
+            raise RuntimeError("runtime_filename_collision")
+        filenames.update(path.name for path in species_files)
+        try:
+            species_cas = SpeciesCAS(species_files[0])
+            species_context = SpeciesServiceContext(
+                registry=SpeciesRegistry(species_files[2], species_cas),
+                species_id=species_value["species_id"],
+                enrollment_release_id=species_value["enrollment_release_id"],
+                local_policy_ref=species_value["local_policy_ref"],
+                pointer_path=species_files[1],
+            )
+            species_context.registry.initialize()
+            species_context.registry.load_local_policy(species_context.local_policy_ref)
+        except (KeyError, SpeciesError, TypeError) as exception:
+            raise RuntimeError("runtime_species_configuration_rejected") from exception
     if set(contents.secrets) != required_slots:
         raise RuntimeError("unexpected_runtime_secret_slot")
     seed = contents.secrets.get(signing_slot)
@@ -605,6 +652,14 @@ def load_runtime(
         local_origin=local_origin,
         clock=clock,
     )
+    if species_context is not None:
+        try:
+            species_context.registry.recover_pending_applications(
+                species_context.pointer_path,
+                find_event=lambda event_id: ledger.event(event_id),
+            )
+        except SpeciesError as exception:
+            raise RuntimeError("runtime_species_recovery_rejected") from exception
     communication = CommunicationStore(ledger, clock=clock)
     router: RouteCoordinator | None = None
     if route_profile is not None:
@@ -717,6 +772,7 @@ def load_runtime(
             fence_verifier=curator_fence_verifier,
             effect_observer=curator_effect_observer,
         ),
+        species=species_context,
     )
     ledger.integrity_check()
     final_root = root.lstat()
@@ -739,6 +795,7 @@ __all__ = [
     "BUNDLE_SCHEMA",
     "BUNDLE_SCHEMA_V2",
     "BUNDLE_SCHEMA_V3",
+    "BUNDLE_SCHEMA_V4",
     "HostedRuntime",
     "RuntimeError",
     "load_runtime",

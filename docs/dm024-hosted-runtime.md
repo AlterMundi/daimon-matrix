@@ -36,6 +36,14 @@ local origin. The SQLite metadata advances only after every stored event
 verifies and the complete update commits atomically. An accepted ledger cannot
 be reopened with its prior V1 bundle. See `docs/dm079-authority-epochs.md`.
 
+DM-055 adds nullable `peer_transport` in `dm.runtime.bundle/v3`. DM-061 adds
+nullable `species` in `dm.runtime.bundle/v4`: three collision-checked private
+filenames for CAS, registry and runtime pointer plus exact species ID,
+enrollment release ID and content-addressed local policy. Startup validates the
+policy and recovers every fenced application against the canonical ledger
+before serving. The public bundle contains no maintainer seed, pointer bytes,
+runner handle or mutable package source.
+
 ## Local protocol
 
 The only release listener is an owner-local AF_UNIX stream socket. Linux peer
@@ -81,6 +89,13 @@ snapshot file. A Cluster reader is injected and must return an exactly bound
 injected history verifier. Live fan-out and carrier dispatch remain outside the
 general daemon surface.
 
+DM-061 adds closed `species.genesis.ingest`, `species.release.ingest`,
+`species.incoming`, `species.apply` and `species.rollback` methods only when a
+V4 species context is configured. Application events are signed by the exact
+subject operational origin. A newly ingested late sibling automatically
+triggers the deterministic release-fork rollback when the serving lineage is
+affected; identity, enrollment and non-species history remain unchanged.
+
 ## Replay and crash semantics
 
 Ledger schema V3 journals `(client_id, request_id, request_hash, method)` and the
@@ -110,5 +125,6 @@ not. Telegram, Buzz or another human gateway may be added later only behind
 the disabled generic edge. No carrier becomes event, scope, adoption, receipt
 or Weave-cursor authority.
 
-Schemas are in `schemas/hosted/v1/` and `schemas/hosted/v2/`; runnable verification is in
-`tests/test_dm024_service.py` and `tests/test_dm024_runtime.py`.
+Schemas are in `schemas/hosted/v1/` through `schemas/hosted/v4/`; runnable
+verification is in `tests/test_dm024_service.py`, `tests/test_dm024_runtime.py`
+and `tests/test_dm061_species.py`.

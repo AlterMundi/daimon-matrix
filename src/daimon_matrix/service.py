@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from .canonical import CanonicalError, unb64url
+from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
 from .curator import CuratorCoordinator, CuratorError
 from .human_review import HumanReviewCoordinator, HumanReviewError
@@ -41,6 +41,7 @@ from .memory_projection import MemoryProjectionError, current_memory_projection
 from .projections import ProjectionEngine, ProjectionError
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
+from .species import APPLICATION_EVENT_KIND, SpeciesError, SpeciesServiceContext
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
 
@@ -103,6 +104,15 @@ SCOPE_METHODS: Final = frozenset(
         "scope.we.sync-plan",
     }
 )
+SPECIES_METHODS: Final = frozenset(
+    {
+        "species.apply",
+        "species.genesis.ingest",
+        "species.incoming",
+        "species.release.ingest",
+        "species.rollback",
+    }
+)
 SERVICE_METHODS: Final = (
     BODY_METHODS
     | METHODS
@@ -112,6 +122,7 @@ SERVICE_METHODS: Final = (
     | REVIEW_METHODS
     | ROUTE_METHODS
     | SCOPE_METHODS
+    | SPECIES_METHODS
 )
 
 Clock = Callable[[], int]
@@ -204,6 +215,7 @@ class HostedWeave:
     scopes: ScopeResolver | None = None
     curator: CuratorCoordinator | None = None
     review: HumanReviewCoordinator | None = None
+    species: SpeciesServiceContext | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -454,6 +466,15 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.retryable},
             )
+        except SpeciesError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.incomplete},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -534,6 +555,195 @@ class HostedWeave:
                 request_id=_uuid(value["request_id"]),
                 tribe_ref=tribe_ref,
             )
+        if method.startswith("species."):
+            species = self.species
+            if species is None:
+                raise ServiceError("species_runtime_unavailable")
+            if method == "species.genesis.ingest":
+                value = _closed(params, {"artifact"})
+                artifact = value["artifact"]
+                if not isinstance(artifact, Mapping):
+                    raise ServiceError("invalid_params")
+                return species.registry.ingest_genesis(artifact)
+            if method == "species.release.ingest":
+                value = _closed(params, {"artifact"})
+                artifact = value["artifact"]
+                if not isinstance(artifact, Mapping):
+                    raise ServiceError("invalid_params")
+                ingested = species.registry.ingest_release(artifact)
+                if (
+                    ingested["state"] == "quarantined"
+                    and ingested["species_id"] == species.species_id
+                    and species.pointer_path.exists()
+                ):
+                    snapshot = species.registry.incoming(
+                        subject_me_id=self.ledger.authority.manifest.being_ref,
+                        species_id=species.species_id,
+                        enrollment_release_id=species.enrollment_release_id,
+                        local_policy_ref=species.local_policy_ref,
+                    )
+                    core = snapshot["snapshot_core"]
+                    if core["effective_applied_release"] is not None and any(
+                        item["kind"] == "release-position"
+                        for item in core["conflict_refs"]
+                    ):
+                        application_head = core["application_head"]
+                        if application_head is None:
+                            raise SpeciesError(
+                                "species_release_fork_without_application"
+                            )
+                        rollback_operation = str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                "daimon/species-release-fork-rollback/v0\x00"
+                                + self.ledger.authority.manifest.being_ref
+                                + "\x00"
+                                + ingested["artifact_id"]
+                                + "\x00"
+                                + application_head["event_id"],
+                            )
+                        )
+                        fork_capability_hash = b64url(
+                            hashlib.sha256(
+                                canonical_bytes(sorted(self.capabilities))
+                            ).digest()
+                        )
+
+                        def append_release_fork_rollback(
+                            payload: Mapping[str, Any],
+                        ) -> Mapping[str, Any]:
+                            previous = payload["previous_application"]
+                            causal = [] if previous is None else [previous["event_id"]]
+                            return self.ledger.append_local(
+                                kind=APPLICATION_EVENT_KIND,
+                                subject=self.ledger.authority.manifest.being_ref,
+                                payload=payload,
+                                signer=self.signer,
+                                sensitivity="private",
+                                causal_parents=causal,
+                                occurred_at_ms=payload["applied_at_ms"],
+                                event_id=str(
+                                    uuid.uuid5(
+                                        uuid.UUID(rollback_operation),
+                                        APPLICATION_EVENT_KIND,
+                                    )
+                                ),
+                            )
+
+                        ingested["rollback"] = species.registry.rollback(
+                            operation_id=rollback_operation,
+                            snapshot=snapshot,
+                            local_policy_ref=species.local_policy_ref,
+                            capability_grant_set_hash=fork_capability_hash,
+                            pointer_path=species.pointer_path,
+                            applied_at_ms=self.clock(),
+                            reason="release-fork",
+                            append_event=append_release_fork_rollback,
+                        )
+                return ingested
+            if method == "species.incoming":
+                value = _closed(
+                    params,
+                    {
+                        "expected_occupied_positions_hash",
+                        "page_index",
+                        "selected_candidate_id",
+                    },
+                )
+                return species.registry.incoming(
+                    subject_me_id=self.ledger.authority.manifest.being_ref,
+                    species_id=species.species_id,
+                    enrollment_release_id=species.enrollment_release_id,
+                    selected_candidate_id=_optional_text(
+                        value["selected_candidate_id"], 160
+                    ),
+                    local_policy_ref=species.local_policy_ref,
+                    page_index=_uint(value["page_index"]),
+                    expected_occupied_positions_hash=_optional_text(
+                        value["expected_occupied_positions_hash"], 43
+                    ),
+                )
+            if method == "species.apply":
+                value = _closed(params, {"operation_id", "snapshot"})
+                snapshot = value["snapshot"]
+                if not isinstance(snapshot, Mapping):
+                    raise ServiceError("invalid_params")
+                operation_id = _uuid(value["operation_id"])
+                apply_capability_digest = hashlib.sha256(
+                    canonical_bytes(sorted(self.capabilities))
+                ).digest()
+
+                def append_application(
+                    payload: Mapping[str, Any],
+                ) -> Mapping[str, Any]:
+                    previous = payload["previous_application"]
+                    causal = [] if previous is None else [previous["event_id"]]
+                    event_id = str(
+                        uuid.uuid5(uuid.UUID(operation_id), APPLICATION_EVENT_KIND)
+                    )
+                    return self.ledger.append_local(
+                        kind=APPLICATION_EVENT_KIND,
+                        subject=self.ledger.authority.manifest.being_ref,
+                        payload=payload,
+                        signer=self.signer,
+                        sensitivity="private",
+                        causal_parents=causal,
+                        occurred_at_ms=payload["applied_at_ms"],
+                        event_id=event_id,
+                    )
+
+                return species.registry.apply(
+                    operation_id=operation_id,
+                    snapshot=snapshot,
+                    local_policy_ref=species.local_policy_ref,
+                    capability_grant_set_hash=b64url(apply_capability_digest),
+                    pointer_path=species.pointer_path,
+                    applied_at_ms=self.clock(),
+                    append_event=append_application,
+                )
+            if method == "species.rollback":
+                value = _closed(params, {"operation_id", "reason", "snapshot"})
+                snapshot = value["snapshot"]
+                reason = value["reason"]
+                if not isinstance(snapshot, Mapping) or reason not in {
+                    "release-fork",
+                    "runtime-failure",
+                }:
+                    raise ServiceError("invalid_params")
+                operation_id = _uuid(value["operation_id"])
+                rollback_capability_digest = hashlib.sha256(
+                    canonical_bytes(sorted(self.capabilities))
+                ).digest()
+
+                def append_rollback(
+                    payload: Mapping[str, Any],
+                ) -> Mapping[str, Any]:
+                    previous = payload["previous_application"]
+                    causal = [] if previous is None else [previous["event_id"]]
+                    event_id = str(
+                        uuid.uuid5(uuid.UUID(operation_id), APPLICATION_EVENT_KIND)
+                    )
+                    return self.ledger.append_local(
+                        kind=APPLICATION_EVENT_KIND,
+                        subject=self.ledger.authority.manifest.being_ref,
+                        payload=payload,
+                        signer=self.signer,
+                        sensitivity="private",
+                        causal_parents=causal,
+                        occurred_at_ms=payload["applied_at_ms"],
+                        event_id=event_id,
+                    )
+
+                return species.registry.rollback(
+                    operation_id=operation_id,
+                    snapshot=snapshot,
+                    local_policy_ref=species.local_policy_ref,
+                    capability_grant_set_hash=b64url(rollback_capability_digest),
+                    pointer_path=species.pointer_path,
+                    applied_at_ms=self.clock(),
+                    reason=reason,
+                    append_event=append_rollback,
+                )
         if method == "review.authorize":
             value = _closed(params, {"authorization"})
             if not isinstance(value["authorization"], Mapping):

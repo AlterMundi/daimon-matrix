@@ -21,7 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = ["cryptography==50.0.0", "mcp==2.0.0"]
+dependencies = ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]
 
 [project.scripts]
 daimon = "daimon_matrix.cli:main"
@@ -33,6 +33,7 @@ daimon-mcp = "daimon_matrix.mcp_server:main"
 daimon-matrixd = "daimon_matrix.daemon:main"
 daimon-reviewer = "daimon_matrix.reviewer_cli:main"
 daimon-synthetic-birth = "daimon_matrix.synthetic_birth:main"
+daimon-synthetic-species = "daimon_matrix.synthetic_species:main"
 
 [project.urls]
 Homepage = "https://github.com/AlterMundi/daimon-matrix"

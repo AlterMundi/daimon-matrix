@@ -158,7 +158,7 @@ actually validated in-process.
 - source-module and console-entrypoint execution.
 
 The three DM-060 conformance scenarios are `birth_contract_integrity`,
-`birth_durable_one_use`, and `birth_installed_journey` in suite DM-026.15.
+`birth_durable_one_use`, and `birth_installed_journey` in suite DM-026.16.
 
 ## Remaining production boundary
 

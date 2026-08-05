@@ -47,11 +47,11 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current twenty-four core/scope/memory/curator methods and
+bytes, MCP exposes only the current thirty-four closed methods and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-79-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+83-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths without claiming remote delivery, live Cluster effects or
 rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -110,6 +110,16 @@ one first embodiment over zero canonical events/memory/projection records. It
 performs no live birth, host mutation or provider effect. DM-061 continues with
 species evolution; later multi-host cards own additional-embodiment and rebirth
 evidence for an existing being.
+
+DM-061 implements the frozen species-evolution contract: threshold-maintained
+content-addressed genesis/releases, fork-safe high-waters and resolution,
+predecessor-selected local deterministic WASI verification, paged read-only
+`/species.incoming`, and crash-safe compatible application plus rollback. A
+signed parent declaration and independently authorized incompatible child
+genesis create a new species, but no existing parent carrier can adopt it in
+V0. The 124 normative DM-014 Section 14 rows are frozen in an executable
+generated map. Evidence is synthetic; no Agent 0, first real speciation, live
+Cluster mutation or cutover is claimed.
 
 DM-079 closes the real-restart gap found by the Cluster #48 installed-process
 test. A signed authority epoch now advances one embodiment from incarnation

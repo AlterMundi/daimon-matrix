@@ -1,0 +1,333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/species/v0/contracts.schema.json",
+  "title": "Daimon Matrix DM-014 species V0 wire contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/artifact"},
+    {"$ref": "#/$defs/incoming"},
+    {"$ref": "#/$defs/application"},
+    {"$ref": "#/$defs/localPolicy"},
+    {"$ref": "#/$defs/branchFoundation"}
+  ],
+  "$defs": {
+    "safeInteger": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "positiveSafeInteger": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "hash43": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "hash64": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "text128": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[ -~]+$"},
+    "speciesId": {"type": "string", "pattern": "^dm:species:v0:[A-Za-z0-9_-]{43}$"},
+    "releaseId": {"type": "string", "pattern": "^dm:species-release:v0:[A-Za-z0-9_-]{43}$"},
+    "genesisId": {"type": "string", "pattern": "^dm:species-genesis:v0:[A-Za-z0-9_-]{43}$"},
+    "contentId": {"type": "string", "pattern": "^dm:species-content:v0:[A-Za-z0-9_-]{43}$"},
+    "contentRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["byte_length", "content_id", "media_type", "sha256"],
+      "properties": {
+        "byte_length": {"type": "integer", "minimum": 0, "maximum": 67108864},
+        "content_id": {"$ref": "#/$defs/contentId"},
+        "media_type": {"$ref": "#/$defs/text128"},
+        "sha256": {"$ref": "#/$defs/hash43"}
+      }
+    },
+    "key": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "key_id", "public"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+        "public": {"$ref": "#/$defs/hash43"}
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["keys", "threshold"],
+      "properties": {
+        "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/key"}},
+        "threshold": {"type": "integer", "minimum": 1, "maximum": 32}
+      }
+    },
+    "floor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["minimum_key_count", "minimum_threshold"],
+      "properties": {
+        "minimum_key_count": {"type": "integer", "minimum": 1, "maximum": 32},
+        "minimum_threshold": {"type": "integer", "minimum": 1, "maximum": 32}
+      }
+    },
+    "contractEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract_id", "contract_ref", "version"],
+      "properties": {"contract_id": {"$ref": "#/$defs/text128"}, "contract_ref": {"$ref": "#/$defs/contentRef"}, "version": {"$ref": "#/$defs/text128"}}
+    },
+    "protocolEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bounds_ref", "requirement_id", "requirement_ref", "version"],
+      "properties": {"bounds_ref": {"$ref": "#/$defs/contentRef"}, "requirement_id": {"$ref": "#/$defs/text128"}, "requirement_ref": {"$ref": "#/$defs/contentRef"}, "version": {"$ref": "#/$defs/text128"}}
+    },
+    "suiteEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["suite_id", "suite_ref", "suite_version"],
+      "properties": {"suite_id": {"$ref": "#/$defs/text128"}, "suite_ref": {"$ref": "#/$defs/contentRef"}, "suite_version": {"$ref": "#/$defs/text128"}}
+    },
+    "invariantEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["invariant_id", "invariant_ref", "invariant_version"],
+      "properties": {"invariant_id": {"$ref": "#/$defs/text128"}, "invariant_ref": {"$ref": "#/$defs/contentRef"}, "invariant_version": {"$ref": "#/$defs/text128"}}
+    },
+    "genome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["capability_contracts", "compatibility_requirements", "conformance_suites", "implementation_invariants", "protocol_requirements", "root_me_definition"],
+      "properties": {
+        "capability_contracts": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/contractEntry"}},
+        "compatibility_requirements": {
+          "type": "object", "additionalProperties": false,
+          "required": ["forbidden_authority_changes", "required_contract_ids", "required_invariants", "required_suites", "resource_profile"],
+          "properties": {
+            "forbidden_authority_changes": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}},
+            "required_contract_ids": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}},
+            "required_invariants": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/invariantEntry"}},
+            "required_suites": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/suiteEntry"}},
+            "resource_profile": {"$ref": "#/$defs/contentRef"}
+          }
+        },
+        "conformance_suites": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/suiteEntry"}},
+        "implementation_invariants": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/invariantEntry"}},
+        "protocol_requirements": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/protocolEntry"}},
+        "root_me_definition": {"$ref": "#/$defs/contentRef"}
+      }
+    },
+    "positionRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_hash", "artifact_id", "epoch", "sequence"],
+      "properties": {"artifact_hash": {"$ref": "#/$defs/hash43"}, "artifact_id": {"$ref": "#/$defs/releaseId"}, "epoch": {"$ref": "#/$defs/safeInteger"}, "sequence": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "releaseRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_hash", "artifact_id", "epoch", "sequence", "species_id"],
+      "properties": {"artifact_hash": {"$ref": "#/$defs/hash43"}, "artifact_id": {"$ref": "#/$defs/releaseId"}, "epoch": {"$ref": "#/$defs/safeInteger"}, "sequence": {"$ref": "#/$defs/safeInteger"}, "species_id": {"$ref": "#/$defs/speciesId"}}
+    },
+    "evidenceLink": {
+      "type": "object", "additionalProperties": false,
+      "required": ["root_ref", "row_count"],
+      "properties": {"root_ref": {"$ref": "#/$defs/contentRef"}, "row_count": {"type": "integer", "minimum": 0, "maximum": 4096}}
+    },
+    "compatibilityReport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["base_release", "candidate_genome_hash", "contract_delta", "invariant_evidence", "overall_verdict", "protocol_delta", "schema", "test_evidence"],
+      "properties": {
+        "base_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/positionRef"}]},
+        "candidate_genome_hash": {"$ref": "#/$defs/hash43"},
+        "contract_delta": {
+          "type": "object", "additionalProperties": false,
+          "required": ["added", "changed", "removed"],
+          "properties": {"added": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}}, "changed": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}}, "removed": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}}}
+        },
+        "invariant_evidence": {"$ref": "#/$defs/evidenceLink"},
+        "overall_verdict": {"enum": ["genesis", "compatible", "incompatible"]},
+        "protocol_delta": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/protocolDelta"}},
+        "schema": {"const": "daimon-species-compatibility-report/v0"},
+        "test_evidence": {"$ref": "#/$defs/evidenceLink"}
+      }
+    },
+    "breakingTarget": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["kind", "contract_id"], "properties": {"kind": {"const": "contract"}, "contract_id": {"$ref": "#/$defs/text128"}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "requirement_id"], "properties": {"kind": {"enum": ["protocol", "bound"]}, "requirement_id": {"$ref": "#/$defs/text128"}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "suite_id", "suite_version", "case_id"], "properties": {"kind": {"const": "required-output"}, "suite_id": {"$ref": "#/$defs/text128"}, "suite_version": {"$ref": "#/$defs/text128"}, "case_id": {"$ref": "#/$defs/text128"}}}
+      ]
+    },
+    "branchFoundation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["branch_nonce", "breaking_delta", "child_genome", "child_implementation_bundle", "child_initial_maintainers", "child_maintainer_floor", "child_species_nonce", "incompatibility_report", "parent_base_release", "parent_species_id", "schema"],
+      "properties": {
+        "branch_nonce": {"$ref": "#/$defs/hash43"},
+        "breaking_delta": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["child_hash", "delta_id", "parent_hash", "reason_code", "target"], "properties": {"child_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]}, "delta_id": {"$ref": "#/$defs/text128"}, "parent_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]}, "reason_code": {"enum": ["added-breaking", "removed", "changed-contract", "changed-protocol", "changed-bound", "changed-required-output"]}, "target": {"$ref": "#/$defs/breakingTarget"}}}},
+        "child_genome": {"$ref": "#/$defs/genome"},
+        "child_implementation_bundle": {"$ref": "#/$defs/contentRef"},
+        "child_initial_maintainers": {"$ref": "#/$defs/policy"},
+        "child_maintainer_floor": {"$ref": "#/$defs/floor"},
+        "child_species_nonce": {"$ref": "#/$defs/hash43"},
+        "incompatibility_report": {"type": "object", "additionalProperties": false, "required": ["child_candidate_hash", "overall_verdict", "parent_requirements_hash", "test_evidence"], "properties": {"child_candidate_hash": {"$ref": "#/$defs/hash43"}, "overall_verdict": {"const": "deliberately-incompatible"}, "parent_requirements_hash": {"$ref": "#/$defs/hash43"}, "test_evidence": {"$ref": "#/$defs/evidenceLink"}}},
+        "parent_base_release": {"$ref": "#/$defs/releaseRef"},
+        "parent_species_id": {"$ref": "#/$defs/speciesId"},
+        "schema": {"const": "daimon-species-branch-foundation/v0"}
+      }
+    },
+    "origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["branch_foundation", "kind", "parent_branch_release"],
+      "properties": {"branch_foundation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/branchFoundation"}]}, "kind": {"enum": ["primordial", "branch"]}, "parent_branch_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/positionRef"}]}}
+    },
+    "signature": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "key_id", "role", "value"],
+      "properties": {"algorithm": {"const": "Ed25519"}, "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"}, "role": {"enum": ["species-genesis-authorization", "species-release-authorization", "species-maintainer-possession"]}, "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}
+    },
+    "genesisBody": {
+      "type": "object", "additionalProperties": false,
+      "required": ["created_at_ms", "genesis_core", "schema", "species_id"],
+      "properties": {
+        "created_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "genesis_core": {"type": "object", "additionalProperties": false, "required": ["cryptographic_suite", "domain_version", "genome", "initial_maintainers", "maintainer_floor", "origin", "protocol_version", "species_nonce"], "properties": {"cryptographic_suite": {"const": "DM0_HPKE_X25519_HKDF_SHA256_CHACHA20POLY1305_ED25519_JCS"}, "domain_version": {"const": 0}, "genome": {"$ref": "#/$defs/genome"}, "initial_maintainers": {"$ref": "#/$defs/policy"}, "maintainer_floor": {"$ref": "#/$defs/floor"}, "origin": {"$ref": "#/$defs/origin"}, "protocol_version": {"const": 0}, "species_nonce": {"$ref": "#/$defs/hash43"}}},
+        "schema": {"const": "daimon-species-genesis/v0"},
+        "species_id": {"$ref": "#/$defs/speciesId"}
+      }
+    },
+    "releaseBody": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authorizing_policy_hash", "branch_declaration", "compatibility_report", "fork_resolution", "genesis", "genome", "implementation_bundle", "issued_at_ms", "next_maintainers", "position", "previous_release", "release_kind", "release_label", "schema", "species_id"],
+      "properties": {
+        "authorizing_policy_hash": {"$ref": "#/$defs/hash43"},
+        "branch_declaration": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/branchFoundation"}]},
+        "compatibility_report": {"$ref": "#/$defs/compatibilityReport"},
+        "fork_resolution": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/forkResolution"}]},
+        "genesis": {"type": "object", "additionalProperties": false, "required": ["artifact_hash", "artifact_id"], "properties": {"artifact_hash": {"$ref": "#/$defs/hash43"}, "artifact_id": {"$ref": "#/$defs/genesisId"}}},
+        "genome": {"$ref": "#/$defs/genome"},
+        "implementation_bundle": {"$ref": "#/$defs/contentRef"},
+        "issued_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "next_maintainers": {"$ref": "#/$defs/policy"},
+        "position": {"type": "object", "additionalProperties": false, "required": ["epoch", "sequence"], "properties": {"epoch": {"$ref": "#/$defs/safeInteger"}, "sequence": {"$ref": "#/$defs/safeInteger"}}},
+        "previous_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/positionRef"}]},
+        "release_kind": {"enum": ["genesis", "compatible", "branch-declaration", "fork-resolution"]},
+        "release_label": {"$ref": "#/$defs/text128"},
+        "schema": {"const": "daimon-species-release/v0"},
+        "species_id": {"$ref": "#/$defs/speciesId"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_hash", "artifact_id", "body", "kind", "schema", "signatures"],
+      "properties": {
+        "artifact_hash": {"$ref": "#/$defs/hash43"},
+        "artifact_id": {"oneOf": [{"$ref": "#/$defs/genesisId"}, {"$ref": "#/$defs/releaseId"}]},
+        "body": {"oneOf": [{"$ref": "#/$defs/genesisBody"}, {"$ref": "#/$defs/releaseBody"}]},
+        "kind": {"enum": ["genesis", "release"]},
+        "schema": {"const": "daimon-species-artifact/v0"},
+        "signatures": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/signature"}}
+      }
+    },
+    "protocolDelta": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_hash", "classification", "prior_hash", "requirement_id"],
+      "properties": {
+        "candidate_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]},
+        "classification": {"enum": ["added", "removed", "compatible-change", "breaking-change"]},
+        "prior_hash": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]},
+        "requirement_id": {"$ref": "#/$defs/text128"}
+      }
+    },
+    "forkResolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["closed_epoch", "closure_cursor", "common_predecessor", "competing_heads"],
+      "properties": {
+        "closed_epoch": {"$ref": "#/$defs/safeInteger"},
+        "closure_cursor": {
+          "type": "object", "additionalProperties": false,
+          "required": ["epoch", "max_sequence", "occupied_count", "occupied_manifest_ref"],
+          "properties": {
+            "epoch": {"$ref": "#/$defs/safeInteger"},
+            "max_sequence": {"$ref": "#/$defs/safeInteger"},
+            "occupied_count": {"type": "integer", "minimum": 2, "maximum": 9007199254740991},
+            "occupied_manifest_ref": {"$ref": "#/$defs/contentRef"}
+          }
+        },
+        "common_predecessor": {"$ref": "#/$defs/positionRef"},
+        "competing_heads": {"type": "array", "minItems": 2, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/positionRef"}}
+      }
+    },
+    "applicationRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["application_sequence", "event_hash", "event_id"],
+      "properties": {
+        "application_sequence": {"$ref": "#/$defs/safeInteger"},
+        "event_hash": {"$ref": "#/$defs/hash64"},
+        "event_id": {"type": "string", "format": "uuid"}
+      }
+    },
+    "missingRef": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["content", "kind"], "properties": {"content": {"$ref": "#/$defs/contentRef"}, "kind": {"const": "content"}}},
+        {"type": "object", "additionalProperties": false, "required": ["kind", "release"], "properties": {"kind": {"const": "release"}, "release": {"$ref": "#/$defs/releaseRef"}}}
+      ]
+    },
+    "conflictRef": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["artifacts", "epoch", "kind", "sequence"],
+          "properties": {
+            "artifacts": {"type": "array", "minItems": 2, "maxItems": 128, "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["artifact_hash", "artifact_id"], "properties": {"artifact_hash": {"$ref": "#/$defs/hash43"}, "artifact_id": {"$ref": "#/$defs/releaseId"}}}},
+            "epoch": {"$ref": "#/$defs/safeInteger"}, "kind": {"const": "release-position"}, "sequence": {"$ref": "#/$defs/safeInteger"}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["application_sequence", "events", "kind"],
+          "properties": {
+            "application_sequence": {"$ref": "#/$defs/safeInteger"},
+            "events": {"type": "array", "minItems": 2, "maxItems": 128, "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["event_hash", "event_id"], "properties": {"event_hash": {"$ref": "#/$defs/hash64"}, "event_id": {"type": "string", "format": "uuid"}}}},
+            "kind": {"const": "application-position"}
+          }
+        }
+      ]
+    },
+    "registryCursor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accepted_head", "closed_epoch_high_water", "greatest_observed", "occupied_positions_hash"],
+      "properties": {
+        "accepted_head": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]},
+        "closed_epoch_high_water": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["closed_epoch", "resolution_release"], "properties": {"closed_epoch": {"$ref": "#/$defs/safeInteger"}, "resolution_release": {"$ref": "#/$defs/releaseRef"}}}]},
+        "greatest_observed": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["epoch", "sequence"], "properties": {"epoch": {"$ref": "#/$defs/safeInteger"}, "sequence": {"$ref": "#/$defs/safeInteger"}}}]},
+        "occupied_positions_hash": {"$ref": "#/$defs/hash43"}
+      }
+    },
+    "pathPage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["continuation_release", "end_release", "page_index", "releases", "start_release"],
+      "properties": {
+        "continuation_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]},
+        "end_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]},
+        "page_index": {"$ref": "#/$defs/safeInteger"},
+        "releases": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/releaseRef"}},
+        "start_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]}
+      }
+    },
+    "incomingCore": {
+      "type": "object", "additionalProperties": false,
+      "required": ["application_eligible", "application_head", "conflict_refs", "effective_applied_release", "enrollment_release_id", "evidence_closure_hash", "missing_refs", "path_page", "reason_codes", "registry_cursor", "selected_candidate", "species_id", "state", "subject_me_id"],
+      "properties": {
+        "application_eligible": {"type": "boolean"},
+        "application_head": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/applicationRef"}]},
+        "conflict_refs": {"type": "array", "maxItems": 4096, "uniqueItems": true, "items": {"$ref": "#/$defs/conflictRef"}},
+        "effective_applied_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]},
+        "enrollment_release_id": {"$ref": "#/$defs/releaseId"},
+        "evidence_closure_hash": {"$ref": "#/$defs/hash43"},
+        "missing_refs": {"type": "array", "maxItems": 4096, "uniqueItems": true, "items": {"$ref": "#/$defs/missingRef"}},
+        "path_page": {"$ref": "#/$defs/pathPage"},
+        "reason_codes": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text128"}},
+        "registry_cursor": {"$ref": "#/$defs/registryCursor"},
+        "selected_candidate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]},
+        "species_id": {"$ref": "#/$defs/speciesId"},
+        "state": {"enum": ["quarantined", "incomplete", "diverged", "current", "compatible-behind"]},
+        "subject_me_id": {"type": "string", "minLength": 1, "maxLength": 240}
+      }
+    },
+    "incoming": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "snapshot_core", "snapshot_hash"],
+      "properties": {"schema": {"const": "daimon-species-incoming-result/v0"}, "snapshot_core": {"$ref": "#/$defs/incomingCore"}, "snapshot_hash": {"$ref": "#/$defs/hash43"}}
+    },
+    "application": {
+      "type": "object", "additionalProperties": false,
+      "required": ["application_sequence", "applied_at_ms", "enrollment_release_id", "from_release", "implementation_bundle_ref", "local_policy_ref", "previous_application", "prior_runtime_manifest_ref", "result", "resulting_runtime_manifest_ref", "schema", "species_id", "subject_me_id", "to_release", "verification_manifest_ref"],
+      "properties": {
+        "application_sequence": {"$ref": "#/$defs/safeInteger"}, "applied_at_ms": {"$ref": "#/$defs/safeInteger"}, "enrollment_release_id": {"$ref": "#/$defs/releaseId"}, "from_release": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/releaseRef"}]}, "implementation_bundle_ref": {"$ref": "#/$defs/contentRef"}, "local_policy_ref": {"$ref": "#/$defs/contentRef"}, "previous_application": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/applicationRef"}]}, "prior_runtime_manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/contentRef"}]}, "result": {"enum": ["applied", "vetoed", "failed", "rolled-back"]}, "resulting_runtime_manifest_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/contentRef"}]}, "schema": {"const": "daimon-species-release-application/v0"}, "species_id": {"$ref": "#/$defs/speciesId"}, "subject_me_id": {"type": "string", "minLength": 1, "maxLength": 240}, "to_release": {"$ref": "#/$defs/releaseRef"}, "verification_manifest_ref": {"$ref": "#/$defs/contentRef"}
+      }
+    },
+    "localPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["allowed_species", "auto_apply", "policy_version", "resource_profile_ref", "schema"],
+      "properties": {"allowed_species": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/speciesId"}}, "auto_apply": {"type": "boolean"}, "policy_version": {"$ref": "#/$defs/text128"}, "resource_profile_ref": {"$ref": "#/$defs/contentRef"}, "schema": {"const": "daimon-species-local-application-policy/v0"}}
+    }
+  }
+}
