@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 73,
-  "registry_sha256": "c200089ef51d192f066c69d62e4b92c9f1b0f91d7c33958230debbdd4d9364e7",
+  "required_scenario_count": 77,
+  "registry_sha256": "6763d3a02d4c826370e51ad4ba66909d64e2a23c9dd9672b026a494b4e4c08e4",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -23,7 +23,8 @@
     "matrix_org_cluster_tribe_and_live_gateways_absent": true,
     "synthetic_local_direct_hub_routes_exercised": true,
     "signed_authority_epoch_succession": true,
-    "local_codex_hermes_plural_body_weave": true
+    "local_codex_hermes_plural_body_weave": true,
+    "collective_memory_bidirectional_exchange": true
   },
   "evidence": [
     "conformance/registry-v1.json",
@@ -33,6 +34,8 @@
     "docs/verification/dm079-invariants.json",
     "docs/verification/dm033-invariants.json",
     "docs/verification/dm042-invariants.json",
+    "docs/verification/dm036-invariants.json",
+    "docs/dm036-collective-memory.md",
     "docs/dm079-authority-epochs.md",
     "schemas/hosted/v2/bundle.schema.json",
     "schemas/weave/v1/authority-epoch.schema.json",

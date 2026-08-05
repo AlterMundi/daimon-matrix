@@ -28,7 +28,7 @@ TRANSCRIPT_SCHEMA: Final = "dm.conformance.transcript/v1"
 MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 REQUIRED_REGISTRY_SHA256: Final = (
-    "c200089ef51d192f066c69d62e4b92c9f1b0f91d7c33958230debbdd4d9364e7"
+    "6763d3a02d4c826370e51ad4ba66909d64e2a23c9dd9672b026a494b4e4c08e4"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -38,6 +38,10 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "causal_quarantine_promotion",
         "cli_closed_retry_surface",
         "cluster_effect_truth",
+        "collective_exchange_recovery",
+        "collective_publication_review",
+        "collective_real_io",
+        "collective_source_quarantine",
         "communication_cursor_contiguous",
         "communication_fanout_receipts",
         "communication_route_replay",
