@@ -1,0 +1,12 @@
+{
+  "newborn_body_ref": "cluster:synthetic:newborn",
+  "parent_body_ref": "cluster:synthetic:parent",
+  "scenario_id": "72ab3f90-d229-4ab2-9fbc-a68ea72dc9ca",
+  "schema": "dm.synthetic-birth-scenario/v1",
+  "source_references": [
+    "dm:source:v1:ZB6-JzpX6ylrLKLOui5v5czxjFf2LWHnInIMJ6rlZrs"
+  ],
+  "species_release_id": "dm:species-release:v1:8NIEZSbn3nvuxrbFyUhpYvgRa5rL_koEj16kelY0zKw",
+  "tribal_commitments": [],
+  "witness_body_ref": "cluster:synthetic:witness"
+}

@@ -1,6 +1,6 @@
 # DM-026 local conformance
 
-Status: implemented for the released local narrow waist through DM-055,
+Status: implemented for the released local narrow waist through DM-060,
 DM-079, DM-033 and DM-042. This is
 release evidence for `daimon-matrix`; it is not a remote transport, deployment,
 Cluster lifecycle, external-effect, or rebirth certification.
@@ -8,7 +8,7 @@ Cluster lifecycle, external-effect, or rebirth certification.
 ## Closed evidence registry
 
 `conformance/registry-v1.json` is the canonical
-`dm.conformance.registry/v1`. Its 76 scenario identifiers are closed in both
+`dm.conformance.registry/v1`. Its 79 scenario identifiers are closed in both
 directions: a missing scenario, an unknown scenario, duplicate identifier,
 unknown field, unregistered evidence reference, or non-required release
 scenario fails validation. Each scenario names its owner cards,
@@ -42,6 +42,8 @@ The registry deliberately describes the implementation that exists:
   selected; and
 - DM-033 human-review evidence uses synthetic purpose-separated keys and local
   protected custody only; and
+- DM-060 birth evidence creates only fresh synthetic roots and proves one
+  installed first awakening with empty autobiography; and
 - live remote Cluster effects remain later integration obligations.
 
 ## Running the installed gate

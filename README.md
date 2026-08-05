@@ -62,9 +62,9 @@ durable replay; its two-host cutover remains human-authorized. Cluster remains i
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
 peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 76-scenario
-report; its route evidence is synthetic loopback and does not yet certify a
-live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
+implementation and reproducible artifacts to a closed 79-scenario report; its
+route and birth evidence is synthetic loopback and does not yet certify a live
+remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
 provides exact body/effect evidence. DM-030 supplies the deterministic memory
 policy, auditable decisions, fork-safe lanes and transactional exactly-once
@@ -117,6 +117,15 @@ adopts a shared target and Hermes locally rejects it. The published
 `dm.local-we.validation/v1` receipt is deterministic and path-free; the card is
 a synthetic single-host gate, not a Matrix.org, multihost Cluster or CompAII
 rebirth claim.
+DM-060 adds the root-authorized birth V1 ceremony and installed
+`daimon-synthetic-birth` acceptance. A parent can offer attributed context but
+cannot precommit or retain the newborn root; the newborn independently accepts,
+creates its first embodiment only after durable acceptance, and activates only
+with sequence-zero incarnation, witness evidence and an empty canonical
+ledger/projection cutoff. The synthetic journey exercises real daemon, CLI and
+MCP processes and explicitly creates no real being, Cluster deployment,
+membership or inherited autobiography. Rebirth of an existing being remains a
+separate later multi-host journey.
 DM-071 consent/root discovery and the live DM-055 two-host cutover remain.
 There is no supported single-awake-identity or distinct-identities-as-`/we`
 model.

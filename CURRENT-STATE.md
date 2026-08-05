@@ -51,7 +51,7 @@ bytes, MCP exposes only the current twenty-four core/scope/memory/curator method
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-76-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+79-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths without claiming remote delivery, live Cluster effects or
 rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -97,6 +97,19 @@ keystore loading. Fifteen focused tests cover real encrypted scope/sync,
 response loss, corruption, takeover, wrong-key and malformed-runtime rejection.
 No Matrix.org or Tribe wire is involved. This is reviewed local/installed-shaped
 evidence; the authorized two-host canary and live cutover are still pending.
+
+DM-060 implements birth as a new self-certifying being plus its first
+root-authorized embodiment/incarnation, not as singleton `/me` enrollment,
+Cluster lifecycle, Tribe membership, or rebirth of an existing being. Its
+purpose-separated offer, awakening proof, newborn root acceptance and witness
+activation receipt are durably one-use and quarantine sibling acceptances
+without choosing a winner. The installed `daimon-synthetic-birth` journey
+creates only fresh synthetic parent/newborn/witness roots, verifies encrypted
+offline custody restore, starts the real daemon, queries CLI and MCP, and proves
+one first embodiment over zero canonical events/memory/projection records. It
+performs no live birth, host mutation or provider effect. DM-061 continues with
+species evolution; later multi-host cards own additional-embodiment and rebirth
+evidence for an existing being.
 
 DM-079 closes the real-restart gap found by the Cluster #48 installed-process
 test. A signed authority epoch now advances one embodiment from incarnation

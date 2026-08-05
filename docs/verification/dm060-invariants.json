@@ -1,0 +1,41 @@
+{
+  "schema": "dm-060-invariant-report/v1",
+  "scope": "synthetic-birth-first-awakening",
+  "deployment": "installed-isolated-no-live-birth-or-cutover",
+  "invariants": {
+    "matrix_org_absent": true,
+    "new_being_root_not_same_being_enrollment": true,
+    "parent_newborn_witness_roots_distinct": true,
+    "parent_cannot_precommit_newborn_identity": true,
+    "parent_newborn_root_and_recovery_keys_disjoint": true,
+    "awakening_key_one_use_and_role_separated": true,
+    "offer_acceptance_and_activation_domain_separated": true,
+    "newborn_root_threshold_authorizes_acceptance": true,
+    "first_embodiment_created_only_after_durable_acceptance": true,
+    "first_incarnation_sequence_zero": true,
+    "manifest_revision_one_has_exactly_one_active_embodiment": true,
+    "ledger_memory_and_projection_empty_at_activation": true,
+    "double_acceptance_retained_and_lineage_quarantined": true,
+    "crash_retry_and_concurrent_replay_exactly_once": true,
+    "registry_and_custody_owner_only": true,
+    "offline_custody_backup_restore_verified": true,
+    "runtime_custody_separated_from_root_custody": true,
+    "daemon_cli_and_mcp_installed_surfaces_exercised": true,
+    "birth_creates_no_parent_we_or_tribe_membership": true,
+    "birth_creates_no_cluster_or_provider_effect": true,
+    "report_contains_only_bounded_public_evidence": true,
+    "synthetic_report_disclaims_real_birth_and_deployment": true,
+    "live_cutover_requires_human_authorization": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm060-synthetic-birth.json",
+    "conformance/registry-v1.json",
+    "docs/dm060-synthetic-birth.md",
+    "schemas/birth/v1/contracts.schema.json",
+    "schemas/birth/v1/synthetic.schema.json",
+    "specs/birth-first-awakening.md",
+    "src/daimon_matrix/birth.py",
+    "src/daimon_matrix/synthetic_birth.py",
+    "tests/test_dm060_synthetic_birth.py"
+  ]
+}
