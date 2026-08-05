@@ -52,6 +52,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/mcp_server.py"),
     Path("src/daimon_matrix/memory_policy.py"),
     Path("src/daimon_matrix/memory_projection.py"),
+    Path("src/daimon_matrix/peer_transport.py"),
     Path("src/daimon_matrix/publication.py"),
     Path("src/daimon_matrix/projections.py"),
     Path("src/daimon_matrix/py.typed"),

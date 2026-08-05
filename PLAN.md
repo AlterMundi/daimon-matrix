@@ -26,14 +26,15 @@ is explicitly outside the MVP.
    adapters without granting harnesses identity authority (DM-030 through
    DM-042). DM-030's evaluator/transactional executor and DM-031's
    resource-scoped curator coordination are implemented; DM-032 onward consume
-   those frozen boundaries without an exclusive being-wide lease. DM-032's
-   evidence-only replaceable worker, fixed DeepSeek profile, durable retry and
-   installed process boundary are implemented; DM-033 is the next authority
-   transition.
+   those frozen boundaries without an exclusive being-wide lease. DM-032
+   through DM-042 now provide the worker, human-review, personal/publication
+   adapters and locally validated Codex/Hermes embodiments; DM-036 remains
+   integration-blocked only on its external collective-memory dependency.
 6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
    encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
    resolution; then remove the standalone runtime dependency (DM-050 through
-   DM-055).
+   DM-055). DM-055's native encrypted peer implementation is complete behind
+   bundle V3; its authorized two-host cutover remains an operational gate.
 7. Complete birth/species/source behavior and their synthetic acceptance
    journeys.
 8. Bind Matrix embodiment evidence to Cluster lifecycle and resource fences;

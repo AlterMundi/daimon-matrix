@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import http.server
 import os
 import secrets
 import signal
@@ -21,6 +22,7 @@ from typing import Final, cast
 
 from .canonical import canonical_bytes
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
+from .peer_transport import MAX_ENVELOPE_BYTES, PeerTransportBusy, PeerTransportError
 from .runtime import HostedRuntime, RuntimeError, load_runtime
 
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
@@ -181,6 +183,103 @@ def serve_connection(
         return
 
 
+class _BoundedPeerHTTPServer(http.server.ThreadingHTTPServer):
+    """Reject excess connections before allocating their handler threads."""
+
+    daemon_threads = True
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler: type[http.server.BaseHTTPRequestHandler],
+    ) -> None:
+        self._peer_slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
+        super().__init__(server_address, handler)
+
+    def process_request(
+        self,
+        request: socket.socket | tuple[bytes, socket.socket],
+        client_address: tuple[str, int],
+    ) -> None:
+        if not self._peer_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._peer_slots.release()
+            raise
+
+    def process_request_thread(
+        self,
+        request: socket.socket | tuple[bytes, socket.socket],
+        client_address: tuple[str, int],
+    ) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._peer_slots.release()
+
+
+def create_peer_http_server(runtime: HostedRuntime) -> http.server.ThreadingHTTPServer:
+    if runtime.peer_dispatcher is None or runtime.peer_listen is None:
+        raise DaemonError("peer_transport_not_configured")
+    dispatcher = runtime.peer_dispatcher
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(DEFAULT_TIMEOUT_SECONDS)
+
+        def _reject(self, status: int) -> None:
+            self.send_response_only(status)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+        def do_POST(self) -> None:
+            if (
+                self.path != "/dm-peer/v1"
+                or self.headers.get("Content-Type") != "application/vnd.daimon.peer+jcs"
+            ):
+                self._reject(404)
+                return
+            try:
+                lengths = self.headers.get_all("Content-Length", failobj=[])
+                size = int(lengths[0]) if len(lengths) == 1 else 0
+            except ValueError:
+                size = 0
+            if not 1 <= size <= MAX_ENVELOPE_BYTES:
+                self._reject(400)
+                return
+            try:
+                raw = self.rfile.read(size)
+            except (TimeoutError, OSError):
+                return
+            if len(raw) != size:
+                self._reject(400)
+                return
+            try:
+                response = dispatcher.dispatch(raw)
+            except PeerTransportBusy:
+                self._reject(503)
+                return
+            except PeerTransportError:
+                self._reject(400)
+                return
+            self.send_response_only(200)
+            self.send_header("Content-Type", "application/vnd.daimon.peer+jcs")
+            self.send_header("Content-Length", str(len(response)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, _format: str, *args: object) -> None:
+            return
+
+    return _BoundedPeerHTTPServer(runtime.peer_listen, Handler)
+
+
 def serve_forever(
     runtime: HostedRuntime,
     *,
@@ -198,7 +297,17 @@ def serve_forever(
     _prepare_socket(path)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     created: tuple[int, int] | None = None
+    peer_server: http.server.ThreadingHTTPServer | None = None
+    peer_thread: threading.Thread | None = None
     try:
+        if runtime.peer_dispatcher is not None:
+            peer_server = create_peer_http_server(runtime)
+            peer_thread = threading.Thread(
+                target=peer_server.serve_forever,
+                name="daimon-matrix-peer-http",
+                daemon=True,
+            )
+            peer_thread.start()
         _bind_private_socket(listener, path)
         info = path.lstat()
         created = (info.st_dev, info.st_ino)
@@ -233,6 +342,11 @@ def serve_forever(
                     continue
                 workers.submit(run, connection)
     finally:
+        if peer_server is not None:
+            peer_server.shutdown()
+            peer_server.server_close()
+        if peer_thread is not None:
+            peer_thread.join(timeout=2)
         listener.close()
         if created is not None:
             try:
@@ -308,6 +422,7 @@ if __name__ == "__main__":
 __all__ = [
     "DaemonError",
     "acquire_lock",
+    "create_peer_http_server",
     "main",
     "serve_connection",
     "serve_forever",

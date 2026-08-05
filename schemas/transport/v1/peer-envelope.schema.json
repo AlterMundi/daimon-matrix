@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/transport/v1/peer-envelope.schema.json",
+  "title": "DM-055 direct encrypted Matrix peer envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "being_ref",
+    "content_type",
+    "correlation_id",
+    "envelope_id",
+    "expires_at_ms",
+    "issued_at_ms",
+    "manifest_hash",
+    "payload",
+    "profile",
+    "recipient",
+    "reply_to",
+    "schema",
+    "sender",
+    "signature",
+    "wrapped_cek"
+  ],
+  "properties": {
+    "schema": {"const": "dm.peer-envelope/v1"},
+    "profile": {"const": "HPKE-X25519-HKDF-SHA256-CHACHA20POLY1305+ED25519+JCS/v1"},
+    "envelope_id": {"$ref": "#/$defs/uuid"},
+    "correlation_id": {"$ref": "#/$defs/uuid"},
+    "reply_to": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/uuid"}]},
+    "content_type": {
+      "enum": [
+        "application/vnd.daimon.scope-request+json",
+        "application/vnd.daimon.scope-response+json",
+        "application/vnd.daimon.sync-request+json",
+        "application/vnd.daimon.sync-delta+json"
+      ]
+    },
+    "issued_at_ms": {"$ref": "#/$defs/uint"},
+    "expires_at_ms": {"$ref": "#/$defs/uint"},
+    "being_ref": {"$ref": "#/$defs/id"},
+    "manifest_hash": {"$ref": "#/$defs/hash"},
+    "sender": {"$ref": "#/$defs/sender"},
+    "recipient": {"$ref": "#/$defs/recipient"},
+    "wrapped_cek": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ciphertext", "enc"],
+      "properties": {
+        "enc": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+        "ciphertext": {"type": "string", "pattern": "^[A-Za-z0-9_-]{64}$"}
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ciphertext", "nonce"],
+      "properties": {
+        "nonce": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16}$"},
+        "ciphertext": {"type": "string", "minLength": 22, "maxLength": 2796224, "pattern": "^[A-Za-z0-9_-]+$"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "kid", "role", "value"],
+      "properties": {
+        "alg": {"const": "Ed25519"},
+        "kid": {"$ref": "#/$defs/id"},
+        "role": {"const": "peer-transport"},
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "sender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "body_ref", "credential_id", "embodiment_id", "incarnation_id", "principal_id", "signing_kid"],
+      "properties": {
+        "being_ref": {"$ref": "#/$defs/id"},
+        "body_ref": {"$ref": "#/$defs/id"},
+        "credential_id": {"$ref": "#/$defs/id"},
+        "embodiment_id": {"$ref": "#/$defs/id"},
+        "incarnation_id": {"$ref": "#/$defs/id"},
+        "principal_id": {"$ref": "#/$defs/id"},
+        "signing_kid": {"$ref": "#/$defs/id"}
+      }
+    },
+    "recipient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["being_ref", "credential_id", "embodiment_id", "encryption_kid"],
+      "properties": {
+        "being_ref": {"$ref": "#/$defs/id"},
+        "credential_id": {"$ref": "#/$defs/id"},
+        "embodiment_id": {"$ref": "#/$defs/id"},
+        "encryption_kid": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

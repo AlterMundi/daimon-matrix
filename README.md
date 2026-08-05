@@ -19,9 +19,10 @@ split-brain failure.
 The V0.1 MVP includes the `daimon-matrix` runtime. It owns being-root
 continuity, canonical state, `/me` and `/we` resolution, synchronization,
 memory policy, and secure communications. Daimon Cluster manages bodies,
-incarnations, storage, lifecycle, and concrete resource fences. Tribe Bridge
-supplies transitional authenticated encrypted transport until DM-050–DM-055
-absorb it into this project.
+incarnations, storage, lifecycle, and concrete resource fences. DM-050–DM-055
+independently absorb the reusable Tribe behavior; DM-055 now supplies the
+native encrypted Matrix peer wire, while Tribe Bridge remains only for the
+bounded ordinary-message canary before retirement.
 
 Legacy administrator-manifest and Cluster Weave canary bytes remain provisional
 history only. DM-021 attaches them to a Matrix root through an exact
@@ -55,11 +56,13 @@ explicit-profile local IPC, authenticated HTTP and opaque hub providers with
 durable carrier inboxes; all are disabled until configured and no live carrier
 is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
 `/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
-fan-out independent of any live carrier. Cluster remains its
+fan-out independent of any live carrier. DM-055 adds the optional bundle-V3
+root-bound HPKE/Ed25519 peer transport and direct scope/sync HTTP carrier with
+durable replay; its two-host cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
-migration oracle rather than a second protocol. Tribe Bridge remains a
-transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 73-scenario
+migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
+peer wire. The installed `daimon-conformance` gate binds the local
+implementation and reproducible artifacts to a closed 76-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
 live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
@@ -114,7 +117,8 @@ adopts a shared target and Hermes locally rejects it. The published
 `dm.local-we.validation/v1` receipt is deterministic and path-free; the card is
 a synthetic single-host gate, not a Matrix.org, multihost Cluster or CompAII
 rebirth claim.
-DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
-supported single-awake-identity or distinct-identities-as-`/we` model.
+DM-071 consent/root discovery and the live DM-055 two-host cutover remain.
+There is no supported single-awake-identity or distinct-identities-as-`/we`
+model.
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

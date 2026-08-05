@@ -34,13 +34,15 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
 
 ## Transitional Tribe-owned
 
-- Typed encrypted Weave payloads.
+- Ordinary human-message service retained only through the bounded DM-055
+  canary; native Matrix peer traffic no longer uses its wire.
 - Founder-only invitation, acceptance, expulsion, leave, and founder transfer.
 - Direct-principal routing and conformance fixtures.
 - Explicit separation of audience, `tribe_ref`, and `being_ref`.
 
-DM-050 through DM-055 move these responsibilities into `daimon-matrix` and
-remove the standalone Tribe runtime dependency before release. Cluster's old
+DM-050 through DM-055 move the reusable responsibilities into `daimon-matrix`;
+DM-055's implementation is native and its live cutover is still pending. DM-077
+removes the standalone Tribe runtime dependency before release. Cluster's old
 `weave/` behavior now survives only as frozen migration fixtures; the merged
 host adapter runs the installed Matrix engine. Matrix.org is not an
 implementation target or dependency.

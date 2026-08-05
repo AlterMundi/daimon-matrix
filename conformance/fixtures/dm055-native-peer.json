@@ -1,0 +1,25 @@
+{
+  "schema": "dm.peer.fixtures/v1",
+  "cases": [
+    {
+      "id": "encrypted-scope-sync",
+      "expected": "scope-retains-origin-sync-imports-known-not-adopted"
+    },
+    {
+      "id": "manifest-revocation-tamper",
+      "expected": "peer_transport_rejected-before-effect"
+    },
+    {
+      "id": "response-loss-replay",
+      "expected": "byte-identical-request-one-handler-effect"
+    },
+    {
+      "id": "runtime-v3-http",
+      "expected": "one-shot-owner-custody-encrypted-bounded-post-only"
+    },
+    {
+      "id": "durable-store-adversarial",
+      "expected": "concurrent-lease-takeover-conflict-corruption-fail-closed"
+    }
+  ]
+}

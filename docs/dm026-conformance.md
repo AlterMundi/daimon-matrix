@@ -1,6 +1,6 @@
 # DM-026 local conformance
 
-Status: implemented for the released local narrow waist through DM-054,
+Status: implemented for the released local narrow waist through DM-055,
 DM-079, DM-033 and DM-042. This is
 release evidence for `daimon-matrix`; it is not a remote transport, deployment,
 Cluster lifecycle, external-effect, or rebirth certification.
@@ -8,7 +8,7 @@ Cluster lifecycle, external-effect, or rebirth certification.
 ## Closed evidence registry
 
 `conformance/registry-v1.json` is the canonical
-`dm.conformance.registry/v1`. Its 73 scenario identifiers are closed in both
+`dm.conformance.registry/v1`. Its 76 scenario identifiers are closed in both
 directions: a missing scenario, an unknown scenario, duplicate identifier,
 unknown field, unregistered evidence reference, or non-required release
 scenario fails validation. Each scenario names its owner cards,
@@ -35,9 +35,9 @@ The registry deliberately describes the implementation that exists:
   HLC or arrival-time winner;
 - import makes content known but does not adopt it;
 - “exactly once” means one canonical event, RPC response, or sync receipt; and
-- DM-051 recipient encryption and DM-053 local/direct/hub behavior are
-  synthetic loopback evidence; a live route rollout remains a later
-  integration obligation;
+- DM-051 recipient encryption, DM-053 routes and DM-055 native encrypted peer
+  scope/sync run through installed-shaped loopback and real HTTP; the live
+  two-host cutover remains an explicit human-authorized integration obligation;
 - the generic human gateway is disabled and neither Buzz nor Telegram is
   selected; and
 - DM-033 human-review evidence uses synthetic purpose-separated keys and local
