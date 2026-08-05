@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/review/v1/decision.schema.json",
+  "title": "Human-held content-bound review decision",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "decision_id", "review_request_id", "review_request_hash", "authorization_id", "reviewer_key_id", "action", "replacement", "reason", "note_ref", "decision_nonce", "decided_at_ms", "predecessor_decision_id", "signature"],
+  "properties": {
+    "schema": {"const": "dm.review.human-decision/v1"},
+    "decision_id": {"type": "string", "pattern": "^dm:review-decision:v1:[A-Za-z0-9_-]{43}$"},
+    "review_request_id": {"type": "string", "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$"},
+    "review_request_hash": {"$ref": "#/$defs/hash"},
+    "authorization_id": {"type": "string", "pattern": "^dm:review-authorization:v1:[A-Za-z0-9_-]{43}$"},
+    "reviewer_key_id": {"$ref": "#/$defs/key_id"},
+    "action": {"enum": ["accept", "edit", "reject", "defer"]},
+    "replacement": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/replacement"}]},
+    "reason": {"enum": ["consent-or-safety-concern", "content-correction", "evidence-insufficient", "evidence-sufficient", "policy-conflict", "reconsideration-needed", "superseded"]},
+    "note_ref": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"}]},
+    "decision_nonce": {"type": "string", "format": "uuid"},
+    "decided_at_ms": {"$ref": "#/$defs/uint"},
+    "predecessor_decision_id": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^dm:review-decision:v1:[A-Za-z0-9_-]{43}$"}]},
+    "signature": {"$ref": "#/$defs/signature"}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"const": "accept"}}}, "then": {"properties": {"reason": {"const": "evidence-sufficient"}}}},
+    {"if": {"properties": {"action": {"const": "edit"}}}, "then": {"properties": {"reason": {"const": "content-correction"}}}},
+    {"if": {"properties": {"action": {"const": "reject"}}}, "then": {"properties": {"reason": {"enum": ["consent-or-safety-concern", "evidence-insufficient", "policy-conflict", "superseded"]}}}},
+    {"if": {"properties": {"action": {"const": "defer"}}}, "then": {"properties": {"reason": {"enum": ["evidence-insufficient", "reconsideration-needed"]}}}}
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+    "signature": {"type": "object", "additionalProperties": false, "required": ["alg", "kid", "value"], "properties": {"alg": {"const": "Ed25519"}, "kid": {"$ref": "#/$defs/key_id"}, "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}},
+    "replacement": {"type": "object", "additionalProperties": false, "required": ["policy", "candidate", "plan", "proposal"], "properties": {"policy": {"$ref": "../../memory/v1/policy.schema.json"}, "candidate": {"$ref": "../../memory/v1/candidate.schema.json"}, "plan": {"$ref": "../../memory/v1/transition-plan.schema.json"}, "proposal": {"anyOf": [{"type": "null"}, {"$ref": "../../curator-worker/v1/proposal.schema.json"}]}}}
+  }
+}

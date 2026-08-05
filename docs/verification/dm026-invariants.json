@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 39,
-  "registry_sha256": "b1009a5a7998b7e266459fbc9bf9405b2af4a56ad51a37f1d84e298f14e5652b",
+  "required_scenario_count": 61,
+  "registry_sha256": "bea8b9b2a116e7820520bc3bd662613810f031c2a475f1934c385de431a4f3fd",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -30,6 +30,7 @@
     "docs/verification/dm054-invariants.json",
     "docs/verification/dm037-invariants.json",
     "docs/verification/dm079-invariants.json",
+    "docs/verification/dm033-invariants.json",
     "docs/dm079-authority-epochs.md",
     "schemas/hosted/v2/bundle.schema.json",
     "schemas/weave/v1/authority-epoch.schema.json",

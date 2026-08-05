@@ -156,11 +156,15 @@ class ProjectionEngine:
     def snapshot(self) -> dict[str, Any]:
         known = self.ledger.events(include_incomplete=False)
         local_embodiment = self.ledger.local_origin["embodiment_id"]
+        target_kinds = {
+            "configuration.proposed",
+            "experience.observed",
+            "memory.recorded",
+            "preference.proposed",
+            "skill.proposed",
+        }
         targets = {
-            event["event_id"]: event
-            for event in known
-            if event["kind"]
-            not in {"adoption.decided", "projection.receipted", "lifecycle.announced"}
+            event["event_id"]: event for event in known if event["kind"] in target_kinds
         }
         local_decisions: dict[str, list[Event]] = defaultdict(list)
         remote_decisions: dict[str, list[str]] = defaultdict(list)

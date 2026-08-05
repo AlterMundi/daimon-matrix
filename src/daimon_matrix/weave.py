@@ -53,6 +53,11 @@ EVENT_KINDS: Final = frozenset(
         "projection.receipted",
         "lifecycle.announced",
         "memory.recorded",
+        "review.authorization.issued",
+        "review.authorization.revoked",
+        "review.requested",
+        "review.decided",
+        "review.executed",
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -839,6 +844,43 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
             raise WeaveProtocolError("invalid_memory_record") from exception
         if record["predecessor_event_id"] != value["supersedes"]:
             raise WeaveProtocolError("invalid_memory_record")
+    if value["kind"].startswith("review."):
+        from .human_review import (
+            HumanReviewError,
+            validate_execution_receipt,
+            validate_review_request,
+            validate_reviewer_authorization,
+            validate_revocation,
+            validate_signed_decision_shape,
+        )
+
+        try:
+            if value["kind"] == "review.authorization.issued":
+                authorization = validate_reviewer_authorization(payload)
+                control = authorization["control_position"]
+                if (
+                    value["subject"] != authorization["subject_me_id"]
+                    or value["being_ref"] != authorization["subject_me_id"]
+                    or value["manifest_hash"] != control["manifest_hash"]
+                    or origin["embodiment_id"] != control["embodiment_id"]
+                    or origin["incarnation_id"] != control["incarnation_id"]
+                ):
+                    raise HumanReviewError("review_authorization_control_mismatch")
+            elif value["kind"] == "review.authorization.revoked":
+                validate_revocation(payload)
+            elif value["kind"] == "review.requested":
+                request = validate_review_request(payload)
+                if (
+                    value["subject"] != request["subject_me_id"]
+                    or value["being_ref"] != request["subject_me_id"]
+                ):
+                    raise HumanReviewError("review_request_subject_mismatch")
+            elif value["kind"] == "review.decided":
+                validate_signed_decision_shape(payload)
+            elif value["kind"] == "review.executed":
+                validate_execution_receipt(payload)
+        except HumanReviewError as exception:
+            raise WeaveProtocolError("invalid_review_event") from exception
     return value
 
 

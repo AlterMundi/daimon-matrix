@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/review/v1/access-proof.schema.json",
+  "title": "Short-lived reviewer possession proof for disclosure",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "proof_id", "authorization_id", "reviewer_key_id", "rpc_request_id", "issued_at_ms", "expires_at_ms", "signature"],
+  "properties": {
+    "schema": {"const": "dm.review.access-proof/v1"},
+    "proof_id": {"type": "string", "pattern": "^dm:review-access:v1:[A-Za-z0-9_-]{43}$"},
+    "authorization_id": {"type": "string", "pattern": "^dm:review-authorization:v1:[A-Za-z0-9_-]{43}$"},
+    "reviewer_key_id": {"$ref": "#/$defs/key_id"},
+    "rpc_request_id": {"type": "string", "format": "uuid"},
+    "issued_at_ms": {"$ref": "#/$defs/uint"},
+    "expires_at_ms": {"$ref": "#/$defs/uint"},
+    "signature": {"$ref": "#/$defs/signature"}
+  },
+  "$defs": {
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+    "signature": {"type": "object", "additionalProperties": false, "required": ["alg", "kid", "value"], "properties": {"alg": {"const": "Ed25519"}, "kid": {"$ref": "#/$defs/key_id"}, "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}}
+  }
+}

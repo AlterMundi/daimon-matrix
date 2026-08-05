@@ -47,6 +47,7 @@ from daimon_matrix.service import (
     CURATOR_METHODS,
     MEMORY_METHODS,
     METHODS,
+    REVIEW_METHODS,
     SCOPE_METHODS,
 )
 from daimon_matrix.weave import BeingManifest
@@ -69,7 +70,13 @@ class RuntimeFixture(RootLedgerFixture):
         capability = create_capability(
             seed("dm024-capability"),
             client_id="client:runtime-test",
-            methods=sorted(CURATOR_METHODS | MEMORY_METHODS | METHODS | SCOPE_METHODS),
+            methods=sorted(
+                CURATOR_METHODS
+                | MEMORY_METHODS
+                | METHODS
+                | REVIEW_METHODS
+                | SCOPE_METHODS
+            ),
             not_before_ms=now_ms - 60_000,
             not_after_ms=now_ms + 60_000,
         )

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/review/v1/execution-receipt.schema.json",
+  "title": "Subject-side review execution or no-op receipt",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "receipt_id", "review_request_id", "request_event_id", "action", "decision_ids", "memory_event_id", "successor_request_id", "result", "executed_at_ms"],
+  "properties": {
+    "schema": {"const": "dm.review.execution-receipt/v1"},
+    "receipt_id": {"type": "string", "pattern": "^dm:review-receipt:v1:[A-Za-z0-9_-]{43}$"},
+    "review_request_id": {"type": "string", "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$"},
+    "request_event_id": {"type": "string", "format": "uuid"},
+    "action": {"enum": ["accept", "edit", "reject"]},
+    "decision_ids": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^dm:review-decision:v1:[A-Za-z0-9_-]{43}$"}},
+    "memory_event_id": {"type": ["string", "null"], "format": "uuid"},
+    "successor_request_id": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$"}]},
+    "result": {"enum": ["applied", "no-op", "successor-requested"]},
+    "executed_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
+  }
+}

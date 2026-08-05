@@ -418,6 +418,60 @@ class LocalClient:
             "curator.inspect", {"item_id": item_id}, request_id=request_id
         )
 
+    def review_authorize(
+        self, authorization: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "review.authorize",
+            {"authorization": authorization},
+            request_id=request_id,
+        )
+
+    def review_revoke(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("review.revoke", params, request_id=request_id)
+
+    def review_request(
+        self, request: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "review.request", {"request": request}, request_id=request_id
+        )
+
+    def review_queue(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("review.queue", params, request_id=request_id)
+
+    def review_inspect(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("review.inspect", params, request_id=request_id)
+
+    def review_decision_draft(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("review.decision.draft", params, request_id=request_id)
+
+    def review_decision_submit(
+        self, decision: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "review.decision.submit",
+            {"decision": decision},
+            request_id=request_id,
+        )
+
+    def review_execute(
+        self, review_request_id: str, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "review.execute",
+            {"review_request_id": review_request_id},
+            request_id=request_id,
+        )
+
     def we_heads(
         self, *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

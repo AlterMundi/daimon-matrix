@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import secrets
 import signal
 import socket
 import stat
@@ -14,6 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
 from typing import Final, cast
 
@@ -103,6 +105,28 @@ def _peer_is_owner(connection: socket.socket) -> bool:
     return uid == os.geteuid()
 
 
+def _bind_private_socket(listener: socket.socket, path: Path) -> None:
+    """Bind privately and publish only after the socket has mode 0600.
+
+    ``bind(path)`` creates a filesystem entry before a following ``chmod`` can
+    run.  Publishing a separately bound owner-only socket with ``replace``
+    removes that observable permission race, including during daemon restart.
+    """
+
+    staged = path.with_name(f".dm-socket-{secrets.token_hex(8)}")
+    if staged.exists() or staged.is_symlink():
+        raise DaemonError("socket_staging_collision")
+    try:
+        listener.bind(str(staged))
+        os.chmod(staged, 0o600)
+        listener.listen(MAX_IN_FLIGHT)
+        os.replace(staged, path)
+    except BaseException:
+        with suppress(FileNotFoundError):
+            staged.unlink()
+        raise
+
+
 def _receive(connection: socket.socket) -> dict[str, object]:
     header = _recv_exact(connection, 4)
     size = int.from_bytes(header, "big")
@@ -175,11 +199,9 @@ def serve_forever(
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     created: tuple[int, int] | None = None
     try:
-        listener.bind(str(path))
-        os.chmod(path, 0o600)
+        _bind_private_socket(listener, path)
         info = path.lstat()
         created = (info.st_dev, info.st_ino)
-        listener.listen(MAX_IN_FLIGHT)
         listener.settimeout(0.25)
         if ready_descriptor is not None:
             os.write(ready_descriptor, b"READY\n")

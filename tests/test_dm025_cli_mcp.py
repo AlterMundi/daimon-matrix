@@ -25,6 +25,7 @@ from daimon_matrix.service import (
     CURATOR_METHODS,
     MEMORY_METHODS,
     METHODS,
+    REVIEW_METHODS,
     SCOPE_METHODS,
 )
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
@@ -274,6 +275,57 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "--plan",
                 str(document),
             ],
+            ["review", "authorize", "--authorization", str(document)],
+            [
+                "review",
+                "revoke",
+                "--authorization-id",
+                "dm:review-authorization:v1:" + "A" * 43,
+                "--reason",
+                "synthetic",
+            ],
+            ["review", "request", "--review-request", str(document)],
+            [
+                "review",
+                "queue",
+                "--authorization-id",
+                "dm:review-authorization:v1:" + "A" * 43,
+                "--access-proof",
+                str(document),
+            ],
+            [
+                "review",
+                "inspect",
+                "--review-request-id",
+                "dm:review-request:v1:" + "A" * 43,
+                "--authorization-id",
+                "dm:review-authorization:v1:" + "A" * 43,
+                "--access-proof",
+                str(document),
+            ],
+            [
+                "review",
+                "draft",
+                "--review-request-id",
+                "dm:review-request:v1:" + "A" * 43,
+                "--authorization-id",
+                "dm:review-authorization:v1:" + "A" * 43,
+                "--action",
+                "accept",
+                "--reason",
+                "evidence-sufficient",
+                "--decision-nonce",
+                "33000000-0000-4000-8000-000000000025",
+                "--decided-at-ms",
+                "1",
+            ],
+            ["review", "submit", "--signed-decision", str(document)],
+            [
+                "review",
+                "execute",
+                "--review-request-id",
+                "dm:review-request:v1:" + "A" * 43,
+            ],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -314,7 +366,14 @@ class InstalledSurfaceTests(RuntimeFixture):
             _method_params(cli_parser().parse_args(prefix + row))[0] for row in commands
         }
         self.assertEqual(
-            methods, set(CURATOR_METHODS | MEMORY_METHODS | METHODS | SCOPE_METHODS)
+            methods,
+            set(
+                CURATOR_METHODS
+                | MEMORY_METHODS
+                | METHODS
+                | REVIEW_METHODS
+                | SCOPE_METHODS
+            ),
         )
 
     def test_mcp_modern_stdio_lists_closed_surface_and_calls_daemon(self) -> None:
@@ -356,7 +415,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 24)
+        self.assertEqual(len(tools), 29)
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -367,6 +426,11 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "curator_inspect",
                 "memory_evaluate",
                 "memory_execute",
+                "review_request",
+                "review_queue",
+                "review_inspect",
+                "review_decision_draft",
+                "review_decision_submit",
                 "scope_me",
                 "scope_we",
                 "scope_we_diff",
@@ -391,7 +455,16 @@ class InstalledSurfaceTests(RuntimeFixture):
                 item["description"].removeprefix("Typed Daimon operation ")
                 for item in tools
             },
-            set(CURATOR_METHODS | MEMORY_METHODS | METHODS | SCOPE_METHODS),
+            set(
+                (
+                    CURATOR_METHODS
+                    | MEMORY_METHODS
+                    | METHODS
+                    | REVIEW_METHODS
+                    | SCOPE_METHODS
+                )
+                - {"review.authorize", "review.revoke", "review.execute"}
+            ),
         )
         self.assertTrue(responses[3]["result"]["structuredContent"]["ok"])
         self.assertNotIn("auth", responses[3]["result"]["structuredContent"])
@@ -439,6 +512,23 @@ class InstalledSurfaceTests(RuntimeFixture):
         )
         self.assertEqual(len(self.runtime.service.ledger.events()), 1)
         self.assertEqual(len(list(self.request_dir.iterdir())), 1)
+
+    def test_mcp_human_decision_submit_is_structurally_refused(self) -> None:
+        response = self.mcp_exchange(
+            {
+                "jsonrpc": "2.0",
+                "id": "review-submit",
+                "method": "tools/call",
+                "params": {
+                    "_meta": META,
+                    "name": "review_decision_submit",
+                    "arguments": {"decision": {}},
+                },
+            }
+        )
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("human-held signing CLI", response["error"]["message"])
+        self.assertEqual(self.runtime.service.ledger.rpc_requests(), [])
 
     def test_mcp_rejects_legacy_initialize_without_daemon_dispatch(self) -> None:
         initialize = {

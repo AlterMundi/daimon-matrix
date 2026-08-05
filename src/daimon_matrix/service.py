@@ -11,6 +11,7 @@ from typing import Any, Final
 from .canonical import CanonicalError, unb64url
 from .communication import CommunicationError, CommunicationStore
 from .curator import CuratorCoordinator, CuratorError
+from .human_review import HumanReviewCoordinator, HumanReviewError
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
@@ -76,6 +77,18 @@ MEMORY_METHODS: Final = frozenset({"memory.evaluate", "memory.execute"})
 CURATOR_METHODS: Final = frozenset(
     {"curator.claim", "curator.complete", "curator.enqueue", "curator.inspect"}
 )
+REVIEW_METHODS: Final = frozenset(
+    {
+        "review.authorize",
+        "review.revoke",
+        "review.request",
+        "review.queue",
+        "review.inspect",
+        "review.decision.draft",
+        "review.decision.submit",
+        "review.execute",
+    }
+)
 SCOPE_METHODS: Final = frozenset(
     {
         "scope.me",
@@ -91,6 +104,7 @@ SERVICE_METHODS: Final = (
     | COMMUNICATION_METHODS
     | CURATOR_METHODS
     | MEMORY_METHODS
+    | REVIEW_METHODS
     | ROUTE_METHODS
     | SCOPE_METHODS
 )
@@ -184,6 +198,7 @@ class HostedWeave:
     router: RouteCoordinator | None = None
     scopes: ScopeResolver | None = None
     curator: CuratorCoordinator | None = None
+    review: HumanReviewCoordinator | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -226,6 +241,12 @@ class HostedWeave:
         elif curator.ledger is not self.ledger:
             raise ServiceError("curator_ledger_mismatch")
         curator.initialize()
+        review = self.review
+        if review is None:
+            review = HumanReviewCoordinator(self.ledger, self.signer, self.clock)
+            object.__setattr__(self, "review", review)
+        elif review.ledger is not self.ledger or review.signer is not self.signer:
+            raise ServiceError("review_coordinator_mismatch")
 
     @property
     def origin(self) -> dict[str, str]:
@@ -419,6 +440,15 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.retryable},
             )
+        except HumanReviewError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -498,6 +528,150 @@ class HostedWeave:
                 scope=scope,
                 request_id=_uuid(value["request_id"]),
                 tribe_ref=tribe_ref,
+            )
+        if method == "review.authorize":
+            value = _closed(params, {"authorization"})
+            if not isinstance(value["authorization"], Mapping):
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.authorize(
+                value["authorization"],
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "review.revoke":
+            value = _closed(params, {"authorization_id", "reason"})
+            authorization_id = _optional_text(value["authorization_id"], 160)
+            reason = _optional_text(value["reason"], 256)
+            if authorization_id is None or reason is None:
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.revoke(
+                authorization_id,
+                reason=reason,
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "review.request":
+            value = _closed(params, {"request"})
+            if not isinstance(value["request"], Mapping):
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.request_review(
+                value["request"],
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "review.queue":
+            value = _closed(
+                params,
+                {"access_proof", "after", "authorization_id", "limit"},
+            )
+            if not isinstance(value["access_proof"], Mapping):
+                raise ServiceError("invalid_params")
+            authorization_id = _optional_text(value["authorization_id"], 160)
+            after = _optional_text(value["after"], 160)
+            if authorization_id is None:
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.queue(
+                authorization_id=authorization_id,
+                access_proof=value["access_proof"],
+                rpc_request_id=request_id,
+                after=after,
+                limit=_uint(value["limit"], minimum=1, maximum=100),
+            )
+        if method == "review.inspect":
+            value = _closed(
+                params,
+                {"access_proof", "authorization_id", "review_request_id"},
+            )
+            if not isinstance(value["access_proof"], Mapping):
+                raise ServiceError("invalid_params")
+            authorization_id = _optional_text(value["authorization_id"], 160)
+            review_request_id = _optional_text(value["review_request_id"], 160)
+            if authorization_id is None or review_request_id is None:
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.inspect(
+                review_request_id=review_request_id,
+                authorization_id=authorization_id,
+                access_proof=value["access_proof"],
+                rpc_request_id=request_id,
+            )
+        if method == "review.decision.draft":
+            value = _closed(
+                params,
+                {
+                    "action",
+                    "authorization_id",
+                    "decision_nonce",
+                    "decided_at_ms",
+                    "note_ref",
+                    "predecessor_decision_id",
+                    "reason",
+                    "replacement",
+                    "review_request_id",
+                },
+            )
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            review_request_id = _optional_text(value["review_request_id"], 160)
+            authorization_id = _optional_text(value["authorization_id"], 160)
+            action = _optional_text(value["action"], 32)
+            reason = _optional_text(value["reason"], 1024)
+            note_ref = _optional_text(value["note_ref"], 256)
+            decision_nonce = _optional_text(value["decision_nonce"], 36)
+            predecessor = _optional_text(value["predecessor_decision_id"], 160)
+            replacement = value["replacement"]
+            if replacement is not None and not isinstance(replacement, Mapping):
+                raise ServiceError("invalid_params")
+            if (
+                review_request_id is None
+                or authorization_id is None
+                or action is None
+                or reason is None
+                or decision_nonce is None
+            ):
+                raise ServiceError("invalid_params")
+            return self.review.draft(
+                review_request_id=review_request_id,
+                authorization_id=authorization_id,
+                action=action,
+                replacement=replacement,
+                reason=reason,
+                note_ref=note_ref,
+                decision_nonce=decision_nonce,
+                decided_at_ms=_uint(value["decided_at_ms"]),
+                predecessor_decision_id=predecessor,
+            )
+        if method == "review.decision.submit":
+            value = _closed(params, {"decision"})
+            if not isinstance(value["decision"], Mapping):
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.submit(
+                value["decision"],
+                client_id=client_id,
+                request_id=request_id,
+            )
+        if method == "review.execute":
+            value = _closed(params, {"review_request_id"})
+            review_request_id = _optional_text(value["review_request_id"], 160)
+            if review_request_id is None:
+                raise ServiceError("invalid_params")
+            if self.review is None:
+                raise ServiceError("review_unavailable")
+            return self.review.execute(
+                review_request_id,
+                client_id=client_id,
+                request_id=request_id,
             )
         if method == "memory.evaluate":
             value = _closed(params, {"candidate", "policy"})
