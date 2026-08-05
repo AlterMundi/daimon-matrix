@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator-worker/v1/provider-output.schema.json",
+  "title": "Untrusted curator provider JSON output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proposal_kind", "statement", "category", "derivation", "evidence_refs", "contradiction_refs", "classification_suggestion", "confidence", "uncertainty_labels", "warnings"],
+  "properties": {
+    "proposal_kind": {"enum": ["assert", "correct", "retract"]},
+    "statement": {"type": "string", "minLength": 1, "maxLength": 131072},
+    "category": {"$ref": "#/$defs/scoped"},
+    "derivation": {"$ref": "#/$defs/scoped"},
+    "evidence_refs": {"$ref": "#/$defs/refs"},
+    "contradiction_refs": {"$ref": "#/$defs/refs"},
+    "classification_suggestion": {"enum": ["public", "personal", "private", "protected"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "uncertainty_labels": {"$ref": "#/$defs/labels"},
+    "warnings": {"$ref": "#/$defs/labels"}
+  },
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "refs": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/scoped"}},
+    "labels": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/scoped"}}
+  }
+}

@@ -14,8 +14,10 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
   decisions, projections, and communications service.
 - Scope, memory, Tribe, and adapter conformance vectors. DM-030 memory policy
   and DM-031 resource-scoped curator coordination, schemas, vectors, hosted
-  methods and exactly-once/effect-truth guards are implemented; DM-032 through
-  DM-036 own workers, human decisions and projection/publication effects.
+  methods and exactly-once/effect-truth guards are implemented. DM-032's closed
+  worker/provider registration, proposal boundary and durable failure recovery
+  are implemented; DM-033 through DM-036 own human decisions and projection/
+  publication effects.
 - Root-authorized additional-embodiment, relocation, and disaster-rebirth
   acceptance on a fresh host (DM-078).
 

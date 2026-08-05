@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator-worker/v1/registration.schema.json",
+  "title": "Closed curator worker provider registration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "enabled", "implementation", "profile_id", "profile_hash", "secret_handle"],
+  "properties": {
+    "schema": {"const": "dm.curator-worker.registration/v1"},
+    "enabled": {"type": "boolean"},
+    "implementation": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "profile_id": {"type": "string", "pattern": "^dm:curator-profile:v1:[A-Za-z0-9_-]{43}$"},
+    "profile_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "secret_handle": {"type": "string", "pattern": "^secret:[A-Za-z0-9._:@-]{1,249}$"}
+  }
+}

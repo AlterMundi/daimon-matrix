@@ -26,7 +26,10 @@ is explicitly outside the MVP.
    adapters without granting harnesses identity authority (DM-030 through
    DM-042). DM-030's evaluator/transactional executor and DM-031's
    resource-scoped curator coordination are implemented; DM-032 onward consume
-   those frozen boundaries without an exclusive being-wide lease.
+   those frozen boundaries without an exclusive being-wide lease. DM-032's
+   evidence-only replaceable worker, fixed DeepSeek profile, durable retry and
+   installed process boundary are implemented; DM-033 is the next authority
+   transition.
 6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
    encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
    resolution; then remove the standalone runtime dependency (DM-050 through

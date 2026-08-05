@@ -214,6 +214,34 @@
       "required": true
     },
     {
+      "id": "curator_worker_boundary",
+      "owners": ["DM-018", "DM-030", "DM-032"],
+      "specifications": ["specs/adapter-contracts.md", "specs/curator-worker.md"],
+      "setup": "Closed worker manifest/profile/registration/task schemas, synthetic evidence and a controlled direct-HTTPS fixture.",
+      "stimulus": "Build the exact non-thinking request, substitute registration/model/evidence, present sensitive or secret-like content and exercise bounded HTTP response shapes.",
+      "fault": "Untrusted provider data, configuration or evidence attempts to widen authority, disclose forbidden bytes, select another endpoint/model or return reasoning/tools.",
+      "expected": "Every authority flag stays false; exact permitted personal bytes are data only; sensitive, substituted, oversized and malformed traffic fails before proposal authority.",
+      "evidence": ["tests.test_dm032_curator_worker.CuratorWorkerTests.test_disclosure_policy_and_final_body_scan_refuse_before_network", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_https_transport_pins_origin_bounds_read_and_redacts_failures", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_installed_process_files_and_secret_descriptor_fail_closed", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_manifest_profile_and_task_are_closed_and_authority_denied", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_model_reasoning_tool_shape_and_evidence_substitution_fail_closed", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_public_schemas_match_runtime_artifacts_and_are_closed"],
+      "cleanup": "Discard synthetic provider bytes, mutable secret buffers and isolated ledger.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "curator_worker_recovery",
+      "owners": ["DM-031", "DM-032"],
+      "specifications": ["specs/curator-coordination.md", "specs/curator-worker.md"],
+      "setup": "Real DM-031 SQLite queue/claim, installed worker module, scripted provider and durable worker-attempt table.",
+      "stimulus": "Retry transient failure across restart, lose the process after proposal or terminal persistence, replay completion and regenerate public vectors.",
+      "fault": "Provider computation or process response is lost on either side of durable state while the bounded attempt budget is nearly exhausted.",
+      "expected": "Attempt budget survives restart; one proposal reaches review-required or one typed deferred/failed result completes; no provider call, proposal, memory event or effect duplicates.",
+      "evidence": ["tests.test_dm032_curator_worker.CuratorWorkerTests.test_attempt_budget_survives_restart_and_defers_exactly_once", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_dm031_completion_response_loss_never_reinvokes_provider", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_persisted_proposal_finishes_dm031_after_response_loss", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_success_is_inert_review_required_and_exactly_once", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_terminal_row_recovers_dm031_completion_after_process_loss", "tests.test_dm032_curator_worker.CuratorWorkerTests.test_vectors_validate_and_regenerate_byte_identically"],
+      "cleanup": "Close SQLite handles and remove synthetic attempt, queue and vector roots.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
       "id": "custody_disclosure_boundary",
       "owners": ["DM-021"],
       "specifications": ["specs/identity-root-v1.md"],

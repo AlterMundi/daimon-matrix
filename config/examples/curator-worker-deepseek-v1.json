@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "implementation": "deepseek-http-v1",
+  "profile_hash": "62be5f6c68ac93ef270c700c93fc69cbe17168811c07c67c4aa7bc28467258c6",
+  "profile_id": "dm:curator-profile:v1:irKot29WNlFQfAq5FI1PK_PY0Id3RMly5AREtka--Y0",
+  "schema": "dm.curator-worker.registration/v1",
+  "secret_handle": "secret:PLACEHOLDER_OWNER_ONLY_REFERENCE"
+}

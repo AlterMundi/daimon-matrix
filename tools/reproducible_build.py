@@ -38,6 +38,8 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/communication.py"),
     Path("src/daimon_matrix/conformance.py"),
     Path("src/daimon_matrix/curator.py"),
+    Path("src/daimon_matrix/curator_worker.py"),
+    Path("src/daimon_matrix/curator_worker_process.py"),
     Path("src/daimon_matrix/daemon.py"),
     Path("src/daimon_matrix/identity.py"),
     Path("src/daimon_matrix/keystore.py"),
