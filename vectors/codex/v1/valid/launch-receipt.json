@@ -20,17 +20,17 @@
   },
   "matrix_binding": {
     "being_ref": "dm:being:v1:RE9FEFXy5H40ETEySVDFu8OfYjIh4gjM3_B4xsBjvMU",
-    "body_ref": "dm:body:v1:21ATxrjMPGqJ8hQk3vOEsEhGjRb7TrcugWwDKUHx8Dw",
-    "embodiment_id": "dm:embodiment:v1:LDOwyXhpJmi6JGXp3S20CZp0az42ur5WGazI0-h-LQ8",
-    "incarnation_id": "dm:incarnation:v1:H8gz9RivyNrO7rd2cBK3feJvIR4I4RKikcp0SpZ092k",
+    "body_ref": "cluster:synthetic:dm040-vector-body",
+    "embodiment_id": "embodiment:synthetic:dm040-vector-embodiment",
+    "incarnation_id": "incarnation:synthetic:dm040-vector-incarnation:0",
     "matrix_high_water": "b91391a81ba8f5e964b8dc221d12039e7449d3a67f251da7071fb65dfec495c7",
     "matrix_session_id": "dm:session:v1:aq9lsQ5LKCZ_KU2Ey1rh7dLDzUhBiCFz5MTyjIJDtLI"
   },
   "observed_at_ms": 1800000001000,
   "outcome": "started",
-  "plan_hash": "7de4dcbb42ec976432d5e6bdbd1c80cebeb04de5c269ac328551646a2011d8b2",
+  "plan_hash": "3cf4e862d7d82b77a90fee5c47fbfe39ca8d31acf9daffbf3feecc2f7aa3212c",
   "profile_id": "dm:codex-profile:v1:BnSke1Dpe0Rf7iMGJKL_6YQriG2DG_YLePhBUpnbzSM",
-  "receipt_id": "dm:codex-launch-receipt:v1:yruoQAfCwFc5AbN4XagdSmH750bOmMfMLYA0H_IBMyc",
+  "receipt_id": "dm:codex-launch-receipt:v1:ebtk29Gh8sfUaFWlOHjZBqeXwcORm6wPjh2r5T_OJuI",
   "reviewed_files": {
     "agents_sha256": "98787423b018be91c418cb47d47fd241bb86d31c527c79f26d38007df25b43e0",
     "bootstrap_sha256": "b03181aaea9b57c6f3dee88f02116d407f0ad3b9c0784a01441b61f07d31c771",

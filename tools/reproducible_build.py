@@ -48,6 +48,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/keystore.py"),
     Path("src/daimon_matrix/ledger.py"),
     Path("src/daimon_matrix/local_api.py"),
+    Path("src/daimon_matrix/local_we.py"),
     Path("src/daimon_matrix/mcp_server.py"),
     Path("src/daimon_matrix/memory_policy.py"),
     Path("src/daimon_matrix/memory_projection.py"),

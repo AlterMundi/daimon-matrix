@@ -1,0 +1,25 @@
+{
+  "schema": "dm.local-we.vector-index/v1",
+  "files": [
+    {
+      "name": "negative/body-identity-aliased.json",
+      "sha256": "81be7a11372c29e000b9c7308f3b075a4ea133d0be98be3ba634b34f1e557f5a",
+      "valid": false
+    },
+    {
+      "name": "negative/report-id-tampered.json",
+      "sha256": "e8f495a59398fa7296cafe96dc2f513bcca04a0c711255d39c91fa50e1714f0d",
+      "valid": false
+    },
+    {
+      "name": "negative/storage-isolation-false.json",
+      "sha256": "73e25685d9b78ab24823085eff2f7bfd5a85a6db13c1ca3ab764d136892b765f",
+      "valid": false
+    },
+    {
+      "name": "valid/report.json",
+      "sha256": "b7814165a0a7f1ec2811bc2a62c293a15f97f0a459ab79702918e055a8fea94c",
+      "valid": true
+    }
+  ]
+}

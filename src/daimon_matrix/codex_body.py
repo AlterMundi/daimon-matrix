@@ -135,6 +135,8 @@ _HASH = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN = re.compile(r"^[A-Za-z0-9._:-]{1,192}$")
 _ME_ID = re.compile(r"^dm:being:v1:[A-Za-z0-9_-]{43}$")
 _DERIVED_ID = re.compile(r"^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$")
+_EMBODIMENT_ID = re.compile(r"^embodiment:[A-Za-z0-9._:-]{1,240}$")
+_INCARNATION_ID = re.compile(r"^incarnation:[A-Za-z0-9._:-]{1,240}$")
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
@@ -474,14 +476,22 @@ def validate_bootstrap(value: Any) -> dict[str, Any]:
         is None
     ):
         raise CodexBodyError("invalid_codex_bootstrap")
-    for field in ("body_ref", "embodiment_id", "incarnation_id", "matrix_session_id"):
-        if (
-            _DERIVED_ID.fullmatch(
-                _text(row[field], "invalid_codex_bootstrap", maximum=192)
-            )
-            is None
-        ):
-            raise CodexBodyError("invalid_codex_bootstrap")
+    _text(row["body_ref"], "invalid_codex_bootstrap", maximum=256)
+    if (
+        _EMBODIMENT_ID.fullmatch(
+            _text(row["embodiment_id"], "invalid_codex_bootstrap", maximum=256)
+        )
+        is None
+        or _INCARNATION_ID.fullmatch(
+            _text(row["incarnation_id"], "invalid_codex_bootstrap", maximum=256)
+        )
+        is None
+        or _DERIVED_ID.fullmatch(
+            _text(row["matrix_session_id"], "invalid_codex_bootstrap", maximum=192)
+        )
+        is None
+    ):
+        raise CodexBodyError("invalid_codex_bootstrap")
     for field in ("capability_set_hash", "certificate_hash", "matrix_high_water"):
         _hash(row[field], "invalid_codex_bootstrap")
     issued = _uint(row["issued_at_ms"], "invalid_codex_bootstrap")
@@ -1327,14 +1337,22 @@ def validate_runtime_handle(value: Any) -> dict[str, Any]:
         is None
     ):
         raise CodexBodyError("invalid_runtime_handle")
-    for field in ("body_ref", "embodiment_id", "incarnation_id", "matrix_session_id"):
-        if (
-            _DERIVED_ID.fullmatch(
-                _text(row[field], "invalid_runtime_handle", maximum=192)
-            )
-            is None
-        ):
-            raise CodexBodyError("invalid_runtime_handle")
+    _text(row["body_ref"], "invalid_runtime_handle", maximum=256)
+    if (
+        _EMBODIMENT_ID.fullmatch(
+            _text(row["embodiment_id"], "invalid_runtime_handle", maximum=256)
+        )
+        is None
+        or _INCARNATION_ID.fullmatch(
+            _text(row["incarnation_id"], "invalid_runtime_handle", maximum=256)
+        )
+        is None
+        or _DERIVED_ID.fullmatch(
+            _text(row["matrix_session_id"], "invalid_runtime_handle", maximum=192)
+        )
+        is None
+    ):
+        raise CodexBodyError("invalid_runtime_handle")
     _token(row["thread_id"], "invalid_runtime_handle")
     _token(row["session_tree_id"], "invalid_runtime_handle")
     if row["turn_id"] is not None:
@@ -1543,14 +1561,26 @@ def validate_launch_receipt(value: Any) -> dict[str, Any]:
         is None
     ):
         raise CodexBodyError("invalid_launch_receipt")
-    for field in ("body_ref", "embodiment_id", "incarnation_id", "matrix_session_id"):
-        if (
-            _DERIVED_ID.fullmatch(
-                _text(binding[field], "invalid_launch_receipt", maximum=192)
+    _text(binding["body_ref"], "invalid_launch_receipt", maximum=256)
+    if (
+        _EMBODIMENT_ID.fullmatch(
+            _text(binding["embodiment_id"], "invalid_launch_receipt", maximum=256)
+        )
+        is None
+        or _INCARNATION_ID.fullmatch(
+            _text(binding["incarnation_id"], "invalid_launch_receipt", maximum=256)
+        )
+        is None
+        or _DERIVED_ID.fullmatch(
+            _text(
+                binding["matrix_session_id"],
+                "invalid_launch_receipt",
+                maximum=192,
             )
-            is None
-        ):
-            raise CodexBodyError("invalid_launch_receipt")
+        )
+        is None
+    ):
+        raise CodexBodyError("invalid_launch_receipt")
     _hash(binding["matrix_high_water"], "invalid_launch_receipt")
     core = {
         key: copy.deepcopy(item) for key, item in row.items() if key != "receipt_id"

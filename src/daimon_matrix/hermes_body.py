@@ -2499,10 +2499,92 @@ def create_launch_receipt(
         "provider_ready_id": accepted_ready["ready_id"],
         "deployment": "synthetic-isolated",
     }
-    return {
-        **core,
-        "launch_receipt_id": _derived("dm:hermes-launch:v1:", LAUNCH_DOMAIN, core),
+    return validate_launch_receipt(
+        {
+            **core,
+            "launch_receipt_id": _derived("dm:hermes-launch:v1:", LAUNCH_DOMAIN, core),
+        },
+        plan,
+    )
+
+
+def validate_launch_receipt(
+    value: Any, plan: HermesBodyPlan | Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate path-free launch evidence against one exact public plan."""
+
+    row = _closed(
+        value,
+        {
+            "active_handle_id",
+            "deployment",
+            "hermes_commit",
+            "hermes_python",
+            "hermes_session_id",
+            "hermes_version",
+            "launch_receipt_id",
+            "matrix_high_water",
+            "matrix_package",
+            "plan_id",
+            "profile_id",
+            "provider_ready_id",
+            "schema",
+            "starting_handle_id",
+        },
+        "invalid_launch_receipt",
+    )
+    plan_value = plan.value if isinstance(plan, HermesBodyPlan) else plan
+    expected_plan_id = plan_id(validate_plan(plan_value))
+    if (
+        row["schema"] != LAUNCH_RECEIPT_SCHEMA
+        or row["plan_id"] != expected_plan_id
+        or row["hermes_version"] != HERMES_VERSION
+        or row["hermes_commit"] != HERMES_COMMIT
+        or row["deployment"] != "synthetic-isolated"
+        or row["matrix_package"] != matrix_package_evidence()
+    ):
+        raise HermesBodyError("launch_receipt_binding_mismatch")
+    _derived_id(row["profile_id"], "dm:hermes-profile:v1:", "invalid_launch_receipt")
+    _derived_id(
+        row["starting_handle_id"],
+        "dm:hermes-handle:v1:",
+        "invalid_launch_receipt",
+    )
+    _derived_id(
+        row["active_handle_id"],
+        "dm:hermes-handle:v1:",
+        "invalid_launch_receipt",
+    )
+    _derived_id(
+        row["provider_ready_id"],
+        "dm:hermes-ready:v1:",
+        "invalid_launch_receipt",
+    )
+    _text(row["hermes_session_id"], "invalid_launch_receipt", maximum=256)
+    _hash(row["matrix_high_water"], "invalid_launch_receipt")
+    python = _closed(
+        row["hermes_python"],
+        {"executable_sha256", "implementation", "supported_interval", "version"},
+        "invalid_launch_receipt",
+    )
+    if (
+        python["implementation"] != "cpython"
+        or python["supported_interval"] != ">=3.11,<3.14"
+        or not isinstance(python["version"], str)
+        or re.fullmatch(r"3\.(?:11|12|13)\.[0-9]+", python["version"]) is None
+    ):
+        raise HermesBodyError("invalid_launch_receipt")
+    _hash(python["executable_sha256"], "invalid_launch_receipt")
+    core = {
+        key: copy.deepcopy(item)
+        for key, item in row.items()
+        if key != "launch_receipt_id"
     }
+    if row["launch_receipt_id"] != _derived(
+        "dm:hermes-launch:v1:", LAUNCH_DOMAIN, core
+    ):
+        raise HermesBodyError("launch_receipt_id_mismatch")
+    return copy.deepcopy(dict(row))
 
 
 def create_park_request(

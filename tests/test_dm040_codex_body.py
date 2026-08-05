@@ -79,9 +79,9 @@ def bootstrap(label: str = "alpha") -> dict[str, Any]:
     return {
         "schema": BOOTSTRAP_SCHEMA,
         "being_ref": derived("being", f"being-{label}"),
-        "body_ref": derived("body", f"body-{label}"),
-        "embodiment_id": derived("embodiment", f"embodiment-{label}"),
-        "incarnation_id": derived("incarnation", f"incarnation-{label}"),
+        "body_ref": f"cluster:synthetic:body-{label}",
+        "embodiment_id": f"embodiment:synthetic:{label}",
+        "incarnation_id": f"incarnation:synthetic:{label}:0",
         "matrix_session_id": derived("session", f"matrix-session-{label}"),
         "matrix_high_water": hashlib.sha256(f"high-water-{label}".encode()).hexdigest(),
         "capability_set_hash": hashlib.sha256(

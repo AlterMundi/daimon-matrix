@@ -67,6 +67,7 @@ from daimon_matrix.hermes_body import (
     plan_id,
     render_config,
     validate_hermes_context,
+    validate_launch_receipt,
     validate_park_receipt,
     validate_plan,
     validate_provider_ready,
@@ -501,7 +502,7 @@ class ContractAndProfileTests(HermesBodyFixture):
     def test_profile_is_deterministic_exclusive_and_native_memory_free(self) -> None:
         manifest = self.create()
         self.assertEqual(manifest, verify_profile(self.plan))
-        self.assertEqual(len(manifest["matrix_package"]["modules"]), 33)
+        self.assertEqual(len(manifest["matrix_package"]["modules"]), 34)
         self.assertEqual(
             len(manifest["matrix_package"]["tree_sha256"]),
             64,
@@ -914,6 +915,15 @@ class JournalAndReadyTests(HermesBodyFixture):
             )
         self.assertEqual(body.handle["state"], "active")
         self.assertEqual(body.receipt["profile_id"], profile["profile_id"])
+        self.assertEqual(validate_launch_receipt(body.receipt, self.plan), body.receipt)
+        tampered_receipt = copy.deepcopy(dict(body.receipt))
+        tampered_receipt["matrix_high_water"] = hashlib.sha256(b"wrong").hexdigest()
+        with self.assertRaisesRegex(HermesBodyError, "launch_receipt_id_mismatch"):
+            validate_launch_receipt(tampered_receipt, self.plan)
+        wrong_plan = copy.deepcopy(dict(self.plan.value))
+        wrong_plan["workspace_ref"] = derived("workspace", "wrong-launch-plan")
+        with self.assertRaisesRegex(HermesBodyError, "launch_receipt_binding_mismatch"):
+            validate_launch_receipt(body.receipt, wrong_plan)
         kwargs = spawn.call_args.kwargs
         self.assertEqual(kwargs["umask"], 0o077)
         self.assertEqual(

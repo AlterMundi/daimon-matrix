@@ -77,6 +77,14 @@ The plan fixes:
 - the exact six Matrix MCP tools and one safe descriptor-name environment
   variable.
 
+The bootstrap uses the root identity vocabulary rather than inventing an
+adapter namespace: `body_ref` is bounded opaque text (normally `cluster:...`),
+`embodiment_id` matches `embodiment:...`, and `incarnation_id` matches
+`incarnation:...`. Matrix session, workspace and content-addressed artifact IDs
+remain derived `dm:...` values. The initial DM-040 synthetic vectors used
+derived IDs for all four fields; DM-042 corrected that overly narrow adapter
+assumption so an admitted Codex body can match `being-manifest/v2` exactly.
+
 Creation requires a fresh nonexistent `CODEX_HOME`, an owner-only parent and
 synthetic workspace, a current injected Matrix bootstrap verifier and trusted
 executables. It rejects symlinks, hard links, unsafe modes/owners, path swaps,
@@ -213,8 +221,8 @@ determinism, closed schemas, unsafe owner/mode/type/symlink/hard-link/path
 replacement, existing-state preservation, memory negatives, two isolated
 beings, hooks, journal corruption/crash windows, response loss, expired
 presence, high-water rollback, MCP timeout/version/tool drift, instruction
-sources, fragmented/coalesced JSONL, unknown notifications and secret/path-free
-receipts.
+sources, root-manifest identity formats, fragmented/coalesced JSONL, unknown
+notifications and secret/path-free receipts.
 
 The private real-Codex smoke is opt-in because it needs the 311 MB pinned
 native Codex payload. It does not need provider authentication or invoke a

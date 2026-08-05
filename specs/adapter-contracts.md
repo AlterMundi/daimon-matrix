@@ -77,6 +77,23 @@ serve a cached success. The contract and downstream hosting checklist are in
 Adapters negotiate exact protocol versions. Unknown or downgraded versions
 fail closed; this first release has no compatibility mode for prior ontology.
 
+## Local plural-body composition
+
+DM-042 composes the Codex and Hermes adapters without granting either adapter
+new authority. Both public state machines must be active under one exact
+root-bound `being-manifest/v2`, while their body/embodiment/incarnation,
+credential, signing/encryption/transport keys, principal, Matrix session,
+capability set, profile and writable SQLite remain distinct.
+
+The composition uses DM-023 requests, deltas and receipts directly. It does not
+invent adapter-to-adapter synchronization. Final signed event sets and heads
+must converge, but adoption remains local: Codex may adopt a target that Hermes
+rejects, and both projections retain the opposite decision as remote evidence.
+The path-free `dm.local-we.validation/v1` receipt proves those bounded facts;
+its producer additionally verifies filesystem isolation, current profiles,
+root membership and plan-bound launch receipts. The normative scenario and
+failure matrix are in `docs/dm042-local-we.md`.
+
 ## Hermes body adapter
 
 DM-041 adapts Hermes Agent 0.19.0 as a body runtime without moving identity,
