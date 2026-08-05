@@ -1,0 +1,52 @@
+{
+  "compatibility": {
+    "adapter_version": "1.0.0",
+    "app_server_schema_digest": "146a56d701ccd97a76ad1a461d51fc454f32df6c5b4d338ea65968331ccc8b7a",
+    "app_server_typescript_digest": "b60eaad826761bac1ebb33a933e0a0ad389a343f983b288107484e2e2b9c93e2",
+    "codex_binary_sha256": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04",
+    "codex_version": "0.146.0",
+    "hook_python_sha256": "9fdd4659ed3e6e05639bb099d9f195a5a16b55d1ca12a93fb94723df8bfac36e",
+    "matrix_mcp_binary_sha256": "43afa4fbc7b69d569d8b223e8472abae2631ba8125c2306edd0a5df992f6c467",
+    "matrix_mcp_name": "daimon-matrix",
+    "matrix_mcp_version": "0.0.0",
+    "matrix_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_observe",
+      "we_projection_get"
+    ]
+  },
+  "matrix_binding": {
+    "being_ref": "dm:being:v1:RE9FEFXy5H40ETEySVDFu8OfYjIh4gjM3_B4xsBjvMU",
+    "body_ref": "dm:body:v1:21ATxrjMPGqJ8hQk3vOEsEhGjRb7TrcugWwDKUHx8Dw",
+    "embodiment_id": "dm:embodiment:v1:LDOwyXhpJmi6JGXp3S20CZp0az42ur5WGazI0-h-LQ8",
+    "incarnation_id": "dm:incarnation:v1:H8gz9RivyNrO7rd2cBK3feJvIR4I4RKikcp0SpZ092k",
+    "matrix_high_water": "b91391a81ba8f5e964b8dc221d12039e7449d3a67f251da7071fb65dfec495c7",
+    "matrix_session_id": "dm:session:v1:aq9lsQ5LKCZ_KU2Ey1rh7dLDzUhBiCFz5MTyjIJDtLI"
+  },
+  "observed_at_ms": 1800000001000,
+  "outcome": "started",
+  "plan_hash": "7de4dcbb42ec976432d5e6bdbd1c80cebeb04de5c269ac328551646a2011d8b2",
+  "profile_id": "dm:codex-profile:v1:BnSke1Dpe0Rf7iMGJKL_6YQriG2DG_YLePhBUpnbzSM",
+  "receipt_id": "dm:codex-launch-receipt:v1:yruoQAfCwFc5AbN4XagdSmH750bOmMfMLYA0H_IBMyc",
+  "reviewed_files": {
+    "agents_sha256": "98787423b018be91c418cb47d47fd241bb86d31c527c79f26d38007df25b43e0",
+    "bootstrap_sha256": "b03181aaea9b57c6f3dee88f02116d407f0ad3b9c0784a01441b61f07d31c771",
+    "config_sha256": "c998482a7fbadd4fef1229d1e89728aba9793051748e583423ff61bb9c39e287",
+    "hook_sha256": "7e027474938adce33cc36d1b22228108868073c07dcd258b8fdb8fc007c43605"
+  },
+  "runtime": {
+    "approval_policy": "on-request",
+    "model": "gpt-5.6-terra",
+    "network": "disabled",
+    "provider": "openai",
+    "sandbox": "workspace-write",
+    "session_tree_id": "019abcde-0000-7000-8000-000000000002",
+    "thread_id": "019abcde-0000-7000-8000-000000000001",
+    "turn_id": null,
+    "workspace_ref": "dm:workspace:v1:7EVM2_0Xic4TrqvjX-iu3zRCd9VDXfxFSPdSjJ4iFIU"
+  },
+  "schema": "dm.codex-body.launch-receipt/v1"
+}

@@ -1,4 +1,4 @@
-"""Closed MCP 2026-07-28 stdio adapter for the authenticated local runtime."""
+"""Closed MCP stdio adapter for authenticated Matrix runtime access."""
 
 from __future__ import annotations
 
@@ -18,9 +18,15 @@ import anyio
 import mcp_types as types
 from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
-from mcp.server.runner import _serve_modern_stream
+from mcp.server.runner import (
+    _has_modern_envelope,
+    _replay_from_opening_request,
+    _serve_legacy_stream,
+    _serve_modern_stream,
+)
 from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import MCPError
+from mcp.shared.message import SessionMessage
 
 from .canonical import canonical_bytes
 from .client import (
@@ -34,6 +40,8 @@ from .client import (
 from .local_api import MAX_FRAME_BYTES
 
 MCP_PROTOCOL_VERSION: Final = "2026-07-28"
+CODEX_MCP_PROTOCOL_VERSION: Final = "2025-06-18"
+MCP_PROTOCOL_VERSIONS: Final = (CODEX_MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION)
 MCP_RESOURCE_MEDIA_TYPE: Final = "application/vnd.daimon-matrix+json"
 
 _UUID = {"type": "string", "format": "uuid", "maxLength": 36}
@@ -812,13 +820,57 @@ async def _run_stdio(server: Server[Any]) -> None:
         server.lifespan(server) as lifespan_context,
     ):
         try:
-            await _serve_modern_stream(
-                server,
-                read_stream,
-                write_stream,
-                lifespan_state=lifespan_context,
-                raise_exceptions=False,
-            )
+            async with _replay_from_opening_request(read_stream) as (
+                opening,
+                replayed,
+            ):
+                opens_modern = (
+                    opening is not None
+                    and opening.method != "initialize"
+                    and _has_modern_envelope(opening.params)
+                )
+                if opens_modern:
+                    await _serve_modern_stream(
+                        server,
+                        replayed,
+                        write_stream,
+                        lifespan_state=lifespan_context,
+                        raise_exceptions=False,
+                    )
+                elif opening is not None:
+                    params = opening.params
+                    requested = (
+                        params.get("protocolVersion")
+                        if isinstance(params, Mapping)
+                        else None
+                    )
+                    if (
+                        opening.method == "initialize"
+                        and requested != CODEX_MCP_PROTOCOL_VERSION
+                    ):
+                        await write_stream.send(
+                            SessionMessage(
+                                types.JSONRPCError(
+                                    jsonrpc="2.0",
+                                    id=opening.id,
+                                    error=types.ErrorData(
+                                        code=types.UNSUPPORTED_PROTOCOL_VERSION,
+                                        message="unsupported MCP handshake version",
+                                        data={"supported": list(MCP_PROTOCOL_VERSIONS)},
+                                    ),
+                                )
+                            )
+                        )
+                    else:
+                        await _serve_legacy_stream(
+                            server,
+                            replayed,
+                            write_stream,
+                            lifespan_state=lifespan_context,
+                            session_id=None,
+                            init_options=server.create_initialization_options(),
+                            raise_exceptions=False,
+                        )
         finally:
             await write_stream.aclose()
 
@@ -854,4 +906,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["MCP_PROTOCOL_VERSION", "TOOL_CONTRACTS", "DaimonMcp", "main", "parser"]
+__all__ = [
+    "CODEX_MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSION",
+    "MCP_PROTOCOL_VERSIONS",
+    "TOOL_CONTRACTS",
+    "DaimonMcp",
+    "main",
+    "parser",
+]

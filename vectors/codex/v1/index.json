@@ -1,0 +1,36 @@
+{
+  "codex_version": "0.146.0",
+  "files": [
+    {
+      "name": "negative/bootstrap-short-signature.json",
+      "sha256": "a3ebbe25583dfecff31ed87babd69ab044bbe825f1aaf96b04501c24277519d8",
+      "valid": false
+    },
+    {
+      "name": "negative/plan-unknown-field.json",
+      "sha256": "7603aed3c0eb4fae31d136787c627b7bf5d8f0cb4683dee8ca4dd551deb76359",
+      "valid": false
+    },
+    {
+      "name": "valid/bootstrap.json",
+      "sha256": "87f8f508c72ddcc1ddddb368fe86e65a70e1e596a6a03da6219bb841baecaf41",
+      "valid": true
+    },
+    {
+      "name": "valid/launch-receipt.json",
+      "sha256": "92ac8d2647a2e735f0acfffd75015a55217eea2ecce67b85c24969a31e62eca4",
+      "valid": true
+    },
+    {
+      "name": "valid/plan.json",
+      "sha256": "b4a5081adf81957bee89df0580e0e88fb0a34fa700c16d96083dfc652e9551eb",
+      "valid": true
+    },
+    {
+      "name": "valid/runtime-handle.json",
+      "sha256": "ead05a19afd652a0a9e6f27456ecde45c98e88eac77a6814b6e75516bb61c534",
+      "valid": true
+    }
+  ],
+  "schema": "dm.codex-body.vector-index/v1"
+}

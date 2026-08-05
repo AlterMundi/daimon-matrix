@@ -1,0 +1,840 @@
+{
+  "$defs": {
+    "bootstrap": {
+      "additionalProperties": false,
+      "properties": {
+        "being_ref": {
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "body_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "capability_set_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "certificate_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "embodiment_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "expires_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "incarnation_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "issued_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "matrix_high_water": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "matrix_session_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "schema": {
+          "const": "dm.codex-body.bootstrap/v1"
+        },
+        "signature": {
+          "additionalProperties": false,
+          "properties": {
+            "alg": {
+              "const": "Ed25519"
+            },
+            "kid": {
+              "maxLength": 192,
+              "minLength": 1,
+              "type": "string"
+            },
+            "value": {
+              "pattern": "^[A-Za-z0-9_-]{86}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "alg",
+            "kid",
+            "value"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema",
+        "being_ref",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "matrix_high_water",
+        "capability_set_hash",
+        "certificate_hash",
+        "issued_at_ms",
+        "expires_at_ms",
+        "signature"
+      ],
+      "type": "object"
+    },
+    "compatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "app_server_schema_digest": {
+          "const": "146a56d701ccd97a76ad1a461d51fc454f32df6c5b4d338ea65968331ccc8b7a"
+        },
+        "app_server_schema_files": {
+          "const": 275
+        },
+        "app_server_typescript_digest": {
+          "const": "b60eaad826761bac1ebb33a933e0a0ad389a343f983b288107484e2e2b9c93e2"
+        },
+        "app_server_typescript_files": {
+          "const": 622
+        },
+        "codex_binary_sha256": {
+          "const": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
+        },
+        "codex_version": {
+          "const": "0.146.0"
+        },
+        "schema": {
+          "const": "dm.codex-body.compatibility/v1"
+        },
+        "status": {
+          "const": "supported"
+        }
+      },
+      "required": [
+        "schema",
+        "codex_version",
+        "codex_binary_sha256",
+        "app_server_schema_files",
+        "app_server_schema_digest",
+        "app_server_typescript_files",
+        "app_server_typescript_digest",
+        "status"
+      ],
+      "type": "object"
+    },
+    "launch_receipt": {
+      "additionalProperties": false,
+      "properties": {
+        "compatibility": {
+          "additionalProperties": false,
+          "properties": {
+            "adapter_version": {
+              "const": "1.0.0"
+            },
+            "app_server_schema_digest": {
+              "const": "146a56d701ccd97a76ad1a461d51fc454f32df6c5b4d338ea65968331ccc8b7a"
+            },
+            "app_server_typescript_digest": {
+              "const": "b60eaad826761bac1ebb33a933e0a0ad389a343f983b288107484e2e2b9c93e2"
+            },
+            "codex_binary_sha256": {
+              "const": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
+            },
+            "codex_version": {
+              "const": "0.146.0"
+            },
+            "hook_python_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "matrix_mcp_binary_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "matrix_mcp_name": {
+              "const": "daimon-matrix"
+            },
+            "matrix_mcp_version": {
+              "const": "0.0.0"
+            },
+            "matrix_tools": {
+              "const": [
+                "daimon_status",
+                "scope_me",
+                "scope_we",
+                "we_heads",
+                "we_observe",
+                "we_projection_get"
+              ]
+            }
+          },
+          "required": [
+            "adapter_version",
+            "codex_version",
+            "codex_binary_sha256",
+            "app_server_schema_digest",
+            "app_server_typescript_digest",
+            "matrix_mcp_name",
+            "matrix_mcp_binary_sha256",
+            "matrix_mcp_version",
+            "hook_python_sha256",
+            "matrix_tools"
+          ],
+          "type": "object"
+        },
+        "matrix_binding": {
+          "additionalProperties": false,
+          "properties": {
+            "being_ref": {
+              "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "body_ref": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "embodiment_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "incarnation_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "matrix_high_water": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "matrix_session_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "being_ref",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "matrix_session_id",
+            "matrix_high_water"
+          ],
+          "type": "object"
+        },
+        "observed_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "enum": [
+            "started",
+            "resumed"
+          ]
+        },
+        "plan_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "profile_id": {
+          "pattern": "^dm:codex-profile:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "receipt_id": {
+          "pattern": "^dm:codex-launch-receipt:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "reviewed_files": {
+          "additionalProperties": false,
+          "properties": {
+            "agents_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "bootstrap_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "config_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "hook_sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "agents_sha256",
+            "bootstrap_sha256",
+            "config_sha256",
+            "hook_sha256"
+          ],
+          "type": "object"
+        },
+        "runtime": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_policy": {
+              "const": "on-request"
+            },
+            "model": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "network": {
+              "const": "disabled"
+            },
+            "provider": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "sandbox": {
+              "const": "workspace-write"
+            },
+            "session_tree_id": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "thread_id": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "turn_id": {
+              "oneOf": [
+                {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "workspace_ref": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "model",
+            "provider",
+            "workspace_ref",
+            "sandbox",
+            "approval_policy",
+            "network",
+            "thread_id",
+            "session_tree_id",
+            "turn_id"
+          ],
+          "type": "object"
+        },
+        "schema": {
+          "const": "dm.codex-body.launch-receipt/v1"
+        }
+      },
+      "required": [
+        "schema",
+        "receipt_id",
+        "outcome",
+        "observed_at_ms",
+        "profile_id",
+        "plan_hash",
+        "compatibility",
+        "reviewed_files",
+        "runtime",
+        "matrix_binding"
+      ],
+      "type": "object"
+    },
+    "observation": {
+      "additionalProperties": false,
+      "properties": {
+        "body_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "embodiment_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "event": {
+          "enum": [
+            "session-start",
+            "user-prompt-submit",
+            "stop",
+            "session-end"
+          ]
+        },
+        "incarnation_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "matrix_session_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "model": {
+          "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+          "type": "string"
+        },
+        "observation_id": {
+          "pattern": "^dm:codex-observation:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "observed_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "observed"
+        },
+        "schema": {
+          "const": "dm.codex-body.lifecycle-observation/v1"
+        },
+        "session_id": {
+          "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "observation_id",
+        "event",
+        "observed_at_ms",
+        "session_id",
+        "model",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "plan": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_version": {
+          "const": "1.0.0"
+        },
+        "bootstrap": {
+          "additionalProperties": false,
+          "properties": {
+            "being_ref": {
+              "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "body_ref": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "capability_set_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "certificate_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "embodiment_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "expires_at_ms": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "incarnation_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "issued_at_ms": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "matrix_high_water": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "matrix_session_id": {
+              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            "schema": {
+              "const": "dm.codex-body.bootstrap/v1"
+            },
+            "signature": {
+              "additionalProperties": false,
+              "properties": {
+                "alg": {
+                  "const": "Ed25519"
+                },
+                "kid": {
+                  "maxLength": 192,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "value": {
+                  "pattern": "^[A-Za-z0-9_-]{86}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "alg",
+                "kid",
+                "value"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "schema",
+            "being_ref",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "matrix_session_id",
+            "matrix_high_water",
+            "capability_set_hash",
+            "certificate_hash",
+            "issued_at_ms",
+            "expires_at_ms",
+            "signature"
+          ],
+          "type": "object"
+        },
+        "codex": {
+          "additionalProperties": false,
+          "properties": {
+            "app_server_schema_digest": {
+              "const": "146a56d701ccd97a76ad1a461d51fc454f32df6c5b4d338ea65968331ccc8b7a"
+            },
+            "app_server_typescript_digest": {
+              "const": "b60eaad826761bac1ebb33a933e0a0ad389a343f983b288107484e2e2b9c93e2"
+            },
+            "binary_sha256": {
+              "const": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
+            },
+            "model": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "provider": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "version": {
+              "const": "0.146.0"
+            }
+          },
+          "required": [
+            "version",
+            "binary_sha256",
+            "app_server_schema_digest",
+            "app_server_typescript_digest",
+            "model",
+            "provider"
+          ],
+          "type": "object"
+        },
+        "profile_policy": {
+          "additionalProperties": false,
+          "properties": {
+            "approval_policy": {
+              "const": "on-request"
+            },
+            "history_persistence": {
+              "const": "none"
+            },
+            "matrix_tools": {
+              "const": [
+                "daimon_status",
+                "scope_me",
+                "scope_we",
+                "we_heads",
+                "we_observe",
+                "we_projection_get"
+              ]
+            },
+            "mcp_env_names": {
+              "const": [
+                "DAIMON_CAPABILITY_KEY_FD"
+              ]
+            },
+            "network": {
+              "const": "disabled"
+            },
+            "sandbox": {
+              "const": "workspace-write"
+            }
+          },
+          "required": [
+            "sandbox",
+            "approval_policy",
+            "network",
+            "history_persistence",
+            "matrix_tools",
+            "mcp_env_names"
+          ],
+          "type": "object"
+        },
+        "schema": {
+          "const": "dm.codex-body.plan/v1"
+        },
+        "workspace_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "adapter_version",
+        "workspace_ref",
+        "bootstrap",
+        "codex",
+        "profile_policy"
+      ],
+      "type": "object"
+    },
+    "profile_manifest": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_version": {
+          "const": "1.0.0"
+        },
+        "being_ref": {
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "body_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "codex_binary_sha256": {
+          "const": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04"
+        },
+        "codex_version": {
+          "const": "0.146.0"
+        },
+        "embodiment_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "enum": [
+                  "AGENTS.md",
+                  "bootstrap.json",
+                  "config.toml",
+                  "hooks/lifecycle.py"
+                ]
+              },
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "hook_python_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "incarnation_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "matrix_mcp_binary_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "matrix_session_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "plan_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "profile_id": {
+          "pattern": "^dm:codex-profile:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "schema": {
+          "const": "dm.codex-body.profile-manifest/v1"
+        },
+        "workspace_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "profile_id",
+        "plan_hash",
+        "adapter_version",
+        "codex_version",
+        "codex_binary_sha256",
+        "matrix_mcp_binary_sha256",
+        "hook_python_sha256",
+        "being_ref",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "workspace_ref",
+        "files"
+      ],
+      "type": "object"
+    },
+    "runtime_handle": {
+      "additionalProperties": false,
+      "properties": {
+        "being_ref": {
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "body_ref": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "embodiment_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "generation": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "handle_id": {
+          "pattern": "^dm:codex-handle:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "incarnation_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "matrix_high_water": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "matrix_session_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "observed_at_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previous_handle_id": {
+          "oneOf": [
+            {
+              "pattern": "^dm:codex-handle:v1:[A-Za-z0-9_-]{43}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema": {
+          "const": "dm.codex-body.runtime-handle/v1"
+        },
+        "session_tree_id": {
+          "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "starting",
+            "resuming",
+            "active",
+            "parked"
+          ]
+        },
+        "thread_id": {
+          "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+          "type": "string"
+        },
+        "turn_id": {
+          "oneOf": [
+            {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "handle_id",
+        "generation",
+        "previous_handle_id",
+        "being_ref",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "matrix_high_water",
+        "thread_id",
+        "session_tree_id",
+        "turn_id",
+        "state",
+        "observed_at_ms"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.altermundi.net/daimon-matrix/codex/v1/contracts.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/bootstrap"
+    },
+    {
+      "$ref": "#/$defs/plan"
+    },
+    {
+      "$ref": "#/$defs/profile_manifest"
+    },
+    {
+      "$ref": "#/$defs/launch_receipt"
+    },
+    {
+      "$ref": "#/$defs/runtime_handle"
+    },
+    {
+      "$ref": "#/$defs/observation"
+    },
+    {
+      "$ref": "#/$defs/compatibility"
+    }
+  ],
+  "title": "Daimon Matrix Codex body V1 contracts"
+}

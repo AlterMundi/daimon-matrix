@@ -91,6 +91,13 @@ pins the external transaction and HMK commits, scans the final reviewed bytes,
 requires fresh effect truth, and recovers every provider/Matrix commit window
 without duplicate publication. No live Wiki or state deployment is performed
 by the card.
+DM-040 adds Codex as an isolated first-class body/incarnation surface. It pins
+the native Codex 0.146.0 executable and generated App Server contract, renders
+an owner-only no-memory profile with required least-privilege Matrix MCP,
+verifies instruction/hook/MCP drift, and journals start/resume/park handles
+before effects so response loss cannot create blind duplicate threads. Codex
+remains a body rather than `/me`; real CompAII credentials and deployment are
+not touched by this synthetic card.
 DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 
