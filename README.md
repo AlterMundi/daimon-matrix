@@ -58,13 +58,15 @@ is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
 `/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
 fan-out independent of any live carrier. DM-055 adds the optional bundle-V3
 root-bound HPKE/Ed25519 peer transport and direct scope/sync HTTP carrier with
-durable replay; its two-host cutover remains human-authorized. Cluster remains its
+durable replay. DM-070 proves deterministic convergence between two isolated
+installed processes through partition and restart; a fresh live two-host
+cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
 peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 83-scenario report; its
-route and birth evidence is synthetic loopback and does not yet certify a live
-remote delivery or rebirth. The merged Cluster adapter pins Matrix,
+implementation and reproducible artifacts to a closed 86-scenario report; its
+route, birth and multihost evidence is synthetic/isolated and does not yet
+certify a fresh live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
 provides exact body/effect evidence. DM-030 supplies the deterministic memory
 policy, auditable decisions, fork-safe lanes and transactional exactly-once

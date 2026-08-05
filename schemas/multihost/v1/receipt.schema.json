@@ -1,0 +1,721 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.local/schemas/multihost/v1/receipt.schema.json",
+  "title": "Daimon Matrix multihost convergence receipt v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "dm.multihost-convergence-receipt/v1"
+    },
+    "run_profile": {
+      "const": "installed-isolated-loopback/v1"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "package": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "const": "daimon-matrix"
+        },
+        "version": {
+          "const": "0.0.0"
+        },
+        "entrypoint": {
+          "const": "daimon-synthetic-multihost"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "entrypoint"
+      ],
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "properties": {
+        "being_ref": {
+          "type": "string",
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "control_head": {
+          "type": "string",
+          "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "initial_manifest_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "successor_manifest_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "embodiments": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "enum": [
+                  "legion",
+                  "daimonmatrix"
+                ]
+              },
+              "body_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "embodiment_id": {
+                "type": "string",
+                "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+              },
+              "initial_incarnation_id": {
+                "type": "string",
+                "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+              },
+              "current_incarnation_id": {
+                "type": "string",
+                "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+              },
+              "credential_id": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              },
+              "signing_key_id": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              },
+              "encryption_key_id": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              },
+              "transport_key_id": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              },
+              "capability_id": {
+                "type": "string",
+                "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$"
+              },
+              "state_fingerprint": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "label",
+              "body_ref",
+              "embodiment_id",
+              "initial_incarnation_id",
+              "current_incarnation_id",
+              "credential_id",
+              "signing_key_id",
+              "encryption_key_id",
+              "transport_key_id",
+              "capability_id",
+              "state_fingerprint"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "being_ref",
+        "control_head",
+        "initial_manifest_hash",
+        "successor_manifest_hash",
+        "embodiments"
+      ],
+      "additionalProperties": false
+    },
+    "processes": {
+      "type": "object",
+      "properties": {
+        "daemon_count": {
+          "const": 2
+        },
+        "simultaneously_awake": {
+          "const": true
+        },
+        "me_response_hashes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "we_response_hashes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "restart_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fixed_test_clock_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "daemon_count",
+        "simultaneously_awake",
+        "me_response_hashes",
+        "we_response_hashes",
+        "restart_count",
+        "fixed_test_clock_ms"
+      ],
+      "additionalProperties": false
+    },
+    "partition": {
+      "type": "object",
+      "properties": {
+        "failed_request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "failed_request_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "failure_code": {
+          "const": "peer_transport_ambiguous"
+        },
+        "ciphertext_replayed_exactly": {
+          "const": true
+        },
+        "origin_event_ids": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
+        "isolated_heads_hashes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "opposite_ledgers_unaware": {
+          "const": true
+        }
+      },
+      "required": [
+        "failed_request_id",
+        "failed_request_hash",
+        "failure_code",
+        "ciphertext_replayed_exactly",
+        "origin_event_ids",
+        "isolated_heads_hashes",
+        "opposite_ledgers_unaware"
+      ],
+      "additionalProperties": false
+    },
+    "sync": {
+      "type": "object",
+      "properties": {
+        "transport_schema": {
+          "const": "dm.peer-envelope/v1"
+        },
+        "transport_profile": {
+          "const": "HPKE-X25519-HKDF-SHA256-CHACHA20POLY1305+ED25519+JCS/v1"
+        },
+        "plaintext_absent": {
+          "const": true
+        },
+        "fallback_absent": {
+          "const": true
+        },
+        "directions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "properties": {
+              "receiver_embodiment_id": {
+                "type": "string",
+                "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+              },
+              "sender_embodiment_id": {
+                "type": "string",
+                "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"
+              },
+              "request_hashes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "page_hashes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "receipt_hashes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "receiver_embodiment_id",
+              "sender_embodiment_id",
+              "request_hashes",
+              "page_hashes",
+              "receipt_hashes",
+              "pages"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "interruptions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "properties": {
+              "boundary": {
+                "enum": [
+                  "after-receiver-commit",
+                  "before-receiver-commit"
+                ]
+              },
+              "request_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "page_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "receipt_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "process_restarted": {
+                "const": true
+              },
+              "exact_replay": {
+                "const": true
+              }
+            },
+            "required": [
+              "boundary",
+              "request_hash",
+              "page_hash",
+              "receipt_hash",
+              "process_restarted",
+              "exact_replay"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "final_heads_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_set_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "write_free_exact_replay": {
+          "const": true
+        },
+        "duplicate_count": {
+          "const": 0
+        }
+      },
+      "required": [
+        "transport_schema",
+        "transport_profile",
+        "plaintext_absent",
+        "fallback_absent",
+        "directions",
+        "interruptions",
+        "final_heads_hash",
+        "event_set_hash",
+        "event_count",
+        "write_free_exact_replay",
+        "duplicate_count"
+      ],
+      "additionalProperties": false
+    },
+    "adoption": {
+      "type": "object",
+      "properties": {
+        "target_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "legion_decision_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "daimonmatrix_decision_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "legion_reversal_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "legion_state": {
+          "const": "reverted"
+        },
+        "daimonmatrix_state": {
+          "const": "rejected"
+        },
+        "legion_remote_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "daimonmatrix_remote_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "immutable_decisions_preserved": {
+          "const": true
+        }
+      },
+      "required": [
+        "target_event_id",
+        "legion_decision_id",
+        "daimonmatrix_decision_id",
+        "legion_reversal_id",
+        "legion_state",
+        "daimonmatrix_state",
+        "legion_remote_evidence",
+        "daimonmatrix_remote_evidence",
+        "immutable_decisions_preserved"
+      ],
+      "additionalProperties": false
+    },
+    "succession": {
+      "type": "object",
+      "properties": {
+        "transition_id": {
+          "type": "string",
+          "pattern": "^dm:authority-epoch:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "previous_incarnation_id": {
+          "type": "string",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+        },
+        "successor_incarnation_id": {
+          "type": "string",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"
+        },
+        "old_write_error": {
+          "const": "origin_not_active"
+        },
+        "new_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "new_lane_sequence": {
+          "const": 1
+        },
+        "old_high_water_preserved": {
+          "const": true
+        },
+        "sync_resumed": {
+          "const": true
+        }
+      },
+      "required": [
+        "transition_id",
+        "previous_incarnation_id",
+        "successor_incarnation_id",
+        "old_write_error",
+        "new_event_id",
+        "new_lane_sequence",
+        "old_high_water_preserved",
+        "sync_resumed"
+      ],
+      "additionalProperties": false
+    },
+    "cluster": {
+      "type": "object",
+      "properties": {
+        "body_snapshot_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accepted_fence_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "same_resource_second_holder": {
+          "const": "fence_not_current"
+        },
+        "stale_replay": {
+          "const": "effect-truth-discrepancy"
+        },
+        "different_resource": {
+          "const": "verified"
+        },
+        "ordinary_events_unaffected": {
+          "const": true
+        }
+      },
+      "required": [
+        "body_snapshot_hash",
+        "accepted_fence_hash",
+        "same_resource_second_holder",
+        "stale_replay",
+        "different_resource",
+        "ordinary_events_unaffected"
+      ],
+      "additionalProperties": false
+    },
+    "historical": {
+      "type": "object",
+      "properties": {
+        "provenance_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "validation": {
+          "const": "verified"
+        },
+        "identity_authority": {
+          "const": false
+        },
+        "event_authority": {
+          "const": false
+        },
+        "adoption_authority": {
+          "const": false
+        },
+        "fence_authority": {
+          "const": false
+        }
+      },
+      "required": [
+        "provenance_hash",
+        "validation",
+        "identity_authority",
+        "event_authority",
+        "adoption_authority",
+        "fence_authority"
+      ],
+      "additionalProperties": false
+    },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "state_roots_distinct": {
+          "const": true
+        },
+        "ledger_inodes_distinct": {
+          "const": true
+        },
+        "keystore_inodes_distinct": {
+          "const": true
+        },
+        "capabilities_distinct": {
+          "const": true
+        },
+        "signing_keys_distinct": {
+          "const": true
+        },
+        "encryption_keys_distinct": {
+          "const": true
+        },
+        "transport_principals_distinct": {
+          "const": true
+        },
+        "request_journals_distinct": {
+          "const": true
+        },
+        "no_shared_writable_state": {
+          "const": true
+        },
+        "public_receipt_path_free": {
+          "const": true
+        },
+        "public_receipt_secret_free": {
+          "const": true
+        },
+        "no_live_host_mutation": {
+          "const": true
+        },
+        "no_winner_election": {
+          "const": true
+        }
+      },
+      "required": [
+        "state_roots_distinct",
+        "ledger_inodes_distinct",
+        "keystore_inodes_distinct",
+        "capabilities_distinct",
+        "signing_keys_distinct",
+        "encryption_keys_distinct",
+        "transport_principals_distinct",
+        "request_journals_distinct",
+        "no_shared_writable_state",
+        "public_receipt_path_free",
+        "public_receipt_secret_free",
+        "no_live_host_mutation",
+        "no_winner_election"
+      ],
+      "additionalProperties": false
+    },
+    "schedule": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "const": "awake"
+        },
+        {
+          "const": "partition"
+        },
+        {
+          "const": "independent-append"
+        },
+        {
+          "const": "heal-forward-page-1"
+        },
+        {
+          "const": "restart-after-receiver-commit"
+        },
+        {
+          "const": "replay-forward-page-1"
+        },
+        {
+          "const": "restart-before-receiver-commit"
+        },
+        {
+          "const": "resume-forward"
+        },
+        {
+          "const": "heal-reverse"
+        },
+        {
+          "const": "write-free-replay"
+        },
+        {
+          "const": "independent-decisions"
+        },
+        {
+          "const": "decision-convergence"
+        },
+        {
+          "const": "local-reversal"
+        },
+        {
+          "const": "reversal-convergence"
+        },
+        {
+          "const": "authority-epoch-advance"
+        },
+        {
+          "const": "successor-sync"
+        },
+        {
+          "const": "cluster-fence-check"
+        },
+        {
+          "const": "historical-receipt-check"
+        }
+      ],
+      "minItems": 18,
+      "maxItems": 18
+    },
+    "receipt_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "receipt_id": {
+      "type": "string",
+      "pattern": "^dm:multihost-receipt:v1:[A-Za-z0-9_-]{43}$"
+    }
+  },
+  "required": [
+    "schema",
+    "run_profile",
+    "source_commit",
+    "package",
+    "authority",
+    "processes",
+    "partition",
+    "sync",
+    "adoption",
+    "succession",
+    "cluster",
+    "historical",
+    "isolation",
+    "schedule",
+    "receipt_hash",
+    "receipt_id"
+  ],
+  "additionalProperties": false
+}

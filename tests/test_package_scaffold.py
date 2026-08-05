@@ -54,6 +54,9 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
                 "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
+                "daimon-synthetic-multihost": (
+                    "daimon_matrix.synthetic_multihost:main"
+                ),
                 "daimon-synthetic-species": "daimon_matrix.synthetic_species:main",
             },
         )
@@ -170,6 +173,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/mcp_server.py",
                 "src/daimon_matrix/memory_policy.py",
                 "src/daimon_matrix/memory_projection.py",
+                "src/daimon_matrix/multihost.py",
                 "src/daimon_matrix/peer_transport.py",
                 "src/daimon_matrix/publication.py",
                 "src/daimon_matrix/projections.py",
@@ -185,6 +189,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/species_runner.py",
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/synthetic_birth.py",
+                "src/daimon_matrix/synthetic_multihost.py",
                 "src/daimon_matrix/synthetic_species.py",
                 "src/daimon_matrix/weave.py",
             },
@@ -216,6 +221,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/mcp_server.py",
                 "daimon_matrix/memory_policy.py",
                 "daimon_matrix/memory_projection.py",
+                "daimon_matrix/multihost.py",
                 "daimon_matrix/peer_transport.py",
                 "daimon_matrix/publication.py",
                 "daimon_matrix/projections.py",
@@ -231,6 +237,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/species_runner.py",
                 "daimon_matrix/sync.py",
                 "daimon_matrix/synthetic_birth.py",
+                "daimon_matrix/synthetic_multihost.py",
                 "daimon_matrix/synthetic_species.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",

@@ -1,0 +1,40 @@
+{
+  "schema": "dm.multihost.vector-index/v1",
+  "files": [
+    {
+      "name": "negative/adoption-collapsed.json",
+      "sha256": "8b31dc8de2f36af98a90ea591e92bea311645ba9b3b67beb5dfb2ffc6ff7cbd5",
+      "valid": false
+    },
+    {
+      "name": "negative/fence-authority-fabricated.json",
+      "sha256": "9186972043d7c47a49582e67a508ea9909a6d029ccc30f4acd82cb25d7d1dc06",
+      "valid": false
+    },
+    {
+      "name": "negative/private-path-leaked.json",
+      "sha256": "99f2b11ef8d92f2d5f69779dec1f8790c2f96df8303a57536df1a0b0869b7b44",
+      "valid": false
+    },
+    {
+      "name": "negative/receipt-hash-tampered.json",
+      "sha256": "6b85459c5f3908b101e7c1d0037d43310d556b5d5356b307280251ef9d40e0ab",
+      "valid": false
+    },
+    {
+      "name": "negative/schedule-reordered.json",
+      "sha256": "8b64feee4b04d0dfeacecac1a00d1325660341c1202602a374f02ca593e08538",
+      "valid": false
+    },
+    {
+      "name": "negative/signing-key-aliased.json",
+      "sha256": "6fd4ed5f273a46da19d84a36640f86b51d68adbbdc9e422cbf685479733e2ac1",
+      "valid": false
+    },
+    {
+      "name": "valid/receipt.json",
+      "sha256": "d4050223fc2f76bc4c9b3541b82f479156127f20c78031335ebb8b3500c2ea95",
+      "valid": true
+    }
+  ]
+}

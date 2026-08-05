@@ -1,0 +1,242 @@
+{
+  "schema": "dm.multihost-convergence-receipt/v1",
+  "run_profile": "installed-isolated-loopback/v1",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "package": {
+    "name": "daimon-matrix",
+    "version": "0.0.0",
+    "entrypoint": "daimon-synthetic-multihost"
+  },
+  "authority": {
+    "being_ref": "dm:being:v1:t9cYcpJCgVM_FiMVBjuURZnNLbYM2Fi95hQnANLTsSY",
+    "control_head": "dm:identity:v1:gOuUa6okM9uvjvZXYG2iizPvOuwPjNIAN49q1fDcNHw",
+    "initial_manifest_hash": "b87b5fc8fa946ba5ce631a6b4e1802224b25846e439d88e7d4f2779e81019520",
+    "successor_manifest_hash": "811a2bbc4ef76c529aac2c04d4b296c45e9055345bf05e4136902300e512e0cc",
+    "embodiments": [
+      {
+        "label": "legion",
+        "body_ref": "cluster:legion:synthetic-compaii",
+        "embodiment_id": "embodiment:07000000-0000-4000-8000-000000000001",
+        "initial_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000001",
+        "current_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000101",
+        "credential_id": "dm:identity:v1:hRYKWtetNg1bcm5CbBawTwbGuT8OHajvMOG9DF_1QS8",
+        "signing_key_id": "dm:key:v1:voV7Yc_Z6VhgmtEGoaQI0bhzKSe3l8Y_InGnthxUM0A",
+        "encryption_key_id": "dm:key:v1:Dgg8JpSwfayN2IFdTiqhJxAeZ9wc2fOvJlIFJuBFoKY",
+        "transport_key_id": "dm:key:v1:EA1Kl4iCoVexm0WTZWfiGn_GBvvC2DEBUDu-N084oZg",
+        "capability_id": "dm:local-capability:v1:h786DuNnEOkh_82PO7c1UaESu54ID6V8U5o_e-XaqcU",
+        "state_fingerprint": "410d583222c26cf2ae503dde008555e61fefbd93cc7ead7d70d527fc75727fbe"
+      },
+      {
+        "label": "daimonmatrix",
+        "body_ref": "cluster:daimonmatrix:synthetic-compaii",
+        "embodiment_id": "embodiment:07000000-0000-4000-8000-000000000002",
+        "initial_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000002",
+        "current_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000002",
+        "credential_id": "dm:identity:v1:AEmieAmBGqqwBQ2VWXfuoB1P822W-4HQWo_ZgQbOW3k",
+        "signing_key_id": "dm:key:v1:lPXjVm16YP02kxKMpxRPfJednTeoSb2obimXMzLUf84",
+        "encryption_key_id": "dm:key:v1:nYwNWUcAY1KMdB4pLuBy7R_4teJdJTHn_ADFWzX0ttA",
+        "transport_key_id": "dm:key:v1:KcqzV8H45n4B31ZkHRCfQcBuVKMAqWJDbxGhjtgvFXk",
+        "capability_id": "dm:local-capability:v1:gsAr4aaPt6W5f7_AlRM2sOkcMYD6vO3Y4emYI9A0MYw",
+        "state_fingerprint": "7ab8cfe766794d54d909f4078ce1a0f9ec7d370dbd5d842db180e59207939197"
+      }
+    ]
+  },
+  "processes": {
+    "daemon_count": 2,
+    "simultaneously_awake": true,
+    "me_response_hashes": [
+      "4f627d97c71c204bda876dae5739e2138a2b385ab42c64e9ccf1e6095110af89",
+      "17f9ea1f06e7bbbb9114f52099d6ec2a689bf6e86a712f58aa1890a2a6718a92"
+    ],
+    "we_response_hashes": [
+      "1d0671e851c3b57576a3f770da921541ea6eeeb4d700b93d65b9896673d11745",
+      "252251d7415d8673f0ed4e404d858fd8304b6a85c6b29f4c114d83c961bd0d80"
+    ],
+    "restart_count": 4,
+    "fixed_test_clock_ms": 1800000000000
+  },
+  "partition": {
+    "failed_request_id": "07000000-0000-4000-8000-000000000101",
+    "failed_request_hash": "083f1da5185296eb2e0a563d4ee2daa52c950f0612e2bce957ab15863ef1d212",
+    "failure_code": "peer_transport_ambiguous",
+    "ciphertext_replayed_exactly": true,
+    "origin_event_ids": [
+      [
+        "07000000-0000-4000-8000-000000000001",
+        "07000000-0000-4000-8000-000000000002"
+      ],
+      [
+        "07000000-0000-4000-8001-000000000001",
+        "07000000-0000-4000-8001-000000000002",
+        "07000000-0000-4000-8001-000000000003"
+      ]
+    ],
+    "isolated_heads_hashes": [
+      "6ca7941bd90b01c85d49b479041c9fe3fb002fc4cee4909a14f4c1741163616d",
+      "4f740070018af2b9b4e504f5de73d9ebffac0bccec01732b568b8893351877ed"
+    ],
+    "opposite_ledgers_unaware": true
+  },
+  "sync": {
+    "transport_schema": "dm.peer-envelope/v1",
+    "transport_profile": "HPKE-X25519-HKDF-SHA256-CHACHA20POLY1305+ED25519+JCS/v1",
+    "plaintext_absent": true,
+    "fallback_absent": true,
+    "directions": [
+      {
+        "receiver_embodiment_id": "embodiment:07000000-0000-4000-8000-000000000001",
+        "sender_embodiment_id": "embodiment:07000000-0000-4000-8000-000000000002",
+        "request_hashes": [
+          "083f1da5185296eb2e0a563d4ee2daa52c950f0612e2bce957ab15863ef1d212",
+          "ee87502b58e8da900d7ae9602483066a5a41608ffc6dacbaae3fc21809932f13",
+          "31805b2add3e8997741bc9ddc1a26e402089a5325f04141e1727fb8ac67250e7",
+          "ab6f4725ba9c3e5d6c604c87863817127901e711cf4eeb72dc35d2f34b024763",
+          "d4aa7b025fb1ebb13264c22437f647bbaf4ee6a023db23f779f7d44fd9fa008e"
+        ],
+        "page_hashes": [
+          "819947587b0a0ce96d12d944a549cfd88872dc6e4da66fe3d8b067a834350452",
+          "49642fad2ea83590e42bf3e5eab36e6a611e32c023379b5a9d422bb7b384d0c9",
+          "df65a81c741aa07dc3da7d8271979ba1dcb6bcba4b7233ef91953880ac150cd1",
+          "3d07e99e1c62f86580c06736895c57eba4b4824f484525d612855455873585a4",
+          "e56ed79156cccd24638ccfc933f19ab594e44667edc748ecafe4998c0b799c5a"
+        ],
+        "receipt_hashes": [
+          "6abacf1fb6d3615f0da523fee0eab06bb565e8fa75763f1fd9394c715ab77b53",
+          "de6e65982da9399aec39f886f4a6cff04f44f6f5db8cf08a8c9eeeddf6d9952a",
+          "50a815b08dafd9539664a519c921c9fe5a9d7be2e4210551affd68e2f45dc78a",
+          "2675e51a91905c6c0d9738de63c21921a8d5eace242caf03209b2743b347ef45",
+          "5084f868760164df13eb599608c1b037e150d60a236b41df848e3bb22a01c391"
+        ],
+        "pages": 5
+      },
+      {
+        "receiver_embodiment_id": "embodiment:07000000-0000-4000-8000-000000000002",
+        "sender_embodiment_id": "embodiment:07000000-0000-4000-8000-000000000001",
+        "request_hashes": [
+          "5efea62e30c1e990f8d971757e8baceed43cad2b4a14e15d2258e26eee9b4dd5",
+          "a2b2dc21cc52e1fae7e0eef7a3cbe7aab41f2cf44509fd45191e641329db4769",
+          "11d43e8a37fcfe07d1fad34638c31d6ac099d8dacede325f253c75744f007b02",
+          "315f16265847162be9619a571a68e01cdba204a947c3a4b29a983107f54dff25",
+          "2a08201738b79b51f69ef3a322dbe3b55a4d2b23d0aa42ccd4e7e419caeae62a"
+        ],
+        "page_hashes": [
+          "65130b62875118b3848ea6021a1a32de97acfae05c89d530c95894017fc822d7",
+          "bffc0b9facee32dc73ece5c970c4aaaef69468d7edb2fbb99874978084f39cfa",
+          "72c8c3cee77c72c78534dd79c0c9915d1485903218f8b4793f384abe762bf1df",
+          "abf3bf058b543eab48c2c1c89757b8c5120f12a2bae7e219ae35b3a23f8db4e7",
+          "fc5ddd5e9267f46d2a0bc87b6a42ec13a272bfe1527fb42d413bf7aeaf4ef199"
+        ],
+        "receipt_hashes": [
+          "d54c2c2ceb7612ba1ff73cfb21ac36493f8c5d7ed96a1ebd153cc9b21dd2bc59",
+          "33f027c70c6768939c664151950d1a798ee741cb688f369f5aa0b59be3088b7b",
+          "58b5282cd375497af5198d59e4d3a36656c1166215a519943bce461f9cb99d9d",
+          "ae649f16867b9545bbb9382ce32e40c1b7b60f108728f63ab18b8c700bad0472",
+          "9342f79a4bb383984e19bd6da8f6c9fa9d69bac1f49c15dd2723868070dd98e0"
+        ],
+        "pages": 5
+      }
+    ],
+    "interruptions": [
+      {
+        "boundary": "after-receiver-commit",
+        "request_hash": "083f1da5185296eb2e0a563d4ee2daa52c950f0612e2bce957ab15863ef1d212",
+        "page_hash": "819947587b0a0ce96d12d944a549cfd88872dc6e4da66fe3d8b067a834350452",
+        "receipt_hash": "6abacf1fb6d3615f0da523fee0eab06bb565e8fa75763f1fd9394c715ab77b53",
+        "process_restarted": true,
+        "exact_replay": true
+      },
+      {
+        "boundary": "before-receiver-commit",
+        "request_hash": "ee87502b58e8da900d7ae9602483066a5a41608ffc6dacbaae3fc21809932f13",
+        "page_hash": "49642fad2ea83590e42bf3e5eab36e6a611e32c023379b5a9d422bb7b384d0c9",
+        "receipt_hash": "de6e65982da9399aec39f886f4a6cff04f44f6f5db8cf08a8c9eeeddf6d9952a",
+        "process_restarted": true,
+        "exact_replay": true
+      }
+    ],
+    "final_heads_hash": "668e0d8623ae97097853d2cfd10765532719025a073e6333e67e5ecbcf8cdd4b",
+    "event_set_hash": "a6ed3fe36ee963921c8291f8f9726845c513f88c3ac01c19274109f33246b8b7",
+    "event_count": 9,
+    "write_free_exact_replay": true,
+    "duplicate_count": 0
+  },
+  "adoption": {
+    "target_event_id": "07000000-0000-4000-8000-000000000001",
+    "legion_decision_id": "07000000-0000-4000-8000-000000000301",
+    "daimonmatrix_decision_id": "07000000-0000-4000-8000-000000000302",
+    "legion_reversal_id": "07000000-0000-4000-8000-000000000303",
+    "legion_state": "reverted",
+    "daimonmatrix_state": "rejected",
+    "legion_remote_evidence": [
+      "07000000-0000-4000-8000-000000000302"
+    ],
+    "daimonmatrix_remote_evidence": [
+      "07000000-0000-4000-8000-000000000301",
+      "07000000-0000-4000-8000-000000000303"
+    ],
+    "immutable_decisions_preserved": true
+  },
+  "succession": {
+    "transition_id": "dm:authority-epoch:v1:pmulrsTnIuBsIixaAZxXW6pv2Jds0fIlpEmFS9ThgRE",
+    "previous_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000001",
+    "successor_incarnation_id": "incarnation:07000000-0000-4000-8000-000000000101",
+    "old_write_error": "origin_not_active",
+    "new_event_id": "07000000-0000-4000-8000-000000000401",
+    "new_lane_sequence": 1,
+    "old_high_water_preserved": true,
+    "sync_resumed": true
+  },
+  "cluster": {
+    "body_snapshot_hash": "017f70db56dc4f162776c27f02367250d44245df92174b7f9e6998d6ce56a368",
+    "accepted_fence_hash": "85cbc55f547d106891cbc42040b5eb819b735d8f637f2679ebc90836ed7aac19",
+    "same_resource_second_holder": "fence_not_current",
+    "stale_replay": "effect-truth-discrepancy",
+    "different_resource": "verified",
+    "ordinary_events_unaffected": true
+  },
+  "historical": {
+    "provenance_hash": "8f756fb40edf047ff393155cd91c8de842785536eda16169d93a460062e19fba",
+    "validation": "verified",
+    "identity_authority": false,
+    "event_authority": false,
+    "adoption_authority": false,
+    "fence_authority": false
+  },
+  "isolation": {
+    "state_roots_distinct": true,
+    "ledger_inodes_distinct": true,
+    "keystore_inodes_distinct": true,
+    "capabilities_distinct": true,
+    "signing_keys_distinct": true,
+    "encryption_keys_distinct": true,
+    "transport_principals_distinct": true,
+    "request_journals_distinct": true,
+    "no_shared_writable_state": true,
+    "public_receipt_path_free": true,
+    "public_receipt_secret_free": true,
+    "no_live_host_mutation": true,
+    "no_winner_election": true
+  },
+  "schedule": [
+    "awake",
+    "partition",
+    "independent-append",
+    "heal-forward-page-1",
+    "restart-after-receiver-commit",
+    "replay-forward-page-1",
+    "restart-before-receiver-commit",
+    "resume-forward",
+    "heal-reverse",
+    "write-free-replay",
+    "independent-decisions",
+    "decision-convergence",
+    "local-reversal",
+    "reversal-convergence",
+    "authority-epoch-advance",
+    "successor-sync",
+    "cluster-fence-check",
+    "historical-receipt-check"
+  ],
+  "receipt_hash": "b5959fc072263f99811d7f1a1a40c3d95cecba9ff172da542c6bcac7ce5374f2",
+  "receipt_id": "dm:multihost-receipt:v1:tZWfwHImP5mBHX8aGkDD2Vzsup_xctpULGvKx85TdPI"
+}

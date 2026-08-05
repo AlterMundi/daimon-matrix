@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "3705cb9ca5487935b2a1082162b720f8d0d7e239706362b166b09b4269cd5370"
+    "f9ebedc99ef4d3a1bd3d80862600b8bffb19c695e85b0eae5766cefc258e7773"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -78,6 +78,9 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "memory_projection_rebuild",
         "memory_review_precedence",
         "memory_stale_exact_once",
+        "multihost_cluster_boundary",
+        "multihost_process_convergence",
+        "multihost_receipt_fail_closed",
         "peer_encrypted_protocol",
         "peer_response_loss",
         "peer_runtime_http",

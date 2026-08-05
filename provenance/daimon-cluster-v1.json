@@ -1,0 +1,32 @@
+{
+  "schema": "dm.cluster-provenance/v1",
+  "repository": "https://github.com/nicoechaniz/daimon-cluster",
+  "commit": "676495e852e6772a60de8221271ee9fc976f77ce",
+  "hosting_contract": {
+    "issue": 48,
+    "issue_state": "closed",
+    "contract_path": "clusterctl/matrix_host.py",
+    "contract_sha256": "b539a366ca19bc30fdfbcb4a3704bbea5e2bea59a2c2e9d17a10d76e5115df01",
+    "process_test_path": "tests/test_matrix_host_process.py",
+    "process_test_sha256": "d337a7dbb6cffb52c36a41d8a344b8dc5322e6b4f6470a0c4e7f2367cfa2fe6e"
+  },
+  "historical_canary": {
+    "issue": 43,
+    "issue_state": "closed",
+    "receipt_path": "docs/verification/weave-r6-legion-daimonmatrix.md",
+    "receipt_sha256": "3978740db2c67020f7797c85ce074829bf4edb1c2ec27633ea7a263221d270d0",
+    "result": "PASS",
+    "matrix_commit": "5074a4fd4e8719d30449b368fd644c6580c1f2f7",
+    "cluster_commit": "9e656f3f9df2d1d7812e0e37d46c0ec5e272ffaa",
+    "tribe_bridge_commit": "d2f3c9e64b8a5ef4ca5f3e75798e4b028f5e8b7a"
+  },
+  "authority_limits": {
+    "redacted": true,
+    "read_only": true,
+    "identity_authority": false,
+    "event_authority": false,
+    "adoption_authority": false,
+    "fence_authority": false
+  },
+  "provenance_hash": "8f756fb40edf047ff393155cd91c8de842785536eda16169d93a460062e19fba"
+}

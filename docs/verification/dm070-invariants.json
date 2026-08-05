@@ -1,0 +1,37 @@
+{
+  "schema": "dm.verification.invariants/v1",
+  "card": "DM-070",
+  "status": "implemented-synthetic-installed",
+  "invariants": {
+    "matrix_means_daimon_matrix_not_matrix_org": true,
+    "one_root_authorizes_two_simultaneously_active_embodiments": true,
+    "credentials_keys_capabilities_state_roots_ledgers_and_journals_are_disjoint": true,
+    "partitioned_origin_chains_remain_independently_valid": true,
+    "native_peer_payload_is_recipient_encrypted_and_has_no_tribe_fallback": true,
+    "request_page_and_receipt_replay_survive_restart_before_and_after_commit": true,
+    "bidirectional_event_sets_and_per_origin_heads_converge": true,
+    "exact_converged_replay_is_write_free_and_duplicate_free": true,
+    "import_is_not_adoption": true,
+    "local_decision_and_reversal_remain_observer_relative": true,
+    "authority_epoch_rejects_old_origin_and_preserves_high_waters": true,
+    "cluster_fence_truth_is_injected_current_and_resource_scoped": true,
+    "ordinary_matrix_history_is_not_suppressed_by_fences": true,
+    "historical_canary_and_host_contract_are_redacted_read_only_non_authority": true,
+    "receipt_is_closed_deterministic_content_addressed_path_free_and_secret_free": true,
+    "arrival_time_label_hash_and_path_rules_never_choose_a_winner": true,
+    "no_live_host_service_identity_provider_or_resource_mutation": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm070-multihost.json",
+    "conformance/registry-v1.json",
+    "docs/dm070-multihost-convergence.md",
+    "provenance/daimon-cluster-v1.json",
+    "schemas/multihost/v1/receipt.schema.json",
+    "src/daimon_matrix/multihost.py",
+    "src/daimon_matrix/synthetic_multihost.py",
+    "tests/test_dm070_multihost.py",
+    "tools/generate_dm070_vectors.py",
+    "vectors/multihost/v1/index.json"
+  ],
+  "deployment": "N/A: two isolated installed loopback processes only; live cutover and rebirth require separate explicit authorization"
+}
