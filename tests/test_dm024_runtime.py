@@ -50,6 +50,7 @@ from daimon_matrix.service import (
     METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SOURCE_METHODS,
     SPECIES_METHODS,
 )
 from daimon_matrix.weave import BeingManifest
@@ -79,6 +80,7 @@ class RuntimeFixture(RootLedgerFixture):
                 | METHODS
                 | REVIEW_METHODS
                 | SCOPE_METHODS
+                | SOURCE_METHODS
                 | SPECIES_METHODS
             ),
             not_before_ms=now_ms - 60_000,

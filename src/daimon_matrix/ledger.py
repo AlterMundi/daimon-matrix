@@ -499,6 +499,26 @@ class Ledger:
             predecessor = event["payload"]["previous_application"]
             if predecessor is not None:
                 dependencies.add(predecessor["event_id"])
+        if event["kind"] == "matrix/source-claim":
+            predecessor = event["payload"]["previous_claim_event_id"]
+            if predecessor is not None:
+                dependencies.add(predecessor)
+        if event["kind"] == "matrix/source-assessment":
+            payload = event["payload"]
+            predecessor = payload["previous_assessment_event_id"]
+            if predecessor is not None:
+                dependencies.add(predecessor)
+        if event["kind"] == "matrix/source-publication":
+            payload = event["payload"]
+            dependencies.add(payload["publisher_claim_event_id"])
+            predecessor = payload["previous_publication_event_id"]
+            if predecessor is not None:
+                dependencies.add(predecessor)
+        if event["kind"] == "matrix/source-import-decision":
+            payload = event["payload"]
+            predecessor = payload["previous_decision_event_id"]
+            if predecessor is not None:
+                dependencies.add(predecessor)
         if event["supersedes"] is not None:
             dependencies.add(event["supersedes"])
         return dependencies

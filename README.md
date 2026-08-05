@@ -64,7 +64,7 @@ cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
 peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 86-scenario report; its
+implementation and reproducible artifacts to a closed 91-scenario report; its
 route, birth and multihost evidence is synthetic/isolated and does not yet
 certify a fresh live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
@@ -135,6 +135,16 @@ species. Existing carriers cannot adopt an incompatible child in V0; a fresh
 newborn may enroll it. Its generated conformance map binds all 124 normative
 DM-014 Section 14 rows to named executable evidence, and all public evidence is
 synthetic and explicitly not Agent 0 or a real speciation.
+DM-081 adds the complete owner-local DM-015 source runtime: five signed event
+kinds, exact-byte CAS, foreign-being ledgers bound to their own root
+authorities, observer-relative cursors, disclosure-gated paginated diff,
+side-effect-free incoming preview, crash-resumable quarantine pull, local
+assessment and separately reviewed `external-reference` promotion. Its
+installed deterministic journey uses two distinct synthetic beings and proves
+retraction/reassertion, tombstone, attribution and byte retention without
+contacting a live source, Matrix.org, personal memory or Cluster. DM-082 still
+owns relationship/disclosure grants and DM-071 owns the consented external
+canary.
 DM-071 consent/root discovery and the live DM-055 two-host cutover remain.
 There is no supported single-awake-identity or distinct-identities-as-`/we`
 model.

@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "f9ebedc99ef4d3a1bd3d80862600b8bffb19c695e85b0eae5766cefc258e7773"
+    "8d4c88313ec9b3bc8afba93165f1e0f28bfbce09d7c7da1dd3303b2b182e466a"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -116,6 +116,11 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "species_compatibility_sandbox",
         "species_registry_state",
         "sqlite_delete_full_integrity",
+        "source_contract_vectors",
+        "source_crash_pagination",
+        "source_quarantine_promotion",
+        "source_section14_matrix",
+        "source_two_being_exchange",
         "sync_import_not_adoption",
         "sync_resume_cursor",
         "tribe_verified_snapshot",

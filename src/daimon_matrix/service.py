@@ -41,6 +41,7 @@ from .memory_projection import MemoryProjectionError, current_memory_projection
 from .projections import ProjectionEngine, ProjectionError
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
+from .sources import SourceError, SourceServiceContext
 from .species import APPLICATION_EVENT_KIND, SpeciesError, SpeciesServiceContext
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
@@ -113,6 +114,22 @@ SPECIES_METHODS: Final = frozenset(
         "species.rollback",
     }
 )
+SOURCE_METHODS: Final = frozenset(
+    {
+        "source.assess",
+        "source.claim",
+        "source.content.put",
+        "source.cursor.create",
+        "source.diff",
+        "source.incoming",
+        "source.import.decide",
+        "source.projection",
+        "source.promote",
+        "source.publication.append",
+        "source.pull",
+        "source.status",
+    }
+)
 SERVICE_METHODS: Final = (
     BODY_METHODS
     | METHODS
@@ -123,6 +140,7 @@ SERVICE_METHODS: Final = (
     | ROUTE_METHODS
     | SCOPE_METHODS
     | SPECIES_METHODS
+    | SOURCE_METHODS
 )
 
 Clock = Callable[[], int]
@@ -216,6 +234,7 @@ class HostedWeave:
     curator: CuratorCoordinator | None = None
     review: HumanReviewCoordinator | None = None
     species: SpeciesServiceContext | None = None
+    sources: SourceServiceContext | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -264,6 +283,10 @@ class HostedWeave:
             object.__setattr__(self, "review", review)
         elif review.ledger is not self.ledger or review.signer is not self.signer:
             raise ServiceError("review_coordinator_mismatch")
+        if self.sources is not None:
+            if self.sources.registry.ledger is not self.ledger:
+                raise ServiceError("source_registry_ledger_mismatch")
+            self.sources.registry.initialize()
 
     @property
     def origin(self) -> dict[str, str]:
@@ -475,6 +498,18 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": exception.incomplete},
             )
+        except SourceError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={
+                    "code": exception.code,
+                    "retryable": exception.retryable or exception.incomplete,
+                },
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -555,6 +590,128 @@ class HostedWeave:
                 request_id=_uuid(value["request_id"]),
                 tribe_ref=tribe_ref,
             )
+        if method.startswith("source."):
+            sources = self.sources
+            if sources is None:
+                raise ServiceError("source_runtime_unavailable")
+            registry = sources.registry
+            if method == "source.content.put":
+                value = _closed(params, {"data", "media_type"})
+                data = value["data"]
+                media_type = value["media_type"]
+                if not isinstance(data, str) or not isinstance(media_type, str):
+                    raise ServiceError("invalid_params")
+                try:
+                    raw = unb64url(data)
+                except CanonicalError as exception:
+                    raise ServiceError("invalid_params") from exception
+                return registry.cas.put(raw, media_type)
+            if method in {
+                "source.claim",
+                "source.assess",
+                "source.publication.append",
+                "source.import.decide",
+            }:
+                value = _closed(params, {"payload"})
+                payload = value["payload"]
+                if not isinstance(payload, Mapping):
+                    raise ServiceError("invalid_params")
+                if method == "source.claim":
+                    return registry.append_claim(payload, signer=self.signer)
+                if method == "source.assess":
+                    return registry.append_assessment(payload, signer=self.signer)
+                if method == "source.publication.append":
+                    return registry.append_publication(payload, signer=self.signer)
+                return registry.append_import_decision(payload, signer=self.signer)
+            if method == "source.status":
+                value = _closed(params, {"selector"})
+                selector = value["selector"]
+                if not isinstance(selector, Mapping):
+                    raise ServiceError("invalid_params")
+                return registry.status(selector)
+            if method == "source.cursor.create":
+                value = _closed(params, {"selector"})
+                selector = value["selector"]
+                if not isinstance(selector, Mapping):
+                    raise ServiceError("invalid_params")
+                return registry.create_cursor(selector, signer=self.signer)
+            if method == "source.diff":
+                value = _closed(
+                    params,
+                    {
+                        "continuation",
+                        "max_bytes",
+                        "max_items",
+                        "request_event_id",
+                        "requester_cursor",
+                        "requester_me_id",
+                        "selector",
+                    },
+                )
+                for field in ("selector", "requester_cursor"):
+                    if not isinstance(value[field], Mapping):
+                        raise ServiceError("invalid_params")
+                continuation = value["continuation"]
+                if continuation is not None and not isinstance(continuation, Mapping):
+                    raise ServiceError("invalid_params")
+                requester = _optional_text(value["requester_me_id"], 240)
+                if requester is None:
+                    raise ServiceError("invalid_params")
+                return registry.diff(
+                    selector=value["selector"],
+                    request_event_id=_uuid(value["request_event_id"]),
+                    requester_me_id=requester,
+                    requester_cursor=value["requester_cursor"],
+                    max_items=_uint(value["max_items"], minimum=1, maximum=4096),
+                    max_bytes=_uint(value["max_bytes"], minimum=1, maximum=268_435_456),
+                    continuation=continuation,
+                )
+            if method == "source.incoming":
+                value = _closed(params, {"bundle"})
+                if not isinstance(value["bundle"], Mapping):
+                    raise ServiceError("invalid_params")
+                return registry.incoming(value["bundle"])
+            if method == "source.pull":
+                value = _closed(params, {"bundle", "operation_id", "preview"})
+                if not isinstance(value["bundle"], Mapping) or not isinstance(
+                    value["preview"], Mapping
+                ):
+                    raise ServiceError("invalid_params")
+                return registry.pull(
+                    operation_id=_uuid(value["operation_id"]),
+                    bundle=value["bundle"],
+                    preview=value["preview"],
+                    signer=self.signer,
+                )
+            if method == "source.promote":
+                value = _closed(
+                    params,
+                    {
+                        "evidence_snapshot_ref",
+                        "policy_ref",
+                        "publication_id",
+                    },
+                )
+                if not isinstance(value["policy_ref"], Mapping) or not isinstance(
+                    value["evidence_snapshot_ref"], Mapping
+                ):
+                    raise ServiceError("invalid_params")
+                publication_identifier = _optional_text(value["publication_id"], 160)
+                if publication_identifier is None:
+                    raise ServiceError("invalid_params")
+                return registry.promote(
+                    publication_identifier=publication_identifier,
+                    policy_ref=value["policy_ref"],
+                    evidence_snapshot_ref=value["evidence_snapshot_ref"],
+                    signer=self.signer,
+                )
+            if method == "source.projection":
+                value = _closed(params, {"publication_id"})
+                publication_identifier = _optional_text(value["publication_id"], 160)
+                if publication_identifier is None:
+                    raise ServiceError("invalid_params")
+                return registry.promotion_projection(publication_identifier)
+            raise ServiceError("unsupported_method")
         if method.startswith("species."):
             species = self.species
             if species is None:
@@ -1385,6 +1542,7 @@ __all__ = [
     "METHODS",
     "SCOPE_METHODS",
     "SERVICE_METHODS",
+    "SOURCE_METHODS",
     "HostedWeave",
     "ServiceError",
 ]

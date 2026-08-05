@@ -20,6 +20,10 @@ public contract, invariants, dependencies, tests, and acceptance evidence.
   publication effects.
 - Root-authorized additional-embodiment, relocation, and disaster-rebirth
   acceptance on a fresh host (DM-078).
+- DM-081 source claims/publications, exact cursors, paginated quarantine pull,
+  local assessment and attributed promotion are implemented with closed
+  schemas, vectors and installed two-being evidence. DM-082 supplies explicit
+  relationship/disclosure grants before DM-071 runs an external canary.
 
 ## Cluster-owned
 

@@ -67,10 +67,12 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/service.py"),
     Path("src/daimon_matrix/species.py"),
     Path("src/daimon_matrix/species_runner.py"),
+    Path("src/daimon_matrix/sources.py"),
     Path("src/daimon_matrix/sync.py"),
     Path("src/daimon_matrix/synthetic_birth.py"),
     Path("src/daimon_matrix/synthetic_multihost.py"),
     Path("src/daimon_matrix/synthetic_species.py"),
+    Path("src/daimon_matrix/synthetic_sources.py"),
     Path("src/daimon_matrix/weave.py"),
 )
 

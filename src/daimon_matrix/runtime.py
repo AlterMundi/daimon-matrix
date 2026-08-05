@@ -55,6 +55,7 @@ from .routes import (
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import RecipientTarget
 from .service import SERVICE_METHODS, HostedWeave
+from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
 from .weave import (
@@ -70,6 +71,7 @@ BUNDLE_SCHEMA: Final = "dm.runtime.bundle/v1"
 BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
 BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
 BUNDLE_SCHEMA_V4: Final = "dm.runtime.bundle/v4"
+BUNDLE_SCHEMA_V5: Final = "dm.runtime.bundle/v5"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -243,18 +245,26 @@ def load_runtime(
         "schema",
         "socket",
     }
-    if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
+    if schema in {
+        BUNDLE_SCHEMA_V2,
+        BUNDLE_SCHEMA_V3,
+        BUNDLE_SCHEMA_V4,
+        BUNDLE_SCHEMA_V5,
+    }:
         fields.add("authority_history")
-    if schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
+    if schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}:
         fields.add("peer_transport")
-    if schema == BUNDLE_SCHEMA_V4:
+    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}:
         fields.add("species")
+    if schema == BUNDLE_SCHEMA_V5:
+        fields.add("sources")
     bundle = _closed(raw_bundle, fields)
     if schema not in {
         BUNDLE_SCHEMA,
         BUNDLE_SCHEMA_V2,
         BUNDLE_SCHEMA_V3,
         BUNDLE_SCHEMA_V4,
+        BUNDLE_SCHEMA_V5,
     }:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
@@ -285,7 +295,12 @@ def load_runtime(
         incarnations = _indexed(bundle["incarnations"])
         active = RootAuthority(manifest, state, credentials, incarnations)
         authority: RootAuthority | RootHistoryAuthority | BoundHistoryAuthority = active
-        if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
+        if schema in {
+            BUNDLE_SCHEMA_V2,
+            BUNDLE_SCHEMA_V3,
+            BUNDLE_SCHEMA_V4,
+            BUNDLE_SCHEMA_V5,
+        }:
             authority_history = bundle["authority_history"]
             if (
                 not isinstance(authority_history, list)
@@ -311,7 +326,12 @@ def load_runtime(
                     active, historical_authorities, successors
                 )
         if history is not None:
-            if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}:
+            if schema in {
+                BUNDLE_SCHEMA_V2,
+                BUNDLE_SCHEMA_V3,
+                BUNDLE_SCHEMA_V4,
+                BUNDLE_SCHEMA_V5,
+            }:
                 raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
             public_keys = history_value["public_keys"]
@@ -493,7 +513,7 @@ def load_runtime(
             raise RuntimeError("runtime_route_provider_missing")
     peer_configuration: Mapping[str, Any] | None = None
     if (
-        schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4}
+        schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}
         and bundle["peer_transport"] is not None
     ):
         peer_configuration = _closed(
@@ -587,7 +607,7 @@ def load_runtime(
             except RelationshipError as exception:
                 raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
     species_context: SpeciesServiceContext | None = None
-    if schema == BUNDLE_SCHEMA_V4 and bundle["species"] is not None:
+    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5} and bundle["species"] is not None:
         species_value = _closed(
             bundle["species"],
             {
@@ -621,6 +641,127 @@ def load_runtime(
             species_context.registry.load_local_policy(species_context.local_policy_ref)
         except (KeyError, SpeciesError, TypeError) as exception:
             raise RuntimeError("runtime_species_configuration_rejected") from exception
+    source_cas_path: Path | None = None
+    known_source_configurations: list[tuple[str, Path, Any, Mapping[str, str]]] = []
+    if schema == BUNDLE_SCHEMA_V5 and bundle["sources"] is not None:
+        source_value = _closed(bundle["sources"], {"cas_filename", "known_beings"})
+        source_cas_path = _safe_file(
+            root, source_value["cas_filename"], must_exist=False
+        )
+        if source_cas_path.name in filenames:
+            raise RuntimeError("runtime_filename_collision")
+        filenames.add(source_cas_path.name)
+        known_beings = source_value["known_beings"]
+        if not isinstance(known_beings, list) or len(known_beings) > 256:
+            raise RuntimeError("runtime_source_configuration_rejected")
+        seen_known_beings: set[str] = set()
+        try:
+            for raw_known in known_beings:
+                known = _closed(
+                    raw_known,
+                    {
+                        "authority_history",
+                        "control_artifacts",
+                        "control_head",
+                        "credentials",
+                        "incarnations",
+                        "ledger_filename",
+                        "manifest",
+                    },
+                )
+                known_controls = known["control_artifacts"]
+                if (
+                    not isinstance(known_controls, list)
+                    or not 1 <= len(known_controls) <= 1024
+                ):
+                    raise RuntimeError("runtime_source_configuration_rejected")
+                known_chain = ControlChain(known_controls[0])
+                for artifact in known_controls[1:]:
+                    known_chain.add(artifact)
+                known_state = known_chain.state
+                if known["control_head"] != known_state.head:
+                    raise RuntimeError("runtime_source_control_head_mismatch")
+                known_manifest = BeingManifest.from_value(known["manifest"])
+                known_credentials = _indexed(known["credentials"])
+                known_incarnations = _indexed(known["incarnations"])
+                known_active = RootAuthority(
+                    known_manifest,
+                    known_state,
+                    known_credentials,
+                    known_incarnations,
+                )
+                known_authority: RootAuthority | RootHistoryAuthority = known_active
+                known_history = known["authority_history"]
+                if not isinstance(known_history, list) or len(known_history) > 256:
+                    raise RuntimeError("runtime_source_configuration_rejected")
+                historical_authorities = []
+                known_successors = []
+                for raw_epoch in known_history:
+                    epoch = _closed(raw_epoch, {"manifest", "successor"})
+                    historical_authorities.append(
+                        RootAuthority(
+                            BeingManifest.from_value(epoch["manifest"]),
+                            known_state,
+                            known_credentials,
+                            known_incarnations,
+                        )
+                    )
+                    known_successors.append(epoch["successor"])
+                if known_history:
+                    known_authority = RootHistoryAuthority(
+                        known_active, historical_authorities, known_successors
+                    )
+                known_being_ref = known_manifest.being_ref
+                if (
+                    known_being_ref == manifest.being_ref
+                    or known_being_ref in seen_known_beings
+                ):
+                    raise RuntimeError("runtime_source_being_conflict")
+                seen_known_beings.add(known_being_ref)
+                active_members = [
+                    row
+                    for row in known_manifest.value["embodiments"]
+                    if row["status"] == "active"
+                ]
+                if not active_members:
+                    raise RuntimeError("runtime_source_authority_inactive")
+                known_member = active_members[0]
+                known_credential = known_credentials[
+                    known_member["embodiment_credential_id"]
+                ]
+                principals = known_credential["body"]["transport_principals"]
+                if not isinstance(principals, list) or not principals:
+                    raise RuntimeError("runtime_source_authority_inactive")
+                known_origin = {
+                    "body_ref": known_member["body_ref"],
+                    "embodiment_id": known_member["embodiment_id"],
+                    "incarnation_id": known_member["incarnation_id"],
+                    "principal_id": principals[0]["principal_id"],
+                }
+                known_authority.validate_origin(known_origin, require_active=True)
+                known_path = _safe_file(
+                    root, known["ledger_filename"], must_exist=False
+                )
+                if known_path.name in filenames:
+                    raise RuntimeError("runtime_filename_collision")
+                filenames.add(known_path.name)
+                known_source_configurations.append(
+                    (
+                        known_being_ref,
+                        known_path,
+                        known_authority,
+                        known_origin,
+                    )
+                )
+        except (
+            AttributeError,
+            KeyError,
+            SourceError,
+            TypeError,
+            VerificationError,
+            WeaveProtocolError,
+        ) as exception:
+            raise RuntimeError("runtime_source_configuration_rejected") from exception
     if set(contents.secrets) != required_slots:
         raise RuntimeError("unexpected_runtime_secret_slot")
     seed = contents.secrets.get(signing_slot)
@@ -652,6 +793,29 @@ def load_runtime(
         local_origin=local_origin,
         clock=clock,
     )
+    source_context: SourceServiceContext | None = None
+    if source_cas_path is not None:
+        known_ledgers = {
+            configuration[0]: Ledger(
+                configuration[1],
+                authority=configuration[2],
+                local_origin=configuration[3],
+                clock=clock,
+            )
+            for configuration in known_source_configurations
+        }
+        try:
+            source_context = SourceServiceContext(
+                SourceRegistry(
+                    ledger,
+                    SourceCAS(source_cas_path),
+                    clock=clock,
+                    known_ledgers=known_ledgers,
+                )
+            )
+            source_context.registry.initialize()
+        except SourceError as exception:
+            raise RuntimeError("runtime_source_configuration_rejected") from exception
     if species_context is not None:
         try:
             species_context.registry.recover_pending_applications(
@@ -773,6 +937,7 @@ def load_runtime(
             effect_observer=curator_effect_observer,
         ),
         species=species_context,
+        sources=source_context,
     )
     ledger.integrity_check()
     final_root = root.lstat()
@@ -796,6 +961,7 @@ __all__ = [
     "BUNDLE_SCHEMA_V2",
     "BUNDLE_SCHEMA_V3",
     "BUNDLE_SCHEMA_V4",
+    "BUNDLE_SCHEMA_V5",
     "HostedRuntime",
     "RuntimeError",
     "load_runtime",

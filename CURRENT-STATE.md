@@ -47,11 +47,11 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current thirty-four closed methods and
+bytes, MCP exposes only the current forty-six closed methods and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-86-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+91-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths. DM-070 extends that gate with two isolated installed processes,
 native encrypted peer exchange, partition/restart convergence, observer-local
 adoption, authority-epoch succession and injected Cluster fence truth. Neither
@@ -124,6 +124,17 @@ genesis create a new species, but no existing parent carrier can adopt it in
 V0. The 124 normative DM-014 Section 14 rows are frozen in an executable
 generated map. Evidence is synthetic; no Agent 0, first real speciation, live
 Cluster mutation or cutover is claimed.
+
+DM-081 implements the complete DM-015 source runtime. Five signed event kinds,
+an owner-local exact-byte CAS, separate root-bound foreign-being ledgers,
+portable cursors/diff, side-effect-free per-item preview, crash-resumable
+paginated pull, initial quarantine, receiver-local assessment, attributed
+external-reference promotion, retraction/reassertion and tombstone are exposed
+through runtime bundle V5 and twelve typed daemon/CLI/MCP methods. The installed
+two-being journey recovers at every durable boundary and the generated 84-row
+Section 14 registry is release-blocking. It performs no live disclosure,
+source fetch, memory admission, host mutation or Cluster effect. DM-082 owns
+relationship grants; DM-071 owns the later consented external canary.
 
 DM-079 closes the real-restart gap found by the Cluster #48 installed-process
 test. A signed authority epoch now advances one embodiment from incarnation

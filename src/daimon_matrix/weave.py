@@ -29,6 +29,7 @@ from .identity import (
     verify_history_binding,
     verify_incarnation_authorization,
 )
+from .sources import SOURCE_EVENT_KINDS, SourceError, validate_source_event_payload
 
 Artifact = Mapping[str, Any]
 Event = dict[str, Any]
@@ -61,6 +62,7 @@ EVENT_KINDS: Final = frozenset(
         "publication.requested",
         "publication.receipted",
         "matrix/species-release-application",
+        *SOURCE_EVENT_KINDS,
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -927,6 +929,22 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
             and predecessor["event_id"] not in value["causal_parents"]
         ):
             raise WeaveProtocolError("invalid_species_application_event")
+    if value["kind"] in SOURCE_EVENT_KINDS:
+        try:
+            source_payload = validate_source_event_payload(
+                value["kind"],
+                payload,
+                author_me_id=value["being_ref"],
+                origin=origin,
+                manifest_hash=value["manifest_hash"],
+                causal_parents=value["causal_parents"],
+            )
+            if value["subject"] != source_payload["source_id"]:
+                raise SourceError("source_event_subject_mismatch")
+        except SourceError as exception:
+            raise WeaveProtocolError(
+                f"invalid_source_event:{exception.code}"
+            ) from exception
     return value
 
 

@@ -58,6 +58,7 @@ class PackageMetadataTests(unittest.TestCase):
                     "daimon_matrix.synthetic_multihost:main"
                 ),
                 "daimon-synthetic-species": "daimon_matrix.synthetic_species:main",
+                "daimon-synthetic-sources": "daimon_matrix.synthetic_sources:main",
             },
         )
 
@@ -187,10 +188,12 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/service.py",
                 "src/daimon_matrix/species.py",
                 "src/daimon_matrix/species_runner.py",
+                "src/daimon_matrix/sources.py",
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/synthetic_birth.py",
                 "src/daimon_matrix/synthetic_multihost.py",
                 "src/daimon_matrix/synthetic_species.py",
+                "src/daimon_matrix/synthetic_sources.py",
                 "src/daimon_matrix/weave.py",
             },
         )
@@ -235,10 +238,12 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/service.py",
                 "daimon_matrix/species.py",
                 "daimon_matrix/species_runner.py",
+                "daimon_matrix/sources.py",
                 "daimon_matrix/sync.py",
                 "daimon_matrix/synthetic_birth.py",
                 "daimon_matrix/synthetic_multihost.py",
                 "daimon_matrix/synthetic_species.py",
+                "daimon_matrix/synthetic_sources.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
                 "daimon_matrix-0.0.0.dist-info/entry_points.txt",

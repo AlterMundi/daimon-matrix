@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Final
 
-from .canonical import canonical_bytes
+from .canonical import b64url, canonical_bytes
 from .client import (
     ClientConfig,
     ClientError,
@@ -53,6 +53,19 @@ def _transport(args: argparse.Namespace) -> dict[str, str]:
         "scheme": str(args.transport_scheme),
         "principal_id": str(args.transport_principal),
     }
+
+
+def _bounded_bytes(value: str) -> bytes:
+    try:
+        path = Path(value)
+        if path.is_symlink() or not path.is_file():
+            raise ClientError("input_document_unavailable")
+        raw = path.read_bytes()
+    except OSError as exception:
+        raise ClientError("input_document_unavailable") from exception
+    if len(raw) > 67_108_864:
+        raise ClientError("input_document_too_large")
+    return raw
 
 
 def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
@@ -234,6 +247,56 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "reason": args.reason,
             "snapshot": _bounded_file(args.snapshot),
         }
+    if command == ("source", "content-put"):
+        return "source.content.put", {
+            "data": b64url(_bounded_bytes(args.content)),
+            "media_type": args.media_type,
+        }
+    if command in {
+        ("source", "claim"),
+        ("source", "assess"),
+        ("source", "publication-append"),
+        ("source", "import-decide"),
+    }:
+        methods = {
+            "claim": "source.claim",
+            "assess": "source.assess",
+            "publication-append": "source.publication.append",
+            "import-decide": "source.import.decide",
+        }
+        return methods[args.command], {"payload": _bounded_file(args.payload)}
+    if command == ("source", "status"):
+        return "source.status", {"selector": _bounded_file(args.selector)}
+    if command == ("source", "cursor-create"):
+        return "source.cursor.create", {"selector": _bounded_file(args.selector)}
+    if command == ("source", "diff"):
+        return "source.diff", {
+            "continuation": (
+                None if args.continuation is None else _bounded_file(args.continuation)
+            ),
+            "max_bytes": args.max_bytes,
+            "max_items": args.max_items,
+            "request_event_id": args.source_request_id,
+            "requester_cursor": _bounded_file(args.requester_cursor),
+            "requester_me_id": args.requester_me_id,
+            "selector": _bounded_file(args.selector),
+        }
+    if command == ("source", "incoming"):
+        return "source.incoming", {"bundle": _bounded_file(args.bundle)}
+    if command == ("source", "pull"):
+        return "source.pull", {
+            "bundle": _bounded_file(args.bundle),
+            "operation_id": args.operation_id,
+            "preview": _bounded_file(args.preview),
+        }
+    if command == ("source", "promote"):
+        return "source.promote", {
+            "evidence_snapshot_ref": _bounded_file(args.evidence_snapshot_ref),
+            "policy_ref": _bounded_file(args.policy_ref),
+            "publication_id": args.publication_id,
+        }
+    if command == ("source", "projection"):
+        return "source.projection", {"publication_id": args.publication_id}
     raise ClientError("unsupported_cli_command")
 
 
@@ -312,6 +375,60 @@ def parser() -> argparse.ArgumentParser:
         "--reason", choices=("release-fork", "runtime-failure"), required=True
     )
     species_rollback.add_argument("--snapshot", required=True)
+
+    source = families.add_parser(
+        "source", help="DM-015 attributed ancestry and quarantined knowledge"
+    )
+    source_commands = source.add_subparsers(dest="command", required=True)
+    content_put = source_commands.add_parser(
+        "content-put", help="store exact owner-local bytes in the source CAS"
+    )
+    content_put.add_argument("--content", required=True)
+    content_put.add_argument("--media-type", required=True)
+    for name, help_text in (
+        ("claim", "author one evidence-bound self claim"),
+        ("assess", "author one receiver-local claim assessment"),
+        ("publication-append", "append one publication or tombstone"),
+        ("import-decide", "append one explicit local import decision"),
+    ):
+        command_parser = source_commands.add_parser(name, help=help_text)
+        command_parser.add_argument("--payload", required=True)
+    for name, help_text in (
+        ("status", "resolve one exact source locally"),
+        ("cursor-create", "author one portable observer-relative cursor"),
+    ):
+        command_parser = source_commands.add_parser(name, help=help_text)
+        command_parser.add_argument("--selector", required=True)
+    source_diff = source_commands.add_parser(
+        "diff", help="serve one disclosure-authorized portable diff page"
+    )
+    source_diff.add_argument("--selector", required=True)
+    source_diff.add_argument("--source-request-id", required=True)
+    source_diff.add_argument("--requester-me-id", required=True)
+    source_diff.add_argument("--requester-cursor", required=True)
+    source_diff.add_argument("--max-items", type=int, default=64)
+    source_diff.add_argument("--max-bytes", type=int, default=4_194_304)
+    source_diff.add_argument("--continuation")
+    source_incoming = source_commands.add_parser(
+        "incoming", help="side-effect-free validation of one diff bundle"
+    )
+    source_incoming.add_argument("--bundle", required=True)
+    source_pull = source_commands.add_parser(
+        "pull", help="durably land one exact preview in quarantine"
+    )
+    source_pull.add_argument("--operation-id", required=True)
+    source_pull.add_argument("--bundle", required=True)
+    source_pull.add_argument("--preview", required=True)
+    source_promote = source_commands.add_parser(
+        "promote", help="separately promote reviewed content as external-reference"
+    )
+    source_promote.add_argument("--publication-id", required=True)
+    source_promote.add_argument("--policy-ref", required=True)
+    source_promote.add_argument("--evidence-snapshot-ref", required=True)
+    source_projection = source_commands.add_parser(
+        "projection", help="rebuild one attributed promotion projection"
+    )
+    source_projection.add_argument("--publication-id", required=True)
 
     memory = families.add_parser("memory", help="deterministic personal-memory policy")
     memory_commands = memory.add_subparsers(dest="command", required=True)
