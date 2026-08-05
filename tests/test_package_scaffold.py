@@ -52,6 +52,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-matrixd": "daimon_matrix.daemon:main",
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
+                "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
             },
         )
 
@@ -145,6 +146,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
                 "src/daimon_matrix/authority_epochs.py",
+                "src/daimon_matrix/birth.py",
                 "src/daimon_matrix/canonical.py",
                 "src/daimon_matrix/cli.py",
                 "src/daimon_matrix/client.py",
@@ -178,6 +180,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/sealed.py",
                 "src/daimon_matrix/service.py",
                 "src/daimon_matrix/sync.py",
+                "src/daimon_matrix/synthetic_birth.py",
                 "src/daimon_matrix/weave.py",
             },
         )
@@ -186,6 +189,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             {
                 "daimon_matrix/__init__.py",
                 "daimon_matrix/authority_epochs.py",
+                "daimon_matrix/birth.py",
                 "daimon_matrix/canonical.py",
                 "daimon_matrix/cli.py",
                 "daimon_matrix/client.py",
@@ -219,6 +223,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/sealed.py",
                 "daimon_matrix/service.py",
                 "daimon_matrix/sync.py",
+                "daimon_matrix/synthetic_birth.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.0.0.dist-info/METADATA",
                 "daimon_matrix-0.0.0.dist-info/entry_points.txt",

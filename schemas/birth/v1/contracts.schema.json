@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/birth/v1/contracts.schema.json",
+  "title": "Daimon Matrix birth V1 contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/offer"},
+    {"$ref": "#/$defs/acceptance"},
+    {"$ref": "#/$defs/activation"},
+    {"$ref": "#/$defs/inspection"}
+  ],
+  "$defs": {
+    "safeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "contentId": {
+      "type": "string",
+      "pattern": "^dm:[a-z-]+:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "scopedId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._:@-]{0,255}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "public"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {"$ref": "#/$defs/contentId"},
+        "public": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "kid", "role", "value"],
+      "properties": {
+        "alg": {"const": "Ed25519"},
+        "kid": {"$ref": "#/$defs/contentId"},
+        "role": {
+          "enum": [
+            "parent-offer",
+            "awakening-proof",
+            "newborn-root",
+            "activation-witness"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "principal_id"
+      ],
+      "properties": {
+        "body_ref": {"$ref": "#/$defs/scopedId"},
+        "embodiment_id": {
+          "type": "string",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,243}$"
+        },
+        "incarnation_id": {
+          "type": "string",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,242}$"
+        },
+        "principal_id": {"$ref": "#/$defs/scopedId"}
+      }
+    },
+    "commitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delegable",
+        "expires_at_ms",
+        "max_delegation_depth",
+        "operations",
+        "resource_refs",
+        "tribe_ref"
+      ],
+      "properties": {
+        "delegable": {"type": "boolean"},
+        "expires_at_ms": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/safeInteger"}]
+        },
+        "max_delegation_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "operations": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "resource_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "tribe_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "offerBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "awakening_key",
+        "bootstrap_routes",
+        "expires_at_ms",
+        "issued_at_ms",
+        "offer_nonce",
+        "parent_being_ref",
+        "parent_control_head",
+        "parent_credential_id",
+        "parent_origin",
+        "source_references",
+        "species_release_id",
+        "tribal_commitments"
+      ],
+      "properties": {
+        "awakening_key": {"$ref": "#/$defs/key"},
+        "bootstrap_routes": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "array",
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "route_id"],
+                "properties": {
+                  "kind": {"$ref": "#/$defs/scopedId"},
+                  "route_id": {"$ref": "#/$defs/scopedId"}
+                }
+              }
+            }
+          ]
+        },
+        "expires_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "issued_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "offer_nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "parent_being_ref": {
+          "type": "string",
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "parent_control_head": {"$ref": "#/$defs/contentId"},
+        "parent_credential_id": {"$ref": "#/$defs/contentId"},
+        "parent_origin": {"$ref": "#/$defs/origin"},
+        "source_references": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "species_release_id": {"$ref": "#/$defs/text"},
+        "tribal_commitments": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/commitment"}
+        }
+      }
+    },
+    "offer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body", "offer_id", "schema", "signature"],
+      "properties": {
+        "body": {"$ref": "#/$defs/offerBody"},
+        "offer_id": {
+          "type": "string",
+          "pattern": "^dm:birth-offer:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "schema": {"const": "dm.birth.offer/v1"},
+        "signature": {"$ref": "#/$defs/signature"}
+      }
+    },
+    "acceptanceCore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptance_nonce",
+        "accepted_at_ms",
+        "newborn_being_ref",
+        "newborn_genesis_id",
+        "offer_hash",
+        "offer_id",
+        "parent_being_ref",
+        "parent_control_head",
+        "parent_origin",
+        "source_references",
+        "species_release_id",
+        "tribal_commitments"
+      ],
+      "properties": {
+        "acceptance_nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "accepted_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "newborn_being_ref": {
+          "type": "string",
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "newborn_genesis_id": {"$ref": "#/$defs/contentId"},
+        "offer_hash": {"$ref": "#/$defs/sha256"},
+        "offer_id": {
+          "type": "string",
+          "pattern": "^dm:birth-offer:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "parent_being_ref": {
+          "type": "string",
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "parent_control_head": {"$ref": "#/$defs/contentId"},
+        "parent_origin": {"$ref": "#/$defs/origin"},
+        "source_references": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "species_release_id": {"$ref": "#/$defs/text"},
+        "tribal_commitments": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/commitment"}
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acceptance_id", "body", "schema", "signatures"],
+      "properties": {
+        "acceptance_id": {
+          "type": "string",
+          "pattern": "^dm:birth-acceptance:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["awakening_proof", "core"],
+          "properties": {
+            "awakening_proof": {"$ref": "#/$defs/signature"},
+            "core": {"$ref": "#/$defs/acceptanceCore"}
+          }
+        },
+        "schema": {"const": "dm.birth.acceptance/v1"},
+        "signatures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/signature"}
+        }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body", "receipt_id", "schema", "signature"],
+      "properties": {
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "acceptance_id",
+            "event_count",
+            "first_credential_id",
+            "first_incarnation_authorization_id",
+            "ledger_state_hash",
+            "manifest_hash",
+            "memory_event_count",
+            "newborn_being_ref",
+            "observed_at_ms",
+            "projection_record_count",
+            "witness_being_ref",
+            "witness_credential_id",
+            "witness_origin"
+          ],
+          "properties": {
+            "acceptance_id": {
+              "type": "string",
+              "pattern": "^dm:birth-acceptance:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "event_count": {"$ref": "#/$defs/safeInteger"},
+            "first_credential_id": {"$ref": "#/$defs/contentId"},
+            "first_incarnation_authorization_id": {
+              "$ref": "#/$defs/contentId"
+            },
+            "ledger_state_hash": {"$ref": "#/$defs/sha256"},
+            "manifest_hash": {"$ref": "#/$defs/sha256"},
+            "memory_event_count": {"$ref": "#/$defs/safeInteger"},
+            "newborn_being_ref": {
+              "type": "string",
+              "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "observed_at_ms": {"$ref": "#/$defs/safeInteger"},
+            "projection_record_count": {"$ref": "#/$defs/safeInteger"},
+            "witness_being_ref": {
+              "type": "string",
+              "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "witness_credential_id": {"$ref": "#/$defs/contentId"},
+            "witness_origin": {"$ref": "#/$defs/origin"}
+          }
+        },
+        "receipt_id": {
+          "type": "string",
+          "pattern": "^dm:birth-activation:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "schema": {"const": "dm.birth.activation-receipt/v1"},
+        "signature": {"$ref": "#/$defs/signature"}
+      }
+    },
+    "inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptances",
+        "accepted_id",
+        "activation_id",
+        "offer_id",
+        "schema",
+        "state"
+      ],
+      "properties": {
+        "acceptances": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["acceptance_id", "being_ref"],
+            "properties": {
+              "acceptance_id": {
+                "type": "string",
+                "pattern": "^dm:birth-acceptance:v1:[A-Za-z0-9_-]{43}$"
+              },
+              "being_ref": {
+                "type": "string",
+                "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+              }
+            }
+          }
+        },
+        "accepted_id": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "string",
+              "pattern": "^dm:birth-acceptance:v1:[A-Za-z0-9_-]{43}$"
+            }
+          ]
+        },
+        "activation_id": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "string",
+              "pattern": "^dm:birth-activation:v1:[A-Za-z0-9_-]{43}$"
+            }
+          ]
+        },
+        "offer_id": {
+          "type": "string",
+          "pattern": "^dm:birth-offer:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "schema": {"const": "dm.birth.inspection/v1"},
+        "state": {"enum": ["offered", "accepted", "active", "quarantined"]}
+      }
+    }
+  }
+}

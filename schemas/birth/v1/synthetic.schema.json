@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlterMundi/daimon-matrix/schemas/birth/v1/synthetic.schema.json",
+  "title": "Daimon Matrix DM-060 synthetic birth evidence",
+  "oneOf": [
+    {"$ref": "#/$defs/scenario"},
+    {"$ref": "#/$defs/report"}
+  ],
+  "$defs": {
+    "safeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "contentId": {
+      "type": "string",
+      "pattern": "^dm:[a-z-]+:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "beingRef": {
+      "type": "string",
+      "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f]+$"
+    },
+    "bodyRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z][A-Za-z0-9._:@-]{0,255}$"
+    },
+    "commitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delegable",
+        "expires_at_ms",
+        "max_delegation_depth",
+        "operations",
+        "resource_refs",
+        "tribe_ref"
+      ],
+      "properties": {
+        "delegable": {"type": "boolean"},
+        "expires_at_ms": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/safeInteger"}]
+        },
+        "max_delegation_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "operations": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "resource_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "tribe_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "newborn_body_ref",
+        "parent_body_ref",
+        "scenario_id",
+        "schema",
+        "source_references",
+        "species_release_id",
+        "tribal_commitments",
+        "witness_body_ref"
+      ],
+      "properties": {
+        "schema": {"const": "dm.synthetic-birth-scenario/v1"},
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "species_release_id": {"$ref": "#/$defs/text"},
+        "source_references": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "tribal_commitments": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/commitment"}
+        },
+        "parent_body_ref": {"$ref": "#/$defs/bodyRef"},
+        "newborn_body_ref": {"$ref": "#/$defs/bodyRef"},
+        "witness_body_ref": {"$ref": "#/$defs/bodyRef"}
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptance_id",
+        "activation_id",
+        "distinct_being_roots",
+        "newborn_being_ref",
+        "offer_id",
+        "parent_being_ref",
+        "state",
+        "witness_being_ref"
+      ],
+      "properties": {
+        "offer_id": {"$ref": "#/$defs/contentId"},
+        "acceptance_id": {"$ref": "#/$defs/contentId"},
+        "activation_id": {"$ref": "#/$defs/contentId"},
+        "state": {"const": "active"},
+        "parent_being_ref": {"$ref": "#/$defs/beingRef"},
+        "newborn_being_ref": {"$ref": "#/$defs/beingRef"},
+        "witness_being_ref": {"$ref": "#/$defs/beingRef"},
+        "distinct_being_roots": {"const": true}
+      }
+    },
+    "firstEmbodiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credential_id",
+        "embodiment_id",
+        "incarnation_authorization_id",
+        "incarnation_id",
+        "incarnation_sequence",
+        "manifest_hash",
+        "manifest_revision"
+      ],
+      "properties": {
+        "embodiment_id": {
+          "type": "string",
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,243}$"
+        },
+        "incarnation_id": {
+          "type": "string",
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,242}$"
+        },
+        "incarnation_sequence": {"const": 0},
+        "credential_id": {"$ref": "#/$defs/contentId"},
+        "incarnation_authorization_id": {"$ref": "#/$defs/contentId"},
+        "manifest_hash": {"$ref": "#/$defs/sha256"},
+        "manifest_revision": {"const": 1}
+      }
+    },
+    "emptyMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_count",
+        "ledger_state_hash",
+        "memory_event_count",
+        "projection_record_count"
+      ],
+      "properties": {
+        "event_count": {"const": 0},
+        "memory_event_count": {"const": 0},
+        "projection_record_count": {"const": 0},
+        "ledger_state_hash": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "custody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "control_head",
+        "counter",
+        "recovery_key_count",
+        "restore_verified",
+        "root_key_count",
+        "runtime_separated"
+      ],
+      "properties": {
+        "counter": {"const": 1},
+        "control_head": {"$ref": "#/$defs/contentId"},
+        "root_key_count": {"const": 2},
+        "recovery_key_count": {"const": 2},
+        "restore_verified": {"const": true},
+        "runtime_separated": {"const": true}
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commitments_are_inert",
+        "context_is_not_autobiography",
+        "source_reference_count",
+        "species_release_id",
+        "tribal_commitment_count"
+      ],
+      "properties": {
+        "species_release_id": {"$ref": "#/$defs/text"},
+        "source_reference_count": {"$ref": "#/$defs/safeInteger"},
+        "tribal_commitment_count": {"$ref": "#/$defs/safeInteger"},
+        "context_is_not_autobiography": {"const": true},
+        "commitments_are_inert": {"const": true}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automatic_we_membership",
+        "inherited_parent_credentials",
+        "inherited_parent_events",
+        "inherited_parent_routes",
+        "inherited_parent_sessions",
+        "newborn_we_embodiments"
+      ],
+      "properties": {
+        "automatic_we_membership": {"const": false},
+        "inherited_parent_credentials": {"const": 0},
+        "inherited_parent_events": {"const": 0},
+        "inherited_parent_routes": {"const": 0},
+        "inherited_parent_sessions": {"const": 0},
+        "newborn_we_embodiments": {"const": 1}
+      }
+    },
+    "installedSurfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cli_methods",
+        "cli_result_hashes",
+        "daemon",
+        "mcp_method",
+        "mcp_result_hash"
+      ],
+      "properties": {
+        "daemon": {"const": "ready-stopped"},
+        "cli_methods": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "runtime.status"},
+            {"const": "scope.me"},
+            {"const": "scope.we"},
+            {"const": "we.heads"},
+            {"const": "we.projection.get"}
+          ],
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "cli_result_hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime.status",
+            "scope.me",
+            "scope.we",
+            "we.heads",
+            "we.projection.get"
+          ],
+          "properties": {
+            "runtime.status": {"$ref": "#/$defs/sha256"},
+            "scope.me": {"$ref": "#/$defs/sha256"},
+            "scope.we": {"$ref": "#/$defs/sha256"},
+            "we.heads": {"$ref": "#/$defs/sha256"},
+            "we.projection.get": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "mcp_method": {"const": "scope_me"},
+        "mcp_result_hash": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boundaries",
+        "claim",
+        "completed_at_ms",
+        "context",
+        "custody",
+        "empty_memory",
+        "first_embodiment",
+        "installed_surfaces",
+        "lineage",
+        "scenario_id",
+        "schema",
+        "started_at_ms",
+        "status"
+      ],
+      "properties": {
+        "schema": {"const": "dm.synthetic-birth-report/v1"},
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "claim": {
+          "const": "synthetic protocol validation; no real being or deployment was born"
+        },
+        "status": {"const": "pass"},
+        "started_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "completed_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "lineage": {"$ref": "#/$defs/lineage"},
+        "first_embodiment": {"$ref": "#/$defs/firstEmbodiment"},
+        "empty_memory": {"$ref": "#/$defs/emptyMemory"},
+        "custody": {"$ref": "#/$defs/custody"},
+        "context": {"$ref": "#/$defs/context"},
+        "boundaries": {"$ref": "#/$defs/boundaries"},
+        "installed_surfaces": {"$ref": "#/$defs/installedSurfaces"}
+      }
+    }
+  }
+}

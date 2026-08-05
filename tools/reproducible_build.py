@@ -31,6 +31,7 @@ BUILD_INPUTS: Final = (
     Path("pyproject.toml"),
     Path("src/daimon_matrix/__init__.py"),
     Path("src/daimon_matrix/authority_epochs.py"),
+    Path("src/daimon_matrix/birth.py"),
     Path("src/daimon_matrix/canonical.py"),
     Path("src/daimon_matrix/cli.py"),
     Path("src/daimon_matrix/client.py"),
@@ -64,6 +65,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/sealed.py"),
     Path("src/daimon_matrix/service.py"),
     Path("src/daimon_matrix/sync.py"),
+    Path("src/daimon_matrix/synthetic_birth.py"),
     Path("src/daimon_matrix/weave.py"),
 )
 

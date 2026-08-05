@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.14",
+  "suite_version": "DM-026.15",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -28,6 +28,48 @@
       "evidence": ["tests.test_dm079_authority_epochs.AuthorityEpochTests.test_corrupt_stored_event_rolls_back_epoch_metadata", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_nonempty_ledger_advances_without_rewriting_old_events", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_public_vectors_verify_and_regenerate_byte_identically", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_sequence_body_active_and_history_forks_fail_closed", "tests.test_dm079_authority_epochs.AuthorityEpochTests.test_sqlite_fault_before_commit_retains_old_epoch_then_retry_succeeds", "tests.test_dm079_authority_epochs.HostedAuthorityEpochTests.test_v2_bundle_reopens_existing_runtime_under_exact_successor"],
       "cleanup": "Close SQLite and hosted runtime handles before removing the isolated roots.",
       "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "birth_contract_integrity",
+      "owners": ["DM-021", "DM-060"],
+      "specifications": ["specs/birth-first-awakening.md", "specs/identity-root-v1.md"],
+      "setup": "Distinct parent, newborn and witness roots with purpose-bound credentials and a closed offer, acceptance and activation receipt.",
+      "stimulus": "Validate the positive lineage, then mutate copied context, signature domains, origins, time, first-embodiment evidence, key roles and the empty-ledger cutoff.",
+      "fault": "A parent precommits or retains control of the newborn, transport context substitutes for authority, or nonempty history is presented as a fresh awakening.",
+      "expected": "Only the independently self-certifying newborn root accepts; every substitution fails closed; one root-authorized sequence-zero embodiment activates over a mechanically empty ledger.",
+      "evidence": ["tests.test_dm060_synthetic_birth.BirthContractTests.test_activation_cannot_substitute_another_newborn_or_acceptance", "tests.test_dm060_synthetic_birth.BirthContractTests.test_closed_public_schema_accepts_every_runtime_artifact", "tests.test_dm060_synthetic_birth.BirthContractTests.test_distinct_root_birth_first_embodiment_and_empty_memory_activate", "tests.test_dm060_synthetic_birth.BirthContractTests.test_expiry_wrong_purpose_and_wrong_origin_are_rejected", "tests.test_dm060_synthetic_birth.BirthContractTests.test_nonempty_newborn_ledger_cannot_activate", "tests.test_dm060_synthetic_birth.BirthContractTests.test_offer_acceptance_and_activation_tamper_fail_closed", "tests.test_dm060_synthetic_birth.BirthContractTests.test_parent_offer_cannot_precommit_newborn_or_reuse_key_roles"],
+      "cleanup": "Close the isolated newborn ledger and remove only fixture-owned owner-only temporary roots.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "birth_durable_one_use",
+      "owners": ["DM-060"],
+      "specifications": ["schemas/birth/v1/contracts.schema.json", "specs/birth-first-awakening.md"],
+      "setup": "Owner-only DELETE/FULL SQLite birth registry with one cryptographically verified offer and acceptance.",
+      "stimulus": "Crash before accept and activation commits, retry exact bytes concurrently, present a second valid acceptance, and attempt unsafe store paths.",
+      "fault": "Response loss, concurrent replay, partial commit or arrival ordering could duplicate an effect, select one sibling lineage or follow a symlink.",
+      "expected": "Exact replay has one durable effect, crashes roll back, both sibling acceptances remain quarantined without a winner, and unsafe custody paths fail closed.",
+      "evidence": ["tests.test_dm060_synthetic_birth.BirthRegistryTests.test_accept_and_activation_crashes_roll_back_then_retry_exactly_once", "tests.test_dm060_synthetic_birth.BirthRegistryTests.test_concurrent_exact_acceptance_has_one_durable_effect", "tests.test_dm060_synthetic_birth.BirthRegistryTests.test_double_acceptance_is_retained_and_quarantined_without_winner", "tests.test_dm060_synthetic_birth.BirthRegistryTests.test_store_requires_owner_only_parent_and_regular_file"],
+      "cleanup": "Close every registry connection before removing the exact temporary directory.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "birth_installed_journey",
+      "owners": ["DM-025", "DM-060"],
+      "specifications": ["docs/dm060-synthetic-birth.md", "schemas/birth/v1/synthetic.schema.json", "specs/birth-first-awakening.md"],
+      "setup": "Fresh owner-only roots, production CSPRNG and encrypted custody, real daemon, CLI and MCP processes, and a closed public scenario.",
+      "stimulus": "Run the full birth ceremony through the module and installed-shaped entry point, query /me, /we, heads and projections, then reject open or symlinked scenario input.",
+      "fault": "An integration runner could import shortcuts, reuse ambient state, expose secrets or paths, fabricate memory, or claim a real deployment from a synthetic pass.",
+      "expected": "Daemon, five CLI methods and MCP all agree on one newborn embodiment and zero history; the bounded report leaks no secret/path and states that no real being or deployment was born.",
+      "evidence": ["tests.test_dm060_synthetic_birth.SyntheticBirthJourneyTests.test_module_entrypoint_runs_from_scenario_and_writes_report", "tests.test_dm060_synthetic_birth.SyntheticBirthJourneyTests.test_real_daemon_cli_and_mcp_journey_emits_closed_public_report", "tests.test_dm060_synthetic_birth.SyntheticBirthJourneyTests.test_scenario_loader_rejects_unknown_fields_and_symlinks"],
+      "cleanup": "Stop child processes and remove only the disposable synthetic work root and public report.",
+      "platform": "linux",
       "ci_lane": "complete",
       "required": true
     },
