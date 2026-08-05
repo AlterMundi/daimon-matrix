@@ -44,6 +44,8 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/communication.py",
         "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/curator.py",
+        "src/daimon_matrix/curator_worker.py",
+        "src/daimon_matrix/curator_worker_process.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
@@ -74,6 +76,8 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/communication.py",
         "daimon_matrix/conformance.py",
         "daimon_matrix/curator.py",
+        "daimon_matrix/curator_worker.py",
+        "daimon_matrix/curator_worker_process.py",
         "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
         "daimon_matrix/keystore.py",
@@ -260,6 +264,8 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/communication.py",
         "src/daimon_matrix/conformance.py",
         "src/daimon_matrix/curator.py",
+        "src/daimon_matrix/curator_worker.py",
+        "src/daimon_matrix/curator_worker_process.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
         "src/daimon_matrix/keystore.py",
@@ -323,6 +329,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
+        b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
     ):
@@ -362,6 +369,10 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/communication.py": "src/daimon_matrix/communication.py",
         "daimon_matrix/conformance.py": "src/daimon_matrix/conformance.py",
         "daimon_matrix/curator.py": "src/daimon_matrix/curator.py",
+        "daimon_matrix/curator_worker.py": "src/daimon_matrix/curator_worker.py",
+        "daimon_matrix/curator_worker_process.py": (
+            "src/daimon_matrix/curator_worker_process.py"
+        ),
         "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",

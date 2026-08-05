@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/curator-worker/v1/profile.schema.json",
+  "title": "Content-addressed curator worker provider profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "profile_id", "provider", "implementation", "contract_version", "origin", "path", "model", "thinking", "response_format", "prompt_id", "prompt_hash", "output_schema_id", "output_schema_hash", "secret_handle", "pricing", "limits"],
+  "properties": {
+    "schema": {"const": "dm.curator-worker.profile/v1"},
+    "profile_id": {"type": "string", "pattern": "^dm:curator-profile:v1:[A-Za-z0-9_-]{43}$"},
+    "provider": {"const": "deepseek"},
+    "implementation": {"$ref": "#/$defs/scoped"},
+    "contract_version": {"const": "v1"},
+    "origin": {"const": "https://api.deepseek.com"},
+    "path": {"const": "/chat/completions"},
+    "model": {"const": "deepseek-v4-pro"},
+    "thinking": {"const": "disabled"},
+    "response_format": {"const": "json_object"},
+    "prompt_id": {"const": "dm.curator-worker.prompt/v1"},
+    "prompt_hash": {"$ref": "#/$defs/hash"},
+    "output_schema_id": {"const": "dm.curator-worker.provider-output/v1"},
+    "output_schema_hash": {"$ref": "#/$defs/hash"},
+    "secret_handle": {"type": "string", "pattern": "^secret:[A-Za-z0-9._:@-]{1,249}$"},
+    "pricing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["as_of", "currency", "input_cache_miss_per_million", "output_per_million"],
+      "properties": {
+        "as_of": {"const": "2026-08-04"},
+        "currency": {"const": "USD-micro"},
+        "input_cache_miss_per_million": {"const": 435000},
+        "output_per_million": {"const": 870000}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_input_bytes", "max_output_bytes", "max_output_tokens", "timeout_ms", "max_attempts", "max_cost_microusd"],
+      "properties": {
+        "max_input_bytes": {"type": "integer", "minimum": 1, "maximum": 131072},
+        "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 262144},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 8192},
+        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 300000},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 4},
+        "max_cost_microusd": {"type": "integer", "minimum": 1, "maximum": 10000000}
+      }
+    }
+  },
+  "$defs": {
+    "scoped": {"type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,256}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}
