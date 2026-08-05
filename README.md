@@ -59,7 +59,7 @@ fan-out independent of any live carrier. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 61-scenario
+the local implementation and reproducible artifacts to a closed 64-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
 live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
@@ -80,6 +80,11 @@ Ed25519 authorization, exact review requests, threshold accept/edit/reject/defer
 decisions, authorization-before-disclosure queues, safe inert terminal output,
 subject-side revalidation and idempotent execution receipts. MCP cannot decide
 or execute, and all checked-in review evidence remains synthetic.
+DM-034 adds the pinned HMK personal-memory projection boundary: exact
+assert/correct/retract mapping, current effect-truth verification, owner-local
+crash recovery, verified recall and deterministic namespace-only rebuild. HMK
+is a disposable retrieval view; native/Wiki records keep their own authority,
+and checked-in integration evidence uses only isolated synthetic SQLite state.
 DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 

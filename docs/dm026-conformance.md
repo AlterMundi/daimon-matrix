@@ -8,7 +8,7 @@ Cluster lifecycle, external-effect, or rebirth certification.
 ## Closed evidence registry
 
 `conformance/registry-v1.json` is the canonical
-`dm.conformance.registry/v1`. Its 61 scenario identifiers are closed in both
+`dm.conformance.registry/v1`. Its 64 scenario identifiers are closed in both
 directions: a missing scenario, an unknown scenario, duplicate identifier,
 unknown field, unregistered evidence reference, or non-required release
 scenario fails validation. Each scenario names its owner cards,

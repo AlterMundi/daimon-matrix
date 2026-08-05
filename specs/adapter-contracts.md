@@ -82,3 +82,23 @@ DM-031 curator coordination never substitutes for this adapter contract. A
 must embed the exact derived fence position accepted from the current injected
 Cluster verifier, bind its effect intent and actor, and reconcile the adapter
 receipt against current observed postcondition before every cached replay.
+
+### Personal-memory projection
+
+DM-034 specializes the projection boundary for HMK without granting HMK
+authority. Its exact DM-018 manifest is `memory-projection/v1`; the target is
+HMK merge `f10fd5c3089c0962920314c97e14bc024feffa7a`, API `1.0.0`, schema `1`,
+and projector `matrix:personal-memory-projector@1.0.0`.
+
+Only current, linear, locally accepted `/me` heads in the three personal
+categories may cross. Stable destination identity is
+`(source_instance, subject_me_id, projector_id, projector_version, memory_id)`.
+Every effect binds the exact source event/head/content/checkpoint and is freshly
+observed before initial or cached success. The owner-local recovery lock and
+journal serialize exact requests but confer no authority.
+
+Recall verifies the complete current namespace against Matrix before returning
+content. Rebuild re-derives and revalidates the embedded HMK plan immediately
+before its atomic namespace-only apply. HMK-native, Wiki and collective records
+are outside the selector. The closed contract, crash table, dry-run cutover and
+rollback procedure are normative in `docs/dm034-memory-projection.md`.
