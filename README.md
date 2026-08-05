@@ -59,7 +59,7 @@ fan-out independent of any live carrier. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 67-scenario
+the local implementation and reproducible artifacts to a closed 70-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
 live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
@@ -98,6 +98,15 @@ verifies instruction/hook/MCP drift, and journals start/resume/park handles
 before effects so response loss cannot create blind duplicate threads. Codex
 remains a body rather than `/me`; real CompAII credentials and deployment are
 not touched by this synthetic card.
+DM-041 adds Hermes Agent 0.19.0 through its supported external memory-provider
+and current-user-message composition surfaces. It creates a fresh owner-only,
+nonambient profile; pins the audited source callbacks and interpreter interval;
+disables native/HMK memory; reads only a bounded provenance-safe current Matrix
+projection; and permits only an explicit idempotent observation proposal.
+Launch becomes active only after authenticated provider readiness, while park
+requires Matrix handoff and relinquished-presence evidence. Public CI exercises
+real plugin discovery and prompt composition at the exact Hermes commit without
+running a model or touching a live CompAII profile.
 DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 

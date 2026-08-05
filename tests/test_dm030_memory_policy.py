@@ -46,6 +46,7 @@ from daimon_matrix.memory_policy import (
     validate_memory_policy,
     validate_policy_successor,
 )
+from daimon_matrix.memory_projection import current_memory_projection
 from daimon_matrix.projections import ProjectionEngine
 from daimon_matrix.runtime import load_runtime
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
@@ -240,6 +241,12 @@ class MemoryPolicyTests(RootLedgerFixture):
         self.assertIn(
             event["event_id"], {entry["event_id"] for entry in projection["entries"]}
         )
+        current = current_memory_projection(self.ledger_a)
+        self.assertEqual(current["total_active"], 1)
+        self.assertFalse(current["truncated"])
+        self.assertEqual(current["entries"][0]["event_id"], event["event_id"])
+        self.assertEqual(current["entries"][0]["content_ref"], self.content)
+        self.assertEqual(current["entries"][0]["author_me_id"], self.state.being_ref)
 
     def test_executor_rejects_review_plan_and_atomic_stale_checkpoint(self) -> None:
         review_candidate = self.candidate(contradiction="sensitive")
@@ -832,6 +839,17 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
         ]
         self.assertEqual(len(memory_events), 1)
         self.assertEqual(response["result"]["event"], memory_events[0])
+        _, context_response = self.client.memory_context(
+            {"query": "installed synthetic memory", "limit": 64}
+        )
+        self.assertTrue(context_response["ok"], context_response)
+        context = context_response["result"]
+        self.assertEqual(context["schema"], "dm.memory.context/v1")
+        self.assertEqual(context["projection"]["total_active"], 1)
+        self.assertEqual(
+            context["projection"]["entries"][0]["content_ref"],
+            candidate["content_ref"],
+        )
         schema_paths = [
             *sorted((ROOT / "schemas/memory/v1").glob("*.json")),
             ROOT / "schemas/weave/v1/event.schema.json",

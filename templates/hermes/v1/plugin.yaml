@@ -1,0 +1,7 @@
+name: daimon-matrix
+version: 1.0.0
+kind: exclusive
+description: "Read and propose through an authenticated Daimon Matrix body."
+author: "AlterMundi"
+license: MIT
+compatibility: "Hermes Agent == 0.19.0"

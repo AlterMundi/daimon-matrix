@@ -391,6 +391,11 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("memory.evaluate", params, request_id=request_id)
 
+    def memory_context(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("memory.context", params, request_id=request_id)
+
     def memory_execute(
         self, params: Mapping[str, Any], *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

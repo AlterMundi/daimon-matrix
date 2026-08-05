@@ -16,6 +16,13 @@ The external Matrix.org protocol is not part of this stack.
 | Weave subsystem | independent per-embodiment ledger and reusable `/we.sync` evidence inside `daimon-matrix` | transport directory, resource fencing, root identity |
 | Tribe Bridge | transitional authenticated principals, encrypted delivery, audiences, ACKs | same-being membership, memory adoption, resource effects |
 
+Codex and Hermes are replaceable body runtimes above this authority map. They
+may consume Matrix scopes and submit authorized requests, but neither owns
+`/me`, canonical memory, presence, resource fences or transport membership.
+Cluster supervises their processes and volumes; Matrix admits their exact body
+binding and receipts. Their local threads/sessions remain body state across
+park/rebirth and never become a continuity root.
+
 ## Provisional same-being manifest
 
 Before a Matrix root exists, an administrator installs the same canonical

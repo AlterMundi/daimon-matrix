@@ -53,6 +53,7 @@ REBUILD_PLAN_SCHEMA: Final = "dm.memory-projection.rebuild-plan/v1"
 REBUILD_RECEIPT_SCHEMA: Final = "dm.memory-projection.rebuild-receipt/v1"
 RECALL_SCHEMA: Final = "dm.memory-projection.recall/v1"
 CHECKPOINT_SCHEMA: Final = "dm.memory-projection.checkpoint/v1"
+CURRENT_PROJECTION_SCHEMA: Final = "dm.memory.current-projection/v1"
 
 HMK_REQUEST_SCHEMA: Final = "hmk.daimon-projection.request/v1"
 HMK_RECEIPT_SCHEMA: Final = "hmk.daimon-projection.receipt/v1"
@@ -71,6 +72,7 @@ MAX_UINT: Final = 2**53 - 1
 JOURNAL_SCHEMA_VERSION: Final = 1
 
 CHECKPOINT_DOMAIN: Final = b"daimon/memory-projection/checkpoint/v1\x00"
+CURRENT_PROJECTION_DOMAIN: Final = b"daimon/memory/current-projection/v1\x00"
 ADAPTER_DOMAIN: Final = b"daimon/memory-projection/adapter/v1\x00"
 RECEIPT_DOMAIN: Final = b"daimon/memory-projection/receipt/v1\x00"
 REBUILD_PLAN_DOMAIN: Final = b"daimon/memory-projection/rebuild-plan/v1\x00"
@@ -469,6 +471,197 @@ def projection_checkpoint(ledger: Ledger) -> dict[str, Any]:
             CHECKPOINT_DOMAIN + _canonical(core, "invalid_checkpoint")
         ).hexdigest(),
     }
+
+
+def validate_current_memory_projection(value: Any) -> dict[str, Any]:
+    row = _closed(
+        value,
+        {
+            "being_ref",
+            "checkpoint",
+            "entries",
+            "manifest_hash",
+            "projection_hash",
+            "schema",
+            "total_active",
+            "truncated",
+        },
+        "invalid_current_memory_projection",
+    )
+    if row["schema"] != CURRENT_PROJECTION_SCHEMA:
+        raise MemoryProjectionError("unsupported_current_memory_projection")
+    subject = _me_id(row["being_ref"], "invalid_current_memory_projection")
+    manifest_hash = _hash(row["manifest_hash"], "invalid_current_memory_projection")
+    checkpoint = _closed(
+        row["checkpoint"],
+        {"hash", "sequence"},
+        "invalid_current_memory_projection",
+    )
+    _hash(checkpoint["hash"], "invalid_current_memory_projection")
+    _uint(checkpoint["sequence"], "invalid_current_memory_projection")
+    entries = row["entries"]
+    total = _uint(row["total_active"], "invalid_current_memory_projection")
+    if (
+        not isinstance(entries, list)
+        or len(entries) > 64
+        or total < len(entries)
+        or row["truncated"] is not (total > len(entries))
+    ):
+        raise MemoryProjectionError("invalid_current_memory_projection")
+    normalized: list[dict[str, Any]] = []
+    previous_memory_id: str | None = None
+    for entry in entries:
+        item = _closed(
+            entry,
+            {
+                "author_me_id",
+                "candidate_id",
+                "category",
+                "content_ref",
+                "context",
+                "decision_id",
+                "event_hash",
+                "event_id",
+                "evidence_refs",
+                "memory_id",
+                "origin",
+                "policy_id",
+                "sequence",
+            },
+            "invalid_current_memory_projection",
+        )
+        event_id = _uuid(item["event_id"], "invalid_current_memory_projection")
+        event_hash = _hash(item["event_hash"], "invalid_current_memory_projection")
+        memory_id = _uuid(item["memory_id"], "invalid_current_memory_projection")
+        if previous_memory_id is not None and memory_id <= previous_memory_id:
+            raise MemoryProjectionError("invalid_current_memory_projection")
+        previous_memory_id = memory_id
+        sequence = _uint(
+            item["sequence"], "invalid_current_memory_projection", minimum=1
+        )
+        if item["category"] not in PERSONAL_CATEGORIES:
+            raise MemoryProjectionError("invalid_current_memory_projection")
+        author = _me_id(item["author_me_id"], "invalid_current_memory_projection")
+        if author != subject:
+            raise MemoryProjectionError("current_memory_authority_violation")
+        context = _text(
+            item["context"], "invalid_current_memory_projection", maximum=128
+        )
+        try:
+            content_ref = validate_content_ref(item["content_ref"])
+        except ValueError as exception:
+            raise MemoryProjectionError(
+                "invalid_current_memory_projection"
+            ) from exception
+        evidence_refs = item["evidence_refs"]
+        if (
+            not isinstance(evidence_refs, list)
+            or evidence_refs != sorted(set(evidence_refs))
+            or len(evidence_refs) > 256
+        ):
+            raise MemoryProjectionError("invalid_current_memory_projection")
+        for reference in evidence_refs:
+            _uuid(reference, "invalid_current_memory_projection")
+        for field, prefix in (
+            ("policy_id", "dm:memory-policy:v1:"),
+            ("candidate_id", "dm:memory-candidate:v1:"),
+            ("decision_id", "dm:memory-decision:v1:"),
+        ):
+            _derived_id(item[field], prefix, "invalid_current_memory_projection")
+        origin = _closed(
+            item["origin"],
+            {"body_ref", "embodiment_id", "incarnation_id", "principal_id"},
+            "invalid_current_memory_projection",
+        )
+        for origin_value in origin.values():
+            _text(origin_value, "invalid_current_memory_projection")
+        normalized.append(
+            {
+                "event_id": event_id,
+                "event_hash": event_hash,
+                "memory_id": memory_id,
+                "sequence": sequence,
+                "category": item["category"],
+                "author_me_id": author,
+                "context": context,
+                "content_ref": content_ref,
+                "evidence_refs": copy.deepcopy(evidence_refs),
+                "policy_id": item["policy_id"],
+                "candidate_id": item["candidate_id"],
+                "decision_id": item["decision_id"],
+                "origin": copy.deepcopy(dict(origin)),
+            }
+        )
+    core = {
+        key: copy.deepcopy(item)
+        for key, item in row.items()
+        if key != "projection_hash"
+    }
+    if (
+        row["projection_hash"]
+        != hashlib.sha256(
+            CURRENT_PROJECTION_DOMAIN
+            + _canonical(core, "invalid_current_memory_projection")
+        ).hexdigest()
+    ):
+        raise MemoryProjectionError("current_memory_projection_hash_mismatch")
+    if manifest_hash != row["manifest_hash"]:
+        raise MemoryProjectionError("invalid_current_memory_projection")
+    return {**copy.deepcopy(dict(row)), "entries": normalized}
+
+
+def current_memory_projection(ledger: Ledger, *, limit: int = 64) -> dict[str, Any]:
+    """Return current personal-memory heads as bounded provenance-only refs."""
+
+    _uint(limit, "invalid_current_memory_projection_limit", minimum=1)
+    if limit > 64:
+        raise MemoryProjectionError("invalid_current_memory_projection_limit")
+    lanes = _personal_lanes(ledger)
+    active: list[dict[str, Any]] = []
+    for memory_id in sorted(lanes):
+        head = lanes[memory_id][-1]
+        record = validate_memory_record(head["payload"])
+        if record["operation"] == "retract":
+            continue
+        active.append(
+            {
+                "event_id": head["event_id"],
+                "event_hash": head["content_hash"],
+                "memory_id": memory_id,
+                "sequence": record["sequence"],
+                "category": record["category"],
+                "author_me_id": record["author_me_id"],
+                "context": record["context"],
+                "content_ref": copy.deepcopy(record["content_ref"]),
+                "evidence_refs": copy.deepcopy(record["evidence_refs"]),
+                "policy_id": record["policy_id"],
+                "candidate_id": record["candidate_id"],
+                "decision_id": record["decision_id"],
+                "origin": copy.deepcopy(head["origin"]),
+            }
+        )
+    checkpoint = projection_checkpoint(ledger)
+    core = {
+        "schema": CURRENT_PROJECTION_SCHEMA,
+        "being_ref": ledger.authority.manifest.being_ref,
+        "manifest_hash": ledger.authority.manifest.digest,
+        "checkpoint": {
+            "sequence": checkpoint["sequence"],
+            "hash": checkpoint["hash"],
+        },
+        "entries": active[:limit],
+        "total_active": len(active),
+        "truncated": len(active) > limit,
+    }
+    return validate_current_memory_projection(
+        {
+            **core,
+            "projection_hash": hashlib.sha256(
+                CURRENT_PROJECTION_DOMAIN
+                + _canonical(core, "invalid_current_memory_projection")
+            ).hexdigest(),
+        }
+    )
 
 
 def _head_event(ledger: Ledger, memory_id: str) -> tuple[list[Event], Event]:
@@ -2202,8 +2395,10 @@ __all__ = [
     "ProjectionTransport",
     "create_projection_manifest",
     "create_projection_profile",
+    "current_memory_projection",
     "negotiate_projection_manifest",
     "projection_checkpoint",
+    "validate_current_memory_projection",
     "validate_projection_manifest",
     "validate_projection_profile",
     "validate_projection_receipt",

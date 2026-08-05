@@ -44,6 +44,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/daemon.py"),
     Path("src/daimon_matrix/identity.py"),
     Path("src/daimon_matrix/human_review.py"),
+    Path("src/daimon_matrix/hermes_body.py"),
     Path("src/daimon_matrix/keystore.py"),
     Path("src/daimon_matrix/ledger.py"),
     Path("src/daimon_matrix/local_api.py"),

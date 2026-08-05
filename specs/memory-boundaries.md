@@ -318,3 +318,26 @@ automated evidence there.
 Public deterministic vectors live in `vectors/memory/v1/`; their index binds
 every artifact SHA-256. CI regenerates them and executes all scenarios against
 source and the built wheel.
+
+## 14. Hermes consumption boundary
+
+DM-041 adds a read-only current personal-memory projection for a supervised
+Hermes body. The owner-local `memory.context` method is capability-scoped to
+that adapter and is intentionally absent from the generic Matrix CLI/MCP tool
+inventory. It returns only current linear personal heads with content
+references, decision/policy IDs, provenance and a Matrix checkpoint; it never
+returns content bytes, paths or HMK rows.
+
+The Hermes provider revalidates `/me`, a current running Cluster body snapshot,
+body/incarnation, manifest and monotonic Weave heads before each read. It
+validates the complete projection and requires the manifest and high-water to
+remain unchanged across a second scope read before injecting a bounded inert
+block through Hermes' current-user API sidecar. The stable system prompt is not
+a memory channel. Native Hermes `MEMORY.md`/`USER.md`, HMK providers, librarian
+writes and `sync_turn` authorship are disabled.
+
+The only V0 write is an explicit idempotent `experience.observed` proposal via
+Matrix. Its receipt fixes `adopted: false`; DM-030 policy and any required
+DM-033 review remain mandatory before personal-memory adoption. Session hooks,
+compression, transcript replay, profile restoration and model claims cannot
+promote data or replace an effect receipt. See `docs/dm041-hermes-body.md`.
