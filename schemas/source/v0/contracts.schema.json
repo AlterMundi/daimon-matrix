@@ -1,0 +1,1407 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/source/v0/contracts.schema.json",
+  "title": "Daimon Matrix DM-015 source V0 wire contracts",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/claim"
+    },
+    {
+      "$ref": "#/$defs/evidenceManifest"
+    },
+    {
+      "$ref": "#/$defs/assessment"
+    },
+    {
+      "$ref": "#/$defs/policySnapshot"
+    },
+    {
+      "$ref": "#/$defs/publication"
+    },
+    {
+      "$ref": "#/$defs/provenanceManifest"
+    },
+    {
+      "$ref": "#/$defs/cursor"
+    },
+    {
+      "$ref": "#/$defs/cursorPage"
+    },
+    {
+      "$ref": "#/$defs/importDecision"
+    },
+    {
+      "$ref": "#/$defs/promotionPolicy"
+    }
+  ],
+  "$defs": {
+    "safeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "hash43": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "hash64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "meId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "sourceId": {
+      "type": "string",
+      "pattern": "^dm:source:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "claimSeriesId": {
+      "type": "string",
+      "pattern": "^dm:source-claim-series:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "assessmentSeriesId": {
+      "type": "string",
+      "pattern": "^dm:source-assessment-series:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "publicationId": {
+      "type": "string",
+      "pattern": "^dm:source-publication:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "importSeriesId": {
+      "type": "string",
+      "pattern": "^dm:source-import-series:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "contentRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_length",
+        "content_id",
+        "media_type",
+        "sha256"
+      ],
+      "properties": {
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        },
+        "content_id": {
+          "type": "string",
+          "pattern": "^dm:source-content:v0:[A-Za-z0-9_-]{43}$"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_domain",
+        "artifact_hash",
+        "artifact_id"
+      ],
+      "properties": {
+        "artifact_domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[ -~]+$"
+        },
+        "artifact_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[ -~]+$"
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "sourceCore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_reference",
+        "kind",
+        "namespace",
+        "schema"
+      ],
+      "properties": {
+        "canonical_reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[!-~]+$"
+        },
+        "kind": {
+          "enum": [
+            "collective",
+            "corpus",
+            "person",
+            "project",
+            "tradition",
+            "other"
+          ]
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[!-~]+$"
+        },
+        "schema": {
+          "const": "daimon-source-core/v0"
+        }
+      }
+    },
+    "controlPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "embodiment_id",
+        "incarnation_id",
+        "manifest_hash"
+      ],
+      "properties": {
+        "embodiment_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "incarnation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "manifest_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "reasonCodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,62}:[a-z][a-z0-9-]{0,62}$"
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "claim_sequence",
+        "claim_series_id",
+        "claimant_control_position",
+        "claimant_me_id",
+        "evidence_manifest_ref",
+        "expires_at_ms",
+        "issued_at_ms",
+        "previous_claim_event_hash",
+        "previous_claim_event_id",
+        "relations",
+        "schema",
+        "source_core",
+        "source_id"
+      ],
+      "properties": {
+        "action": {
+          "enum": [
+            "assert",
+            "retract"
+          ]
+        },
+        "claim_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "claim_series_id": {
+          "$ref": "#/$defs/claimSeriesId"
+        },
+        "claimant_control_position": {
+          "$ref": "#/$defs/controlPosition"
+        },
+        "claimant_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "evidence_manifest_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "expires_at_ms": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          ]
+        },
+        "issued_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "previous_claim_event_hash": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "previous_claim_event_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uuid"
+            }
+          ]
+        },
+        "relations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "created-by",
+              "descended-from",
+              "derived-from",
+              "formed-in",
+              "influenced-by",
+              "trained-on",
+              "participates-in"
+            ]
+          }
+        },
+        "schema": {
+          "const": "daimon-source-claim/v0"
+        },
+        "source_core": {
+          "$ref": "#/$defs/sourceCore"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "assert"}}},
+          "then": {"properties": {"evidence_manifest_ref": {"$ref": "#/$defs/contentRef"}}},
+          "else": {"properties": {"evidence_manifest_ref": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"claim_sequence": {"const": 0}}},
+          "then": {
+            "properties": {
+              "previous_claim_event_id": {"type": "null"},
+              "previous_claim_event_hash": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_claim_event_id": {"$ref": "#/$defs/uuid"},
+              "previous_claim_event_hash": {"$ref": "#/$defs/hash64"}
+            }
+          }
+        }
+      ]
+    },
+    "evidenceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "assertion",
+        "content",
+        "evidence_id",
+        "issuer_me_id",
+        "kind",
+        "role"
+      ],
+      "properties": {
+        "artifact": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/artifactRef"
+            }
+          ]
+        },
+        "assertion": {
+          "enum": [
+            "cryptographically-authored",
+            "publisher-declared",
+            "external-metadata",
+            "unattributed"
+          ]
+        },
+        "content": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issuer_me_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "daimon-artifact",
+            "content"
+          ]
+        },
+        "role": {
+          "enum": [
+            "corroborates",
+            "context",
+            "contradicts",
+            "derivation"
+          ]
+        }
+      }
+    },
+    "evidenceManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_binding_hash",
+        "entries",
+        "schema"
+      ],
+      "properties": {
+        "claim_binding_hash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceEntry"
+          }
+        },
+        "schema": {
+          "const": "daimon-source-evidence-manifest/v0"
+        }
+      }
+    },
+    "policySubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_hash",
+        "event_id",
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "kind": {
+          "enum": [
+            "claim",
+            "publication"
+          ]
+        }
+      }
+    },
+    "policySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_refs",
+        "claim_event_ids",
+        "content_refs",
+        "contradiction_refs",
+        "observed_cursor_event_hash",
+        "observed_cursor_event_id",
+        "schema",
+        "source_id",
+        "subject"
+      ],
+      "properties": {
+        "artifact_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        },
+        "claim_event_ids": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "content_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/contentRef"
+          }
+        },
+        "contradiction_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/artifactRef"
+              },
+              {
+                "$ref": "#/$defs/contentRef"
+              }
+            ]
+          }
+        },
+        "observed_cursor_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "observed_cursor_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "schema": {
+          "const": "daimon-source-policy-evidence-snapshot/v0"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        },
+        "subject": {
+          "$ref": "#/$defs/policySubject"
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_sequence",
+        "assessment_series_id",
+        "assessor_me_id",
+        "claim_event_hash",
+        "claim_event_id",
+        "claimant_me_id",
+        "decided_at_ms",
+        "disposition",
+        "evidence_manifest_ref",
+        "evidence_snapshot_ref",
+        "policy_ref",
+        "previous_assessment_event_id",
+        "reason_codes",
+        "schema",
+        "source_id"
+      ],
+      "properties": {
+        "assessment_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "assessment_series_id": {
+          "$ref": "#/$defs/assessmentSeriesId"
+        },
+        "assessor_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "claim_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "claim_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "claimant_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "decided_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "disposition": {
+          "enum": [
+            "admitted",
+            "quarantined",
+            "rejected"
+          ]
+        },
+        "evidence_manifest_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "evidence_snapshot_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "policy_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "previous_assessment_event_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uuid"
+            }
+          ]
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reasonCodes"
+        },
+        "schema": {
+          "const": "daimon-source-assessment/v0"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"assessment_sequence": {"const": 0}}},
+          "then": {"properties": {"previous_assessment_event_id": {"type": "null"}}},
+          "else": {"properties": {"previous_assessment_event_id": {"$ref": "#/$defs/uuid"}}}
+        }
+      ]
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "classification",
+        "consent",
+        "content_ref",
+        "issued_at_ms",
+        "license",
+        "previous_publication_event_hash",
+        "previous_publication_event_id",
+        "provenance_manifest_ref",
+        "publication_id",
+        "publication_sequence",
+        "publisher_claim_event_id",
+        "publisher_me_id",
+        "reason",
+        "schema",
+        "source_id",
+        "source_uri"
+      ],
+      "properties": {
+        "action": {
+          "enum": [
+            "publish",
+            "tombstone"
+          ]
+        },
+        "classification": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "public",
+            "tribe-shared",
+            null
+          ]
+        },
+        "consent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "explicit",
+            null
+          ]
+        },
+        "content_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "issued_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        },
+        "previous_publication_event_hash": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ]
+        },
+        "previous_publication_event_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uuid"
+            }
+          ]
+        },
+        "provenance_manifest_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publicationId"
+        },
+        "publication_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "publisher_claim_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "publisher_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "schema": {
+          "const": "daimon-source-publication/v0"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        },
+        "source_uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[!-~]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "publish"}}},
+          "then": {
+            "properties": {
+              "classification": {"enum": ["public", "tribe-shared"]},
+              "consent": {"const": "explicit"},
+              "content_ref": {"$ref": "#/$defs/contentRef"},
+              "license": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[ -~]+$"},
+              "provenance_manifest_ref": {"$ref": "#/$defs/contentRef"},
+              "reason": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "classification": {"type": "null"},
+              "consent": {"type": "null"},
+              "content_ref": {"type": "null"},
+              "license": {"type": "null"},
+              "provenance_manifest_ref": {"type": "null"},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 1024}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"publication_sequence": {"const": 0}}},
+          "then": {
+            "properties": {
+              "previous_publication_event_id": {"type": "null"},
+              "previous_publication_event_hash": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_publication_event_id": {"$ref": "#/$defs/uuid"},
+              "previous_publication_event_hash": {"$ref": "#/$defs/hash64"}
+            }
+          }
+        }
+      ]
+    },
+    "provenanceAuthor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assertion",
+        "evidence_refs",
+        "subject_id",
+        "subject_kind"
+      ],
+      "properties": {
+        "assertion": {
+          "enum": [
+            "cryptographic",
+            "publisher-declared",
+            "source-metadata",
+            "unattributed"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        },
+        "subject_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "subject_kind": {
+          "enum": [
+            "me",
+            "external"
+          ]
+        }
+      }
+    },
+    "provenanceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authors",
+        "content_ref",
+        "kind",
+        "node_id",
+        "source_uri"
+      ],
+      "properties": {
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/provenanceAuthor"
+          }
+        },
+        "content_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "kind": {
+          "enum": [
+            "original",
+            "derivation"
+          ]
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^dm:source-provenance-node:v0:[A-Za-z0-9_-]{43}$"
+        },
+        "source_uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[!-~]+$"
+        }
+      }
+    },
+    "provenanceEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from_node_id",
+        "relation",
+        "to_node_id",
+        "transformation_ref"
+      ],
+      "properties": {
+        "from_node_id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "relation": {
+          "const": "derived-from"
+        },
+        "to_node_id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "transformation_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        }
+      }
+    },
+    "provenanceManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edges",
+        "nodes",
+        "output_node_id",
+        "publication_binding_hash",
+        "schema"
+      ],
+      "properties": {
+        "edges": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/provenanceEdge"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/provenanceNode"
+          }
+        },
+        "output_node_id": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "publication_binding_hash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "schema": {
+          "const": "daimon-source-provenance-manifest/v0"
+        }
+      }
+    },
+    "pageSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_page_ref",
+        "page_count",
+        "row_count"
+      ],
+      "properties": {
+        "first_page_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_pages",
+        "created_at_ms",
+        "identity_control_position",
+        "observer_me_id",
+        "publication_pages",
+        "schema",
+        "snapshot_hash",
+        "source_id"
+      ],
+      "properties": {
+        "claim_pages": {
+          "$ref": "#/$defs/pageSummary"
+        },
+        "created_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "identity_control_position": {
+          "$ref": "#/$defs/controlPosition"
+        },
+        "observer_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "publication_pages": {
+          "$ref": "#/$defs/pageSummary"
+        },
+        "schema": {
+          "const": "daimon-source-cursor/v0"
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        }
+      }
+    },
+    "claimCursorRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_series_id",
+        "claimant_me_id",
+        "event_hash",
+        "event_id",
+        "sequence",
+        "state"
+      ],
+      "properties": {
+        "claim_series_id": {
+          "$ref": "#/$defs/claimSeriesId"
+        },
+        "claimant_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "enum": [
+            "asserted",
+            "retracted",
+            "forked"
+          ]
+        }
+      }
+    },
+    "publicationCursorRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_hash",
+        "event_id",
+        "publication_id",
+        "publisher_me_id",
+        "sequence",
+        "state"
+      ],
+      "properties": {
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publicationId"
+        },
+        "publisher_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "enum": [
+            "published",
+            "tombstoned",
+            "forked"
+          ]
+        }
+      }
+    },
+    "cursorPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "next_page_ref",
+        "page_index",
+        "rows",
+        "schema",
+        "source_id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "claim",
+            "publication"
+          ]
+        },
+        "next_page_ref": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/contentRef"
+            }
+          ]
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/claimCursorRow"
+              },
+              {
+                "$ref": "#/$defs/publicationCursorRow"
+              }
+            ]
+          }
+        },
+        "schema": {
+          "const": "daimon-source-cursor-page/v0"
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        }
+      }
+    },
+    "importDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_ref",
+        "decided_at_ms",
+        "decision",
+        "decision_sequence",
+        "decision_series_id",
+        "evidence_snapshot_ref",
+        "policy_ref",
+        "previous_decision_event_id",
+        "provenance_manifest_ref",
+        "publication_event_hash",
+        "publication_event_id",
+        "publication_id",
+        "reason_codes",
+        "receiver_me_id",
+        "schema",
+        "source_claim_event_ids",
+        "source_id",
+        "target_memory_category"
+      ],
+      "properties": {
+        "content_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "decided_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "decision": {
+          "enum": [
+            "quarantined",
+            "promoted",
+            "rejected"
+          ]
+        },
+        "decision_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "decision_series_id": {
+          "$ref": "#/$defs/importSeriesId"
+        },
+        "evidence_snapshot_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "policy_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "previous_decision_event_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uuid"
+            }
+          ]
+        },
+        "provenance_manifest_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "publication_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "publication_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publicationId"
+        },
+        "reason_codes": {
+          "$ref": "#/$defs/reasonCodes"
+        },
+        "receiver_me_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "schema": {
+          "const": "daimon-source-import-decision/v0"
+        },
+        "source_claim_event_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "source_id": {
+          "$ref": "#/$defs/sourceId"
+        },
+        "target_memory_category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "external-reference",
+            null
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"decision_sequence": {"const": 0}}},
+          "then": {
+            "properties": {
+              "decision": {"const": "quarantined"},
+              "previous_decision_event_id": {"type": "null"}
+            }
+          },
+          "else": {"properties": {"previous_decision_event_id": {"$ref": "#/$defs/uuid"}}}
+        },
+        {
+          "if": {"properties": {"decision": {"const": "promoted"}}},
+          "then": {"properties": {"target_memory_category": {"const": "external-reference"}}},
+          "else": {"properties": {"target_memory_category": {"type": "null"}}}
+        }
+      ]
+    },
+    "promotionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "consent",
+        "content_ref",
+        "content_safety_passed",
+        "final_render_reviewed",
+        "license",
+        "provenance_manifest_ref",
+        "publication_event_hash",
+        "publication_event_id",
+        "publication_id",
+        "schema",
+        "target_memory_category"
+      ],
+      "properties": {
+        "classification": {
+          "enum": [
+            "public",
+            "tribe-shared"
+          ]
+        },
+        "consent": {
+          "const": "explicit"
+        },
+        "content_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "content_safety_passed": {
+          "const": true
+        },
+        "final_render_reviewed": {
+          "const": true
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        },
+        "provenance_manifest_ref": {
+          "$ref": "#/$defs/contentRef"
+        },
+        "publication_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "publication_event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "publication_id": {
+          "$ref": "#/$defs/publicationId"
+        },
+        "schema": {
+          "const": "daimon-source-promotion-policy/v0"
+        },
+        "target_memory_category": {
+          "const": "external-reference"
+        }
+      }
+    }
+  }
+}

@@ -12,7 +12,10 @@ profile, auth, session, prompt, memory database or provider output. Its public
 templates, schemas, vectors and provenance remain repository evidence rather
 than wheel runtime state. DM-042 packages the path-free local plural-body
 receipt verifier; its synthetic profiles, ledgers, vectors and validation
-harness remain repository/test evidence and never enter the wheel. The package
+harness remain repository/test evidence and never enter the wheel. DM-081 adds
+the source contract/runtime and `daimon-synthetic-sources` isolated acceptance
+entry point; its vectors, schemas, two-being fixture and generated Section 14
+map remain repository evidence rather than wheel state. The package
 contains no remote carrier, Matrix.org
 client, deployment/provider integration or live state.
 
@@ -51,8 +54,8 @@ observable install path.
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
 identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP,
-Codex-body, Hermes-body, local-We and conformance modules, `__init__.py`, and
-`py.typed`.
+Codex-body, Hermes-body, local-We, source, synthetic-source and conformance
+modules, `__init__.py`, and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 
@@ -76,6 +79,7 @@ python -m venv /tmp/daimon-matrix-wheel-smoke
   'import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"'
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-conformance --help
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-hermes-body --help
+/tmp/daimon-matrix-wheel-smoke/bin/daimon-synthetic-sources --help
 ```
 
 Use a fresh disposable path rather than an existing operator environment. No

@@ -36,6 +36,12 @@ DM-054 adds `scope me`, `we`, `diff`, `sync-plan`, `resolve` and `tribe`.
 These read or freeze an exact plan; they cannot run peer fan-out, seal,
 dispatch, adopt, mutate Cluster, or select an arbitrary method.
 
+DM-081 adds `source content-put`, `claim`, `assess`, `publication-append`,
+`import-decide`, `status`, `cursor-create`, `diff`, `incoming`, `pull`,
+`promote` and `projection`. These are fixed typed calls to the owner daemon;
+none accepts an arbitrary method, locator, shell command, identity override or
+database path. `pull` requires an operation UUID and never promotes.
+
 `--json` emits one canonical `dm.cli.result/v1` line. The response authentication
 tag is verified internally and omitted from presentation. Human output carries
 the method, outcome and RPC request ID. Exit 0 is success, 2 is local
@@ -56,7 +62,7 @@ switch eras and missing/wrong modern envelopes fail before daemon dispatch.
 Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
 reserved for MCP frames.
 
-The 29 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+The 46 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
 tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed

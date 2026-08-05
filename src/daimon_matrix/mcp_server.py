@@ -358,6 +358,128 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         ),
         False,
     ),
+    "source_content_put": (
+        "source.content.put",
+        _object_schema(
+            {
+                "data": {"type": "string", "pattern": "^[A-Za-z0-9_-]*$"},
+                "media_type": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[ -~]+$",
+                },
+            },
+            ("data", "media_type"),
+        ),
+        False,
+    ),
+    "source_claim": (
+        "source.claim",
+        _object_schema({"payload": {"type": "object"}}, ("payload",)),
+        False,
+    ),
+    "source_assess": (
+        "source.assess",
+        _object_schema({"payload": {"type": "object"}}, ("payload",)),
+        False,
+    ),
+    "source_publication_append": (
+        "source.publication.append",
+        _object_schema({"payload": {"type": "object"}}, ("payload",)),
+        False,
+    ),
+    "source_import_decide": (
+        "source.import.decide",
+        _object_schema({"payload": {"type": "object"}}, ("payload",)),
+        False,
+    ),
+    "source_status": (
+        "source.status",
+        _object_schema({"selector": {"type": "object"}}, ("selector",)),
+        True,
+    ),
+    "source_cursor_create": (
+        "source.cursor.create",
+        _object_schema({"selector": {"type": "object"}}, ("selector",)),
+        False,
+    ),
+    "source_diff": (
+        "source.diff",
+        _object_schema(
+            {
+                "continuation": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 268_435_456,
+                },
+                "max_items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4096,
+                },
+                "request_event_id": _UUID,
+                "requester_cursor": {"type": "object"},
+                "requester_me_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240,
+                },
+                "selector": {"type": "object"},
+            },
+            (
+                "max_bytes",
+                "max_items",
+                "request_event_id",
+                "requester_cursor",
+                "requester_me_id",
+                "selector",
+            ),
+        ),
+        True,
+    ),
+    "source_incoming": (
+        "source.incoming",
+        _object_schema({"bundle": {"type": "object"}}, ("bundle",)),
+        True,
+    ),
+    "source_pull": (
+        "source.pull",
+        _object_schema(
+            {"bundle": {"type": "object"}, "preview": {"type": "object"}},
+            ("bundle", "operation_id", "preview"),
+        ),
+        False,
+    ),
+    "source_promote": (
+        "source.promote",
+        _object_schema(
+            {
+                "evidence_snapshot_ref": {"type": "object"},
+                "policy_ref": {"type": "object"},
+                "publication_id": {
+                    "type": "string",
+                    "pattern": "^dm:source-publication:v0:[A-Za-z0-9_-]{43}$",
+                },
+            },
+            ("evidence_snapshot_ref", "policy_ref", "publication_id"),
+        ),
+        False,
+    ),
+    "source_projection": (
+        "source.projection",
+        _object_schema(
+            {
+                "publication_id": {
+                    "type": "string",
+                    "pattern": "^dm:source-publication:v0:[A-Za-z0-9_-]{43}$",
+                }
+            },
+            ("publication_id",),
+        ),
+        True,
+    ),
     "we_heads": ("we.heads", _object_schema({}), True),
     "we_diff": (
         "we.diff",
@@ -516,6 +638,7 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
 _DEFAULTS: Final[dict[str, Any]] = {
     "after": None,
     "causal_parents": [],
+    "continuation": None,
     "event_id": None,
     "expected_occupied_positions_hash": None,
     "kind": None,
@@ -592,6 +715,30 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         },
         "species.apply": {"snapshot"},
         "species.rollback": {"reason", "snapshot"},
+        "source.content.put": {"data", "media_type"},
+        "source.claim": {"payload"},
+        "source.assess": {"payload"},
+        "source.publication.append": {"payload"},
+        "source.import.decide": {"payload"},
+        "source.status": {"selector"},
+        "source.cursor.create": {"selector"},
+        "source.diff": {
+            "continuation",
+            "max_bytes",
+            "max_items",
+            "request_event_id",
+            "requester_cursor",
+            "requester_me_id",
+            "selector",
+        },
+        "source.incoming": {"bundle"},
+        "source.pull": {"bundle", "preview"},
+        "source.promote": {
+            "evidence_snapshot_ref",
+            "policy_ref",
+            "publication_id",
+        },
+        "source.projection": {"publication_id"},
         "we.heads": set(),
         "we.diff": {"after", "kind", "limit", "subject"},
         "we.preview": {"events"},
@@ -630,7 +777,7 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
             raise MCPError(
                 types.INVALID_PARAMS, "operation_id must be a canonical UUID"
             ) from exception
-    if method in {"species.apply", "species.rollback"}:
+    if method in {"source.pull", "species.apply", "species.rollback"}:
         if operation_id is None:
             raise MCPError(
                 types.INVALID_PARAMS,

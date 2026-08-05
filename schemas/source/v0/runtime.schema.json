@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/source/v0/runtime.schema.json",
+  "title": "Daimon Matrix DM-015 source runtime exchange contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/selector"},
+    {"$ref": "#/$defs/emptyCursor"},
+    {"$ref": "#/$defs/cursorEnvelope"},
+    {"$ref": "#/$defs/continuation"},
+    {"$ref": "#/$defs/diffItem"},
+    {"$ref": "#/$defs/diffBundle"},
+    {"$ref": "#/$defs/incomingPreview"},
+    {"$ref": "#/$defs/pullResult"},
+    {"$ref": "#/$defs/status"},
+    {"$ref": "#/$defs/promotionProjection"}
+  ],
+  "$defs": {
+    "safeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "hash43": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "eventHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "meId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "sourceId": {
+      "type": "string",
+      "pattern": "^dm:source:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "claimSeriesId": {
+      "type": "string",
+      "pattern": "^dm:source-claim-series:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "publicationId": {
+      "type": "string",
+      "pattern": "^dm:source-publication:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "contentRef": {
+      "$ref": "contracts.schema.json#/$defs/contentRef"
+    },
+    "event": {"$ref": "../../weave/v1/event.schema.json"},
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_core_hash", "source_id"],
+      "properties": {
+        "source_core_hash": {"$ref": "#/$defs/hash43"},
+        "source_id": {"$ref": "#/$defs/sourceId"}
+      }
+    },
+    "emptyCursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observer_me_id", "schema", "source_id"],
+      "properties": {
+        "observer_me_id": {"$ref": "#/$defs/meId"},
+        "schema": {"const": "dm.source-empty-cursor/v0"},
+        "source_id": {"$ref": "#/$defs/sourceId"}
+      }
+    },
+    "cursorPageWrapper": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "reference"],
+      "properties": {
+        "page": {"$ref": "contracts.schema.json#/$defs/cursorPage"},
+        "reference": {"$ref": "#/$defs/contentRef"}
+      }
+    },
+    "cursorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_pages", "event", "publication_pages", "schema"],
+      "properties": {
+        "claim_pages": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/cursorPageWrapper"}
+        },
+        "event": {"$ref": "#/$defs/event"},
+        "publication_pages": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/cursorPageWrapper"}
+        },
+        "schema": {"const": "dm.source-cursor-envelope/v0"}
+      }
+    },
+    "continuation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expires_at_ms", "next_offset", "next_page_index", "page_hash",
+        "request_event_id", "requester_me_id", "responder_cursor_hash",
+        "responder_me_id", "schema", "token_hash"
+      ],
+      "properties": {
+        "expires_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "next_offset": {"$ref": "#/$defs/safeInteger"},
+        "next_page_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63
+        },
+        "page_hash": {"$ref": "#/$defs/hash43"},
+        "request_event_id": {"$ref": "#/$defs/uuid"},
+        "requester_me_id": {"$ref": "#/$defs/meId"},
+        "responder_cursor_hash": {"$ref": "#/$defs/eventHash"},
+        "responder_me_id": {"$ref": "#/$defs/meId"},
+        "schema": {"const": "dm.source-continuation/v0"},
+        "token_hash": {"$ref": "#/$defs/hash43"}
+      }
+    },
+    "diffBlob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "reference"],
+      "properties": {
+        "data": {"type": "string", "pattern": "^[A-Za-z0-9_-]*$"},
+        "reference": {"$ref": "#/$defs/contentRef"}
+      }
+    },
+    "diffItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blobs", "events", "item_hash", "kind", "schema", "series_id"],
+      "properties": {
+        "blobs": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/diffBlob"}
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/event"}
+        },
+        "item_hash": {"$ref": "#/$defs/hash43"},
+        "kind": {"enum": ["claim", "publication"]},
+        "schema": {"const": "dm.source-diff-item/v0"},
+        "series_id": {
+          "oneOf": [
+            {"$ref": "#/$defs/claimSeriesId"},
+            {"$ref": "#/$defs/publicationId"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "claim"}}},
+          "then": {"properties": {"series_id": {"$ref": "#/$defs/claimSeriesId"}}},
+          "else": {"properties": {"series_id": {"$ref": "#/$defs/publicationId"}}}
+        }
+      ]
+    },
+    "diffBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bundle_hash", "continuation", "expires_at_ms", "items", "page_hash",
+        "page_index", "previous_page_hash", "request_event_id",
+        "requester_cursor_hash", "requester_me_id", "responder_cursor",
+        "responder_me_id", "schema", "selector"
+      ],
+      "properties": {
+        "bundle_hash": {"$ref": "#/$defs/hash43"},
+        "continuation": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/continuation"}
+          ]
+        },
+        "expires_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "items": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/diffItem"}
+        },
+        "page_hash": {"$ref": "#/$defs/hash43"},
+        "page_index": {"type": "integer", "minimum": 0, "maximum": 63},
+        "previous_page_hash": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]
+        },
+        "request_event_id": {"$ref": "#/$defs/uuid"},
+        "requester_cursor_hash": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/eventHash"}]
+        },
+        "requester_me_id": {"$ref": "#/$defs/meId"},
+        "responder_cursor": {"$ref": "#/$defs/cursorEnvelope"},
+        "responder_me_id": {"$ref": "#/$defs/meId"},
+        "schema": {"const": "dm.source-diff-bundle/v0"},
+        "selector": {"$ref": "#/$defs/selector"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"page_index": {"const": 0}}},
+          "then": {"properties": {"previous_page_hash": {"type": "null"}}},
+          "else": {"properties": {"previous_page_hash": {"$ref": "#/$defs/hash43"}}}
+        }
+      ]
+    },
+    "previewResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_hash", "kind", "missing_references", "outcome", "reason_codes",
+        "series_id"
+      ],
+      "properties": {
+        "item_hash": {"$ref": "#/$defs/hash43"},
+        "kind": {"enum": ["claim", "publication"]},
+        "missing_references": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+        },
+        "outcome": {
+          "enum": [
+            "admissible-claim-candidate", "admissible-publication-candidate",
+            "already-present", "incomplete", "quarantined", "rejected"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "series_id": {"type": "string", "minLength": 1, "maxLength": 160}
+      }
+    },
+    "incomingPreview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle_hash", "local_cursor_hash", "preview_hash", "results", "schema"],
+      "properties": {
+        "bundle_hash": {"$ref": "#/$defs/hash43"},
+        "local_cursor_hash": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/eventHash"}]
+        },
+        "preview_hash": {"$ref": "#/$defs/hash43"},
+        "results": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/previewResult"}
+        },
+        "schema": {"const": "dm.source-incoming-preview/v0"}
+      }
+    },
+    "pullOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_hash", "kind", "missing_references", "outcome", "reason_codes",
+        "series_id"
+      ],
+      "properties": {
+        "item_hash": {"$ref": "#/$defs/hash43"},
+        "kind": {"enum": ["claim", "publication"]},
+        "missing_references": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+        },
+        "outcome": {
+          "enum": [
+            "admitted-to-quarantine", "already-present", "incomplete",
+            "quarantined", "rejected"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "series_id": {"type": "string", "minLength": 1, "maxLength": 160}
+      }
+    },
+    "pullResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted_event_ids", "achieved_cursor_hash", "bundle_hash",
+        "decision_event_ids", "offered_cursor_hash", "operation_id", "outcomes",
+        "page_hash", "page_index", "previous_page_hash", "request_event_id",
+        "schema", "starting_cursor_hash"
+      ],
+      "properties": {
+        "accepted_event_ids": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/uuid"}
+        },
+        "achieved_cursor_hash": {"$ref": "#/$defs/eventHash"},
+        "bundle_hash": {"$ref": "#/$defs/hash43"},
+        "decision_event_ids": {
+          "type": "array", "maxItems": 4096, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/uuid"}
+        },
+        "offered_cursor_hash": {"$ref": "#/$defs/eventHash"},
+        "operation_id": {"$ref": "#/$defs/uuid"},
+        "outcomes": {
+          "type": "array", "maxItems": 4096,
+          "items": {"$ref": "#/$defs/pullOutcome"}
+        },
+        "page_hash": {"$ref": "#/$defs/hash43"},
+        "page_index": {"type": "integer", "minimum": 0, "maximum": 63},
+        "previous_page_hash": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/hash43"}]
+        },
+        "request_event_id": {"$ref": "#/$defs/uuid"},
+        "schema": {"const": "dm.source-pull-result/v0"},
+        "starting_cursor_hash": {"$ref": "#/$defs/eventHash"}
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claims", "eligible_claimants", "evaluated_at_ms", "observer_me_id",
+        "publications", "schema", "selector"
+      ],
+      "properties": {
+        "claims": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/claimStatus"}},
+        "eligible_claimants": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/eligibleClaimant"}},
+        "evaluated_at_ms": {"$ref": "#/$defs/safeInteger"},
+        "observer_me_id": {"$ref": "#/$defs/meId"},
+        "publications": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/publicationStatus"}},
+        "schema": {"const": "dm.source-status/v0"},
+        "selector": {"$ref": "#/$defs/selector"}
+      }
+    },
+    "claimStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assessment_event_id", "claim_event_hash", "claim_event_id",
+        "claim_series_id", "claimant_me_id", "disposition", "intrinsic_state",
+        "reason_codes", "relations", "sequence"
+      ],
+      "properties": {
+        "assessment_event_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/uuid"}]},
+        "claim_event_hash": {"$ref": "#/$defs/eventHash"},
+        "claim_event_id": {"$ref": "#/$defs/uuid"},
+        "claim_series_id": {"$ref": "#/$defs/claimSeriesId"},
+        "claimant_me_id": {"$ref": "#/$defs/meId"},
+        "disposition": {"enum": ["admitted", "quarantined", "rejected"]},
+        "intrinsic_state": {"enum": ["incomplete", "invalid", "forked", "valid-asserted", "valid-retracted"]},
+        "reason_codes": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string"}},
+        "relations": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": {"enum": ["created-by", "descended-from", "derived-from", "formed-in", "influenced-by", "trained-on", "participates-in"]}
+        },
+        "sequence": {"$ref": "#/$defs/safeInteger"}
+      }
+    },
+    "eligibleClaimant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_event_id", "claimant_me_id", "relations"],
+      "properties": {
+        "claim_event_id": {"$ref": "#/$defs/uuid"},
+        "claimant_me_id": {"$ref": "#/$defs/meId"},
+        "relations": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "publicationStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_hash", "event_id", "publication_id", "publisher_me_id",
+        "reason_codes", "sequence", "state"
+      ],
+      "properties": {
+        "event_hash": {"$ref": "#/$defs/eventHash"},
+        "event_id": {"$ref": "#/$defs/uuid"},
+        "publication_id": {"$ref": "#/$defs/publicationId"},
+        "publisher_me_id": {"$ref": "#/$defs/meId"},
+        "reason_codes": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string"}},
+        "sequence": {"$ref": "#/$defs/safeInteger"},
+        "state": {"enum": ["incomplete", "invalid", "forked", "published", "tombstoned"]}
+      }
+    },
+    "promotionProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active", "authors", "content_ref", "decision_event_hash",
+        "decision_event_id", "provenance_manifest_ref", "publication_event_hash",
+        "publication_event_id", "publication_id", "reason_codes", "receiver_me_id",
+        "schema", "source_id", "source_uri", "target_memory_category"
+      ],
+      "properties": {
+        "active": {"type": "boolean"},
+        "authors": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/projectedAuthors"}},
+        "content_ref": {"$ref": "#/$defs/contentRef"},
+        "decision_event_hash": {"$ref": "#/$defs/eventHash"},
+        "decision_event_id": {"$ref": "#/$defs/uuid"},
+        "provenance_manifest_ref": {"$ref": "#/$defs/contentRef"},
+        "publication_event_hash": {"$ref": "#/$defs/eventHash"},
+        "publication_event_id": {"$ref": "#/$defs/uuid"},
+        "publication_id": {"$ref": "#/$defs/publicationId"},
+        "reason_codes": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string"}},
+        "receiver_me_id": {"$ref": "#/$defs/meId"},
+        "schema": {"const": "dm.source-promotion-projection/v0"},
+        "source_id": {"$ref": "#/$defs/sourceId"},
+        "source_uri": {"type": "string", "minLength": 1, "maxLength": 512},
+        "target_memory_category": {"const": "external-reference"}
+      }
+    },
+    "projectedAuthors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authors", "node_id"],
+      "properties": {
+        "authors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "contracts.schema.json#/$defs/provenanceAuthor"}
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^dm:source-provenance-node:v0:[A-Za-z0-9_-]{43}$"
+        }
+      }
+    }
+  }
+}

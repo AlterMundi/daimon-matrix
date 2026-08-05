@@ -27,6 +27,7 @@ from daimon_matrix.service import (
     METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SOURCE_METHODS,
     SPECIES_METHODS,
 )
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
@@ -327,6 +328,59 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "--review-request-id",
                 "dm:review-request:v1:" + "A" * 43,
             ],
+            [
+                "source",
+                "content-put",
+                "--content",
+                str(document),
+                "--media-type",
+                "application/json",
+            ],
+            ["source", "claim", "--payload", str(document)],
+            ["source", "assess", "--payload", str(document)],
+            ["source", "publication-append", "--payload", str(document)],
+            ["source", "import-decide", "--payload", str(document)],
+            ["source", "status", "--selector", str(document)],
+            ["source", "cursor-create", "--selector", str(document)],
+            [
+                "source",
+                "diff",
+                "--selector",
+                str(document),
+                "--source-request-id",
+                "81000000-0000-4000-8000-000000000001",
+                "--requester-me-id",
+                "dm:me:v0:requester",
+                "--requester-cursor",
+                str(document),
+            ],
+            ["source", "incoming", "--bundle", str(document)],
+            [
+                "source",
+                "pull",
+                "--operation-id",
+                "81000000-0000-4000-8000-000000000002",
+                "--bundle",
+                str(document),
+                "--preview",
+                str(document),
+            ],
+            [
+                "source",
+                "promote",
+                "--publication-id",
+                "dm:source-publication:v0:" + "A" * 43,
+                "--policy-ref",
+                str(document),
+                "--evidence-snapshot-ref",
+                str(document),
+            ],
+            [
+                "source",
+                "projection",
+                "--publication-id",
+                "dm:source-publication:v0:" + "A" * 43,
+            ],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -374,6 +428,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 | METHODS
                 | REVIEW_METHODS
                 | SCOPE_METHODS
+                | SOURCE_METHODS
             ),
         )
 
@@ -416,7 +471,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 34)
+        self.assertEqual(len(tools), 46)
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -443,6 +498,18 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "species_incoming",
                 "species_apply",
                 "species_rollback",
+                "source_content_put",
+                "source_claim",
+                "source_assess",
+                "source_publication_append",
+                "source_import_decide",
+                "source_status",
+                "source_cursor_create",
+                "source_diff",
+                "source_incoming",
+                "source_pull",
+                "source_promote",
+                "source_projection",
                 "we_heads",
                 "we_diff",
                 "we_preview",
@@ -468,6 +535,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                     | METHODS
                     | REVIEW_METHODS
                     | SCOPE_METHODS
+                    | SOURCE_METHODS
                     | SPECIES_METHODS
                 )
                 - {"review.authorize", "review.revoke", "review.execute"}

@@ -490,6 +490,16 @@ Claims may be returned as claims without implying admission. A payload's
 `consent = explicit` is publisher-authored metadata; disclosure policy still
 requires whatever consent evidence it declares sufficient.
 
+An item's origin closure is transport evidence, not a semantic escape hatch.
+Every selected-source publication whose current `publish` head occurs anywhere
+in that closure MUST satisfy its own disclosure policy, carry its complete
+current content/provenance bytes, and receive its own import decision on pull.
+Historical publication revisions and tombstoned heads retain signed metadata
+but do not re-offer their content. An interleaved event for another source may
+appear only as a necessary origin/causal ancestor under an explicit
+`origin-closure` disclosure authorization; it is not an item for the selected
+source and cannot create a claim assessment or publication import decision.
+
 ### 8.3 `/source.incoming`
 
 Incoming validates one exact portable diff bundle against a consistent local
@@ -522,7 +532,9 @@ Every new valid publication's first decision is exactly `quarantined`. Pull
 MUST NOT combine quarantine and promotion in one transaction or policy flag.
 Claims remain quarantined until a separate Section 5 assessment admits them.
 Malformed items are rejected; incomplete items do not advance beyond their
-complete validated prefix. A crash journal commits ledger/blob/quarantine
+complete validated prefix. In particular, an incomplete item is not persisted
+or represented as known in the achieved cursor; a later complete diff can
+offer it again. A crash journal commits ledger/blob/quarantine
 effects before advancing the receiver cursor; retry resumes idempotently.
 
 The pull result reports exact starting, offered, and achieved cursor hashes;

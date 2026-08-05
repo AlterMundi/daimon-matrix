@@ -36,7 +36,8 @@ is explicitly outside the MVP.
    DM-055). DM-055's native encrypted peer implementation is complete behind
    bundle V3; its authorized two-host cutover remains an operational gate.
 7. Complete birth/species/source behavior and their synthetic acceptance
-   journeys.
+   journeys. DM-060, DM-061 and DM-081 now implement those isolated journeys;
+   DM-082 relationship grants precede the DM-071 external source canary.
 8. Bind Matrix embodiment evidence to Cluster lifecycle and resource fences;
    retain the reconciled effect-truth guarantees (DM-037). The installed host
    adapter and DM-080 evaluation-time binding are merged; real Incus/rebirth is

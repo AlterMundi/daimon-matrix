@@ -1,0 +1,35 @@
+{
+  "card": "DM-081",
+  "schema": "dm.verification-invariants/v1",
+  "invariants": {
+    "assessment_and_import_disposition_are_receiver_local": true,
+    "cluster_has_no_source_semantic_authority": true,
+    "concurrent_source_operations_are_exclusively_serialized": true,
+    "cursor_advances_only_after_terminal_page_commit": true,
+    "foreign_events_use_separate_root_bound_known_ledgers": true,
+    "fresh_tombstone_discloses_no_withdrawn_content": true,
+    "incomplete_items_are_not_persisted_or_marked_known": true,
+    "incoming_is_side_effect_free": true,
+    "malformed_items_do_not_discard_complete_valid_prefixes": true,
+    "matrix_org_is_absent": true,
+    "promotion_is_separate_and_external_reference_only": true,
+    "pull_initial_decision_is_quarantined": true,
+    "pull_reports_normative_admitted_to_quarantine_outcomes": true,
+    "republish_requires_a_new_quarantine_decision_successor": true,
+    "remote_assessment_cannot_change_local_policy": true,
+    "section13_bounds_fail_before_effects": true,
+    "selected_source_origin_closure_is_semantically_scoped": true,
+    "source_claim_grants_no_other_protocol_authority": true,
+    "tombstone_deactivates_without_deleting_history_or_content": true,
+    "transitive_current_publications_each_receive_an_import_decision": true
+  },
+  "published_evidence": [
+    "conformance/fixtures/dm081-synthetic-source.json",
+    "conformance/source-v0-section14.json",
+    "schemas/source/v0/contracts.schema.json",
+    "schemas/source/v0/runtime.schema.json",
+    "schemas/source/v0/scenarios.schema.json",
+    "schemas/source/v0/synthetic.schema.json",
+    "vectors/source/v0/index.json"
+  ]
+}

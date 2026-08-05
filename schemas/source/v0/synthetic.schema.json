@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/source/v0/synthetic.schema.json",
+  "title": "DM-081 deterministic two-being source journey report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assessment_event_hash", "distinct_beings", "final", "initial",
+    "pagination", "promotion", "publisher_being_ref", "pull",
+    "receiver_being_ref", "remote_assessment_changed_publisher_policy",
+    "schema", "source_id", "tombstone_event_hash",
+    "unauthorized_denial_code"
+  ],
+  "properties": {
+    "assessment_event_hash": {"$ref": "#/$defs/eventHash"},
+    "distinct_beings": {"const": true},
+    "final": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_disposition", "claim_sequence", "content_retained",
+        "projection_active", "publication_state"
+      ],
+      "properties": {
+        "claim_disposition": {"const": "quarantined"},
+        "claim_sequence": {"const": 2},
+        "content_retained": {"const": true},
+        "projection_active": {"const": false},
+        "publication_state": {"const": "tombstoned"}
+      }
+    },
+    "initial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publisher_claim_intrinsic", "receiver_claim_disposition",
+        "receiver_import_decision"
+      ],
+      "properties": {
+        "publisher_claim_intrinsic": {"const": "valid-asserted"},
+        "receiver_claim_disposition": {"const": "quarantined"},
+        "receiver_import_decision": {"const": "quarantined"}
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_count", "partial_cursor_unchanged", "terminal_cursor_hash"
+      ],
+      "properties": {
+        "page_count": {"const": 2},
+        "partial_cursor_unchanged": {"const": true},
+        "terminal_cursor_hash": {"$ref": "#/$defs/eventHash"}
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "author_preserved", "decision_event_hash", "target_memory_category"
+      ],
+      "properties": {
+        "author_preserved": {"const": "external:synthetic-original-author"},
+        "decision_event_hash": {"$ref": "#/$defs/eventHash"},
+        "target_memory_category": {"const": "external-reference"}
+      }
+    },
+    "publisher_being_ref": {"$ref": "#/$defs/beingRef"},
+    "pull": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "recovered_stages", "replay_byte_identical"],
+      "properties": {
+        "operation_id": {"type": "string", "format": "uuid"},
+        "recovered_stages": {
+          "const": ["prepared", "blobs", "events", "decisions", "cursor"]
+        },
+        "replay_byte_identical": {"const": true}
+      }
+    },
+    "receiver_being_ref": {"$ref": "#/$defs/beingRef"},
+    "remote_assessment_changed_publisher_policy": {"const": false},
+    "schema": {"const": "dm.synthetic-source-report/v0"},
+    "source_id": {
+      "type": "string",
+      "pattern": "^dm:source:v0:[A-Za-z0-9_-]{43}$"
+    },
+    "tombstone_event_hash": {"$ref": "#/$defs/eventHash"},
+    "unauthorized_denial_code": {"const": "source_disclosure_denied"}
+  },
+  "$defs": {
+    "beingRef": {
+      "type": "string",
+      "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "eventHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

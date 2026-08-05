@@ -18,13 +18,16 @@
   behavior inventory.
 - HMK and external-identity adapters.
 - Codex/Hermes embodiment adapters.
+- Root-bound source claims, attributed publications, receiver-local assessment,
+  paginated quarantine pull and external-reference-only promotion (DM-081).
 - Dashboard, runbooks, provisional two-host evidence, and root-authorized
   rebirth/recovery evidence on a fresh host (DM-078).
 
 ## Component boundary
 
 - `daimon-matrix` owns identity continuity, canonical state, scopes, memory
-  policy, synchronization, and communication semantics/runtime.
+  policy, synchronization, communication semantics/runtime, and source
+  claim/publication/quarantine policy.
 - `daimon-cluster` owns body/container lifecycle, storage, deployment evidence,
   and resource-scoped exclusion.
 - Tribe Bridge is a transitional source/runtime and is archived after
