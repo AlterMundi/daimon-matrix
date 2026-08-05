@@ -485,6 +485,16 @@ class Ledger:
         if event["kind"] == "projection.receipted":
             dependencies.add(event["payload"]["target_event_id"])
             dependencies.add(event["payload"]["decision_event_id"])
+        if event["kind"] == "publication.requested":
+            proposal = event["payload"]["proposal"]
+            dependencies.update(
+                item["event_id"] for item in proposal["source"]["event_refs"]
+            )
+            predecessor = proposal["predecessor"]
+            if predecessor is not None:
+                dependencies.add(predecessor["acceptance_event_id"])
+        if event["kind"] == "publication.receipted":
+            dependencies.add(event["payload"]["request_event_id"])
         if event["supersedes"] is not None:
             dependencies.add(event["supersedes"])
         return dependencies

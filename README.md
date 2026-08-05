@@ -59,13 +59,13 @@ fan-out independent of any live carrier. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge remains a
 transport input until absorption. The installed `daimon-conformance` gate binds
-the local implementation and reproducible artifacts to a closed 64-scenario
+the local implementation and reproducible artifacts to a closed 67-scenario
 report; its route evidence is synthetic loopback and does not yet certify a
 live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
 provides exact body/effect evidence. DM-030 supplies the deterministic memory
 policy, auditable decisions, fork-safe lanes and transactional exactly-once
-executor through daemon/CLI/MCP; external memory projection remains later work.
+executor through daemon/CLI/MCP.
 DM-031 adds resource-scoped curator items, generation CAS claims, explicit
 human-review proposals and effect-truth-aware resource-fenced completion. It
 does not create a being-wide Librarian lease; different resources remain
@@ -85,6 +85,12 @@ assert/correct/retract mapping, current effect-truth verification, owner-local
 crash recovery, verified recall and deterministic namespace-only rebuild. HMK
 is a disposable retrieval view; native/Wiki records keep their own authority,
 and checked-in integration evidence uses only isolated synthetic SQLite state.
+DM-035 adds reviewed outbound publication to the LLM Wiki and protected
+`compaii-state` projection through one deterministic target-scoped queue. It
+pins the external transaction and HMK commits, scans the final reviewed bytes,
+requires fresh effect truth, and recovers every provider/Matrix commit window
+without duplicate publication. No live Wiki or state deployment is performed
+by the card.
 DM-071 consent/root discovery and live DM-055 carrier integration remain. There is no
 supported single-awake-identity or distinct-identities-as-`/we` model.
 

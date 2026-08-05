@@ -58,6 +58,8 @@ EVENT_KINDS: Final = frozenset(
         "review.requested",
         "review.decided",
         "review.executed",
+        "publication.requested",
+        "publication.receipted",
     }
 )
 DECISIONS: Final = frozenset({"adopt", "reject", "defer", "revert"})
@@ -881,6 +883,30 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
                 validate_execution_receipt(payload)
         except HumanReviewError as exception:
             raise WeaveProtocolError("invalid_review_event") from exception
+    if value["kind"].startswith("publication."):
+        from .publication import (
+            PublicationError,
+            validate_publication_acceptance_payload,
+            validate_publication_request_payload,
+        )
+
+        try:
+            if value["kind"] == "publication.requested":
+                request = validate_publication_request_payload(payload)
+                if (
+                    value["subject"] != request["proposal"]["source"]["subject_me_id"]
+                    or value["being_ref"]
+                    != request["proposal"]["source"]["subject_me_id"]
+                ):
+                    raise PublicationError("publication_request_subject_mismatch")
+            else:
+                acceptance = validate_publication_acceptance_payload(payload)
+                if value["supersedes"] != acceptance["predecessor_acceptance_event_id"]:
+                    raise PublicationError(
+                        "publication_acceptance_predecessor_mismatch"
+                    )
+        except PublicationError as exception:
+            raise WeaveProtocolError("invalid_publication_event") from exception
     return value
 
 

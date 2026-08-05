@@ -55,6 +55,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
+        "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/relationships.py",
@@ -90,6 +91,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/mcp_server.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
+        "daimon_matrix/publication.py",
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
         "daimon_matrix/relationships.py",
@@ -281,6 +283,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
+        "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/reviewer_cli.py",
@@ -395,6 +398,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/memory_projection.py": (
             "src/daimon_matrix/memory_projection.py"
         ),
+        "daimon_matrix/publication.py": "src/daimon_matrix/publication.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
         "daimon_matrix/reviewer_cli.py": "src/daimon_matrix/reviewer_cli.py",

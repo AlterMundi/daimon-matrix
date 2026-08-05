@@ -1,0 +1,57 @@
+{
+  "schema": "dm.external-contract-provenance/v1",
+  "name": "compaii-state Matrix publisher",
+  "upstream": {
+    "repository": "https://github.com/nicoechaniz/compaii-state",
+    "visibility": "private",
+    "commit": "cf56e9de703f68f44b85fdf21f503d55a5557984",
+    "tree": "f6c83890d8bd5898336b8cafa2fec4798c21927b",
+    "commit_date": "2026-08-05T01:32:02-03:00",
+    "license_expression": "MPL-2.0"
+  },
+  "policy": {
+    "source_imported": false,
+    "source_vendored": false,
+    "runtime_package_dependency_added": false,
+    "live_state_imported": false,
+    "reuse_mode": "exact_version_external_contract",
+    "public_ci_cross_repository_credential": false
+  },
+  "items": [
+    {
+      "path": "matrix_publisher.py",
+      "git_blob_sha1": "3d55ff37d8dc99b755028962d323db1470d20d96",
+      "sha256": "aef3f3b72f94248feddeed1262d41ac56635d183d34ed3e07168505d40581c91",
+      "size": 71731,
+      "use": "real integration and injected external transaction only"
+    },
+    {
+      "path": "policies/matrix-publisher-v1.json",
+      "git_blob_sha1": "db42919c0a304bb47c5570ff1b35f843500dcb6c",
+      "sha256": "991feb97fb94c2f1fa515ef731c20f52ec60dc895be82ad8281cf190f8b93bb8",
+      "size": 823,
+      "use": "exact policy identity and provider configuration"
+    },
+    {
+      "path": "state_safety.py",
+      "git_blob_sha1": "57a1d62572f6dc39f9efb7e05b46b469c22a24aa",
+      "sha256": "fef869f28d0bb2074d9314a4ac63b500781c992600c645735597950a1df2cc6c",
+      "size": 10668,
+      "use": "provider-owned final content gate; not imported"
+    },
+    {
+      "path": "schemas/matrix-publisher/v1/contracts.schema.json",
+      "git_blob_sha1": "c702c0a7f027b0767ed73c723cdadd62453bbae6",
+      "sha256": "8c302808de0fc38600e3a160bf1784fe54dbdb4c30552848d815cf3831fc95a0",
+      "size": 42898,
+      "use": "contract comparison; Matrix publishes an independently generated boundary schema"
+    },
+    {
+      "path": "vectors/matrix-publisher/v1/index.json",
+      "git_blob_sha1": "02a74727184a99fa4add80b4231e57e70ba6b5ae",
+      "sha256": "243bdb29bde53b3cbe859219d3e715e2c14736cdbe2961b88c109c7422158f30",
+      "size": 1102,
+      "use": "interop comparison; Matrix vectors are independently generated"
+    }
+  ]
+}

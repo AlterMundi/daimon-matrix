@@ -550,6 +550,48 @@
       "required": true
     },
     {
+      "id": "publication_contract_vectors",
+      "owners": ["DM-011", "DM-018", "DM-035"],
+      "specifications": ["docs/dm035-publication.md", "specs/adapter-contracts.md"],
+      "setup": "Checked-in closed Matrix publication contracts and synthetic provider plan/receipt vectors pinned to exact external commits.",
+      "stimulus": "Validate every positive artifact, reject an unknown host path and compare every indexed byte hash.",
+      "fault": "Unknown fields, provider substitution or environment-dependent generation could widen the publication boundary.",
+      "expected": "All closed artifacts validate at their exact pins, the unsafe proposal rejects and the Weave kind registry matches the implementation.",
+      "evidence": ["tests.test_dm035_publication.DM035PublicContractTests.test_checked_in_contracts_are_closed_and_self_verifying"],
+      "cleanup": "Synthetic checked-in artifacts only.",
+      "platform": "all",
+      "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "publication_effect_truth",
+      "owners": ["DM-018", "DM-035"],
+      "specifications": ["docs/dm035-publication.md", "specs/adapter-contracts.md"],
+      "setup": "Root-bound Matrix ledger, signed independent review, deterministic queue and credential-free closed provider model.",
+      "stimulus": "Lose the first apply response, replay, publish a monotonic successor and then contradict the observed artifact effect.",
+      "fault": "A cached receipt could be served blindly after response loss, successor change or target drift.",
+      "expected": "One receipt per sequence is accepted; exact response loss replays; current drift returns effect-truth-discrepancy and blocks cached success.",
+      "evidence": ["tests.test_dm035_publication.DM035MatrixProtocolTests.test_model_effect_truth_response_loss_and_monotonic_successor"],
+      "cleanup": "Remove the isolated ledger, queue journal and in-memory model effects.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "publication_recovery",
+      "owners": ["DM-022", "DM-035"],
+      "specifications": ["docs/dm035-publication.md"],
+      "setup": "Two isolated reviewed requests with durable Matrix claim/attempt state and a replayable closed provider model.",
+      "stimulus": "Crash after provider receipt persistence and after ledger acceptance, then restart and replay the same claim.",
+      "fault": "Process loss falls on either side of the authoritative Matrix acceptance event.",
+      "expected": "Restart creates or discovers exactly one verified acceptance and completes the same claim without duplicate provider effect.",
+      "evidence": ["tests.test_dm035_publication.DM035MatrixProtocolTests.test_model_recovers_both_matrix_acceptance_windows_exactly_once"],
+      "cleanup": "Remove isolated ledgers and journals.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
       "id": "purpose_key_separation",
       "owners": ["DM-021", "DM-024"],
       "specifications": ["specs/identity-root-v1.md"],
