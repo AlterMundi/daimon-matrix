@@ -530,7 +530,28 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertIn("human-held signing CLI", response["error"]["message"])
         self.assertEqual(self.runtime.service.ledger.rpc_requests(), [])
 
-    def test_mcp_rejects_legacy_initialize_without_daemon_dispatch(self) -> None:
+    def test_mcp_accepts_codex_handshake_without_daemon_dispatch(self) -> None:
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": "codex",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "codex", "version": "0.146.0"},
+            },
+        }
+        result = self.run_surface(
+            "daimon_matrix.mcp_server",
+            ["--request-dir", str(self.request_dir)],
+            stdin=canonical_bytes(initialize) + b"\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertEqual(response["result"]["protocolVersion"], "2025-06-18")
+        self.assertEqual(self.runtime.service.ledger.rpc_requests(), [])
+
+    def test_mcp_rejects_unreviewed_legacy_initialize_without_dispatch(self) -> None:
         initialize = {
             "jsonrpc": "2.0",
             "id": "legacy",

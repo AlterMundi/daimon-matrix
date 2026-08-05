@@ -35,6 +35,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/cli.py"),
     Path("src/daimon_matrix/client.py"),
     Path("src/daimon_matrix/cluster.py"),
+    Path("src/daimon_matrix/codex_body.py"),
     Path("src/daimon_matrix/communication.py"),
     Path("src/daimon_matrix/conformance.py"),
     Path("src/daimon_matrix/curator.py"),

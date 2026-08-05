@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.10",
+  "suite_version": "DM-026.11",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -330,10 +330,10 @@
       "owners": ["DM-025"],
       "specifications": ["docs/dm025-cli-mcp.md"],
       "setup": "MCP stdio subprocess with owner-local capability and request store.",
-      "stimulus": "Discover, list tools/resources, call daemon, retry operation, then send legacy and malformed frames.",
-      "fault": "Legacy version, duplicate keys, invalid UTF-8, oversize data and injection-like typed content.",
-      "expected": "Only modern closed tools/resources dispatch; malformed traffic and capability expansion fail closed.",
-      "evidence": ["tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_malformed_duplicate_utf8_and_oversize_fail_without_traceback", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_modern_stdio_lists_closed_surface_and_calls_daemon", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_rejects_legacy_initialize_without_daemon_dispatch"],
+      "stimulus": "Discover, list tools/resources, call daemon, retry operation, negotiate the exact Codex handshake, then send unreviewed legacy and malformed frames.",
+      "fault": "Unreviewed legacy version, duplicate keys, invalid UTF-8, oversize data and injection-like typed content.",
+      "expected": "Modern and exact Codex-compatible closed tools/resources dispatch; malformed traffic and capability expansion fail closed.",
+      "evidence": ["tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_accepts_codex_handshake_without_daemon_dispatch", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_malformed_duplicate_utf8_and_oversize_fail_without_traceback", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_modern_stdio_lists_closed_surface_and_calls_daemon", "tests.test_dm025_cli_mcp.InstalledSurfaceTests.test_mcp_rejects_unreviewed_legacy_initialize_without_dispatch"],
       "cleanup": "Close stdio, stop fixture daemon and remove request store.",
       "platform": "linux",
       "ci_lane": "complete",

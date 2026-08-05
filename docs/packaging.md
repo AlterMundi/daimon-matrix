@@ -3,7 +3,9 @@
 DM-020 introduced the closed package scaffold. DM-021 through DM-026 add
 identity/custody, the independent Weave ledger, hosted daemon, authenticated
 client, CLI, MCP stdio adapter and local conformance runner while preserving
-the explicit reproducible artifact boundary. The package contains no remote
+the explicit reproducible artifact boundary. DM-040 adds the authority-safe
+Codex body adapter and `daimon-codex-body` contract checker; it packages only
+reviewed code and embeds no Codex binary, profile, auth, thread or memory. The package contains no remote
 carrier, Matrix.org client, deployment/provider integration or live state.
 
 ## Supported interpreter baseline
@@ -41,7 +43,7 @@ observable install path.
 The sdist may contain only its single normalized root plus `.gitignore`,
 `LICENSE`, `PKG-INFO`, `README.md`, `pyproject.toml`, the public canonical,
 identity, keystore, Weave, ledger, sync, projection, daemon, client, CLI, MCP
-and conformance modules, `__init__.py`, and `py.typed`.
+Codex-body and conformance modules, `__init__.py`, and `py.typed`.
 The wheel may contain only those package modules, the typing marker, MIT
 license, and required `.dist-info` metadata/record files.
 

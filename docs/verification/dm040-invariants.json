@@ -1,0 +1,38 @@
+{
+  "schema": "dm.verification.invariants/v1",
+  "card": "DM-040",
+  "status": "implemented-synthetic",
+  "invariants": {
+    "codex_is_body_not_me": true,
+    "matrix_is_identity_memory_policy_receipt_authority": true,
+    "cluster_is_lifecycle_and_resource_fence_authority": true,
+    "native_binary_and_generated_protocol_are_exactly_pinned": true,
+    "profile_is_fresh_owner_only_and_nonambient": true,
+    "native_and_external_memory_are_disabled_and_quarantined": true,
+    "effective_feature_overrides_fail_closed": true,
+    "workspace_is_untrusted_and_multi_agent_is_disabled": true,
+    "required_matrix_mcp_and_exact_tools_fail_closed": true,
+    "codex_legacy_mcp_handshake_is_explicitly_gated": true,
+    "hooks_are_bounded_advisory_and_path_secret_free": true,
+    "instruction_sources_are_exact_and_workspace_bounded": true,
+    "thread_session_turn_and_matrix_session_are_distinct": true,
+    "start_and_resume_are_durably_pending_before_effect": true,
+    "response_loss_never_causes_blind_duplicate_thread": true,
+    "resume_revalidates_incarnation_expiry_and_high_water": true,
+    "real_codex_matrix_start_write_restart_resume_smoke_passes": true,
+    "launch_receipts_are_content_addressed_and_path_free": true,
+    "app_server_transport_is_child_stdio_only": true,
+    "live_compaii_enablement_is_not_performed": true
+  },
+  "evidence": [
+    "docs/dm040-codex-body.md",
+    "provenance/codex-cli-0.146.0.json",
+    "schemas/codex/v1/contracts.schema.json",
+    "src/daimon_matrix/codex_body.py",
+    "templates/codex/v1/AGENTS.md",
+    "tests/test_dm040_codex_body.py",
+    "tools/generate_dm040_vectors.py",
+    "vectors/codex/v1/index.json"
+  ],
+  "deployment": "N/A: synthetic isolated profiles only; private real smoke is opt-in"
+}

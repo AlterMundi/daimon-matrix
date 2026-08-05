@@ -45,17 +45,19 @@ mismatch.
 
 ## MCP
 
-`daimon-mcp` serves only final MCP `2026-07-28` newline-delimited JSON-RPC on
-stdio. It uses official Python SDK `mcp==2.0.0`; the reviewed release/tag object
+`daimon-mcp` serves final MCP `2026-07-28` per-request envelopes and the exact
+Codex-compatible `2025-06-18` initialize-handshake protocol over
+newline-delimited JSON-RPC on stdio. Other legacy handshake versions are
+rejected before daemon dispatch. It uses official Python SDK `mcp==2.0.0`; the reviewed release/tag object
 is `6f69a3758ebf2ee55ce050f58b470ce11af71133`. The spec tag object is
 `5f5440bb26a62e2cf3440b92da5a667efa03b267`. The adapter invokes the SDK's
-modern runner directly, so legacy `initialize` and missing/wrong modern
-envelopes fail before daemon dispatch. Input is strict UTF-8 with duplicate-key
-and 2 MiB line rejection. Stdout is reserved for MCP frames.
+dual-era runner behind an exact opening-frame gate, so a connection cannot
+switch eras and missing/wrong modern envelopes fail before daemon dispatch.
+Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
+reserved for MCP frames.
 
-The twenty-four advertised tools map one-to-one to twelve DM-024 methods, six
-DM-054 scope methods, two DM-030 memory methods, and four DM-031 curator
-methods. Every
+The 29 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed
 `daimon:` resources expose public contract descriptors or capability-authorized

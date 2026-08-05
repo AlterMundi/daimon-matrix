@@ -1,0 +1,62 @@
+{
+  "app_server": {
+    "normalization": "relative-path + NUL + canonical-json + NUL",
+    "normalized_schema_digest": "146a56d701ccd97a76ad1a461d51fc454f32df6c5b4d338ea65968331ccc8b7a",
+    "raw_schema_is_byte_deterministic": false,
+    "schema_files": 275,
+    "status": "experimental",
+    "typescript_digest": "b60eaad826761bac1ebb33a933e0a0ad389a343f983b288107484e2e2b9c93e2",
+    "typescript_files": 622
+  },
+  "audited_at": "2026-08-05",
+  "codex_version": "0.146.0",
+  "feature_snapshot": {
+    "line_count": 100,
+    "relevant": {
+      "apps": [
+        "stable",
+        true
+      ],
+      "browser_use": [
+        "stable",
+        true
+      ],
+      "chronicle": [
+        "under development",
+        false
+      ],
+      "computer_use": [
+        "stable",
+        true
+      ],
+      "external_agent_memory_import": [
+        "under development",
+        false
+      ],
+      "hooks": [
+        "stable",
+        true
+      ],
+      "memories": [
+        "stable",
+        false
+      ],
+      "plugins": [
+        "stable",
+        true
+      ]
+    },
+    "sha256": "b338bae6ecd46ad6bc02de695a89d4bc80c9ae77ab1294384880fca0dc251384"
+  },
+  "native_binary_sha256": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04",
+  "npm_wrapper_sha256": "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477",
+  "official_sources": [
+    "https://developers.openai.com/codex/codex-manual.md",
+    "https://learn.chatgpt.com/docs/app-server",
+    "https://learn.chatgpt.com/docs/config-file/config-reference",
+    "https://learn.chatgpt.com/docs/hooks",
+    "https://learn.chatgpt.com/docs/customization/memories",
+    "https://learn.chatgpt.com/docs/non-interactive-mode"
+  ],
+  "schema": "dm.codex-body.provenance/v1"
+}
