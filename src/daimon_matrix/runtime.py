@@ -27,6 +27,16 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .peer_transport import (
+    KeystorePeerCustody,
+    PeerClient,
+    PeerClientContext,
+    PeerDispatcher,
+    PeerExchangeStore,
+    PeerOutbox,
+    http_peer_round_trip,
+    protocol_handlers,
+)
 from .relationships import (
     RelationshipError,
     SnapshotVerifier,
@@ -42,8 +52,10 @@ from .routes import (
     RouteError,
     RouteProfile,
 )
-from .scopes import BodyReader, ScopeError, ScopeResolver
+from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
+from .sealed import RecipientTarget
 from .service import SERVICE_METHODS, HostedWeave
+from .sync import SyncEngine
 from .weave import (
     BeingManifest,
     BoundHistoryAuthority,
@@ -55,6 +67,7 @@ from .weave import (
 
 BUNDLE_SCHEMA: Final = "dm.runtime.bundle/v1"
 BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
+BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -70,6 +83,19 @@ class HostedRuntime:
     state_root: Path
     state_identity: tuple[int, int]
     socket_path: Path
+    peer_dispatcher: PeerDispatcher | None = None
+    peer_outbox: PeerOutbox | None = None
+    peer_context: PeerClientContext | None = None
+    peer_listen: tuple[str, int] | None = None
+
+    def create_peer_client(
+        self, endpoint: str, *, timeout_seconds: float = 10
+    ) -> PeerClient:
+        if self.peer_context is None:
+            raise RuntimeError("peer_transport_not_configured")
+        return self.peer_context.client(
+            http_peer_round_trip(endpoint, timeout_seconds=timeout_seconds)
+        )
 
 
 def _closed(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -215,10 +241,12 @@ def load_runtime(
         "schema",
         "socket",
     }
-    if schema == BUNDLE_SCHEMA_V2:
+    if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
         fields.add("authority_history")
+    if schema == BUNDLE_SCHEMA_V3:
+        fields.add("peer_transport")
     bundle = _closed(raw_bundle, fields)
-    if schema not in {BUNDLE_SCHEMA, BUNDLE_SCHEMA_V2}:
+    if schema not in {BUNDLE_SCHEMA, BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
     if not isinstance(controls, list) or not 1 <= len(controls) <= 1024:
@@ -248,11 +276,12 @@ def load_runtime(
         incarnations = _indexed(bundle["incarnations"])
         active = RootAuthority(manifest, state, credentials, incarnations)
         authority: RootAuthority | RootHistoryAuthority | BoundHistoryAuthority = active
-        if schema == BUNDLE_SCHEMA_V2:
+        if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
             authority_history = bundle["authority_history"]
             if (
                 not isinstance(authority_history, list)
-                or not 1 <= len(authority_history) <= 256
+                or len(authority_history) > 256
+                or (schema == BUNDLE_SCHEMA_V2 and not authority_history)
             ):
                 raise RuntimeError("invalid_authority_history")
             historical_authorities = []
@@ -268,9 +297,12 @@ def load_runtime(
                     )
                 )
                 successors.append(epoch["successor"])
-            authority = RootHistoryAuthority(active, historical_authorities, successors)
+            if authority_history:
+                authority = RootHistoryAuthority(
+                    active, historical_authorities, successors
+                )
         if history is not None:
-            if schema == BUNDLE_SCHEMA_V2:
+            if schema in {BUNDLE_SCHEMA_V2, BUNDLE_SCHEMA_V3}:
                 raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
             public_keys = history_value["public_keys"]
@@ -450,6 +482,51 @@ def load_runtime(
             binding.provider_ref for binding in route_profile.routes if binding.enabled
         }:
             raise RuntimeError("runtime_route_provider_missing")
+    peer_configuration: Mapping[str, Any] | None = None
+    if schema == BUNDLE_SCHEMA_V3 and bundle["peer_transport"] is not None:
+        peer_configuration = _closed(
+            bundle["peer_transport"],
+            {
+                "enabled",
+                "encryption_slot",
+                "exchange_filename",
+                "listen_host",
+                "listen_port",
+                "outbox_filename",
+            },
+        )
+        peer_slot = peer_configuration["encryption_slot"]
+        listen_host = peer_configuration["listen_host"]
+        listen_port = peer_configuration["listen_port"]
+        if (
+            peer_configuration["enabled"] is not True
+            or not isinstance(peer_slot, str)
+            or not peer_slot.startswith("peer.encryption.v1:")
+            or peer_slot in required_slots
+            or not isinstance(listen_host, str)
+            or not 1 <= len(listen_host.encode("utf-8")) <= 255
+            or any(character.isspace() for character in listen_host)
+            or not isinstance(listen_port, int)
+            or isinstance(listen_port, bool)
+            or not 1 <= listen_port <= 65_535
+        ):
+            raise RuntimeError("invalid_peer_transport_configuration")
+        if (
+            contents.secrets.get(peer_slot) is None
+            or len(contents.secrets[peer_slot]) != 32
+        ):
+            raise RuntimeError("missing_runtime_secret")
+        peer_files = [
+            _safe_file(root, peer_configuration[field], must_exist=False)
+            for field in ("exchange_filename", "outbox_filename")
+        ]
+        if (
+            any(path.name in filenames for path in peer_files)
+            or len({path.name for path in peer_files}) != 2
+        ):
+            raise RuntimeError("runtime_filename_collision")
+        filenames.update(path.name for path in peer_files)
+        required_slots.add(peer_slot)
     body_capabilities: tuple[str, ...] = ()
     tribes: dict[str, VerifiedTribeSnapshot] = {}
     scopes_bundle = bundle["scopes"]
@@ -508,6 +585,20 @@ def load_runtime(
     ):
         raise RuntimeError("runtime_signer_mismatch")
 
+    peer_custody: KeystorePeerCustody | None = None
+    if peer_configuration is not None:
+        encryption_key_id = credential_body["encryption_key"]["key_id"]
+        peer_slot_value = peer_configuration["encryption_slot"]
+        assert isinstance(peer_slot_value, str)
+        try:
+            peer_custody = KeystorePeerCustody(
+                secrets=contents.secrets,
+                signing_slots={credential_body["signing_key"]["key_id"]: signing_slot},
+                encryption_slots={encryption_key_id: peer_slot_value},
+            )
+        except ValueError as exception:
+            raise RuntimeError("runtime_peer_transport_rejected") from exception
+
     ledger = Ledger(
         ledger_path,
         authority=authority,
@@ -560,6 +651,58 @@ def load_runtime(
         )
     except ScopeError as exception:
         raise RuntimeError("runtime_scope_configuration_rejected") from exception
+    peer_dispatcher: PeerDispatcher | None = None
+    peer_outbox: PeerOutbox | None = None
+    peer_context: PeerClientContext | None = None
+    peer_listen: tuple[str, int] | None = None
+    if peer_configuration is not None:
+        assert peer_custody is not None
+        scope_exchange = ScopeExchangeStore(ledger)
+        scope_exchange.initialize()
+        try:
+            peer_dispatcher = PeerDispatcher(
+                authority=active,
+                local_origin=local_origin,
+                local_target=RecipientTarget(active, credential["artifact_id"]),
+                custody=peer_custody,
+                store=PeerExchangeStore(
+                    _safe_file(
+                        root,
+                        peer_configuration["exchange_filename"],
+                        must_exist=False,
+                    ),
+                    clock=clock,
+                ),
+                handlers=protocol_handlers(
+                    resolver=scopes,
+                    signer=signer,
+                    scope_store=scope_exchange,
+                    sync_engine=SyncEngine(ledger),
+                ),
+                clock=clock,
+            )
+            peer_outbox = PeerOutbox(
+                _safe_file(
+                    root,
+                    peer_configuration["outbox_filename"],
+                    must_exist=False,
+                )
+            )
+            peer_context = PeerClientContext(
+                authority=active,
+                local_origin=local_origin,
+                local_target=RecipientTarget(active, credential["artifact_id"]),
+                custody=peer_custody,
+                outbox=peer_outbox,
+                clock=clock,
+            )
+        except (OSError, TypeError, ValueError) as exception:
+            raise RuntimeError("runtime_peer_transport_rejected") from exception
+        listen_host_value = peer_configuration["listen_host"]
+        listen_port_value = peer_configuration["listen_port"]
+        assert isinstance(listen_host_value, str)
+        assert isinstance(listen_port_value, int)
+        peer_listen = (listen_host_value, listen_port_value)
     service = HostedWeave(
         ledger,
         signer,
@@ -580,12 +723,22 @@ def load_runtime(
     identity = (root_info.st_dev, root_info.st_ino)
     if (final_root.st_dev, final_root.st_ino) != identity:
         raise RuntimeError("state_root_replaced")
-    return HostedRuntime(service, root, identity, socket_path)
+    return HostedRuntime(
+        service,
+        root,
+        identity,
+        socket_path,
+        peer_dispatcher=peer_dispatcher,
+        peer_outbox=peer_outbox,
+        peer_context=peer_context,
+        peer_listen=peer_listen,
+    )
 
 
 __all__ = [
     "BUNDLE_SCHEMA",
     "BUNDLE_SCHEMA_V2",
+    "BUNDLE_SCHEMA_V3",
     "HostedRuntime",
     "RuntimeError",
     "load_runtime",

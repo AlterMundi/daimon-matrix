@@ -1,0 +1,39 @@
+{
+  "schema": "dm-055-invariant-report/v1",
+  "scope": "native-encrypted-peer-transport",
+  "deployment": "installed-shaped-loopback-no-live-cutover",
+  "invariants": {
+    "tribe_wire_and_runtime_dependency_absent": true,
+    "matrix_org_absent": true,
+    "root_manifest_origin_and_principal_bound": true,
+    "current_recipient_credential_bound": true,
+    "hpke_cek_wrap_and_payload_encryption": true,
+    "full_envelope_ed25519_signature": true,
+    "typed_plaintext_not_carrier_visible": true,
+    "scope_and_sync_handlers_revalidate": true,
+    "sync_import_not_adoption": true,
+    "durable_byte_identical_outbox_retry": true,
+    "durable_single_handler_response_replay": true,
+    "exchange_concurrency_lease_takeover_and_corruption_fail_closed": true,
+    "outbox_conflict_and_corruption_fail_closed": true,
+    "manifest_mismatch_and_revocation_fail_closed": true,
+    "runtime_v1_v2_disabled_compatibility": true,
+    "runtime_v3_owner_custody_and_http": true,
+    "runtime_password_descriptor_consumed_once": true,
+    "http_connections_bounded_before_handler_threads": true,
+    "ordinary_tribe_messages_untouched": true,
+    "live_cutover_requires_human_authorization": true
+  },
+  "evidence": [
+    "conformance/fixtures/dm055-native-peer.json",
+    "docs/dm055-native-peer-cutover.md",
+    "reviews/DM-055.md",
+    "schemas/hosted/v3/bundle.schema.json",
+    "schemas/transport/v1/peer-envelope.schema.json",
+    "specs/peer-transport-v1.md",
+    "src/daimon_matrix/daemon.py",
+    "src/daimon_matrix/peer_transport.py",
+    "src/daimon_matrix/runtime.py",
+    "tests/test_dm055_peer_transport.py"
+  ]
+}

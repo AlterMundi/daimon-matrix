@@ -37,8 +37,9 @@ history it names. Cluster continues to host process/state and resource fences.
 
 DM-023 builds the typed transport-neutral `/we.sync` transaction above that
 ledger: issued requests, frozen delta responses, cursor/ingest receipts and
-local projections are durable and replay-safe. Tribe remains only the channel
-that will carry and authenticate these exact bytes in DM-050–DM-055.
+local projections are durable and replay-safe. DM-055 now carries those exact
+documents over the native encrypted Matrix peer transport; Tribe is not that
+wire.
 
 DM-024 adds ledger schema V3, the closed authenticated local service and the
 installed `daimon-matrixd` AF_UNIX process. It loads exact root-bound public
@@ -50,7 +51,7 @@ bytes, MCP exposes only the current twenty-four core/scope/memory/curator method
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-64-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+76-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths without claiming remote delivery, live Cluster effects or
 rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
@@ -84,8 +85,18 @@ DM-054 now owns current scope resolution and the `/me`, `/we`, `/we.diff`,
 per-origin `/we.sync` planning and verified `/tribe` surfaces. It adds
 purpose-separated signed partial fan-out with durable exact replay, real daemon
 and CLI/MCP reads, DM-051/052 target parity, and an exact read-only Cluster
-snapshot contract. No live carrier is selected: Tribe Bridge integration is
-DM-055, while cross-being root discovery and consent remain DM-071.
+snapshot contract. DM-055 implements its native root-bound encrypted peer
+carrier for scope and sync; cross-being root discovery and consent remain
+DM-071.
+
+DM-055 is implemented behind optional runtime bundle V3. It introduces the
+closed `dm.peer-envelope/v1` HPKE/Ed25519 narrow waist, durable byte-identical
+outbox retry, concurrent inbound leases and exact response replay, direct
+DM-054/DM-023 dispatch, a connection-bounded HTTP(S) carrier and one-shot
+keystore loading. Fifteen focused tests cover real encrypted scope/sync,
+response loss, corruption, takeover, wrong-key and malformed-runtime rejection.
+No Matrix.org or Tribe wire is involved. This is reviewed local/installed-shaped
+evidence; the authorized two-host canary and live cutover are still pending.
 
 DM-079 closes the real-restart gap found by the Cluster #48 installed-process
 test. A signed authority epoch now advances one embodiment from incarnation

@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.13",
+  "suite_version": "DM-026.14",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -587,6 +587,48 @@
       "expected": "Stale and changed plans fail before signing; committed retry returns the durable response and exactly one memory event.",
       "evidence": ["tests.test_dm030_memory_policy.MemoryInstalledRuntimeTests.test_real_daemon_response_loss_restart_and_exact_retry_commit_once", "tests.test_dm030_memory_policy.MemoryPolicyTests.test_executor_commits_once_and_exact_retry_survives_state_change", "tests.test_dm030_memory_policy.MemoryPolicyTests.test_executor_rejects_review_plan_and_atomic_stale_checkpoint", "tests.test_dm030_memory_policy.MemoryPolicyTests.test_plan_and_ledger_guard_tampering_fail"],
       "cleanup": "Stop the daemon, close SQLite handles and remove the isolated state root.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "peer_encrypted_protocol",
+      "owners": ["DM-023", "DM-054", "DM-055"],
+      "specifications": ["schemas/transport/v1/peer-envelope.schema.json", "specs/peer-transport-v1.md"],
+      "setup": "Two active root-bound embodiments with independent encrypted custody, ledgers and native peer stores.",
+      "stimulus": "Exchange a signed /me request/response and a real sync request/delta through encrypted direct envelopes, then pull the delta.",
+      "fault": "Carrier-visible bytes are inspected while manifest, revocation, recipient, content type and ciphertext are substituted.",
+      "expected": "Carrier sees no typed plaintext; current root bindings fail closed; scope retains origin and sync imports without adoption.",
+      "evidence": ["tests.test_dm055_peer_transport.PeerTransportTests.test_manifest_mismatch_and_revoked_principal_fail_closed", "tests.test_dm055_peer_transport.PeerTransportTests.test_real_scope_and_sync_handlers_cross_encrypted_boundary", "tests.test_dm055_peer_transport.PeerTransportTests.test_tamper_recipient_expiry_and_unknown_type_fail_closed"],
+      "cleanup": "Remove isolated encrypted custody, ledgers and peer stores.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "peer_response_loss",
+      "owners": ["DM-055"],
+      "specifications": ["specs/peer-transport-v1.md"],
+      "setup": "Durable sender outbox and receiver exchange journal around an idempotent typed handler.",
+      "stimulus": "Drop the committed encrypted response and retry the exact logical call.",
+      "fault": "Remote handler completed but the sender observed a connection failure.",
+      "expected": "Retry sends byte-identical ciphertext, handler executes once and receiver replays the exact committed response.",
+      "evidence": ["tests.test_dm055_peer_transport.PeerTransportTests.test_dispatch_replays_exact_response_and_rejects_id_conflict", "tests.test_dm055_peer_transport.PeerTransportTests.test_exchange_store_serializes_duplicates_takes_over_and_detects_corruption", "tests.test_dm055_peer_transport.PeerTransportTests.test_handler_failure_releases_request_for_safe_protocol_retry", "tests.test_dm055_peer_transport.PeerTransportTests.test_outbox_detects_corrupt_replay_and_conflicting_plan", "tests.test_dm055_peer_transport.PeerTransportTests.test_response_loss_retries_identical_ciphertext_without_second_effect"],
+      "cleanup": "Remove isolated outbox and exchange SQLite files.",
+      "platform": "all",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "peer_runtime_http",
+      "owners": ["DM-024", "DM-055"],
+      "specifications": ["schemas/hosted/v3/bundle.schema.json", "specs/peer-transport-v1.md"],
+      "setup": "Installed-shaped runtime bundle V3 with owner-only peer encryption custody and bounded HTTP listener.",
+      "stimulus": "Load the runtime, construct its dispatcher/outbox/client context and call the real daemon HTTP handler.",
+      "fault": "Peer configuration is absent, malformed, colliding, contains the wrong key or presents non-peer HTTP input.",
+      "expected": "V1/V2 stay disabled-compatible; V3 binds exact local authority and only encrypted POST /dm-peer/v1 reaches protocol handlers.",
+      "evidence": ["tests.test_dm055_peer_transport.PeerRuntimeBundleTests.test_http_server_bounds_connections_before_handler_threads", "tests.test_dm055_peer_transport.PeerRuntimeBundleTests.test_v3_absence_malformed_collision_and_wrong_key_fail_closed", "tests.test_dm055_peer_transport.PeerRuntimeBundleTests.test_v3_bundle_loads_native_peer_custody_and_dispatcher", "tests.test_dm055_peer_transport.PeerTransportTests.test_http_client_rejects_unsafe_url_and_wrong_response_contract", "tests.test_dm055_peer_transport.PeerTransportTests.test_real_http_carrier_observes_only_encrypted_bytes"],
+      "cleanup": "Stop the loopback listener and remove the isolated runtime root.",
       "platform": "linux",
       "ci_lane": "complete",
       "required": true

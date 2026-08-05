@@ -116,9 +116,13 @@ replay, bounded claims and restart recovery inside the DM-023 ledger boundary.
 DM-053 completes layer 5 and the carrier-owned portion of layer 6 with
 explicit profiles, deterministic local/direct/hub selection, authenticated
 Unix/HTTP exchange and opaque provider inboxes. Its providers ship disabled
-and are exercised only against synthetic loopback endpoints. The standalone
-Tribe runtime remains transitional until DM-054 namespace integration and an
-explicit live route rollout pass their gates.
+and are exercised only against synthetic loopback endpoints. DM-054 completes
+native namespace/scope integration. DM-055 independently implements the final
+root-bound HPKE/Ed25519 peer carrier for Matrix scope and sync documents; it
+does not tunnel those documents through Tribe audiences. The standalone Tribe
+runtime now remains only for ordinary human-message regression during the
+authorized canary, after which DM-077 may retire it under the repository
+owner's explicit approval.
 
 ## Replacement gates
 

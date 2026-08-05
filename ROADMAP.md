@@ -13,8 +13,9 @@
 - Weave ledger, preview/pull, difference navigation, local decisions, and
   projection receipts.
 - Live `/we` fan-out with origin-marked partial results.
-- Founded Tribe membership and typed recipient-encrypted transport absorbed
-  from Tribe Bridge.
+- Founded Tribe membership plus native typed recipient-encrypted logical and
+  peer transport, independently implemented in Matrix from the pinned Tribe
+  behavior inventory.
 - HMK and external-identity adapters.
 - Codex/Hermes embodiment adapters.
 - Dashboard, runbooks, provisional two-host evidence, and root-authorized
