@@ -29,6 +29,7 @@ daimon-conformance = "daimon_matrix.conformance:main"
 daimon-curator-worker = "daimon_matrix.curator_worker_process:main"
 daimon-mcp = "daimon_matrix.mcp_server:main"
 daimon-matrixd = "daimon_matrix.daemon:main"
+daimon-reviewer = "daimon_matrix.reviewer_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/AlterMundi/daimon-matrix"

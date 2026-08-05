@@ -155,6 +155,107 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         ),
         False,
     ),
+    "review_request": (
+        "review.request",
+        _object_schema({"request": {"type": "object"}}, ("request",)),
+        False,
+    ),
+    "review_queue": (
+        "review.queue",
+        _object_schema(
+            {
+                "authorization_id": {
+                    "type": "string",
+                    "pattern": "^dm:review-authorization:v1:[A-Za-z0-9_-]{43}$",
+                },
+                "access_proof": {"type": "object"},
+                "after": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$",
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            ("authorization_id", "access_proof", "operation_id"),
+        ),
+        True,
+    ),
+    "review_inspect": (
+        "review.inspect",
+        _object_schema(
+            {
+                "review_request_id": {
+                    "type": "string",
+                    "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$",
+                },
+                "authorization_id": {
+                    "type": "string",
+                    "pattern": "^dm:review-authorization:v1:[A-Za-z0-9_-]{43}$",
+                },
+                "access_proof": {"type": "object"},
+            },
+            (
+                "review_request_id",
+                "authorization_id",
+                "access_proof",
+                "operation_id",
+            ),
+        ),
+        True,
+    ),
+    "review_decision_draft": (
+        "review.decision.draft",
+        _object_schema(
+            {
+                "review_request_id": {"type": "string", "maxLength": 160},
+                "authorization_id": {"type": "string", "maxLength": 160},
+                "action": {"enum": ["accept", "edit", "reject", "defer"]},
+                "replacement": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+                "reason": {
+                    "enum": [
+                        "consent-or-safety-concern",
+                        "content-correction",
+                        "evidence-insufficient",
+                        "evidence-sufficient",
+                        "policy-conflict",
+                        "reconsideration-needed",
+                        "superseded",
+                    ]
+                },
+                "note_ref": _NULLABLE_TEXT,
+                "decision_nonce": _UUID,
+                "decided_at_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2**53 - 1,
+                },
+                "predecessor_decision_id": {
+                    "anyOf": [{"type": "string", "maxLength": 160}, {"type": "null"}]
+                },
+            },
+            (
+                "review_request_id",
+                "authorization_id",
+                "action",
+                "decision_nonce",
+                "replacement",
+                "reason",
+                "note_ref",
+                "decided_at_ms",
+                "predecessor_decision_id",
+            ),
+        ),
+        True,
+    ),
+    "review_decision_submit": (
+        "review.decision.submit",
+        _object_schema({"decision": {"type": "object"}}, ("decision",)),
+        False,
+    ),
     "scope_me": ("scope.me", _object_schema({}), True),
     "scope_we": ("scope.we", _object_schema({}), True),
     "scope_we_diff": ("scope.we.diff", _object_schema({}), True),
@@ -386,6 +487,25 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         "runtime.status": set(),
         "memory.evaluate": {"candidate", "policy"},
         "memory.execute": {"candidate", "plan", "policy"},
+        "review.request": {"request"},
+        "review.queue": {"access_proof", "after", "authorization_id", "limit"},
+        "review.inspect": {
+            "access_proof",
+            "authorization_id",
+            "review_request_id",
+        },
+        "review.decision.draft": {
+            "action",
+            "authorization_id",
+            "decision_nonce",
+            "decided_at_ms",
+            "note_ref",
+            "predecessor_decision_id",
+            "reason",
+            "replacement",
+            "review_request_id",
+        },
+        "review.decision.submit": {"decision"},
         "scope.me": set(),
         "scope.we": set(),
         "scope.we.diff": set(),
@@ -516,6 +636,11 @@ class DaimonMcp:
         method, method_params, operation_id = _tool_params(
             params.name, params.arguments
         )
+        if method == "review.decision.submit":
+            raise MCPError(
+                types.INVALID_REQUEST,
+                "Human review decisions require the human-held signing CLI",
+            )
         request = self._prepare_operation(method, method_params, operation_id)
         try:
             response = await anyio.to_thread.run_sync(self.client.send, request)

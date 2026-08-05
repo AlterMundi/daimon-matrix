@@ -48,6 +48,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/curator_worker_process.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
+        "src/daimon_matrix/human_review.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
@@ -56,6 +57,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/relationships.py",
+        "src/daimon_matrix/reviewer_cli.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/routes.py",
         "src/daimon_matrix/scopes.py",
@@ -80,6 +82,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/curator_worker_process.py",
         "daimon_matrix/daemon.py",
         "daimon_matrix/identity.py",
+        "daimon_matrix/human_review.py",
         "daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py",
@@ -88,6 +91,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
         "daimon_matrix/relationships.py",
+        "daimon_matrix/reviewer_cli.py",
         "daimon_matrix/runtime.py",
         "daimon_matrix/routes.py",
         "daimon_matrix/scopes.py",
@@ -268,12 +272,14 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/curator_worker_process.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/identity.py",
+        "src/daimon_matrix/human_review.py",
         "src/daimon_matrix/keystore.py",
         "src/daimon_matrix/ledger.py",
         "src/daimon_matrix/local_api.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/reviewer_cli.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
@@ -332,6 +338,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
+        b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
     ):
         raise PackageCheckError("wheel console entry point mismatch")
     wheel_text = files[f"{DIST_INFO}/WHEEL"].decode("utf-8")
@@ -375,12 +382,14 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         ),
         "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
         "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
+        "daimon_matrix/human_review.py": "src/daimon_matrix/human_review.py",
         "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
         "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
         "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",
         "daimon_matrix/mcp_server.py": "src/daimon_matrix/mcp_server.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
+        "daimon_matrix/reviewer_cli.py": "src/daimon_matrix/reviewer_cli.py",
         "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
         "daimon_matrix/sealed.py": "src/daimon_matrix/sealed.py",
         "daimon_matrix/service.py": "src/daimon_matrix/service.py",

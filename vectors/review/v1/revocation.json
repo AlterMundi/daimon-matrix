@@ -1,0 +1,1 @@
+{"authorization_event_id":"33000000-0000-4000-8000-000000000001","authorization_id":"dm:review-authorization:v1:hqWObneqAO_glN53RSzQ8YjIK60krZCiGTkgQoN40Xk","reason":"vector-retirement","revocation_id":"dm:review-revocation:v1:zOs-hQfFj1KpelvXUOH9MsipOSaSJprg7Tj5xgjuxCA","revoked_at_ms":1800000010000,"schema":"dm.review.revocation/v1"}

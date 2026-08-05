@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import sys
 from collections.abc import Mapping, Sequence
@@ -21,6 +22,7 @@ from .client import (
     read_capability_key,
     store_prepared_request,
 )
+from .human_review import DECISION_REASONS
 from .local_api import MAX_FRAME_BYTES
 
 EXIT_OK: Final = 0
@@ -29,6 +31,7 @@ EXIT_AUTH: Final = 3
 EXIT_DAEMON: Final = 4
 EXIT_REFUSED: Final = 5
 EXIT_PROTOCOL: Final = 6
+REVIEW_METHOD_PREFIX: Final = "review."
 
 
 def _bounded_file(value: str, *, object_required: bool = True) -> Any:
@@ -110,6 +113,48 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         }
     if command == ("curator", "inspect"):
         return "curator.inspect", {"item_id": args.item_id}
+    if command == ("review", "authorize"):
+        return "review.authorize", {"authorization": _bounded_file(args.authorization)}
+    if command == ("review", "revoke"):
+        return "review.revoke", {
+            "authorization_id": args.authorization_id,
+            "reason": args.reason,
+        }
+    if command == ("review", "request"):
+        return "review.request", {"request": _bounded_file(args.review_request)}
+    if command == ("review", "queue"):
+        return "review.queue", {
+            "authorization_id": args.authorization_id,
+            "access_proof": _bounded_file(args.access_proof),
+            "after": args.after,
+            "limit": args.limit,
+        }
+    if command == ("review", "inspect"):
+        return "review.inspect", {
+            "review_request_id": args.review_request_id,
+            "authorization_id": args.authorization_id,
+            "access_proof": _bounded_file(args.access_proof),
+        }
+    if command == ("review", "draft"):
+        return "review.decision.draft", {
+            "review_request_id": args.review_request_id,
+            "authorization_id": args.authorization_id,
+            "action": args.action,
+            "replacement": None
+            if args.replacement is None
+            else _bounded_file(args.replacement),
+            "reason": args.reason,
+            "note_ref": args.note_ref,
+            "decision_nonce": args.decision_nonce,
+            "decided_at_ms": args.decided_at_ms,
+            "predecessor_decision_id": args.predecessor_decision_id,
+        }
+    if command == ("review", "submit"):
+        return "review.decision.submit", {
+            "decision": _bounded_file(args.signed_decision)
+        }
+    if command == ("review", "execute"):
+        return "review.execute", {"review_request_id": args.review_request_id}
     if command == ("we", "heads"):
         return "we.heads", {}
     if command == ("we", "diff"):
@@ -262,6 +307,57 @@ def parser() -> argparse.ArgumentParser:
     inspect = curator_commands.add_parser("inspect", help="inspect one queue item")
     inspect.add_argument("--item-id", required=True)
 
+    review = families.add_parser(
+        "review", help="purpose-limited human review of sensitive memory"
+    )
+    review_commands = review.add_subparsers(dest="command", required=True)
+    authorize = review_commands.add_parser(
+        "authorize", help="register an exact reviewer-accepted delegation"
+    )
+    authorize.add_argument("--authorization", required=True)
+    revoke = review_commands.add_parser("revoke", help="revoke one delegation")
+    revoke.add_argument("--authorization-id", required=True)
+    revoke.add_argument("--reason", required=True)
+    request_review = review_commands.add_parser(
+        "request", help="register one exact immutable review request"
+    )
+    request_review.add_argument("--review-request", required=True)
+    queue = review_commands.add_parser(
+        "queue", help="list authorized payload-minimized review work"
+    )
+    queue.add_argument("--authorization-id", required=True)
+    queue.add_argument("--access-proof", required=True)
+    queue.add_argument("--after")
+    queue.add_argument("--limit", type=int, default=25)
+    inspect_review = review_commands.add_parser(
+        "inspect", help="inspect exact evidence after reviewer possession proof"
+    )
+    inspect_review.add_argument("--review-request-id", required=True)
+    inspect_review.add_argument("--authorization-id", required=True)
+    inspect_review.add_argument("--access-proof", required=True)
+    draft = review_commands.add_parser(
+        "draft", help="prepare an unsigned, content-bound decision"
+    )
+    draft.add_argument("--review-request-id", required=True)
+    draft.add_argument("--authorization-id", required=True)
+    draft.add_argument(
+        "--action", choices=("accept", "edit", "reject", "defer"), required=True
+    )
+    draft.add_argument("--replacement")
+    draft.add_argument("--reason", choices=sorted(DECISION_REASONS), required=True)
+    draft.add_argument("--note-ref")
+    draft.add_argument("--decision-nonce", required=True)
+    draft.add_argument("--decided-at-ms", type=int, required=True)
+    draft.add_argument("--predecessor-decision-id")
+    submit = review_commands.add_parser(
+        "submit", help="submit a pre-existing human-signed decision"
+    )
+    submit.add_argument("--signed-decision", required=True)
+    execute_review = review_commands.add_parser(
+        "execute", help="subject-revalidate and execute a reached decision"
+    )
+    execute_review.add_argument("--review-request-id", required=True)
+
     we = families.add_parser("we", help="local Weave ledger and projection")
     we_commands = we.add_subparsers(dest="command", required=True)
     we_commands.add_parser("heads", help="signed origin heads")
@@ -337,7 +433,22 @@ def _write_result(
     content = (
         public_response["result"] if public_response["ok"] else public_response["error"]
     )
+    if method.startswith(REVIEW_METHOD_PREFIX):
+        raw = canonical_bytes(content)
+        print(
+            "untrusted-review-data "
+            "encoding=canonical-json-utf8-hex "
+            f"bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}"
+        )
+        for offset in range(0, len(raw), 32):
+            print(f"{offset:08x}  {raw[offset : offset + 32].hex()}")
+        return
     print(json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _ensure_safe_output(method: str, *, json_output: bool, terminal: bool) -> None:
+    if method.startswith(REVIEW_METHOD_PREFIX) and json_output and terminal:
+        raise ClientError("review_json_tty_refused")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -347,6 +458,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = ClientConfig.load(args.client_config, key)
         client = LocalClient(args.socket, config, args.timeout)
         method, params = _method_params(args)
+        _ensure_safe_output(
+            method,
+            json_output=args.json_output,
+            terminal=sys.stdout.isatty(),
+        )
         if args.request_file is not None and args.request_file.exists():
             request = load_prepared_request(
                 args.request_file,

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/review/v1/queue.schema.json",
+  "title": "Payload-minimized deterministic human review queue page",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "authorization_id", "cutoff_ms", "after", "items", "next"],
+  "properties": {
+    "schema": {"const": "dm.review.queue/v1"},
+    "authorization_id": {"type": "string", "pattern": "^dm:review-authorization:v1:[A-Za-z0-9_-]{43}$"},
+    "cutoff_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "after": {"$ref": "#/$defs/cursor"},
+    "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/item"}},
+    "next": {"$ref": "#/$defs/cursor"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "cursor": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$"}]},
+    "item": {"type": "object", "additionalProperties": false, "required": ["review_request_id", "requested_at_ms", "expires_at_ms", "category", "classification", "action", "status", "plan_id", "plan_hash", "projected_effect_hash", "reasons"], "properties": {"review_request_id": {"type": "string", "pattern": "^dm:review-request:v1:[A-Za-z0-9_-]{43}$"}, "requested_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "expires_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}, "category": {"type": "string"}, "classification": {"enum": ["public", "personal", "private", "protected"]}, "action": {"type": ["string", "null"], "enum": ["accept", "edit", "reject", null]}, "status": {"enum": ["pending", "decided", "conflict", "expired", "executed", "superseded"]}, "plan_id": {"type": "string", "pattern": "^dm:memory-plan:v1:[A-Za-z0-9_-]{43}$"}, "plan_hash": {"$ref": "#/$defs/hash"}, "projected_effect_hash": {"$ref": "#/$defs/hash"}, "reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}}
+  }
+}

@@ -1197,6 +1197,121 @@ class MemoryPolicyExecutor:
             "event": event,
         }
 
+    def execute_reviewed(
+        self,
+        plan: Mapping[str, Any],
+        policy: Mapping[str, Any],
+        candidate: Mapping[str, Any],
+        *,
+        review_request_id: str,
+        decision_ids: Sequence[str],
+        client_id: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Commit only an exact plan released by the DM-033 review protocol.
+
+        This entry point is intentionally separate from ``execute``: callers
+        cannot turn arbitrary review-required plans into automatic ones with a
+        boolean flag.  The purpose-separated review references are bound into
+        the local-operation hash; the human review coordinator remains
+        responsible for verifying signatures, scope, quorum, and revocation.
+        """
+
+        normalized = validate_memory_plan(plan)
+        now = _uint(self.clock(), "invalid_memory_execution_time")
+        if normalized["outcome"] != "review-required":
+            raise MemoryExecutionError("memory_plan_not_review_executable")
+        if now > normalized["expires_at_ms"]:
+            raise MemoryExecutionError("memory_plan_expired")
+        if (
+            not isinstance(review_request_id, str)
+            or not review_request_id.startswith("dm:review-request:v1:")
+            or not isinstance(decision_ids, Sequence)
+            or isinstance(decision_ids, (str, bytes))
+            or not decision_ids
+            or list(decision_ids) != sorted(set(decision_ids))
+            or any(
+                not isinstance(item, str)
+                or not item.startswith("dm:review-decision:v1:")
+                for item in decision_ids
+            )
+        ):
+            raise MemoryExecutionError("invalid_memory_review_guard")
+        regenerated = evaluate_memory_candidate(
+            policy,
+            candidate,
+            normalized["checkpoint"],
+            evaluated_at_ms=normalized["evaluated_at_ms"],
+        )
+        if regenerated != normalized:
+            raise MemoryExecutionError("memory_plan_revalidation_mismatch")
+        current_checkpoint = memory_checkpoint(
+            self.ledger,
+            candidate,
+            captured_at_ms=now,
+        )
+        evidence_fields = (
+            "being_ref",
+            "manifest_hash",
+            "local_origin",
+            "projection_hash",
+            "evidence_refs",
+            "body_evidence_state",
+            "lane_state",
+            "lane_event_ids",
+            "lane_head",
+        )
+        if any(
+            current_checkpoint[field] != normalized["checkpoint"][field]
+            for field in evidence_fields
+        ):
+            raise MemoryExecutionError("memory_plan_stale")
+        if normalized["subject_me_id"] != self.ledger.authority.manifest.being_ref:
+            raise MemoryExecutionError("memory_executor_subject_mismatch")
+        preview = normalized["event_preview"]
+        if not isinstance(preview, Mapping):
+            raise MemoryExecutionError("memory_plan_missing_preview")
+        request_hash = hashlib.sha256(
+            canonical_bytes(
+                {
+                    "schema": EXECUTION_SCHEMA,
+                    "plan_id": normalized["plan_id"],
+                    "review_request_id": review_request_id,
+                    "decision_ids": list(decision_ids),
+                }
+            )
+        ).hexdigest()
+        event_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, "daimon-memory:" + normalized["plan_id"])
+        )
+        try:
+            event: Event = self.ledger.append_local_idempotent(
+                client_id=client_id,
+                request_id=request_id,
+                request_hash=request_hash,
+                kind=str(preview["kind"]),
+                subject=str(preview["subject"]),
+                payload=copy.deepcopy(dict(preview["payload"])),
+                signer=self.signer,
+                sensitivity=str(preview["sensitivity"]),
+                causal_parents=tuple(normalized["checkpoint"]["evidence_refs"]),
+                supersedes=normalized["checkpoint"]["lane_head"]["event_id"]
+                if normalized["checkpoint"]["lane_head"] is not None
+                else None,
+                occurred_at_ms=normalized["evaluated_at_ms"],
+                event_id=event_id,
+                expected_state_hash=current_checkpoint["ledger_state_hash"],
+            )
+        except LedgerStateError as exception:
+            raise MemoryExecutionError("memory_plan_stale") from exception
+        return {
+            "schema": EXECUTION_SCHEMA,
+            "plan_id": normalized["plan_id"],
+            "review_request_id": review_request_id,
+            "decision_ids": list(decision_ids),
+            "event": event,
+        }
+
 
 __all__ = [
     "ATTRIBUTED_CATEGORIES",
