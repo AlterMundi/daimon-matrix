@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.9",
+  "suite_version": "DM-026.10",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -435,6 +435,48 @@
       "cleanup": "Discard immutable synthetic policy artifacts.",
       "platform": "all",
       "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "memory_projection_effect_truth",
+      "owners": ["DM-018", "DM-030", "DM-034"],
+      "specifications": ["docs/dm034-memory-projection.md", "specs/adapter-contracts.md", "specs/memory-boundaries.md"],
+      "setup": "Pinned HMK CLI, real temporary SQLite, accepted personal-memory lane and owner-only recovery journal.",
+      "stimulus": "Project, replay, lose the HMK response, contend concurrently and alter current HMK content or receipt bindings.",
+      "fault": "Stored idempotency evidence or shape-valid provider IDs contradict the currently observed source/effect truth.",
+      "expected": "Only exact current head/content/namespace truth returns success; conflicts, substitutions and drift fail without a blind cache replay.",
+      "evidence": ["tests.test_dm034_memory_projection.DM034ProjectionTests.test_concurrent_duplicate_and_conflicting_routes", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_fresh_provider_receipt_is_observed_before_local_success", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_nonpersonal_records_are_excluded_and_personal_lane_forks_fail", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_receipt_identity_and_effect_are_recomputed_not_shape_trusted", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_response_loss_replays_exact_pending_request_and_truth_not_blind_cache"],
+      "cleanup": "Close HMK and journal SQLite handles and remove the isolated synthetic workspace.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "memory_projection_migration",
+      "owners": ["DM-018", "DM-034"],
+      "specifications": ["docs/dm034-memory-projection.md", "specs/memory-boundaries.md"],
+      "setup": "Synthetic HMK-native content, an empty Daimon namespace, SQLite backup and closed pinned Matrix/HMK contracts.",
+      "stimulus": "Inventory and back up without mutation, plan/apply first cutover, verify recall, then restore the pre-cutover database separately.",
+      "fault": "Projection setup could mutate the inventory, consume native authority, expose paths/content or make rollback depend on Matrix rewriting.",
+      "expected": "Planning is byte-read-only; cutover adds only the exact namespace; native retrieval survives; backup restore has no projection and Matrix remains canonical.",
+      "evidence": ["tests.test_dm034_memory_projection.DM034ProjectionTests.test_generic_hmk_mutations_cannot_modify_projection_managed_rows", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_public_schemas_cover_every_matrix_artifact_and_are_closed", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_read_only_dry_run_backup_cutover_and_restore_mixed_hmk_state", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_vectors_bind_hmk_pin_validate_and_regenerate_byte_identically"],
+      "cleanup": "Remove synthetic source, backup, restored and vector-regeneration directories.",
+      "platform": "linux",
+      "ci_lane": "complete",
+      "required": true
+    },
+    {
+      "id": "memory_projection_rebuild",
+      "owners": ["DM-030", "DM-034"],
+      "specifications": ["docs/dm034-memory-projection.md", "specs/memory-boundaries.md"],
+      "setup": "Two accepted personal lanes, one native HMK row and an exact content-derived rebuild plan.",
+      "stimulus": "Delete only derived rows, rebuild, substitute the embedded HMK namespace and change the Matrix checkpoint before apply.",
+      "fault": "A stale or rewrapped provider plan attempts broad replacement, while native rows share the same database.",
+      "expected": "Exact plan repairs a logically identical namespace and preserves native state; target substitution and checkpoint drift refuse before effect.",
+      "evidence": ["tests.test_dm034_memory_projection.DM034ProjectionTests.test_rebuild_is_deterministic_repairs_deleted_projection_and_preserves_native", "tests.test_dm034_memory_projection.DM034ProjectionTests.test_rebuild_rebinds_embedded_hmk_plan_and_refuses_checkpoint_drift"],
+      "cleanup": "Close temporary databases and discard the synthetic ledger, content and plans.",
+      "platform": "linux",
+      "ci_lane": "complete",
       "required": true
     },
     {

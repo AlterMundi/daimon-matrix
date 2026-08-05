@@ -1,0 +1,46 @@
+{
+  "schema": "dm-034-invariant-report/v1",
+  "scope": "synthetic-isolated-matrix-to-hmk",
+  "deployment": "not-applicable",
+  "hmk_commit": "f10fd5c3089c0962920314c97e14bc024feffa7a",
+  "hmk_api_version": "1.0.0",
+  "hmk_schema_version": 1,
+  "required_scenario_count": 64,
+  "registry_sha256": "f3366ebcd5a2e1e56c68908915ae65060d425a7a2c2c8fefb14604a52ca4344e",
+  "full_test_count": 359,
+  "dm034_real_integration_count": 14,
+  "distribution": {
+    "byte_identical": true,
+    "wheel_sha256": "4f3fb3cec526800ea74b3b27b408d4776a6e5de32ac21815a81526baaef71711",
+    "sdist_sha256": "088d07fb205d2e1b27e184bd2e364ac2bf899d95005fd7f838d1cddfe6da109e"
+  },
+  "invariants": {
+    "matrix_ledger_is_personal_memory_authority": true,
+    "matrix_org_is_not_a_dependency": true,
+    "hmk_is_exact_pinned_disposable_projection": true,
+    "only_local_personal_linear_heads_project": true,
+    "destination_identity_is_not_title_path_or_similarity": true,
+    "statement_bytes_are_content_addressed_bounded_utf8_data": true,
+    "provider_receipt_is_recomputed_and_freshly_observed": true,
+    "cached_success_requires_current_effect_truth": true,
+    "pending_response_loss_replays_exact_request": true,
+    "owner_only_process_lock_serializes_projection_and_rebuild": true,
+    "verified_recall_checks_complete_current_namespace": true,
+    "rebuild_rebinds_embedded_hmk_plan_to_current_matrix": true,
+    "rebuild_is_namespace_only_and_logically_deterministic": true,
+    "hmk_generic_mutations_cannot_change_projection_rows": true,
+    "dry_run_plan_leaves_pre_cutover_database_bytes_unchanged": true,
+    "backup_restore_and_native_file_origins_survive_cutover": true,
+    "schemas_and_vectors_are_closed_and_environment_independent": true,
+    "public_evidence_contains_only_synthetic_state": true
+  },
+  "evidence": [
+    "conformance/registry-v1.json",
+    "docs/dm034-memory-projection.md",
+    "schemas/memory-projection/v1/contracts.schema.json",
+    "src/daimon_matrix/memory_projection.py",
+    "tests/test_dm034_memory_projection.py",
+    "tools/generate_dm034_vectors.py",
+    "vectors/memory-projection/v1/index.json"
+  ]
+}

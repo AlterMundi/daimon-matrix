@@ -230,7 +230,7 @@
           "additionalProperties": false,
           "properties": {
             "max_input_bytes": {
-              "maximum": 2097152,
+              "maximum": 17825792,
               "minimum": 1,
               "type": "integer"
             },

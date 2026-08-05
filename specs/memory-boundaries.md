@@ -238,10 +238,12 @@ queues or generic RPC escape hatches.
 ## 9. Projection and external effects
 
 `memory.recorded` is canonical evidence. The generic DM-023 projection may list
-it, but DM-030 performs no HMK/Wiki/database/publication effect. Later adapters
-must distinguish personal and attributed categories, bind the exact event head,
-projector version, intent, idempotency key and resource fence, then record
-observed effect truth.
+it, but DM-030 performs no HMK/Wiki/database/publication effect. DM-034 now
+projects only current, linear, locally authored personal heads through the
+pinned HMK contract. It binds exact event head, content, Matrix checkpoint,
+projector, target and idempotency bytes, then observes current HMK effect truth
+before initial or cached success. Its HMK namespace is disposable and cannot
+write back into this policy or ledger.
 
 Public or destructive candidate effects always require review. Adapter ACK,
 cached idempotency state or a prior receipt is insufficient if the current
@@ -275,6 +277,12 @@ delete decision history, rewrite lanes, lower checkpoints, choose a fork winner,
 resurrect retracted/revoked content, or reinterpret an old record under a new
 policy.
 
+The DM-034 recall path verifies the complete HMK namespace against current
+Matrix truth before presentation. Its rebuild is namespace-only and atomic;
+HMK-native, Wiki-index and collective records remain under their original
+authority and are never inferred as `/me` memory. See
+`docs/dm034-memory-projection.md`.
+
 ## 12. Implementation boundary
 
 DM-030 implements the pure evaluator, immutable artifact validators, exact
@@ -285,6 +293,8 @@ projection or live deployment. DM-031 now supplies only resource-scoped
 curator coordination: immutable items, local generation CAS, exact actor origin
 and Cluster-verified effect-truth replay. DM-032 through DM-036 consume both
 boundaries without adding a being-wide lease or broadening memory authority.
+DM-034 supplies the exact HMK projection/rebuild/verified-recall library and
+synthetic installed integration; it does not perform a live CompAII cutover.
 
 ## 13. Normative conformance scenarios
 
@@ -298,6 +308,9 @@ automated evidence there.
 | `memory_deterministic_vectors` | schemas/vectors and environment-independent bytes |
 | `memory_installed_surface` | installed CLI outcomes and durable exact retry |
 | `memory_lane_fork` | correction/retraction history and no implicit fork winner |
+| `memory_projection_effect_truth` | pinned HMK apply/replay plus fresh observed postcondition |
+| `memory_projection_rebuild` | deterministic namespace rebuild and checkpoint-drift refusal |
+| `memory_projection_migration` | read-only plan/backup, native preservation and reversible restore |
 | `memory_policy_succession` | exact non-retroactive successor linkage |
 | `memory_review_precedence` | total fail-closed outcomes; no automatic review bypass |
 | `memory_stale_exact_once` | atomic stale guard and response-loss/restart exactly once |

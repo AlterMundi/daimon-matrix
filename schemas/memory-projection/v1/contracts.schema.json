@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/memory-projection/v1/contracts.schema.json",
+  "title": "Daimon Matrix personal-memory projection contracts v1",
+  "oneOf": [
+    {"$ref": "#/$defs/profile"},
+    {"$ref": "#/$defs/negotiation"},
+    {"$ref": "#/$defs/intent"},
+    {"$ref": "#/$defs/receipt"},
+    {"$ref": "#/$defs/reconciliation"},
+    {"$ref": "#/$defs/rebuild_plan"},
+    {"$ref": "#/$defs/rebuild_receipt"},
+    {"$ref": "#/$defs/recall"},
+    {"$ref": "#/$defs/checkpoint"}
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "derived": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+:[A-Za-z0-9_-]{43}$", "maxLength": 192},
+    "uuid": {"type": "string", "format": "uuid"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "token": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+    "scoped": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{1,31}:[A-Za-z0-9._:-]{1,160}$"},
+    "me_id": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+    "category": {"enum": ["personal-experience", "personal-insight", "personal-skill"]},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instance_id", "api_version", "schema_version"],
+      "properties": {
+        "instance_id": {"$ref": "#/$defs/scoped"},
+        "api_version": {"const": "1.0.0"},
+        "schema_version": {"const": 1}
+      }
+    },
+    "projector": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"const": "matrix:personal-memory-projector"},
+        "version": {"const": "1.0.0"}
+      }
+    },
+    "checkpoint_short": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sequence", "hash"],
+      "properties": {
+        "sequence": {"$ref": "#/$defs/uint"},
+        "hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "head": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "event_hash", "sequence"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/uuid"},
+        "event_hash": {"$ref": "#/$defs/hash"},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+      }
+    },
+    "statement_ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha256", "byte_length", "media_type", "classification"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/hash"},
+        "byte_length": {"type": "integer", "minimum": 1, "maximum": 16777216},
+        "media_type": {"enum": ["text/plain", "text/markdown"]},
+        "classification": {"enum": ["public", "personal", "private", "protected"]}
+      }
+    },
+    "statement_text": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha256", "byte_length", "media_type", "classification", "text"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/hash"},
+        "byte_length": {"type": "integer", "minimum": 1, "maximum": 16777216},
+        "media_type": {"enum": ["text/plain", "text/markdown"]},
+        "classification": {"enum": ["public", "personal", "private", "protected"]},
+        "text": {"type": "string", "minLength": 1, "maxLength": 16777216}
+      }
+    },
+    "content_ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "content_id", "sha256", "byte_length", "media_type", "classification"],
+      "properties": {
+        "schema": {"const": "dm.memory.content-ref/v1"},
+        "content_id": {"type": "string", "pattern": "^dm:memory-content:v1:[A-Za-z0-9_-]{43}$"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "byte_length": {"type": "integer", "minimum": 1, "maximum": 16777216},
+        "media_type": {"type": "string", "minLength": 3, "maxLength": 128},
+        "classification": {"enum": ["public", "personal", "private", "protected"]}
+      }
+    },
+    "source_event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "event_hash", "memory_id", "sequence", "category", "author_me_id", "evidence_hash", "content_ref"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/uuid"},
+        "event_hash": {"$ref": "#/$defs/hash"},
+        "memory_id": {"$ref": "#/$defs/uuid"},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "category": {"$ref": "#/$defs/category"},
+        "author_me_id": {"$ref": "#/$defs/me_id"},
+        "evidence_hash": {"$ref": "#/$defs/hash"},
+        "content_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/content_ref"}]}
+      }
+    },
+    "namespace_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_instance", "subject_me_id", "projector_id", "projector_version"],
+      "properties": {
+        "source_instance": {"$ref": "#/$defs/scoped"},
+        "subject_me_id": {"$ref": "#/$defs/me_id"},
+        "projector_id": {"const": "matrix:personal-memory-projector"},
+        "projector_version": {"const": "1.0.0"}
+      }
+    },
+    "rebuild_entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["memory_id", "author_me_id", "category", "head", "statement"],
+      "properties": {
+        "memory_id": {"$ref": "#/$defs/uuid"},
+        "author_me_id": {"$ref": "#/$defs/me_id"},
+        "category": {"$ref": "#/$defs/category"},
+        "head": {"$ref": "#/$defs/head"},
+        "statement": {"$ref": "#/$defs/statement_text"}
+      }
+    },
+    "hmk_rebuild_plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "plan_id", "request_id", "idempotency_key", "target", "namespace", "namespace_id", "source_checkpoint", "entries", "manifest_hash", "prior"],
+      "properties": {
+        "schema": {"const": "hmk.daimon-projection.rebuild-plan/v1"},
+        "plan_id": {"type": "string", "pattern": "^hmk:daimon-rebuild-plan:v1:[A-Za-z0-9_-]{43}$"},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "idempotency_key": {"$ref": "#/$defs/token"},
+        "target": {"$ref": "#/$defs/target"},
+        "namespace": {"$ref": "#/$defs/namespace_identity"},
+        "namespace_id": {"type": "string", "pattern": "^hmk:daimon-namespace:v1:[A-Za-z0-9_-]{43}$"},
+        "source_checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+        "entries": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/rebuild_entry"}},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "prior": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["generation", "manifest_hash", "source_checkpoint"],
+              "properties": {
+                "generation": {"$ref": "#/$defs/uint"},
+                "manifest_hash": {"$ref": "#/$defs/hash"},
+                "source_checkpoint": {"$ref": "#/$defs/checkpoint_short"}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "adapter_id", "contract_version", "hmk_commit", "source_instance", "target", "projector"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.profile/v1"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "contract_version": {"const": "v1"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"},
+        "source_instance": {"$ref": "#/$defs/scoped"},
+        "target": {"$ref": "#/$defs/target"},
+        "projector": {"$ref": "#/$defs/projector"}
+      }
+    },
+    "negotiation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "status", "adapter_id", "provider_kind", "contract", "version", "hmk_commit"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.negotiation/v1"},
+        "status": {"const": "accepted"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "provider_kind": {"const": "memory-projection"},
+        "contract": {"const": "memory-projection"},
+        "version": {"const": "v1"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"}
+      }
+    },
+    "intent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "adapter_id", "hmk_commit", "operation", "source_event", "source_checkpoint", "target", "projector", "hmk_request_hash"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.intent/v1"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"},
+        "operation": {"enum": ["project", "advance", "retract"]},
+        "source_event": {"$ref": "#/$defs/source_event"},
+        "source_checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+        "target": {"$ref": "#/$defs/target"},
+        "projector": {"$ref": "#/$defs/projector"},
+        "hmk_request_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "receipt_id", "adapter_id", "hmk_commit", "source_instance", "subject_me_id", "operation", "request_id", "idempotency_key", "intent_hash", "source_event", "source_checkpoint", "target", "projector", "hmk_request_hash", "hmk_receipt", "effect", "outcome"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.receipt/v1"},
+        "receipt_id": {"type": "string", "pattern": "^dm:memory-projection-receipt:v1:[A-Za-z0-9_-]{43}$"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"},
+        "source_instance": {"$ref": "#/$defs/scoped"},
+        "subject_me_id": {"$ref": "#/$defs/me_id"},
+        "operation": {"enum": ["project", "advance", "retract"]},
+        "request_id": {"$ref": "#/$defs/uuid"},
+        "idempotency_key": {"$ref": "#/$defs/token"},
+        "intent_hash": {"$ref": "#/$defs/hash"},
+        "source_event": {"$ref": "#/$defs/source_event"},
+        "source_checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+        "target": {"$ref": "#/$defs/target"},
+        "projector": {"$ref": "#/$defs/projector"},
+        "hmk_request_hash": {"$ref": "#/$defs/hash"},
+        "hmk_receipt": {
+          "type": "object", "additionalProperties": false,
+          "required": ["receipt_id", "receipt_hash"],
+          "properties": {
+            "receipt_id": {"type": "string", "pattern": "^hmk:daimon-receipt:v1:[A-Za-z0-9_-]{43}$"},
+            "receipt_hash": {"$ref": "#/$defs/hash"}
+          }
+        },
+        "effect": {
+          "type": "object", "additionalProperties": false,
+          "required": ["namespace_id", "projection_id", "generation", "manifest_hash", "head", "statement", "active"],
+          "properties": {
+            "namespace_id": {"type": "string", "pattern": "^hmk:daimon-namespace:v1:[A-Za-z0-9_-]{43}$"},
+            "projection_id": {"type": "string", "pattern": "^hmk:daimon-projection:v1:[A-Za-z0-9_-]{43}$"},
+            "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+            "manifest_hash": {"$ref": "#/$defs/hash"},
+            "head": {"$ref": "#/$defs/head"},
+            "statement": {"$ref": "#/$defs/statement_ref"},
+            "active": {"type": "boolean"}
+          }
+        },
+        "outcome": {"const": "applied"}
+      }
+    },
+    "reconciliation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "receipt_id", "status", "reason"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.reconciliation/v1"},
+        "receipt_id": {"type": "string", "pattern": "^dm:memory-projection-receipt:v1:[A-Za-z0-9_-]{43}$"},
+        "status": {"enum": ["verified", "effect-truth-discrepancy", "effect-truth-unverifiable"]},
+        "reason": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,127}$"}
+      }
+    },
+    "rebuild_plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "plan_id", "adapter_id", "hmk_commit", "matrix_checkpoint", "matrix_manifest_hash", "hmk_plan_hash", "hmk_plan"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.rebuild-plan/v1"},
+        "plan_id": {"type": "string", "pattern": "^dm:memory-projection-rebuild-plan:v1:[A-Za-z0-9_-]{43}$"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"},
+        "matrix_checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+        "matrix_manifest_hash": {"$ref": "#/$defs/hash"},
+        "hmk_plan_hash": {"$ref": "#/$defs/hash"},
+        "hmk_plan": {"$ref": "#/$defs/hmk_rebuild_plan"}
+      }
+    },
+    "rebuild_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "receipt_id", "plan_id", "adapter_id", "hmk_commit", "matrix_checkpoint", "matrix_manifest_hash", "hmk_receipt_id", "hmk_receipt_hash", "namespace_id", "generation", "outcome"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.rebuild-receipt/v1"},
+        "receipt_id": {"type": "string", "pattern": "^dm:memory-projection-rebuild-receipt:v1:[A-Za-z0-9_-]{43}$"},
+        "plan_id": {"type": "string", "pattern": "^dm:memory-projection-rebuild-plan:v1:[A-Za-z0-9_-]{43}$"},
+        "adapter_id": {"type": "string", "pattern": "^dm:adapter:v0:[A-Za-z0-9_-]{43}$"},
+        "hmk_commit": {"const": "f10fd5c3089c0962920314c97e14bc024feffa7a"},
+        "matrix_checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+        "matrix_manifest_hash": {"$ref": "#/$defs/hash"},
+        "hmk_receipt_id": {"type": "string", "pattern": "^hmk:daimon-rebuild-receipt:v1:[A-Za-z0-9_-]{43}$"},
+        "hmk_receipt_hash": {"$ref": "#/$defs/hash"},
+        "namespace_id": {"type": "string", "pattern": "^hmk:daimon-namespace:v1:[A-Za-z0-9_-]{43}$"},
+        "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "outcome": {"const": "rebuilt"}
+      }
+    },
+    "recall": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "origin", "statement", "verified_against"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.recall/v1"},
+        "origin": {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "source_instance", "subject_me_id", "author_me_id", "memory_id", "category", "head", "classification", "projector"],
+          "properties": {
+            "kind": {"const": "daimon-projection"},
+            "source_instance": {"$ref": "#/$defs/scoped"},
+            "subject_me_id": {"$ref": "#/$defs/me_id"},
+            "author_me_id": {"$ref": "#/$defs/me_id"},
+            "memory_id": {"$ref": "#/$defs/uuid"},
+            "category": {"$ref": "#/$defs/category"},
+            "head": {"$ref": "#/$defs/head"},
+            "classification": {"enum": ["public", "personal", "private", "protected"]},
+            "projector": {"$ref": "#/$defs/projector"}
+          }
+        },
+        "statement": {"$ref": "#/$defs/statement_text"},
+        "verified_against": {
+          "type": "object", "additionalProperties": false,
+          "required": ["checkpoint", "manifest_hash"],
+          "properties": {
+            "checkpoint": {"$ref": "#/$defs/checkpoint_short"},
+            "manifest_hash": {"$ref": "#/$defs/hash"}
+          }
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "being_ref", "manifest_hash", "events", "sequence", "hash"],
+      "properties": {
+        "schema": {"const": "dm.memory-projection.checkpoint/v1"},
+        "being_ref": {"$ref": "#/$defs/me_id"},
+        "manifest_hash": {"$ref": "#/$defs/hash"},
+        "events": {
+          "type": "array", "maxItems": 4096,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["event_id", "event_hash"],
+            "properties": {
+              "event_id": {"$ref": "#/$defs/uuid"},
+              "event_hash": {"$ref": "#/$defs/hash"}
+            }
+          }
+        },
+        "sequence": {"$ref": "#/$defs/uint"},
+        "hash": {"$ref": "#/$defs/hash"}
+      }
+    }
+  }
+}

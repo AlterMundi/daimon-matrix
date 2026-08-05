@@ -49,9 +49,10 @@ closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
 bytes, MCP exposes only the current twenty-four core/scope/memory/curator methods and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
-release gate with a 51-scenario invariant registry and deterministic installed conformance report;
-it exercises real process, AF_UNIX, filesystem and SQLite paths without
-claiming remote delivery, live Cluster effects or rebirth. DM-037 defines
+release gate with a deterministic installed conformance report over the current
+64-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+SQLite paths without claiming remote delivery, live Cluster effects or
+rebirth. DM-037 defines
 closed Cluster body/fence/effect evidence and requires current effect-truth
 verification before replay. DM-050 begins absorbing
 Tribe transport behind the same boundary. DM-050 pins the current public Tribe
@@ -115,6 +116,11 @@ cross-embodiment forks and response-loss/restart exactly once. DM-031 adds a
 durable per-item curator queue, generation CAS, exact actor origin, explicit
 human-review proposals, Cluster-verified resource-fence mode, and
 effect-truth-aware replay through daemon/client/CLI/MCP. It deliberately has no
-exclusive being-wide Librarian lease. The model worker, cryptographic human
-decision, HMK/Wiki projection and collective publisher remain DM-032 through
-DM-036.
+exclusive being-wide Librarian lease. DM-032 supplies the evidence-only model
+worker and DM-033 the purpose-limited cryptographic human-review narrow waist.
+DM-034 now supplies the exact-version personal-memory projection library for
+HMK: provenance-safe assert/advance/retract, owner-local crash recovery, fresh
+effect-truth reconciliation, verified recall, atomic namespace rebuild, closed
+schemas/vectors and synthetic real-SQLite backup/cutover/restore evidence. HMK
+remains a disposable retrieval view and no live CompAII database is migrated.
+External-state and collective publication remain DM-035 and DM-036.
