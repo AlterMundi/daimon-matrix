@@ -188,6 +188,137 @@ class DisclosureAuthorization:
             authorization_id=authorization_id,
         )
 
+    @classmethod
+    def from_relationship_resolution_event(
+        cls,
+        *,
+        event: Mapping[str, Any],
+        resolution_event: Mapping[str, Any],
+        sender_authority: RootAuthority,
+        recipient_targets: Sequence[RecipientTarget],
+        disclosures: Mapping[str, Mapping[str, Any]],
+        expires_at_ms: int,
+        authorization_id: str | None = None,
+    ) -> DisclosureAuthorization:
+        """Bind verified relationship targets and grants to concrete recipients.
+
+        DM-054 resolves stable relationship principals while DM-051 encrypts to
+        active embodiment credentials.  This bridge requires one closed,
+        authorized relationship disclosure for every signed DM-052 target and
+        binds the complete proof set into the authorization evidence hash.
+        """
+
+        try:
+            message = verify_event(event, sender_authority)
+            resolution = verify_event(resolution_event, sender_authority)
+            message_payload = _message_payload(message)
+            intent = cast(Mapping[str, Any], message_payload["intent"])
+            _payload, targets = _resolution_payload(
+                resolution,
+                message_id=cast(str, message["event_id"]),
+                scope=cast(str, intent["scope"]),
+            )
+        except (CommunicationError, WeaveProtocolError) as exception:
+            raise _reject() from exception
+        if (
+            message_payload["reply"] is not None
+            or resolution["origin"] != message["origin"]
+        ):
+            raise _reject()
+        target_by_embodiment: dict[str, RecipientTarget] = {}
+        for target in recipient_targets:
+            descriptor = recipient_descriptor(
+                target, at_ms=cast(int, resolution["occurred_at_ms"])
+            )
+            embodiment_id = cast(str, descriptor["embodiment_id"])
+            if embodiment_id in target_by_embodiment:
+                raise _reject()
+            target_by_embodiment[embodiment_id] = target
+        recipients: list[dict[str, Any]] = []
+        proof: dict[str, Any] = {}
+        for raw_target in targets:
+            relationship_target = _closed(
+                raw_target,
+                {
+                    "evidence_cursor",
+                    "receipt_origin_embodiment_id",
+                    "recipient_id",
+                    "recipient_type",
+                    "scope_kind",
+                },
+            )
+            recipient_id = _text(relationship_target["recipient_id"], maximum=240)
+            embodiment_id = _text(
+                relationship_target["receipt_origin_embodiment_id"], maximum=240
+            )
+            if (
+                relationship_target["scope_kind"] != "relationship"
+                or relationship_target["recipient_type"] != "relationship"
+            ):
+                raise _reject()
+            concrete = target_by_embodiment.get(embodiment_id)
+            disclosure = disclosures.get(recipient_id)
+            if concrete is None or disclosure is None:
+                raise _reject()
+            row = _closed(disclosure, {"authorization", "authorized", "schema"})
+            authorization = _closed(
+                row["authorization"],
+                {
+                    "classification",
+                    "grant_refs",
+                    "operation",
+                    "requester_being_ref",
+                    "resource_ref",
+                },
+            )
+            descriptor = recipient_descriptor(
+                concrete, at_ms=cast(int, resolution["occurred_at_ms"])
+            )
+            grants = authorization["grant_refs"]
+            if (
+                row["schema"] != "dm.relationship.disclosure/v1"
+                or row["authorized"] is not True
+                or authorization["requester_being_ref"] != descriptor["being_ref"]
+                or not isinstance(grants, list)
+                or not grants
+            ):
+                raise _reject()
+            for grant in grants:
+                reference = _closed(grant, {"event_hash", "event_id", "grant_id"})
+                _text(reference["event_id"], maximum=36)
+                _hex_hash(reference["event_hash"])
+                _text(reference["grant_id"], maximum=240)
+            for field in ("classification", "operation", "resource_ref"):
+                _text(authorization[field], maximum=256)
+            recipients.append(descriptor)
+            proof[recipient_id] = copy.deepcopy(dict(row))
+        if len(recipients) != len(target_by_embodiment) or set(proof) != set(
+            disclosures
+        ):
+            raise _reject()
+        evidence_hash = hashlib.sha256(
+            canonical_bytes(
+                {
+                    "schema": "dm.relationship-delivery-evidence/v1",
+                    "resolution_event_hash": resolution["content_hash"],
+                    "disclosures": proof,
+                }
+            )
+        ).hexdigest()
+        return cls.synthetic(
+            event=message,
+            sender=sender_descriptor(
+                message,
+                sender_authority,
+                at_ms=cast(int, resolution["occurred_at_ms"]),
+            ),
+            recipients=sorted(recipients, key=_recipient_key),
+            evidence_hash=evidence_hash,
+            authorized_at_ms=cast(int, resolution["occurred_at_ms"]),
+            expires_at_ms=expires_at_ms,
+            authorization_id=authorization_id,
+        )
+
 
 def _reject() -> SealedDeliveryError:
     return SealedDeliveryError()

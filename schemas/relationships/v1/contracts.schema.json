@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/relationships/v1/contracts.schema.json",
+  "title": "Daimon Matrix relationship, founded-Tribe, and grant payloads V1",
+  "oneOf": [
+    {"$ref": "#/$defs/card"},
+    {"$ref": "#/$defs/offer"},
+    {"$ref": "#/$defs/acceptance"},
+    {"$ref": "#/$defs/close"},
+    {"$ref": "#/$defs/declaration"},
+    {"$ref": "#/$defs/invitation"},
+    {"$ref": "#/$defs/membershipAcceptance"},
+    {"$ref": "#/$defs/membershipLeave"},
+    {"$ref": "#/$defs/membershipExpulsion"},
+    {"$ref": "#/$defs/founderTransfer"},
+    {"$ref": "#/$defs/founderAcceptance"},
+    {"$ref": "#/$defs/grant"},
+    {"$ref": "#/$defs/grantAcceptance"},
+    {"$ref": "#/$defs/grantRevocation"},
+    {"$ref": "#/$defs/resource"}
+  ],
+  "$defs": {
+    "safeInteger": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "text": {"type": "string", "minLength": 1, "maxLength": 256},
+    "hash64": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hash43": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "beingRef": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+    "relationshipId": {"type": "string", "pattern": "^dm:relationship:v1:[A-Za-z0-9_-]{43}$"},
+    "cardSeriesId": {"type": "string", "pattern": "^dm:relationship-card-series:v1:[A-Za-z0-9_-]{43}$"},
+    "resourceRef": {"type": "string", "pattern": "^dm:relationship-resource:v1:[A-Za-z0-9_-]{43}$"},
+    "grantId": {"type": "string", "pattern": "^dm:relationship-grant:v1:[A-Za-z0-9_-]{43}$"},
+    "tribeRef": {"type": "string", "pattern": "^dm:tribe:v1:[A-Za-z0-9_-]{43}$"},
+    "invitationId": {"type": "string", "pattern": "^dm:tribe-invitation:v1:[A-Za-z0-9_-]{43}$"},
+    "transferId": {"type": "string", "pattern": "^dm:founder-transfer:v1:[A-Za-z0-9_-]{43}$"},
+    "eventRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_hash", "event_id"],
+      "properties": {"event_hash": {"$ref": "#/$defs/hash64"}, "event_id": {"$ref": "#/$defs/uuid"}}
+    },
+    "keyDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "public"],
+      "properties": {
+        "algorithm": {"const": "X25519"},
+        "key_id": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+        "public": {"$ref": "#/$defs/hash43"}
+      }
+    },
+    "controlPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["embodiment_id", "incarnation_id", "manifest_hash"],
+      "properties": {
+        "embodiment_id": {"$ref": "#/$defs/text"},
+        "incarnation_id": {"$ref": "#/$defs/text"},
+        "manifest_hash": {"$ref": "#/$defs/hash64"}
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "controller_being_ref", "descriptor_ref", "kind", "operations", "resource_nonce", "schema"],
+      "properties": {
+        "schema": {"const": "dm.relationship.resource/v1"},
+        "resource_nonce": {"$ref": "#/$defs/hash43"},
+        "controller_being_ref": {"$ref": "#/$defs/beingRef"},
+        "kind": {"enum": ["knowledge", "compute", "storage", "tool", "sensor", "actuator", "route", "other"]},
+        "classification": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 64},
+        "operations": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$", "maxLength": 256}},
+        "descriptor_ref": {"$ref": "#/$defs/text"}
+      }
+    },
+    "resourceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["descriptor", "resource_ref"],
+      "properties": {"descriptor": {"$ref": "#/$defs/resource"}, "resource_ref": {"$ref": "#/$defs/resourceRef"}}
+    },
+    "permission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "delegable", "operations", "remaining_delegation_depth", "resource_ref"],
+      "properties": {
+        "resource_ref": {"$ref": "#/$defs/resourceRef"},
+        "operations": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[./-][a-z0-9]+)*$"}},
+        "classification": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", "maxLength": 64},
+        "delegable": {"type": "boolean"},
+        "remaining_delegation_depth": {"type": "integer", "minimum": 0, "maximum": 16}
+      }
+    },
+    "proposedGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expires_at_ms", "grantor_being_ref", "not_before_ms", "permissions", "subject_being_ref"],
+      "properties": {
+        "grantor_being_ref": {"$ref": "#/$defs/beingRef"},
+        "subject_being_ref": {"$ref": "#/$defs/beingRef"},
+        "permissions": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/permission"}},
+        "not_before_ms": {"$ref": "#/$defs/safeInteger"},
+        "expires_at_ms": {"$ref": "#/$defs/safeInteger"}
+      }
+    },
+    "card": {
+      "type": "object", "additionalProperties": false,
+      "required": ["being_ref", "capability_refs", "card_series_id", "control_position", "encryption_key", "expires_at_ms", "issued_at_ms", "previous_card_event_id", "resources", "route_refs", "schema", "sequence"],
+      "properties": {
+        "schema": {"const": "dm.relationship.card/v1"}, "card_series_id": {"$ref": "#/$defs/cardSeriesId"}, "sequence": {"$ref": "#/$defs/safeInteger"},
+        "previous_card_event_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/uuid"}]}, "being_ref": {"$ref": "#/$defs/beingRef"},
+        "control_position": {"$ref": "#/$defs/controlPosition"}, "encryption_key": {"$ref": "#/$defs/keyDescriptor"},
+        "route_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "capability_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "resources": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/resourceEntry"}},
+        "issued_at_ms": {"$ref": "#/$defs/safeInteger"}, "expires_at_ms": {"$ref": "#/$defs/safeInteger"}
+      }
+    },
+    "offer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expires_at_ms", "initiator_being_ref", "initiator_card_ref", "issued_at_ms", "nonce", "proposed_grants", "relationship_id", "responder_being_ref", "responder_card_ref", "roles", "schema", "terms_ref"],
+      "properties": {
+        "schema": {"const": "dm.relationship.offer/v1"}, "relationship_id": {"$ref": "#/$defs/relationshipId"}, "nonce": {"$ref": "#/$defs/hash43"},
+        "initiator_being_ref": {"$ref": "#/$defs/beingRef"}, "responder_being_ref": {"$ref": "#/$defs/beingRef"}, "initiator_card_ref": {"$ref": "#/$defs/eventRef"},
+        "responder_card_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/eventRef"}]}, "terms_ref": {"$ref": "#/$defs/text"},
+        "roles": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "proposed_grants": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/proposedGrant"}}, "issued_at_ms": {"$ref": "#/$defs/safeInteger"}, "expires_at_ms": {"$ref": "#/$defs/safeInteger"}
+      }
+    },
+    "acceptance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accepted_at_ms", "initiator_being_ref", "initiator_card_ref", "offer_ref", "relationship_id", "responder_being_ref", "responder_card_ref", "schema"],
+      "properties": {"schema": {"const": "dm.relationship.acceptance/v1"}, "relationship_id": {"$ref": "#/$defs/relationshipId"}, "offer_ref": {"$ref": "#/$defs/eventRef"}, "initiator_being_ref": {"$ref": "#/$defs/beingRef"}, "responder_being_ref": {"$ref": "#/$defs/beingRef"}, "initiator_card_ref": {"$ref": "#/$defs/eventRef"}, "responder_card_ref": {"$ref": "#/$defs/eventRef"}, "accepted_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "close": {
+      "type": "object", "additionalProperties": false,
+      "required": ["acceptance_ref", "closed_at_ms", "closer_being_ref", "offer_ref", "reason", "relationship_id", "schema"],
+      "properties": {"schema": {"const": "dm.relationship.close/v1"}, "relationship_id": {"$ref": "#/$defs/relationshipId"}, "offer_ref": {"$ref": "#/$defs/eventRef"}, "acceptance_ref": {"$ref": "#/$defs/eventRef"}, "closer_being_ref": {"$ref": "#/$defs/beingRef"}, "reason": {"type": "string", "minLength": 1, "maxLength": 128}, "closed_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "tribeDeclarationCore": {
+      "type": "object", "additionalProperties": false, "required": ["created_at_ms", "founder_principal_id", "nonce", "policy_ref"],
+      "properties": {"created_at_ms": {"$ref": "#/$defs/safeInteger"}, "founder_principal_id": {"$ref": "#/$defs/beingRef"}, "nonce": {"$ref": "#/$defs/hash43"}, "policy_ref": {"$ref": "#/$defs/text"}}
+    },
+    "declaration": {
+      "type": "object", "additionalProperties": false, "required": ["declaration", "schema", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.declaration/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "declaration": {"$ref": "#/$defs/tribeDeclarationCore"}}
+    },
+    "invitation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expires_at_ms", "founder_being_ref", "founder_epoch", "invitation_id", "invitee_being_ref", "issued_at_ms", "nonce", "schema", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.invitation/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "founder_epoch": {"$ref": "#/$defs/safeInteger"}, "founder_being_ref": {"$ref": "#/$defs/beingRef"}, "invitation_id": {"$ref": "#/$defs/invitationId"}, "invitee_being_ref": {"$ref": "#/$defs/beingRef"}, "nonce": {"$ref": "#/$defs/hash43"}, "issued_at_ms": {"$ref": "#/$defs/safeInteger"}, "expires_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "membershipAcceptance": {
+      "type": "object", "additionalProperties": false, "required": ["accepted_at_ms", "founder_epoch", "invitation_ref", "invitee_being_ref", "membership_sequence", "previous_membership_terminal_ref", "schema", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.membership-acceptance/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "founder_epoch": {"$ref": "#/$defs/safeInteger"}, "invitation_ref": {"$ref": "#/$defs/eventRef"}, "invitee_being_ref": {"$ref": "#/$defs/beingRef"}, "membership_sequence": {"$ref": "#/$defs/safeInteger"}, "previous_membership_terminal_ref": {"oneOf": [{"$ref": "#/$defs/eventRef"}, {"type": "null"}]}, "accepted_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "membershipLeave": {
+      "type": "object", "additionalProperties": false, "required": ["founder_epoch", "member_being_ref", "membership_acceptance_ref", "reason", "schema", "terminated_at_ms", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.membership-leave/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "founder_epoch": {"$ref": "#/$defs/safeInteger"}, "member_being_ref": {"$ref": "#/$defs/beingRef"}, "membership_acceptance_ref": {"$ref": "#/$defs/eventRef"}, "reason": {"type": "string", "minLength": 1, "maxLength": 128}, "terminated_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "membershipExpulsion": {
+      "type": "object", "additionalProperties": false, "required": ["founder_being_ref", "founder_epoch", "member_being_ref", "membership_acceptance_ref", "reason", "schema", "terminated_at_ms", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.membership-expulsion/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "founder_epoch": {"$ref": "#/$defs/safeInteger"}, "founder_being_ref": {"$ref": "#/$defs/beingRef"}, "member_being_ref": {"$ref": "#/$defs/beingRef"}, "membership_acceptance_ref": {"$ref": "#/$defs/eventRef"}, "reason": {"type": "string", "minLength": 1, "maxLength": 128}, "terminated_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "founderTransfer": {
+      "type": "object", "additionalProperties": false, "required": ["from_epoch", "issued_at_ms", "nonce", "old_founder_being_ref", "schema", "successor_being_ref", "to_epoch", "transfer_id", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.founder-transfer/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "transfer_id": {"$ref": "#/$defs/transferId"}, "from_epoch": {"$ref": "#/$defs/safeInteger"}, "to_epoch": {"$ref": "#/$defs/safeInteger"}, "old_founder_being_ref": {"$ref": "#/$defs/beingRef"}, "successor_being_ref": {"$ref": "#/$defs/beingRef"}, "nonce": {"$ref": "#/$defs/hash43"}, "issued_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "founderAcceptance": {
+      "type": "object", "additionalProperties": false, "required": ["accepted_at_ms", "from_epoch", "schema", "successor_being_ref", "to_epoch", "transfer_id", "transfer_ref", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.tribe.founder-acceptance/v1"}, "tribe_ref": {"$ref": "#/$defs/tribeRef"}, "transfer_id": {"$ref": "#/$defs/transferId"}, "transfer_ref": {"$ref": "#/$defs/eventRef"}, "from_epoch": {"$ref": "#/$defs/safeInteger"}, "to_epoch": {"$ref": "#/$defs/safeInteger"}, "successor_being_ref": {"$ref": "#/$defs/beingRef"}, "accepted_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "grant": {
+      "type": "object", "additionalProperties": false,
+      "required": ["delegation_sequence", "expires_at_ms", "grant_id", "grantor_being_ref", "issued_at_ms", "nonce", "not_before_ms", "parent_grant_ref", "permissions", "previous_delegation_event_id", "relationship_id", "schema", "subject_being_ref", "tribe_ref"],
+      "properties": {"schema": {"const": "dm.relationship.grant/v1"}, "grant_id": {"$ref": "#/$defs/grantId"}, "nonce": {"$ref": "#/$defs/hash43"}, "relationship_id": {"$ref": "#/$defs/relationshipId"}, "tribe_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/tribeRef"}]}, "grantor_being_ref": {"$ref": "#/$defs/beingRef"}, "subject_being_ref": {"$ref": "#/$defs/beingRef"}, "permissions": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/permission"}}, "not_before_ms": {"$ref": "#/$defs/safeInteger"}, "expires_at_ms": {"$ref": "#/$defs/safeInteger"}, "issued_at_ms": {"$ref": "#/$defs/safeInteger"}, "parent_grant_ref": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/eventRef"}]}, "delegation_sequence": {"$ref": "#/$defs/safeInteger"}, "previous_delegation_event_id": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/uuid"}]}}
+    },
+    "grantAcceptance": {
+      "type": "object", "additionalProperties": false, "required": ["accepted_at_ms", "grant_id", "grant_ref", "grantor_being_ref", "relationship_id", "schema", "subject_being_ref"],
+      "properties": {"schema": {"const": "dm.relationship.grant-acceptance/v1"}, "grant_id": {"$ref": "#/$defs/grantId"}, "grant_ref": {"$ref": "#/$defs/eventRef"}, "relationship_id": {"$ref": "#/$defs/relationshipId"}, "grantor_being_ref": {"$ref": "#/$defs/beingRef"}, "subject_being_ref": {"$ref": "#/$defs/beingRef"}, "accepted_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    },
+    "grantRevocation": {
+      "type": "object", "additionalProperties": false, "required": ["acceptance_ref", "action", "actor_being_ref", "grant_id", "grant_ref", "reason", "revoked_at_ms", "schema"],
+      "properties": {"schema": {"const": "dm.relationship.grant-revocation/v1"}, "grant_id": {"$ref": "#/$defs/grantId"}, "grant_ref": {"$ref": "#/$defs/eventRef"}, "acceptance_ref": {"$ref": "#/$defs/eventRef"}, "actor_being_ref": {"$ref": "#/$defs/beingRef"}, "action": {"enum": ["revoke", "relinquish"]}, "reason": {"type": "string", "minLength": 1, "maxLength": 128}, "revoked_at_ms": {"$ref": "#/$defs/safeInteger"}}
+    }
+  }
+}

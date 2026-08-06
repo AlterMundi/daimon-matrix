@@ -1,0 +1,39 @@
+{
+  "card": "DM-082",
+  "schema": "dm.verification-invariants/v1",
+  "invariants": {
+    "arrival_order_never_selects_authority": true,
+    "authenticated_recipient_intake_precedes_semantic_delivery": true,
+    "bilateral_acceptance_is_required_for_relationship": true,
+    "card_control_is_root_and_incarnation_bound": true,
+    "cluster_effect_truth_has_no_social_authority": true,
+    "delegation_is_strictly_attenuated": true,
+    "disclosure_denial_is_closed_and_indistinguishable": true,
+    "exact_request_replay_is_idempotent": true,
+    "founder_succession_requires_two_parties": true,
+    "grant_requires_exact_subject_acceptance": true,
+    "known_authority_inventory_grants_no_relationship": true,
+    "known_foreign_receipt_is_not_local_adoption": true,
+    "matrix_org_is_absent": true,
+    "membership_and_grant_are_independent": true,
+    "membership_reentry_names_exact_terminal_predecessor": true,
+    "origin_and_series_forks_quarantine_descendants": true,
+    "relationship_store_is_owner_local_and_symlink_safe": true,
+    "relationship_grant_authorizes_recipient_encryption": true,
+    "relationship_recipient_maps_to_exact_receipt_embodiment": true,
+    "revocation_blocks_disclosure_before_sealing": true,
+    "revocation_refuses_stale_direct_and_hub_forward": true,
+    "revocation_survives_restart_and_cascades": true,
+    "route_delivery_and_decryption_are_not_consent": true,
+    "route_ack_is_not_semantic_delivery": true,
+    "snapshot_contains_only_current_verified_authority": true
+  },
+  "published_evidence": [
+    "conformance/fixtures/dm082-synthetic-relationships.json",
+    "conformance/relationship-v1-scenarios.json",
+    "schemas/hosted/v6/bundle.schema.json",
+    "schemas/relationships/v1/contracts.schema.json",
+    "schemas/relationships/v1/synthetic.schema.json",
+    "vectors/relationships/v1/index.json"
+  ]
+}

@@ -57,6 +57,9 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-synthetic-multihost": (
                     "daimon_matrix.synthetic_multihost:main"
                 ),
+                "daimon-synthetic-relationships": (
+                    "daimon_matrix.synthetic_relationships:main"
+                ),
                 "daimon-synthetic-species": "daimon_matrix.synthetic_species:main",
                 "daimon-synthetic-sources": "daimon_matrix.synthetic_sources:main",
             },
@@ -180,6 +183,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/projections.py",
                 "src/daimon_matrix/py.typed",
                 "src/daimon_matrix/relationships.py",
+                "src/daimon_matrix/relationship_store.py",
                 "src/daimon_matrix/reviewer_cli.py",
                 "src/daimon_matrix/runtime.py",
                 "src/daimon_matrix/routes.py",
@@ -192,6 +196,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/sync.py",
                 "src/daimon_matrix/synthetic_birth.py",
                 "src/daimon_matrix/synthetic_multihost.py",
+                "src/daimon_matrix/synthetic_relationships.py",
                 "src/daimon_matrix/synthetic_species.py",
                 "src/daimon_matrix/synthetic_sources.py",
                 "src/daimon_matrix/weave.py",
@@ -230,6 +235,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/projections.py",
                 "daimon_matrix/py.typed",
                 "daimon_matrix/relationships.py",
+                "daimon_matrix/relationship_store.py",
                 "daimon_matrix/reviewer_cli.py",
                 "daimon_matrix/runtime.py",
                 "daimon_matrix/routes.py",
@@ -242,6 +248,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/sync.py",
                 "daimon_matrix/synthetic_birth.py",
                 "daimon_matrix/synthetic_multihost.py",
+                "daimon_matrix/synthetic_relationships.py",
                 "daimon_matrix/synthetic_species.py",
                 "daimon_matrix/synthetic_sources.py",
                 "daimon_matrix/weave.py",

@@ -35,7 +35,7 @@ origin chain. This preserves origin continuity and keeps “known” distinct fr
 Runtime bundle V5 adds an optional `sources` object with one owner-local CAS
 filename and closed `known_beings` authority/ledger entries. Remote disclosure
 is denied unless an injected authorizer accepts the exact requester, source ID
-and classification. DM-082 will supply relationship grants; their absence is
+and classification. DM-082 supplies relationship grants; their absence is
 not inferred from membership or transport success.
 
 ## Intake transaction

@@ -24,10 +24,11 @@ auto-admit content, mint assessments/import decisions, infer a disclosure grant
 from process placement, fetch a source URI, copy another being's database, or
 turn successful lifecycle/effect evidence into source truth.
 
-DM-082 will define the relationship/grant verifier injected into Matrix's
-disclosure boundary. DM-071 will add the consented external canary. Until those
-cards land, remote source disclosure remains closed even when peer transport,
-`/we`, Tribe or Cluster reachability succeeds.
+DM-082 defines the relationship/grant verifier injected into Matrix's
+disclosure boundary and proves it with an isolated recipient-intake journey.
+DM-071 will add the consented external canary. Until that live evidence lands,
+external source disclosure remains disabled even when peer transport, `/we`,
+Tribe or Cluster reachability succeeds.
 
 The future Cluster acceptance should install the exact released Matrix wheel,
 start two independently hosted beings, preserve V5 state across restart and

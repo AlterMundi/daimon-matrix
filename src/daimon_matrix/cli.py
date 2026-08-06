@@ -91,6 +91,45 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         }
     if command == ("scope", "tribe"):
         return "scope.tribe", {"tribe_ref": args.tribe_ref}
+    if command[0] in {"relationship", "tribe"}:
+        mutations = {
+            ("relationship", "card-publish"): "relationship.card.publish",
+            ("relationship", "offer"): "relationship.offer",
+            ("relationship", "accept"): "relationship.accept",
+            ("relationship", "close"): "relationship.close",
+            ("relationship", "grant"): "relationship.grant",
+            ("relationship", "grant-accept"): "relationship.grant.accept",
+            ("relationship", "grant-revoke"): "relationship.grant.revoke",
+            ("relationship", "grant-relinquish"): ("relationship.grant.relinquish"),
+            ("tribe", "declare"): "tribe.declare",
+            ("tribe", "invite"): "tribe.invite",
+            ("tribe", "membership-accept"): "tribe.membership.accept",
+            ("tribe", "leave"): "tribe.leave",
+            ("tribe", "expel"): "tribe.expel",
+            ("tribe", "founder-transfer"): "tribe.founder.transfer",
+            ("tribe", "founder-accept"): "tribe.founder.accept",
+        }
+        if command in mutations:
+            return mutations[command], {"payload": _bounded_file(args.payload)}
+        if command == ("relationship", "event-ingest"):
+            return "relationship.event.ingest", {"event": _bounded_file(args.event)}
+        if command == ("relationship", "cursor"):
+            return "relationship.cursor", {}
+        if command == ("relationship", "status"):
+            return "relationship.status", {"at_ms": args.at_ms}
+        if command == ("relationship", "snapshot"):
+            return "relationship.snapshot", {
+                "at_ms": args.at_ms,
+                "tribe_ref": args.tribe_ref,
+            }
+        if command == ("relationship", "disclose"):
+            return "relationship.disclose", {
+                "at_ms": args.at_ms,
+                "classification": args.classification,
+                "operation": args.operation,
+                "requester_being_ref": args.requester_being_ref,
+                "resource_ref": args.resource_ref,
+            }
     if command == ("memory", "evaluate"):
         return "memory.evaluate", {
             "policy": _bounded_file(args.policy),
@@ -343,6 +382,63 @@ def parser() -> argparse.ArgumentParser:
     resolve.add_argument("--tribe-ref")
     tribe = scope_commands.add_parser("tribe", help="one verified tribe snapshot")
     tribe.add_argument("--tribe-ref", required=True)
+
+    relationship = families.add_parser(
+        "relationship", help="bilateral relationship and directional grant authority"
+    )
+    relationship_commands = relationship.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("card-publish", "publish one current root-bound relationship card"),
+        ("offer", "author one bilateral relationship offer"),
+        ("accept", "accept one exact relationship offer"),
+        ("close", "close one accepted relationship"),
+        ("grant", "offer one exact directional grant"),
+        ("grant-accept", "accept one exact directional grant"),
+        ("grant-revoke", "revoke one authored grant"),
+        ("grant-relinquish", "relinquish one received grant"),
+    ):
+        relationship_mutation = relationship_commands.add_parser(name, help=help_text)
+        relationship_mutation.add_argument("--payload", required=True)
+    relationship_ingest = relationship_commands.add_parser(
+        "event-ingest", help="ingest one signed foreign relationship event"
+    )
+    relationship_ingest.add_argument("--event", required=True)
+    relationship_commands.add_parser(
+        "cursor", help="read exact retained evidence cursor"
+    )
+    relationship_status = relationship_commands.add_parser(
+        "status", help="read owner-local relationship history status"
+    )
+    relationship_status.add_argument("--at-ms", type=int)
+    relationship_snapshot = relationship_commands.add_parser(
+        "snapshot", help="derive one verified founded-Tribe snapshot"
+    )
+    relationship_snapshot.add_argument("--tribe-ref", required=True)
+    relationship_snapshot.add_argument("--at-ms", type=int)
+    relationship_disclose = relationship_commands.add_parser(
+        "disclose", help="evaluate one exact remote disclosure authorization"
+    )
+    relationship_disclose.add_argument("--requester-being-ref", required=True)
+    relationship_disclose.add_argument("--resource-ref", required=True)
+    relationship_disclose.add_argument("--operation", required=True)
+    relationship_disclose.add_argument("--classification", required=True)
+    relationship_disclose.add_argument("--at-ms", type=int)
+
+    tribe_authority = families.add_parser(
+        "tribe", help="founded-Tribe membership and founder transitions"
+    )
+    tribe_commands = tribe_authority.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("declare", "declare one founded Tribe"),
+        ("invite", "invite one bilaterally related being"),
+        ("membership-accept", "accept one exact Tribe invitation"),
+        ("leave", "leave one founded Tribe"),
+        ("expel", "expel one member as current founder"),
+        ("founder-transfer", "offer one next founder epoch"),
+        ("founder-accept", "accept one exact founder transfer"),
+    ):
+        tribe_mutation = tribe_commands.add_parser(name, help=help_text)
+        tribe_mutation.add_argument("--payload", required=True)
 
     species = families.add_parser(
         "species", help="DM-014 lineage verification and local application"

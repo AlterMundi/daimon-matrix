@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 91,
-  "registry_sha256": "8d4c88313ec9b3bc8afba93165f1e0f28bfbce09d7c7da1dd3303b2b182e466a",
+  "required_scenario_count": 97,
+  "registry_sha256": "ff903ff98b08c273ddea98e6a44bf7ca55834189c8c67c850d83ac02ad63ac20",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -29,7 +29,11 @@
     "local_codex_hermes_plural_body_weave": true,
     "species_section14_complete_mapping": true,
     "source_section14_complete_mapping": true,
-    "source_two_being_quarantine_journey": true
+    "source_two_being_quarantine_journey": true,
+    "relationship_three_being_signed_journey": true,
+    "relationship_recipient_intake_and_signed_receipt": true,
+    "relationship_revocation_refuses_stale_carriers": true,
+    "relationship_scenario_mapping": true
   },
   "evidence": [
     "conformance/registry-v1.json",
@@ -43,6 +47,8 @@
     "docs/verification/dm061-invariants.json",
     "docs/verification/dm070-invariants.json",
     "docs/verification/dm081-invariants.json",
+    "docs/verification/dm082-invariants.json",
+    "docs/dm082-relationships.md",
     "docs/dm081-source-runtime.md",
     "docs/dm070-multihost-convergence.md",
     "docs/dm079-authority-epochs.md",
