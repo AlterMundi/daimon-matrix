@@ -3,12 +3,12 @@
 ## Pause checkpoint and repository name
 
 At the 2026-08-06 pause, the only identified chat-facing Tribe repository is
-`nicoechaniz/tribe-bridge`: repository `main` is `636677b` after its
-documentation-only handoff PR #51, while deployed/runtime code remains the
-`b81a683` baseline. No separate `tribe-chat` repository was found locally or
-under the recorded GitHub owners. Treat “tribe-chat” as an informal reference
-to the current Tribe Bridge experience unless an exact repository and
-authority boundary are recorded later.
+`nicoechaniz/tribe-bridge`: repository `main` is `5078a6d` after its
+documentation-only handoff/baseline wording PRs #51/#54, while
+deployed/runtime code remains the `b81a683` baseline. No separate `tribe-chat`
+repository was found locally or under the recorded GitHub owners. Treat
+“tribe-chat” as an informal reference to the current Tribe Bridge experience
+unless an exact repository and authority boundary are recorded later.
 
 DM-082 has completed the local relationship, grant, encrypted delivery,
 authenticated intake and semantic-receipt slice inside `daimon-matrix`.
