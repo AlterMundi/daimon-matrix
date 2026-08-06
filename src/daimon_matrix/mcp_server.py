@@ -480,6 +480,98 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         ),
         True,
     ),
+    **{
+        tool: (
+            method,
+            _object_schema({"payload": {"type": "object"}}, ("payload",)),
+            False,
+        )
+        for tool, method in {
+            "relationship_accept": "relationship.accept",
+            "relationship_card_publish": "relationship.card.publish",
+            "relationship_close": "relationship.close",
+            "relationship_grant": "relationship.grant",
+            "relationship_grant_accept": "relationship.grant.accept",
+            "relationship_grant_relinquish": "relationship.grant.relinquish",
+            "relationship_grant_revoke": "relationship.grant.revoke",
+            "relationship_offer": "relationship.offer",
+            "tribe_declare": "tribe.declare",
+            "tribe_expel": "tribe.expel",
+            "tribe_founder_accept": "tribe.founder.accept",
+            "tribe_founder_transfer": "tribe.founder.transfer",
+            "tribe_invite": "tribe.invite",
+            "tribe_leave": "tribe.leave",
+            "tribe_membership_accept": "tribe.membership.accept",
+        }.items()
+    },
+    "relationship_event_ingest": (
+        "relationship.event.ingest",
+        _object_schema({"event": {"type": "object"}}, ("event",)),
+        False,
+    ),
+    "relationship_cursor": (
+        "relationship.cursor",
+        _object_schema({}),
+        True,
+    ),
+    "relationship_status": (
+        "relationship.status",
+        _object_schema(
+            {
+                "at_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                }
+            }
+        ),
+        True,
+    ),
+    "relationship_snapshot": (
+        "relationship.snapshot",
+        _object_schema(
+            {
+                "at_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                },
+                "tribe_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+            },
+            ("tribe_ref",),
+        ),
+        True,
+    ),
+    "relationship_disclose": (
+        "relationship.disclose",
+        _object_schema(
+            {
+                "at_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                },
+                "classification": {"type": "string", "minLength": 1, "maxLength": 256},
+                "operation": {"type": "string", "minLength": 1, "maxLength": 256},
+                "requester_being_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                },
+                "resource_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+            },
+            (
+                "classification",
+                "operation",
+                "requester_being_ref",
+                "resource_ref",
+            ),
+        ),
+        True,
+    ),
     "we_heads": ("we.heads", _object_schema({}), True),
     "we_diff": (
         "we.diff",
@@ -644,6 +736,7 @@ _DEFAULTS: Final[dict[str, Any]] = {
     "kind": None,
     "limit": 100,
     "occurred_at_ms": None,
+    "at_ms": None,
     "page_index": 0,
     "sensitivity": "personal",
     "selected_candidate_id": None,
@@ -739,6 +832,32 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
             "publication_id",
         },
         "source.projection": {"publication_id"},
+        "relationship.accept": {"payload"},
+        "relationship.card.publish": {"payload"},
+        "relationship.close": {"payload"},
+        "relationship.cursor": set(),
+        "relationship.disclose": {
+            "at_ms",
+            "classification",
+            "operation",
+            "requester_being_ref",
+            "resource_ref",
+        },
+        "relationship.event.ingest": {"event"},
+        "relationship.grant": {"payload"},
+        "relationship.grant.accept": {"payload"},
+        "relationship.grant.relinquish": {"payload"},
+        "relationship.grant.revoke": {"payload"},
+        "relationship.offer": {"payload"},
+        "relationship.snapshot": {"at_ms", "tribe_ref"},
+        "relationship.status": {"at_ms"},
+        "tribe.declare": {"payload"},
+        "tribe.expel": {"payload"},
+        "tribe.founder.accept": {"payload"},
+        "tribe.founder.transfer": {"payload"},
+        "tribe.invite": {"payload"},
+        "tribe.leave": {"payload"},
+        "tribe.membership.accept": {"payload"},
         "we.heads": set(),
         "we.diff": {"after", "kind", "limit", "subject"},
         "we.preview": {"events"},

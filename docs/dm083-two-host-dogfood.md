@@ -1,7 +1,8 @@
 # DM-083 two-host CompAII dogfood
 
-Status: Fast Forward preparation in progress. No host was contacted and no live
-service, route, key, database or Cluster resource was changed by this card yet.
+Status: preparation reconciled after DM-082, then intentionally paused. No host
+was contacted and no live service, route, key, database or Cluster resource was
+changed by this card. Start from [`../RESUME.md`](../RESUME.md).
 
 “Matrix” means `daimon-matrix`; Matrix.org is outside this system. The two
 participants are the existing Legion and daimonmatrix host embodiments of one
@@ -15,24 +16,33 @@ the protocol mechanics. DM-083 must now prove the ordinary installed release
 and reveal what using it feels like. Changes that directly enable, observe or
 reverse that session belong in this batch; unrelated generalization does not.
 
-Initial integration found two concrete release gaps:
+Initial integration found two concrete release gaps and one downstream pin
+that must be refreshed:
 
 1. Cluster was pinned to an older Matrix commit and rejected additive runtime
-   bundles after V2. Its DM-083 branch now pins the DM-081 release and accepts
-   V1 through V5 while preserving exact commit/schema refusal.
+   bundles after V2. Cluster PR #51 advanced the preparation pin to Matrix
+   `8145b4c` and accepts V1 through V5 while preserving exact commit/schema
+   refusal. DM-082 subsequently merged as Matrix `dad012d` and introduced V6,
+   so that preparation pin is deliberately stale and must be advanced and
+   reverified before dogfood.
 2. Matrix's atomic Unix-socket publisher used a staging basename longer than
    the public socket. A relocated root could pass Cluster's path check and then
    fail at `bind(2)`. The staging basename is now shorter and an exact 107-byte
    Linux `AF_UNIX` regression test protects the boundary.
 
-The remaining product gap is explicit: native peer transport can carry
-encrypted `/me`, scope and sync requests, while DM-053 has an outbound logical
-message route client but the installed daemon does not yet expose a configured
-recipient-ingress service. DM-083 therefore uses the already-live Tribe v1
-direct path for one human message and the Matrix peer path for `/me`, `/we` and
-sync. These are two observed lanes: a Tribe ACK is never reported as Matrix
-recipient intake or as a Matrix semantic receipt. The later integration can be
-shaped by the actual UX instead of blocking all dogfood on an untested adapter.
+DM-082 now proves authenticated recipient intake and semantic delivery through
+a real loopback DM-053 HTTP carrier between isolated beings. That closes the
+local protocol seam but does not configure or authorize a live recipient
+service. DM-083 therefore still uses the already-live Tribe v1 direct path for
+one human message and the Matrix peer path for `/me`, `/we` and sync. These are
+two observed lanes: a Tribe ACK is never reported as Matrix recipient intake
+or as a Matrix semantic receipt. A later live Matrix logical-message route
+must reuse the DM-082 boundary rather than invent another intake authority.
+
+Before running the preflight, freeze one post-DM-082 Matrix candidate and make
+Cluster pin that exact commit with V6 acceptance. If either repository changes
+after verification, repeat the exact pin gate; do not wave through a
+source-equivalent but commit-different build.
 
 ## Read-only preflight to authorize
 

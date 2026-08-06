@@ -34,6 +34,7 @@ daimon-matrixd = "daimon_matrix.daemon:main"
 daimon-reviewer = "daimon_matrix.reviewer_cli:main"
 daimon-synthetic-birth = "daimon_matrix.synthetic_birth:main"
 daimon-synthetic-multihost = "daimon_matrix.synthetic_multihost:main"
+daimon-synthetic-relationships = "daimon_matrix.synthetic_relationships:main"
 daimon-synthetic-species = "daimon_matrix.synthetic_species:main"
 daimon-synthetic-sources = "daimon_matrix.synthetic_sources:main"
 

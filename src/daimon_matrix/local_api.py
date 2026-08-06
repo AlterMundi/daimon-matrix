@@ -23,6 +23,7 @@ RESPONSE_DOMAIN: Final = b"daimon/local-api/response/v1\x00"
 CAPABILITY_DOMAIN: Final = b"daimon/local-api/capability/v1\x00"
 MAX_FRAME_BYTES: Final = 2 * 1024 * 1024
 MAX_CLOCK_SKEW_MS: Final = 30_000
+MAX_CAPABILITY_METHODS: Final = 128
 
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9._@:-]{1,128}$")
 _METHOD = re.compile(r"^[a-z][a-z0-9.-]{0,127}$")
@@ -172,7 +173,7 @@ class LocalCapability:
         methods = descriptor["methods"]
         if (
             not isinstance(methods, list)
-            or not 1 <= len(methods) <= 64
+            or not 1 <= len(methods) <= MAX_CAPABILITY_METHODS
             or methods != sorted(set(methods))
             or any(
                 not isinstance(method, str) or _METHOD.fullmatch(method) is None
@@ -447,6 +448,7 @@ def verify_response(
 
 __all__ = [
     "CAPABILITY_SCHEMA",
+    "MAX_CAPABILITY_METHODS",
     "MAX_CLOCK_SKEW_MS",
     "MAX_FRAME_BYTES",
     "REQUEST_SCHEMA",

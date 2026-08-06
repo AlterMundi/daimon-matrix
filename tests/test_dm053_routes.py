@@ -105,7 +105,10 @@ class RouteFixture(SealedFixture):
         self.calls: list[str] = []
 
     def message_and_delivery(
-        self, *, recipients: tuple[str, ...] = ("daimonmatrix",)
+        self,
+        *,
+        recipients: tuple[str, ...] = ("daimonmatrix",),
+        relationship: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], bytes, DisclosureAuthorization]:
         message = self.ledger_a.append_local(
             kind="experience.observed",
@@ -114,7 +117,7 @@ class RouteFixture(SealedFixture):
                 "schema": MESSAGE_PAYLOAD_SCHEMA,
                 "intent": {
                     "operation": "message.send",
-                    "scope": "/we",
+                    "scope": "/tribe" if relationship else "/we",
                     "thread_id": identifier(71_000_000, 1),
                 },
                 "body": {"text": "route me, not my authority"},
@@ -125,9 +128,11 @@ class RouteFixture(SealedFixture):
         )
         targets = [
             {
-                "scope_kind": "we",
-                "recipient_type": "embodiment",
-                "recipient_id": f"embodiment:{label}",
+                "scope_kind": "relationship" if relationship else "we",
+                "recipient_type": "relationship" if relationship else "embodiment",
+                "recipient_id": (
+                    f"membership:{label}" if relationship else f"embodiment:{label}"
+                ),
                 "receipt_origin_embodiment_id": f"embodiment:{label}",
                 "evidence_cursor": "dm:evidence:v1:synthetic-resolution",
             }
@@ -139,7 +144,7 @@ class RouteFixture(SealedFixture):
             payload={
                 "schema": RESOLUTION_PAYLOAD_SCHEMA,
                 "message_id": message["event_id"],
-                "scope": "/we",
+                "scope": "/tribe" if relationship else "/we",
                 "targets": sorted(
                     targets,
                     key=lambda row: (row["recipient_type"], row["recipient_id"]),
@@ -252,6 +257,8 @@ class RouteFixture(SealedFixture):
         hub: bool = False,
         presence_ref: str | None = None,
         fence_ref: str | None = None,
+        recipient_id: str = "embodiment:daimonmatrix",
+        recipient_embodiment_id: str | None = None,
     ) -> tuple[OpaqueInbox, TransportIngress]:
         directory = self.root_path / f"provider-{name}"
         directory.mkdir(mode=0o700)
@@ -261,7 +268,8 @@ class RouteFixture(SealedFixture):
             route_ref=f"route:{name}",
             key_ref=f"credential:{name}",
             secret=self.secret,
-            recipient_id="embodiment:daimonmatrix",
+            recipient_id=recipient_id,
+            recipient_embodiment_id=recipient_embodiment_id,
             recipient_body_ref="body:daimonmatrix",
             inbox=inbox,
             clock=lambda: self.now,
@@ -298,6 +306,42 @@ class RouteFixture(SealedFixture):
 
 
 class RouteSelectionTests(RouteFixture):
+    def test_relationship_leg_routes_by_stable_id_and_opens_exact_embodiment(
+        self,
+    ) -> None:
+        _, result, raw, authorization = self.message_and_delivery(relationship=True)
+        leg = result["legs"][0]
+        recipient_id = "membership:daimonmatrix"
+        _, ingress = self.ingress(
+            "relationship",
+            authorization,
+            recipient_id=recipient_id,
+            recipient_embodiment_id="embodiment:daimonmatrix",
+        )
+        provider = self.provider("relationship", "direct", ingress.handle)
+        coordinator = RouteCoordinator(
+            self.store,
+            self.profile(
+                [
+                    self.binding(
+                        "provider:relationship",
+                        "route:relationship",
+                        "direct",
+                        priority=0,
+                        recipient_id=recipient_id,
+                    )
+                ]
+            ),
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+        )
+        dispatched = coordinator.dispatch(
+            leg_id=leg["leg_id"], envelope=raw, deadline_ms=NOW + 20_000
+        )
+        self.assertEqual(dispatched["selected"]["outcome"], "recipient-intake")
+        self.assertEqual(dispatched["selected"]["intake"]["recipient_id"], recipient_id)
+        self.assertEqual(self.store.leg(leg["leg_id"])["state"], "accepted")
+
     def test_candidate_order_is_input_order_independent(self) -> None:
         _, result, _, authorization = self.message_and_delivery()
         leg_id = result["legs"][0]["leg_id"]

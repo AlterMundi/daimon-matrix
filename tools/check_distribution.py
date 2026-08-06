@@ -65,6 +65,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
         "src/daimon_matrix/relationships.py",
+        "src/daimon_matrix/relationship_store.py",
         "src/daimon_matrix/reviewer_cli.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/routes.py",
@@ -77,6 +78,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
         "src/daimon_matrix/synthetic_multihost.py",
+        "src/daimon_matrix/synthetic_relationships.py",
         "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/synthetic_sources.py",
         "src/daimon_matrix/weave.py",
@@ -114,6 +116,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/projections.py",
         "daimon_matrix/py.typed",
         "daimon_matrix/relationships.py",
+        "daimon_matrix/relationship_store.py",
         "daimon_matrix/reviewer_cli.py",
         "daimon_matrix/runtime.py",
         "daimon_matrix/routes.py",
@@ -126,6 +129,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/sync.py",
         "daimon_matrix/synthetic_birth.py",
         "daimon_matrix/synthetic_multihost.py",
+        "daimon_matrix/synthetic_relationships.py",
         "daimon_matrix/synthetic_species.py",
         "daimon_matrix/synthetic_sources.py",
         "daimon_matrix/weave.py",
@@ -317,8 +321,11 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
         "src/daimon_matrix/py.typed",
+        "src/daimon_matrix/relationship_store.py",
+        "src/daimon_matrix/relationships.py",
         "src/daimon_matrix/reviewer_cli.py",
         "src/daimon_matrix/runtime.py",
+        "src/daimon_matrix/routes.py",
         "src/daimon_matrix/sealed.py",
         "src/daimon_matrix/service.py",
         "src/daimon_matrix/species.py",
@@ -327,6 +334,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/sync.py",
         "src/daimon_matrix/synthetic_birth.py",
         "src/daimon_matrix/synthetic_multihost.py",
+        "src/daimon_matrix/synthetic_relationships.py",
         "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/synthetic_sources.py",
         "src/daimon_matrix/weave.py",
@@ -388,6 +396,8 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
         b"daimon-synthetic-multihost = daimon_matrix.synthetic_multihost:main\n"
+        b"daimon-synthetic-relationships = "
+        b"daimon_matrix.synthetic_relationships:main\n"
         b"daimon-synthetic-sources = daimon_matrix.synthetic_sources:main\n"
         b"daimon-synthetic-species = daimon_matrix.synthetic_species:main\n"
     ):
@@ -449,8 +459,13 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/publication.py": "src/daimon_matrix/publication.py",
         "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
         "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
+        "daimon_matrix/relationship_store.py": (
+            "src/daimon_matrix/relationship_store.py"
+        ),
+        "daimon_matrix/relationships.py": "src/daimon_matrix/relationships.py",
         "daimon_matrix/reviewer_cli.py": "src/daimon_matrix/reviewer_cli.py",
         "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
+        "daimon_matrix/routes.py": "src/daimon_matrix/routes.py",
         "daimon_matrix/sealed.py": "src/daimon_matrix/sealed.py",
         "daimon_matrix/service.py": "src/daimon_matrix/service.py",
         "daimon_matrix/species.py": "src/daimon_matrix/species.py",
@@ -460,6 +475,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/synthetic_birth.py": "src/daimon_matrix/synthetic_birth.py",
         "daimon_matrix/synthetic_multihost.py": (
             "src/daimon_matrix/synthetic_multihost.py"
+        ),
+        "daimon_matrix/synthetic_relationships.py": (
+            "src/daimon_matrix/synthetic_relationships.py"
         ),
         "daimon_matrix/synthetic_species.py": (
             "src/daimon_matrix/synthetic_species.py"

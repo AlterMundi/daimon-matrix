@@ -29,6 +29,13 @@ from .identity import (
     verify_history_binding,
     verify_incarnation_authorization,
 )
+from .relationships import (
+    RELATIONSHIP_EVENT_KINDS,
+    RelationshipError,
+    relationship_event_occurred_at,
+    relationship_event_subject,
+    validate_relationship_event_payload,
+)
 from .sources import SOURCE_EVENT_KINDS, SourceError, validate_source_event_payload
 
 Artifact = Mapping[str, Any]
@@ -62,6 +69,7 @@ EVENT_KINDS: Final = frozenset(
         "publication.requested",
         "publication.receipted",
         "matrix/species-release-application",
+        *RELATIONSHIP_EVENT_KINDS,
         *SOURCE_EVENT_KINDS,
     }
 )
@@ -521,6 +529,63 @@ class RootAuthority:
 
 
 @dataclass(frozen=True)
+class RootAuthorityInventory:
+    """A local root plus an explicit inventory of known foreign roots.
+
+    Foreign events may be verified and retained, but local origin and transport
+    validation always remain anchored in ``local``. Knowledge therefore never
+    becomes adoption or authority to act as another being.
+    """
+
+    local: RootAuthority
+    authorities: Mapping[str, RootAuthority]
+
+    def __post_init__(self) -> None:
+        inventory = dict(self.authorities)
+        if (
+            not inventory
+            or len(inventory) > 256
+            or set(inventory)
+            != {authority.state.being_ref for authority in inventory.values()}
+            or inventory.get(self.local.state.being_ref) != self.local
+        ):
+            raise WeaveProtocolError("invalid_root_authority_inventory")
+        object.__setattr__(self, "authorities", inventory)
+
+    @property
+    def manifest(self) -> BeingManifest:
+        return self.local.manifest
+
+    def select(self, event: Mapping[str, Any]) -> RootAuthority:
+        being_ref = event.get("being_ref")
+        authority = (
+            self.authorities.get(being_ref) if isinstance(being_ref, str) else None
+        )
+        if authority is None or event.get("manifest_hash") != authority.manifest.digest:
+            raise WeaveProtocolError("unknown_root_authority")
+        return authority
+
+    def public_key(self, event: Mapping[str, Any]) -> bytes:
+        return self.select(event).public_key(event)
+
+    def validate_origin(
+        self, origin: Mapping[str, Any], *, require_active: bool = False
+    ) -> Mapping[str, Any]:
+        return self.local.validate_origin(origin, require_active=require_active)
+
+    def validate_transport_principal(
+        self,
+        origin: Mapping[str, Any],
+        *,
+        scheme: str,
+        principal_id: str,
+    ) -> Mapping[str, Any]:
+        return self.local.validate_transport_principal(
+            origin, scheme=scheme, principal_id=principal_id
+        )
+
+
+@dataclass(frozen=True)
 class BoundHistoryAuthority:
     """Root-active authority plus exactly bound provisional event history."""
 
@@ -945,6 +1010,26 @@ def _validate_core(core: Any, manifest: BeingManifest) -> Mapping[str, Any]:
             raise WeaveProtocolError(
                 f"invalid_source_event:{exception.code}"
             ) from exception
+    if value["kind"] in RELATIONSHIP_EVENT_KINDS:
+        try:
+            relationship_payload = validate_relationship_event_payload(
+                value["kind"],
+                payload,
+                author_being_ref=value["being_ref"],
+                causal_parents=value["causal_parents"],
+            )
+            if value["subject"] != relationship_event_subject(
+                value["kind"], relationship_payload
+            ):
+                raise RelationshipError("relationship_event_subject_mismatch")
+            if value["occurred_at_ms"] != relationship_event_occurred_at(
+                value["kind"], relationship_payload
+            ):
+                raise RelationshipError("relationship_event_time_mismatch")
+        except RelationshipError as exception:
+            raise WeaveProtocolError(
+                f"invalid_relationship_event:{exception.code}"
+            ) from exception
     return value
 
 
@@ -1019,6 +1104,7 @@ __all__ = [
     "EventSigner",
     "ProvisionalAuthority",
     "RootAuthority",
+    "RootAuthorityInventory",
     "WeaveProtocolError",
     "create_event",
     "page_bytes",

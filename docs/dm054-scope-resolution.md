@@ -45,8 +45,11 @@ For same-being messages,
 `DisclosureAuthorization.from_resolution_event` verifies the signed DM-052
 message and causal resolution event, maps every active embodiment to its
 current encryption credential, and binds DM-051 disclosure to the resolution
-event hash. Relationship delivery is excluded until DM-071 supplies
-cross-being root discovery and live consent.
+event hash. For relationship messages, DM-082's
+`from_relationship_resolution_event` binds a selected relationship target,
+its current verified disclosure and the concrete receipt-origin embodiment to
+the same DM-051 authorization. The selected target remains signed DM-052
+evidence; route code cannot add a recipient.
 
 ## Difference and sync planning
 
@@ -95,9 +98,10 @@ leave/expulsion, founder transfer, fork freedom, revocation and grant-chain
 attenuation. Without that verifier the snapshot is unusable. Membership alone
 never grants a resource operation.
 
-DM-054 defines consumption and resolution. DM-071 must define live cross-being
-root discovery, consent ceremonies and the concrete relationship artifact
-verifier. A Tribe audience or authenticated carrier contact is insufficient.
+DM-054 defines consumption and resolution; DM-082 supplies the concrete signed
+relationship verifier and a synthetic cross-being intake path. DM-071 still
+owns live cross-host discovery, operational consent exchange and the external
+canary. A Tribe audience or authenticated carrier contact is insufficient.
 
 ## Hosted surfaces and custody
 

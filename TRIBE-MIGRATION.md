@@ -1,5 +1,20 @@
 # Tribe Bridge Integration
 
+## Pause checkpoint and repository name
+
+At the 2026-08-06 pause, the only identified chat-facing Tribe repository is
+`nicoechaniz/tribe-bridge` at `b81a683`. No separate `tribe-chat` repository
+was found locally or under the recorded GitHub owners. Treat “tribe-chat” as an
+informal reference to the current Tribe Bridge experience unless an exact
+repository and authority boundary are recorded later.
+
+DM-082 has completed the local relationship, grant, encrypted delivery,
+authenticated intake and semantic-receipt slice inside `daimon-matrix`.
+Tribe Bridge v1 nevertheless remains deployed as the transitional ordinary
+human-message lane for the future authorized DM-083 dogfood. It must not be
+archived, dual-written or silently replaced during the pause. The exact resume
+and retirement order is in [`RESUME.md`](RESUME.md).
+
 ## Decision
 
 The Tribe Bridge implementation will be absorbed into `daimon-matrix` as the
@@ -123,6 +138,12 @@ does not tunnel those documents through Tribe audiences. The standalone Tribe
 runtime now remains only for ordinary human-message regression during the
 authorized canary, after which DM-077 may retire it under the repository
 owner's explicit approval.
+
+DM-082 completes the missing producer for layer 2. It creates bilateral
+relationships, founded-Tribe membership and directional grants only from
+verified signed Matrix history, then supplies DM-054 with the closed snapshot.
+No Tribe directory, audience, delivery receipt or Cluster lifecycle fact is
+accepted as a shortcut into that authority model.
 
 ## Replacement gates
 

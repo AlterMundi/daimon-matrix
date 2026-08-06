@@ -1,5 +1,28 @@
 # Roadmap
 
+## Current pause and critical resume path
+
+The implementation is paused after DM-082: the complete minimum protocol can
+be exercised locally, but no current release has yet been dogfooded across the
+real Legion and daimonmatrix host embodiments. [`RESUME.md`](RESUME.md) is the
+cold-start handoff and Project 9 is the authoritative live board.
+
+Resume in dependency order:
+
+1. reconcile draft DM-083 with current Matrix `main`, freeze its exact
+   candidate, then repin and reverify Daimon Cluster;
+2. obtain explicit authorization and run the reversible real two-host DM-083
+   experience test;
+3. complete the consented cross-being exchange and fresh-host
+   rebirth/recovery gates;
+4. complete remaining collective-memory/additional-harness and adversarial
+   security gates required by the board;
+5. freeze and publish the V0.1.0 release; and
+6. retire/archive the transitional Tribe Bridge only through its explicit
+   human-authorized migration cards.
+
+No live-host step is implied by a local conformance result or by this roadmap.
+
 ## V0.1 MVP
 
 - Canonical ontology and cross-runtime contracts.
@@ -13,9 +36,10 @@
 - Weave ledger, preview/pull, difference navigation, local decisions, and
   projection receipts.
 - Live `/we` fan-out with origin-marked partial results.
-- Founded Tribe membership plus native typed recipient-encrypted logical and
-  peer transport, independently implemented in Matrix from the pinned Tribe
-  behavior inventory.
+- Bilateral relationships, founded-Tribe membership, directional grants and
+  verified DM-054 snapshots from signed history (DM-082), plus native typed
+  recipient-encrypted logical and peer transport, independently implemented in
+  Matrix from the pinned Tribe behavior inventory.
 - HMK and external-identity adapters.
 - Codex/Hermes embodiment adapters.
 - Root-bound source claims, attributed publications, receiver-local assessment,
@@ -30,6 +54,8 @@
   claim/publication/quarantine policy.
 - `daimon-cluster` owns body/container lifecycle, storage, deployment evidence,
   and resource-scoped exclusion.
+- Cluster hosts Matrix V6 relationship state under the exact adaptation
+  contract but never derives social or grant authority from lifecycle truth.
 - Tribe Bridge is a transitional source/runtime and is archived after
   DM-050–DM-055 replacement gates and the release handoff.
 - DM-050 preserves a hash-pinned behavioral/provenance inventory only; source
