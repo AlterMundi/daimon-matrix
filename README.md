@@ -35,7 +35,8 @@ Matrix.org clients, homeservers and federation are intentionally outside the
 MVP. To avoid ambiguity, documentation uses `daimon-matrix`, `Matrix.org`, and
 “daimonmatrix host” for the software, external protocol, and VPS.
 
-Start with [ONTOLOGY.md](ONTOLOGY.md), the
+For a cold start after the current pause, read [RESUME.md](RESUME.md) first.
+Then continue with [ONTOLOGY.md](ONTOLOGY.md), the
 [operational stack contract](specs/operational-stack-contract.md), and the
 [being-root contract](specs/identity-root-v1.md). Delivery order and acceptance
 are in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
@@ -64,7 +65,7 @@ cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
 peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 91-scenario report; its
+implementation and reproducible artifacts to a closed 97-scenario report; its
 route, birth and multihost evidence is synthetic/isolated and does not yet
 certify a fresh live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and

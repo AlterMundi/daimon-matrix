@@ -1,5 +1,27 @@
 # Current state
 
+## Pause checkpoint — 2026-08-06
+
+DM-082 is merged on `main` at `dad012d` and supplies the first complete local
+minimum relationship-to-message journey. Its installed synthetic evidence is
+release-ready and byte-reproducible; it contacted no live host or participant.
+The project is intentionally paused before DM-083 live effects. The exact
+cross-repository state, stale Cluster pin, human gate and resume sequence are
+recorded in [`RESUME.md`](RESUME.md). A future agent must read that file before
+using the older component-by-component history below.
+
+Draft PR #112 is the active DM-083 preparation branch. It contains the
+Matrix-side Unix-socket boundary fix and the dogfood plan, but it is not live
+dogfood evidence. Daimon Cluster `main` at `5cc2583` still pins the earlier
+Matrix candidate `8145b4c`; that pin must be advanced to the frozen post-DM-082
+candidate and reverified before preflight can become an authorized session.
+Cluster documentation-only handoff PRs #53–#55 do not change that `5cc2583`
+executable baseline. Tribe Bridge documentation-only PRs #51/#54 record the
+pause without changing its deployed/runtime `b81a683` baseline; it remains the
+transitional human-message lane. Inspect current repository heads rather than
+equating a runtime baseline with documentation `main`. There is no separately
+identified `tribe-chat` repository in the recorded project set.
+
 The canonical model permits multiple simultaneous embodiments of one being.
 The previously documented identity-wide singleton lease is not part of the
 supported architecture.
@@ -47,11 +69,11 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current forty-six closed methods and
+bytes, the daemon exposes 83 closed methods, MCP advertises 66 closed tools and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-91-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+97-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths. DM-070 extends that gate with two isolated installed processes,
 native encrypted peer exchange, partition/restart convergence, observer-local
 adoption, authority-epoch succession and injected Cluster fence truth. Neither
@@ -133,8 +155,8 @@ external-reference promotion, retraction/reassertion and tombstone are exposed
 through runtime bundle V5 and twelve typed daemon/CLI/MCP methods. The installed
 two-being journey recovers at every durable boundary and the generated 84-row
 Section 14 registry is release-blocking. It performs no live disclosure,
-source fetch, memory admission, host mutation or Cluster effect. DM-082 owns
-DM-082 now implements those relationship grants plus bilateral consent,
+source fetch, memory admission, host mutation or Cluster effect. DM-082 now
+implements the relationship grants plus bilateral consent,
 founded-Tribe membership, founder succession and strict delegation. Runtime
 bundle V6 feeds DM-054 from verified signed history, publishes fixed owner
 daemon/CLI/MCP surfaces and retains forks without an arrival-order winner. Its

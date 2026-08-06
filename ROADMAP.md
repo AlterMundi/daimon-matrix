@@ -1,5 +1,28 @@
 # Roadmap
 
+## Current pause and critical resume path
+
+The implementation is paused after DM-082: the complete minimum protocol can
+be exercised locally, but no current release has yet been dogfooded across the
+real Legion and daimonmatrix host embodiments. [`RESUME.md`](RESUME.md) is the
+cold-start handoff and Project 9 is the authoritative live board.
+
+Resume in dependency order:
+
+1. reconcile draft DM-083 with current Matrix `main`, freeze its exact
+   candidate, then repin and reverify Daimon Cluster;
+2. obtain explicit authorization and run the reversible real two-host DM-083
+   experience test;
+3. complete the consented cross-being exchange and fresh-host
+   rebirth/recovery gates;
+4. complete remaining collective-memory/additional-harness and adversarial
+   security gates required by the board;
+5. freeze and publish the V0.1.0 release; and
+6. retire/archive the transitional Tribe Bridge only through its explicit
+   human-authorized migration cards.
+
+No live-host step is implied by a local conformance result or by this roadmap.
+
 ## V0.1 MVP
 
 - Canonical ontology and cross-runtime contracts.
