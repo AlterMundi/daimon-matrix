@@ -15,9 +15,10 @@ Matrix-side Unix-socket boundary fix and the dogfood plan, but it is not live
 dogfood evidence. Daimon Cluster `main` at `5cc2583` still pins the earlier
 Matrix candidate `8145b4c`; that pin must be advanced to the frozen post-DM-082
 candidate and reverified before preflight can become an authorized session.
-Tribe Bridge `main` at `b81a683` remains the transitional human-message lane.
-There is no separately identified `tribe-chat` repository in the recorded
-project set.
+Tribe Bridge `main` at `636677b` records the pause handoff; its deployed/runtime
+code baseline remains `b81a683` and it is still the transitional human-message
+lane. There is no separately identified `tribe-chat` repository in the
+recorded project set.
 
 The canonical model permits multiple simultaneous embodiments of one being.
 The previously documented identity-wide singleton lease is not part of the

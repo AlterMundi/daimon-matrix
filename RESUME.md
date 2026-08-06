@@ -32,7 +32,7 @@ of a live CompAII rebirth or of an ordinary two-host user experience.
 |---|---|---|
 | `AlterMundi/daimon-matrix` | `main` at least `dad012d`; draft PR #112 on `dm-083-two-host-dogfood` | Canonical identity, ledgers, scopes, relationship/grant authority, communication semantics and peer runtime. PR #112 is preparation only and still requires the human gate. |
 | `nicoechaniz/daimon-cluster` | `main` `5cc2583` after PR #51 | Hosts the exact installed Matrix runtime, bodies/storage/lifecycle and resource fences. Its current DM-083 pin targets pre-DM-082 Matrix `8145b4c`; repin and reverify before any dogfood. Cluster never gains social, grant or canonical-ledger authority. |
-| `nicoechaniz/tribe-bridge` | `main` `b81a683` | Transitional deployed v1 human-message carrier. Keep its ACK/dedup evidence separate from Matrix intake and semantic receipts. Do not archive it until the Matrix release and explicit migration cards authorize that effect. |
+| `nicoechaniz/tribe-bridge` | `main` `636677b`; deployed/runtime code baseline `b81a683` | PR #51 added only the pause handoff. V1 remains the transitional deployed human-message carrier. Keep its ACK/dedup evidence separate from Matrix intake and semantic receipts. Do not archive it until the Matrix release and explicit migration cards authorize that effect. |
 
 No repository named `tribe-chat` was found in the local project set or the
 `nicoechaniz`/`AlterMundi` GitHub repositories at this checkpoint. If
