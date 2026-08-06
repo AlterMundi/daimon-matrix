@@ -37,6 +37,11 @@ from .peer_transport import (
     http_peer_round_trip,
     protocol_handlers,
 )
+from .relationship_store import (
+    RelationshipServiceContext,
+    RelationshipStore,
+    RelationshipStoreError,
+)
 from .relationships import (
     RelationshipError,
     SnapshotVerifier,
@@ -72,6 +77,7 @@ BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
 BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
 BUNDLE_SCHEMA_V4: Final = "dm.runtime.bundle/v4"
 BUNDLE_SCHEMA_V5: Final = "dm.runtime.bundle/v5"
+BUNDLE_SCHEMA_V6: Final = "dm.runtime.bundle/v6"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -250,14 +256,22 @@ def load_runtime(
         BUNDLE_SCHEMA_V3,
         BUNDLE_SCHEMA_V4,
         BUNDLE_SCHEMA_V5,
+        BUNDLE_SCHEMA_V6,
     }:
         fields.add("authority_history")
-    if schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}:
+    if schema in {
+        BUNDLE_SCHEMA_V3,
+        BUNDLE_SCHEMA_V4,
+        BUNDLE_SCHEMA_V5,
+        BUNDLE_SCHEMA_V6,
+    }:
         fields.add("peer_transport")
-    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}:
+    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}:
         fields.add("species")
-    if schema == BUNDLE_SCHEMA_V5:
+    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}:
         fields.add("sources")
+    if schema == BUNDLE_SCHEMA_V6:
+        fields.add("relationships")
     bundle = _closed(raw_bundle, fields)
     if schema not in {
         BUNDLE_SCHEMA,
@@ -265,6 +279,7 @@ def load_runtime(
         BUNDLE_SCHEMA_V3,
         BUNDLE_SCHEMA_V4,
         BUNDLE_SCHEMA_V5,
+        BUNDLE_SCHEMA_V6,
     }:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
@@ -300,6 +315,7 @@ def load_runtime(
             BUNDLE_SCHEMA_V3,
             BUNDLE_SCHEMA_V4,
             BUNDLE_SCHEMA_V5,
+            BUNDLE_SCHEMA_V6,
         }:
             authority_history = bundle["authority_history"]
             if (
@@ -331,6 +347,7 @@ def load_runtime(
                 BUNDLE_SCHEMA_V3,
                 BUNDLE_SCHEMA_V4,
                 BUNDLE_SCHEMA_V5,
+                BUNDLE_SCHEMA_V6,
             }:
                 raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
@@ -513,7 +530,13 @@ def load_runtime(
             raise RuntimeError("runtime_route_provider_missing")
     peer_configuration: Mapping[str, Any] | None = None
     if (
-        schema in {BUNDLE_SCHEMA_V3, BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5}
+        schema
+        in {
+            BUNDLE_SCHEMA_V3,
+            BUNDLE_SCHEMA_V4,
+            BUNDLE_SCHEMA_V5,
+            BUNDLE_SCHEMA_V6,
+        }
         and bundle["peer_transport"] is not None
     ):
         peer_configuration = _closed(
@@ -607,7 +630,10 @@ def load_runtime(
             except RelationshipError as exception:
                 raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
     species_context: SpeciesServiceContext | None = None
-    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5} and bundle["species"] is not None:
+    if (
+        schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}
+        and bundle["species"] is not None
+    ):
         species_value = _closed(
             bundle["species"],
             {
@@ -641,9 +667,33 @@ def load_runtime(
             species_context.registry.load_local_policy(species_context.local_policy_ref)
         except (KeyError, SpeciesError, TypeError) as exception:
             raise RuntimeError("runtime_species_configuration_rejected") from exception
+    relationship_store_path: Path | None = None
+    relationship_known_refs: tuple[str, ...] = ()
+    if schema == BUNDLE_SCHEMA_V6 and bundle["relationships"] is not None:
+        relationship_value = _closed(
+            bundle["relationships"], {"known_being_refs", "store_filename"}
+        )
+        relationship_store_path = _safe_file(
+            root, relationship_value["store_filename"], must_exist=False
+        )
+        if relationship_store_path.name in filenames:
+            raise RuntimeError("runtime_filename_collision")
+        filenames.add(relationship_store_path.name)
+        raw_refs = relationship_value["known_being_refs"]
+        if (
+            not isinstance(raw_refs, list)
+            or len(raw_refs) > 256
+            or raw_refs != sorted(set(raw_refs))
+            or not all(
+                isinstance(item, str) and item.startswith("dm:being:v1:")
+                for item in raw_refs
+            )
+        ):
+            raise RuntimeError("runtime_relationship_configuration_rejected")
+        relationship_known_refs = tuple(raw_refs)
     source_cas_path: Path | None = None
     known_source_configurations: list[tuple[str, Path, Any, Mapping[str, str]]] = []
-    if schema == BUNDLE_SCHEMA_V5 and bundle["sources"] is not None:
+    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6} and bundle["sources"] is not None:
         source_value = _closed(bundle["sources"], {"cas_filename", "known_beings"})
         source_cas_path = _safe_file(
             root, source_value["cas_filename"], must_exist=False
@@ -816,6 +866,87 @@ def load_runtime(
             source_context.registry.initialize()
         except SourceError as exception:
             raise RuntimeError("runtime_source_configuration_rejected") from exception
+    relationship_context: RelationshipServiceContext | None = None
+    if relationship_store_path is not None:
+        known_authorities = {
+            configuration[0]: configuration[2]
+            for configuration in known_source_configurations
+        }
+        if not set(relationship_known_refs).issubset(known_authorities):
+            raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
+        relationship_authorities: dict[str, Any] = {
+            manifest.being_ref: authority,
+            **{
+                being_ref: known_authorities[being_ref]
+                for being_ref in relationship_known_refs
+            },
+        }
+        active_authorities: dict[str, RootAuthority] = {manifest.being_ref: active}
+        for being_ref in relationship_known_refs:
+            known_authority = known_authorities[being_ref]
+            active_authorities[being_ref] = (
+                known_authority.active
+                if isinstance(known_authority, RootHistoryAuthority)
+                else known_authority
+            )
+
+        def verify_relationship_card(card: Mapping[str, Any], at_ms: int) -> None:
+            being_ref = card.get("being_ref")
+            card_authority = (
+                active_authorities.get(being_ref)
+                if isinstance(being_ref, str)
+                else None
+            )
+            if card_authority is None or being_ref != card_authority.manifest.being_ref:
+                raise RelationshipError("relationship_card_authority_unknown")
+            position = card.get("control_position")
+            if (
+                not isinstance(position, Mapping)
+                or position.get("manifest_hash") != card_authority.manifest.digest
+            ):
+                raise RelationshipError("relationship_card_control_unverified")
+            try:
+                member = card_authority.manifest.member(
+                    position["embodiment_id"], position["incarnation_id"]
+                )
+                if member["status"] != "active":
+                    raise RelationshipError("relationship_card_control_unverified")
+                credential = card_authority.credentials[
+                    member["embodiment_credential_id"]
+                ]
+                body = verify_embodiment_credential(
+                    credential, card_authority.state, at_ms=at_ms
+                )
+            except (
+                KeyError,
+                TypeError,
+                VerificationError,
+                WeaveProtocolError,
+            ) as exception:
+                raise RelationshipError(
+                    "relationship_card_control_unverified"
+                ) from exception
+            if (
+                card.get("encryption_key") != body["encryption_key"]
+                or "messages" not in body["purposes"]
+            ):
+                raise RelationshipError("relationship_card_control_unverified")
+
+        try:
+            relationship_context = RelationshipServiceContext(
+                RelationshipStore(
+                    relationship_store_path,
+                    authority_resolver=lambda being_ref: relationship_authorities[
+                        being_ref
+                    ],
+                ),
+                verify_relationship_card,
+            )
+            relationship_context.store.initialize()
+        except (KeyError, RelationshipError, RelationshipStoreError) as exception:
+            raise RuntimeError(
+                "runtime_relationship_configuration_rejected"
+            ) from exception
     if species_context is not None:
         try:
             species_context.registry.recover_pending_applications(
@@ -867,6 +998,14 @@ def load_runtime(
             body_capabilities=body_capabilities,
             body_reader=body_reader if scopes_bundle is not None else None,
             tribes=tribes,
+            tribe_provider=(
+                None
+                if relationship_context is None
+                else lambda tribe_ref, at_ms: relationship_context.store.view(
+                    at_ms=at_ms,
+                    card_verifier=relationship_context.card_verifier,
+                ).snapshot(tribe_ref)
+            ),
         )
     except ScopeError as exception:
         raise RuntimeError("runtime_scope_configuration_rejected") from exception
@@ -938,6 +1077,7 @@ def load_runtime(
         ),
         species=species_context,
         sources=source_context,
+        relationships=relationship_context,
     )
     ledger.integrity_check()
     final_root = root.lstat()
@@ -962,6 +1102,7 @@ __all__ = [
     "BUNDLE_SCHEMA_V3",
     "BUNDLE_SCHEMA_V4",
     "BUNDLE_SCHEMA_V5",
+    "BUNDLE_SCHEMA_V6",
     "HostedRuntime",
     "RuntimeError",
     "load_runtime",

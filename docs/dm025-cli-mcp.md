@@ -24,6 +24,11 @@ after the ordinary 30-second freshness window only if the daemon already has
 its exact journal row and the capability remains active. A never-seen stale
 request is rejected.
 
+The capability method allowlist is bounded at 128 entries. The current fixed
+service surface has 83 methods after DM-082, so one least-privilege operator
+capability may name the complete surface without truncation; exact-bound and
+plus-one tests keep the widened bound finite.
+
 ## CLI
 
 The installed `daimon` families are exactly `daemon status`; `we heads`,
@@ -41,6 +46,11 @@ DM-081 adds `source content-put`, `claim`, `assess`, `publication-append`,
 `promote` and `projection`. These are fixed typed calls to the owner daemon;
 none accepts an arbitrary method, locator, shell command, identity override or
 database path. `pull` requires an operation UUID and never promotes.
+
+DM-082 adds fixed `relationship` and `tribe` families for signed card,
+handshake, membership, founder, grant, cursor, status, snapshot, ingest and
+disclosure operations. They cannot fabricate a foreign signature, select a
+database, turn membership into a grant or reveal an unauthorized denial reason.
 
 `--json` emits one canonical `dm.cli.result/v1` line. The response authentication
 tag is verified internally and omitted from presentation. Human output carries
@@ -62,7 +72,7 @@ switch eras and missing/wrong modern envelopes fail before daemon dispatch.
 Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
 reserved for MCP frames.
 
-The 46 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+The 66 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
 tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed

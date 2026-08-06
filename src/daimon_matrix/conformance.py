@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "8d4c88313ec9b3bc8afba93165f1e0f28bfbce09d7c7da1dd3303b2b182e466a"
+    "99887a23c1e1b2dbfa7ed050102162d6fd32a8942b71810b1218e04ef6897ffc"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -94,6 +94,12 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "recipient_encryption_isolation",
         "recipient_encryption_retry",
         "recipient_encryption_tamper",
+        "relationship_bilateral_consent",
+        "relationship_delegation_attenuation",
+        "relationship_founded_tribe_succession",
+        "relationship_origin_fork_quarantine",
+        "relationship_runtime_surface",
+        "relationship_synthetic_journey",
         "revocation_history_cutoff",
         "review_access_possession",
         "review_authority_separation",

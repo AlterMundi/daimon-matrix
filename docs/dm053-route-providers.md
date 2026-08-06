@@ -122,6 +122,13 @@ authority, exact recipient set, disclosure authorization and recipient private
 operation. Only after that succeeds does the provider-owned SQLite inbox admit
 the opaque envelope.
 
+For a DM-052 relationship leg, `recipient_id` remains the stable membership or
+relationship principal used for deduplication, routing and receipts. The signed
+leg's separate `receipt_origin_embodiment_id` is the concrete embodiment that
+must occur in the DM-051 sealed recipient set. `TransportIngress` retains both
+bindings; substituting either rejects before durable intake. This mapping does
+not let a route infer membership or expand the signed audience.
+
 The inbox uses owner-only storage, SQLite `DELETE` journal mode and
 `synchronous=FULL`. It assigns monotonic integer sequences independent of
 timestamps. Delivery IDs and authenticated request IDs have exact replay:

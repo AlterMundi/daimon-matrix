@@ -134,7 +134,15 @@ through runtime bundle V5 and twelve typed daemon/CLI/MCP methods. The installed
 two-being journey recovers at every durable boundary and the generated 84-row
 Section 14 registry is release-blocking. It performs no live disclosure,
 source fetch, memory admission, host mutation or Cluster effect. DM-082 owns
-relationship grants; DM-071 owns the later consented external canary.
+DM-082 now implements those relationship grants plus bilateral consent,
+founded-Tribe membership, founder succession and strict delegation. Runtime
+bundle V6 feeds DM-054 from verified signed history, publishes fixed owner
+daemon/CLI/MCP surfaces and retains forks without an arrival-order winner. Its
+installed three-being journey now executes a real local DM-054→DM-052→DM-051→
+DM-053 path: authenticated loopback intake stays non-semantic until the foreign
+being's signed receipt is verified, while revocation refuses stale direct and
+hub-forward traffic. It makes no external route, host or Cluster effect. DM-071
+owns the later consented cross-host canary.
 
 DM-079 closes the real-restart gap found by the Cluster #48 installed-process
 test. A signed authority epoch now advances one embodiment from incarnation

@@ -717,6 +717,7 @@ class TransportIngress:
         secret: bytes,
         recipient_id: str,
         recipient_body_ref: str,
+        recipient_embodiment_id: str | None = None,
         inbox: OpaqueInbox,
         clock: Clock,
         hub: bool = False,
@@ -733,6 +734,10 @@ class TransportIngress:
             recipient_body_ref,
         ):
             _text(value, "invalid_transport_ingress")
+        concrete_recipient = (
+            recipient_id if recipient_embodiment_id is None else recipient_embodiment_id
+        )
+        _text(concrete_recipient, "invalid_transport_ingress")
         if (presence_ref is None) != (fence_ref is None) or (presence_ref is None) != (
             intake_gate is None
         ):
@@ -750,6 +755,7 @@ class TransportIngress:
         self._secret = bytes(secret)
         self.recipient_id = recipient_id
         self.recipient_body_ref = recipient_body_ref
+        self.recipient_embodiment_id = concrete_recipient
         self.inbox = inbox
         self.clock = clock
         self.hub = hub
@@ -833,7 +839,8 @@ class TransportIngress:
                 if (
                     metadata["delivery_id"] != submission["delivery_id"]
                     or metadata["event_id"] != submission["message_id"]
-                    or self.recipient_id not in metadata["recipient_embodiment_ids"]
+                    or self.recipient_embodiment_id
+                    not in metadata["recipient_embodiment_ids"]
                 ):
                     raise RouteError("transport_request_refused")
                 if self.intake_gate is not None:
@@ -1457,7 +1464,8 @@ class RouteCoordinator:
             raise RouteError("sealed_delivery_rejected") from exception
         if (
             metadata["event_id"] != message_id
-            or recipient_id not in metadata["recipient_embodiment_ids"]
+            or leg["receipt_origin_embodiment_id"]
+            not in metadata["recipient_embodiment_ids"]
         ):
             raise RouteError("route_recipient_mismatch")
         delivery_id = cast(str, metadata["delivery_id"])

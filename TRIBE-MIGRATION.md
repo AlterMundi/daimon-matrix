@@ -124,6 +124,12 @@ runtime now remains only for ordinary human-message regression during the
 authorized canary, after which DM-077 may retire it under the repository
 owner's explicit approval.
 
+DM-082 completes the missing producer for layer 2. It creates bilateral
+relationships, founded-Tribe membership and directional grants only from
+verified signed Matrix history, then supplies DM-054 with the closed snapshot.
+No Tribe directory, audience, delivery receipt or Cluster lifecycle fact is
+accepted as a shortcut into that authority model.
+
 ## Replacement gates
 
 - V1/DM stores start empty and reject v0 envelopes or downgrade negotiation.

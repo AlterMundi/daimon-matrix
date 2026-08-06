@@ -13,9 +13,10 @@
 - Weave ledger, preview/pull, difference navigation, local decisions, and
   projection receipts.
 - Live `/we` fan-out with origin-marked partial results.
-- Founded Tribe membership plus native typed recipient-encrypted logical and
-  peer transport, independently implemented in Matrix from the pinned Tribe
-  behavior inventory.
+- Bilateral relationships, founded-Tribe membership, directional grants and
+  verified DM-054 snapshots from signed history (DM-082), plus native typed
+  recipient-encrypted logical and peer transport, independently implemented in
+  Matrix from the pinned Tribe behavior inventory.
 - HMK and external-identity adapters.
 - Codex/Hermes embodiment adapters.
 - Root-bound source claims, attributed publications, receiver-local assessment,
@@ -30,6 +31,8 @@
   claim/publication/quarantine policy.
 - `daimon-cluster` owns body/container lifecycle, storage, deployment evidence,
   and resource-scoped exclusion.
+- Cluster hosts Matrix V6 relationship state under the exact adaptation
+  contract but never derives social or grant authority from lifecycle truth.
 - Tribe Bridge is a transitional source/runtime and is archived after
   DM-050–DM-055 replacement gates and the release handoff.
 - DM-050 preserves a hash-pinned behavioral/provenance inventory only; source

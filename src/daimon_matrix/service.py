@@ -8,7 +8,7 @@ import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
@@ -39,6 +39,16 @@ from .memory_policy import (
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
 from .projections import ProjectionEngine, ProjectionError
+from .relationship_store import (
+    RelationshipServiceContext,
+    RelationshipStoreError,
+)
+from .relationships import (
+    RelationshipError,
+    relationship_event_occurred_at,
+    relationship_event_subject,
+    validate_relationship_event_payload,
+)
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
 from .sources import SourceError, SourceServiceContext
@@ -130,6 +140,33 @@ SOURCE_METHODS: Final = frozenset(
         "source.status",
     }
 )
+RELATIONSHIP_METHOD_KINDS: Final = {
+    "relationship.accept": "matrix/relationship-acceptance",
+    "relationship.card.publish": "matrix/relationship-card",
+    "relationship.close": "matrix/relationship-close",
+    "relationship.grant": "matrix/relationship-grant",
+    "relationship.grant.accept": "matrix/relationship-grant-acceptance",
+    "relationship.grant.relinquish": "matrix/relationship-grant-revocation",
+    "relationship.grant.revoke": "matrix/relationship-grant-revocation",
+    "relationship.offer": "matrix/relationship-offer",
+    "tribe.declare": "matrix/tribe-declaration",
+    "tribe.expel": "matrix/tribe-membership-expulsion",
+    "tribe.founder.accept": "matrix/tribe-founder-acceptance",
+    "tribe.founder.transfer": "matrix/tribe-founder-transfer",
+    "tribe.invite": "matrix/tribe-invitation",
+    "tribe.leave": "matrix/tribe-membership-leave",
+    "tribe.membership.accept": "matrix/tribe-membership-acceptance",
+}
+RELATIONSHIP_METHODS: Final = frozenset(
+    {
+        *RELATIONSHIP_METHOD_KINDS,
+        "relationship.cursor",
+        "relationship.disclose",
+        "relationship.event.ingest",
+        "relationship.snapshot",
+        "relationship.status",
+    }
+)
 SERVICE_METHODS: Final = (
     BODY_METHODS
     | METHODS
@@ -141,6 +178,7 @@ SERVICE_METHODS: Final = (
     | SCOPE_METHODS
     | SPECIES_METHODS
     | SOURCE_METHODS
+    | RELATIONSHIP_METHODS
 )
 
 Clock = Callable[[], int]
@@ -235,6 +273,7 @@ class HostedWeave:
     review: HumanReviewCoordinator | None = None
     species: SpeciesServiceContext | None = None
     sources: SourceServiceContext | None = None
+    relationships: RelationshipServiceContext | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -287,6 +326,8 @@ class HostedWeave:
             if self.sources.registry.ledger is not self.ledger:
                 raise ServiceError("source_registry_ledger_mismatch")
             self.sources.registry.initialize()
+        if self.relationships is not None:
+            self.relationships.store.initialize()
 
     @property
     def origin(self) -> dict[str, str]:
@@ -510,6 +551,24 @@ class HostedWeave:
                     "retryable": exception.retryable or exception.incomplete,
                 },
             )
+        except RelationshipError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": False},
+            )
+        except RelationshipStoreError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": False},
+            )
         except (LedgerError, LedgerStateError):
             response = create_response(
                 capability,
@@ -590,6 +649,117 @@ class HostedWeave:
                 request_id=_uuid(value["request_id"]),
                 tribe_ref=tribe_ref,
             )
+        if method in RELATIONSHIP_METHODS:
+            relationships = self.relationships
+            if relationships is None:
+                raise ServiceError("relationship_runtime_unavailable")
+            store = relationships.store
+            if method == "relationship.event.ingest":
+                value = _closed(params, {"event"})
+                if not isinstance(value["event"], Mapping):
+                    raise ServiceError("invalid_params")
+                event = store.ingest(value["event"])
+                return {
+                    "schema": "dm.relationship.ingest-result/v1",
+                    "event": event,
+                    "cursor": store.cursor(),
+                }
+            if method == "relationship.cursor":
+                _closed(params, set())
+                return store.cursor()
+            if method in {"relationship.status", "relationship.snapshot"}:
+                fields = (
+                    {"at_ms"}
+                    if method == "relationship.status"
+                    else {"at_ms", "tribe_ref"}
+                )
+                value = _closed(params, fields)
+                at_ms = (
+                    self.clock() if value["at_ms"] is None else _uint(value["at_ms"])
+                )
+                view = store.view(
+                    at_ms=at_ms,
+                    card_verifier=relationships.card_verifier,
+                )
+                if method == "relationship.status":
+                    return {
+                        "schema": "dm.relationship.status/v1",
+                        "cursor": store.cursor(),
+                        "history": view.report(),
+                    }
+                tribe_ref = _optional_text(value["tribe_ref"], 256)
+                if tribe_ref is None:
+                    raise ServiceError("invalid_params")
+                return copy.deepcopy(dict(view.snapshot(tribe_ref).value))
+            if method == "relationship.disclose":
+                value = _closed(
+                    params,
+                    {
+                        "at_ms",
+                        "classification",
+                        "operation",
+                        "requester_being_ref",
+                        "resource_ref",
+                    },
+                )
+                at_ms = (
+                    self.clock() if value["at_ms"] is None else _uint(value["at_ms"])
+                )
+                text_fields = {
+                    field: _optional_text(value[field], 256)
+                    for field in (
+                        "classification",
+                        "operation",
+                        "requester_being_ref",
+                        "resource_ref",
+                    )
+                }
+                if any(item is None for item in text_fields.values()):
+                    raise ServiceError("invalid_params")
+                return store.view(
+                    at_ms=at_ms,
+                    card_verifier=relationships.card_verifier,
+                ).disclosure(
+                    requester_being_ref=cast(str, text_fields["requester_being_ref"]),
+                    resource_ref=cast(str, text_fields["resource_ref"]),
+                    operation=cast(str, text_fields["operation"]),
+                    classification=cast(str, text_fields["classification"]),
+                )
+            kind = RELATIONSHIP_METHOD_KINDS[method]
+            value = _closed(params, {"payload"})
+            if not isinstance(value["payload"], Mapping):
+                raise ServiceError("invalid_params")
+            local_being_ref = self.ledger.authority.manifest.being_ref
+            payload = validate_relationship_event_payload(
+                kind,
+                value["payload"],
+                author_being_ref=local_being_ref,
+                causal_parents=(),
+            )
+            if method == "relationship.grant.revoke" and payload["action"] != "revoke":
+                raise ServiceError("invalid_params")
+            if (
+                method == "relationship.grant.relinquish"
+                and payload["action"] != "relinquish"
+            ):
+                raise ServiceError("invalid_params")
+            event = self.ledger.append_local_idempotent(
+                client_id=client_id,
+                request_id=request_id,
+                request_hash=request_hash,
+                kind=kind,
+                subject=relationship_event_subject(kind, payload),
+                payload=payload,
+                signer=self.signer,
+                sensitivity="shareable",
+                occurred_at_ms=relationship_event_occurred_at(kind, payload),
+            )
+            store.ingest(event)
+            return {
+                "schema": "dm.relationship.mutation-result/v1",
+                "event": event,
+                "cursor": store.cursor(),
+            }
         if method.startswith("source."):
             sources = self.sources
             if sources is None:
@@ -1540,6 +1710,7 @@ __all__ = [
     "COMMUNICATION_METHODS",
     "MEMORY_METHODS",
     "METHODS",
+    "RELATIONSHIP_METHODS",
     "SCOPE_METHODS",
     "SERVICE_METHODS",
     "SOURCE_METHODS",

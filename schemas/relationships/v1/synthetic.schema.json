@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/relationships/v1/synthetic.schema.json",
+  "title": "Daimon Matrix synthetic relationship journey report V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "active_snapshot_hash", "being_refs", "child_grant_id", "cursor_hash",
+    "evidence", "final_history", "final_snapshot_hash", "grant_id",
+    "invariants", "relationship_id", "schema", "tribe_ref"
+  ],
+  "properties": {
+    "schema": {"const": "dm.synthetic-relationship-report/v1"},
+    "being_refs": {"type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/beingRef"}},
+    "relationship_id": {"$ref": "#/$defs/relationshipId"},
+    "tribe_ref": {"$ref": "#/$defs/tribeRef"},
+    "grant_id": {"$ref": "#/$defs/grantId"},
+    "child_grant_id": {"$ref": "#/$defs/grantId"},
+    "active_snapshot_hash": {"$ref": "#/$defs/hash64"},
+    "final_snapshot_hash": {"$ref": "#/$defs/hash64"},
+    "cursor_hash": {"$ref": "#/$defs/hash43"},
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "acceptance_event_id", "child_acceptance_event_id", "child_grant_event_id",
+        "declaration_event_id", "grant_acceptance_event_id", "grant_event_id",
+        "membership_event_id", "message_event_id", "receipt_event_id", "resolution_event_id",
+        "offer_event_id", "revocation_event_id",
+        "transfer_acceptance_event_id", "transfer_event_id"
+      ],
+      "properties": {
+        "acceptance_event_id": {"$ref": "#/$defs/uuid"},
+        "child_acceptance_event_id": {"$ref": "#/$defs/uuid"},
+        "child_grant_event_id": {"$ref": "#/$defs/uuid"},
+        "declaration_event_id": {"$ref": "#/$defs/uuid"},
+        "grant_acceptance_event_id": {"$ref": "#/$defs/uuid"},
+        "grant_event_id": {"$ref": "#/$defs/uuid"},
+        "membership_event_id": {"$ref": "#/$defs/uuid"},
+        "message_event_id": {"$ref": "#/$defs/uuid"},
+        "receipt_event_id": {"$ref": "#/$defs/uuid"},
+        "resolution_event_id": {"$ref": "#/$defs/uuid"},
+        "offer_event_id": {"$ref": "#/$defs/uuid"},
+        "revocation_event_id": {"$ref": "#/$defs/uuid"},
+        "transfer_acceptance_event_id": {"$ref": "#/$defs/uuid"},
+        "transfer_event_id": {"$ref": "#/$defs/uuid"}
+      }
+    },
+    "invariants": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "ancestor_revocation_cascades", "bilateral_consent_before_relationship",
+        "delegation_is_strictly_attenuated", "distinct_beings",
+        "exact_replay_is_idempotent", "founder_transfer_is_two_party",
+        "grant_requires_subject_acceptance", "membership_separate_from_grant",
+        "authenticated_intake_creates_signed_delivery", "independent_observer_cursors_converge",
+        "no_external_contact", "recipient_encrypted_delivery_opens_only_after_grant",
+        "revocation_blocks_disclosure_before_sealing", "revocation_survives_restart",
+        "revocation_refuses_stale_direct_and_hub_forward", "route_ack_is_not_consent",
+        "route_ack_is_not_semantic_delivery"
+      ],
+      "properties": {
+        "ancestor_revocation_cascades": {"const": true},
+        "authenticated_intake_creates_signed_delivery": {"const": true},
+        "bilateral_consent_before_relationship": {"const": true},
+        "delegation_is_strictly_attenuated": {"const": true},
+        "distinct_beings": {"const": true},
+        "exact_replay_is_idempotent": {"const": true},
+        "founder_transfer_is_two_party": {"const": true},
+        "grant_requires_subject_acceptance": {"const": true},
+        "independent_observer_cursors_converge": {"const": true},
+        "membership_separate_from_grant": {"const": true},
+        "no_external_contact": {"const": true},
+        "recipient_encrypted_delivery_opens_only_after_grant": {"const": true},
+        "revocation_blocks_disclosure_before_sealing": {"const": true},
+        "revocation_survives_restart": {"const": true},
+        "revocation_refuses_stale_direct_and_hub_forward": {"const": true},
+        "route_ack_is_not_consent": {"const": true},
+        "route_ack_is_not_semantic_delivery": {"const": true}
+      }
+    },
+    "final_history": {"$ref": "#/$defs/history"}
+  },
+  "$defs": {
+    "hash64": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hash43": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "beingRef": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+    "relationshipId": {"type": "string", "pattern": "^dm:relationship:v1:[A-Za-z0-9_-]{43}$"},
+    "tribeRef": {"type": "string", "pattern": "^dm:tribe:v1:[A-Za-z0-9_-]{43}$"},
+    "grantId": {"type": "string", "pattern": "^dm:relationship-grant:v1:[A-Za-z0-9_-]{43}$"},
+    "stateMap": {
+      "type": "object",
+      "propertyNames": {"type": "string", "minLength": 1, "maxLength": 256},
+      "additionalProperties": {"enum": ["active", "closed", "expired", "forked", "incomplete", "invalid", "not-yet-valid", "offered", "relinquished", "revoked", "stale-card"]}
+    },
+    "history": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cards", "complete_event_count", "evaluated_at_ms", "event_count", "forked_event_ids", "grants", "relationships", "schema", "tribes"],
+      "properties": {
+        "schema": {"const": "dm.relationship.history-report/v1"},
+        "evaluated_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "event_count": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "complete_event_count": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "forked_event_ids": {"type": "array", "maxItems": 4096, "uniqueItems": true, "items": {"$ref": "#/$defs/uuid"}},
+        "cards": {
+          "type": "object", "propertyNames": {"$ref": "#/$defs/beingRef"},
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false,
+            "required": ["current", "head_event_id"],
+            "properties": {"current": {"type": "boolean"}, "head_event_id": {"$ref": "#/$defs/uuid"}}
+          }
+        },
+        "relationships": {"$ref": "#/$defs/stateMap"},
+        "tribes": {"$ref": "#/$defs/stateMap"},
+        "grants": {"$ref": "#/$defs/stateMap"}
+      }
+    }
+  }
+}

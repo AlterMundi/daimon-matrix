@@ -18,13 +18,19 @@ from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
 from daimon_matrix.daemon import serve_forever
-from daimon_matrix.local_api import MAX_FRAME_BYTES
+from daimon_matrix.local_api import (
+    MAX_CAPABILITY_METHODS,
+    MAX_FRAME_BYTES,
+    LocalApiError,
+    create_capability,
+)
 from daimon_matrix.mcp_server import TOOL_CONTRACTS
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.service import (
     CURATOR_METHODS,
     MEMORY_METHODS,
     METHODS,
+    RELATIONSHIP_METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
     SOURCE_METHODS,
@@ -381,6 +387,42 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "--publication-id",
                 "dm:source-publication:v0:" + "A" * 43,
             ],
+            ["relationship", "card-publish", "--payload", str(document)],
+            ["relationship", "offer", "--payload", str(document)],
+            ["relationship", "accept", "--payload", str(document)],
+            ["relationship", "close", "--payload", str(document)],
+            ["relationship", "grant", "--payload", str(document)],
+            ["relationship", "grant-accept", "--payload", str(document)],
+            ["relationship", "grant-revoke", "--payload", str(document)],
+            ["relationship", "grant-relinquish", "--payload", str(document)],
+            ["relationship", "event-ingest", "--event", str(document)],
+            ["relationship", "cursor"],
+            ["relationship", "status"],
+            [
+                "relationship",
+                "snapshot",
+                "--tribe-ref",
+                "dm:tribe:v1:" + "A" * 43,
+            ],
+            [
+                "relationship",
+                "disclose",
+                "--requester-being-ref",
+                "dm:being:v1:" + "A" * 43,
+                "--resource-ref",
+                "dm:resource:v1:" + "A" * 43,
+                "--operation",
+                "read",
+                "--classification",
+                "shareable",
+            ],
+            ["tribe", "declare", "--payload", str(document)],
+            ["tribe", "invite", "--payload", str(document)],
+            ["tribe", "membership-accept", "--payload", str(document)],
+            ["tribe", "leave", "--payload", str(document)],
+            ["tribe", "expel", "--payload", str(document)],
+            ["tribe", "founder-transfer", "--payload", str(document)],
+            ["tribe", "founder-accept", "--payload", str(document)],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -426,6 +468,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 CURATOR_METHODS
                 | MEMORY_METHODS
                 | METHODS
+                | RELATIONSHIP_METHODS
                 | REVIEW_METHODS
                 | SCOPE_METHODS
                 | SOURCE_METHODS
@@ -471,7 +514,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 46)
+        self.assertEqual(len(tools), 66)
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -487,6 +530,19 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "review_inspect",
                 "review_decision_draft",
                 "review_decision_submit",
+                "relationship_accept",
+                "relationship_card_publish",
+                "relationship_close",
+                "relationship_cursor",
+                "relationship_disclose",
+                "relationship_event_ingest",
+                "relationship_grant",
+                "relationship_grant_accept",
+                "relationship_grant_relinquish",
+                "relationship_grant_revoke",
+                "relationship_offer",
+                "relationship_snapshot",
+                "relationship_status",
                 "scope_me",
                 "scope_we",
                 "scope_we_diff",
@@ -510,6 +566,13 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "source_pull",
                 "source_promote",
                 "source_projection",
+                "tribe_declare",
+                "tribe_expel",
+                "tribe_founder_accept",
+                "tribe_founder_transfer",
+                "tribe_invite",
+                "tribe_leave",
+                "tribe_membership_accept",
                 "we_heads",
                 "we_diff",
                 "we_preview",
@@ -533,6 +596,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                     CURATOR_METHODS
                     | MEMORY_METHODS
                     | METHODS
+                    | RELATIONSHIP_METHODS
                     | REVIEW_METHODS
                     | SCOPE_METHODS
                     | SOURCE_METHODS
@@ -666,6 +730,29 @@ class InstalledSurfaceTests(RuntimeFixture):
 
 
 class ClientSchemaTests(unittest.TestCase):
+    def test_capability_method_bound_covers_full_service_surface(self) -> None:
+        key = b"x" * 32
+        methods = [f"method.{index:03d}" for index in range(MAX_CAPABILITY_METHODS)]
+        capability = create_capability(
+            key,
+            client_id="client:dm025-bound",
+            methods=methods,
+            not_before_ms=0,
+            not_after_ms=1,
+        )
+        schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        Draft202012Validator(schema).validate(capability.descriptor)
+        with self.assertRaisesRegex(LocalApiError, "invalid_local_capability"):
+            create_capability(
+                key,
+                client_id="client:dm025-bound",
+                methods=[*methods, f"method.{MAX_CAPABILITY_METHODS:03d}"],
+                not_before_ms=0,
+                not_after_ms=1,
+            )
+
     def test_published_client_schemas_are_closed_and_valid(self) -> None:
         for name in ("client.schema.json", "mcp-tools.schema.json"):
             schema = json.loads(

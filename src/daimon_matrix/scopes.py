@@ -32,7 +32,13 @@ from .projections import ProjectionEngine
 from .relationships import RelationshipError, VerifiedTribeSnapshot
 from .routes import RouteCoordinator, RouteError
 from .sync import SyncEngine
-from .weave import BoundHistoryAuthority, EventSigner, RootAuthority, WeaveProtocolError
+from .weave import (
+    BoundHistoryAuthority,
+    EventSigner,
+    RootAuthority,
+    RootAuthorityInventory,
+    WeaveProtocolError,
+)
 
 ME_SCHEMA: Final = "dm.scope.me/v1"
 WE_SCHEMA: Final = "dm.scope.we/v1"
@@ -50,6 +56,7 @@ MAX_FANOUT_TARGETS: Final = 256
 MAX_RESPONSE_BYTES: Final = 1024 * 1024
 MAX_DEADLINE_SPAN_MS: Final = 60_000
 Clock = Callable[[], int]
+TribeProvider = Callable[[str, int], VerifiedTribeSnapshot]
 BodyReader = Callable[[str, str, str, int], Mapping[str, Any]]
 
 
@@ -231,11 +238,17 @@ class ScopeResolver:
     body_capabilities: tuple[str, ...] = ()
     body_reader: BodyReader | None = None
     tribes: Mapping[str, VerifiedTribeSnapshot] | None = None
+    tribe_provider: TribeProvider | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(
             self.ledger.authority,
-            (RootAuthority, RootHistoryAuthority, BoundHistoryAuthority),
+            (
+                RootAuthority,
+                RootAuthorityInventory,
+                RootHistoryAuthority,
+                BoundHistoryAuthority,
+            ),
         ):
             raise ScopeError("scope_requires_root_authority")
         if len(self.body_capabilities) > MAX_CAPABILITIES or list(
@@ -264,6 +277,8 @@ class ScopeResolver:
             return authority.active
         if isinstance(authority, RootAuthority):
             return authority
+        if isinstance(authority, RootAuthorityInventory):
+            return authority.local
         raise ScopeError("scope_requires_root_authority")
 
     @property
@@ -458,9 +473,20 @@ class ScopeResolver:
     def _tribe_at(self, *, tribe_ref: str, at_ms: int) -> dict[str, Any]:
         _text(tribe_ref, "invalid_tribe_ref")
         snapshot = None if self.tribes is None else self.tribes.get(tribe_ref)
+        if snapshot is None and self.tribe_provider is not None:
+            try:
+                snapshot = self.tribe_provider(tribe_ref, at_ms)
+            except (RelationshipError, ValueError) as exception:
+                raise ScopeError("tribe_not_configured") from exception
         if snapshot is None:
             raise ScopeError("tribe_not_configured")
-        principal = self.local_origin["principal_id"]
+        being_ref = self.authority.manifest.being_ref
+        members = cast(Sequence[Mapping[str, Any]], snapshot.value["members"])
+        principal = (
+            being_ref
+            if any(member["principal_id"] == being_ref for member in members)
+            else self.local_origin["principal_id"]
+        )
         try:
             return snapshot.resolve(principal_id=principal, at_ms=at_ms)
         except RelationshipError as exception:
