@@ -203,7 +203,7 @@ PYTHONPATH=src python tools/generate_dm074_profiles.py --check
 PYTHONPATH=src python tests/fixtures/harness/v0/checker.py \
   --fixture tests/fixtures/harness/v0/manifest.json \
   profiles/harness/v0/*.json
-pytest -q tests/test_dm074_harness_conformance.py
+PYTHONPATH=src python -m unittest tests.test_dm074_harness_conformance -v
 ```
 
 The repository's existing `unittest discover` CI gate also runs a DM-074 smoke
