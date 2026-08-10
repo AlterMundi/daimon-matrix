@@ -1,0 +1,212 @@
+{
+  "admission": {
+    "expected": "refused",
+    "reason_code": "persistent-sessions-required-mcp-and-receipts-unproven",
+    "requires_real_vendor_smoke": true
+  },
+  "artifact": {
+    "auto_update_policy": "build-from-exact-source-commit-only",
+    "config_precedence": "exact-source-documents-cli-environment-and-grok-home-order",
+    "executable_sha256": null,
+    "install_source": "not-installed-exact-public-source-audit-only",
+    "limitations": [
+      "headless-history-persists",
+      "matrix-lifecycle-receipt-adapter-unimplemented",
+      "required-mcp-startup-gate-unproven"
+    ],
+    "migration_policy": "disable-claude-import-and-cross-session-memory",
+    "state_roots": [
+      "fresh-grok-home-required"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Headless sessions persist in SQLite; no exact no-history switch is frozen.",
+      "state": "fail"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Configuration precedence and project trust are documented.",
+      "state": "pass"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "xai-grok-memory-c94cc4b5"
+      ],
+      "note": "The highest-precedence no-memory switch can disable memory.",
+      "state": "pass"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "xai-grok-sandbox-098628c3"
+      ],
+      "note": "An exact custom Linux sandbox can fail closed.",
+      "state": "pass"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "GROK_HOME relocates the profile root.",
+      "state": "pass"
+    },
+    "proposal_only": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "secret_custody": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "xai-grok-mcp-fce8f3c7"
+      ],
+      "note": "Headless tool filters can close the exposed inventory.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "version_pinned": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "write_approval": {
+      "evidence": [
+        "xai-grok-config-13a3f7b7"
+      ],
+      "note": "Headless approval filters can separately gate the write.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "documented-candidate",
+  "harness": {
+    "name": "Grok Build",
+    "source_refs": [
+      "xai-grok-config-13a3f7b7",
+      "xai-grok-mcp-fce8f3c7",
+      "xai-grok-memory-c94cc4b5",
+      "xai-grok-sandbox-098628c3"
+    ],
+    "surface": "cli-headless-mcp",
+    "vendor": "xAI",
+    "version": "source-commit-b13fa526f5112c0b20dad5f1f2300d3d3b127895"
+  },
+  "launch": {
+    "argv": [
+      "grok",
+      "--no-memory",
+      "--headless"
+    ],
+    "configuration": [
+      "builtin-web-tools=disabled",
+      "custom-linux-sandbox=fail-closed",
+      "matrix-mcp=local-only"
+    ],
+    "environment": [
+      "GROK_HOME=<validated-disposable-root>"
+    ],
+    "status": "reference-only"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-grok-build-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-grok-build-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "grok-build",
+  "schema": "dm.harness-profile/v0"
+}

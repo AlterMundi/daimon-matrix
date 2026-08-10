@@ -1,0 +1,30 @@
+{
+  "card": "DM-074",
+  "evidence_states": {
+    "claude-code": "documented-candidate",
+    "codex-cli": "synthetic-conformant",
+    "generic-mcp-cli": "synthetic-conformant",
+    "google-antigravity": "documented-candidate",
+    "grok-build": "documented-candidate",
+    "kimi-code": "documented-candidate"
+  },
+  "invariants": {
+    "adapter_disable_and_replacement_preserve_canonical_rebuild": true,
+    "ambiguous_response_loss_recovers_one_effect_after_process_restart": true,
+    "artifact_and_mutable_documentation_inputs_are_content_pinned": true,
+    "distinct_harness_profiles_never_collapse_distinct_me_identities": true,
+    "harness_and_model_are_never_being_authority": true,
+    "harness_memory_history_transcripts_and_exports_are_never_canonical_autobiography": true,
+    "lifecycle_ids_and_receipts_survive_retry_crash_and_resume": true,
+    "malformed_oversized_missing_receipt_unknown_and_stale_inputs_fail_closed": true,
+    "mandatory_unknown_controls_refuse_admission": true,
+    "matrix_revalidates_every_canonical_effect": true,
+    "offline_fixture_invokes_no_vendor_model_credential_or_network": true,
+    "profile_credentials_use_inherited_descriptors_only": true,
+    "public_evidence_is_path_secret_and_transcript_free": true,
+    "support_labels_do_not_exceed_the_four_normative_evidence_states": true,
+    "tool_inventory_is_exact_and_the_only_write_is_non_adopting_observation": true,
+    "unknown_version_downgrade_lifecycle_and_authority_methods_are_refused": true
+  },
+  "schema": "dm.verification-invariants/v1"
+}

@@ -1,0 +1,177 @@
+{
+  "accessed_on": "2026-08-10",
+  "schema": "dm.harness-source-inventory/v0",
+  "sources": [
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:2464fb590121cb0664ce5de16b2bcec8c145c025c9f02674435c749434c2c40e",
+      "owner": "Anthropic",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "anthropic-claude-mcp-20260810",
+      "title": "Connect Claude Code to tools via MCP",
+      "url": "https://code.claude.com/docs/en/mcp"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:870a8769df10ba121996fa31786dd13d3086f16a20825bb5480f6b1586866bca",
+      "owner": "Anthropic",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "anthropic-claude-memory-20260810",
+      "title": "How Claude remembers your project",
+      "url": "https://code.claude.com/docs/en/memory"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:b526efff3e26518041d6b38d7656002c926aa18a47d7c8f1a2c272467f1b3dd2",
+      "owner": "Anthropic",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "anthropic-claude-permissions-20260810",
+      "title": "Configure permissions",
+      "url": "https://code.claude.com/docs/en/permissions"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:2676c327c8dcd0468ddc6711954b4dc7cd272e92a84b3b15227b54bca9d0abaf",
+      "owner": "Google",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "antigravity-mcp-20260810",
+      "title": "Antigravity Editor MCP integration",
+      "url": "https://www.antigravity.google/docs/mcp"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:d8d059bac2da9f87931c876575bee0fa1059ba03b19ededff5d95fc93338c2e2",
+      "owner": "Google",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "antigravity-permissions-20260810",
+      "title": "Antigravity CLI permissions",
+      "url": "https://www.antigravity.google/docs/cli-permissions"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:a5a03dece9a353590cea082fdfd81b2bb66a91bc44cdbeda02e1f9443774a66b",
+      "owner": "Google",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "antigravity-plugins-20260810",
+      "title": "Antigravity plugins",
+      "url": "https://www.antigravity.google/docs/plugins"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:ad7bcf543c77fbaee9d228aaf449387fba20492359d0925bd5c63bcfbe167d2f",
+      "owner": "AlterMundi",
+      "pin": "dad012d669947a81b26d847035787caa937f8705",
+      "source_id": "dm025-generic-mcp",
+      "title": "DM-025 CLI and MCP boundary",
+      "url": "docs/dm025-cli-mcp.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:51baa0c703276f32d9d9588980ed23e1e8a8141ead5b8b7b36761377a812136d",
+      "owner": "AlterMundi",
+      "pin": "dad012d669947a81b26d847035787caa937f8705",
+      "source_id": "dm040-codex-0-146-0",
+      "title": "DM-040 exact Codex body adapter",
+      "url": "docs/dm040-codex-body.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:27f5f03f36678bfe3565af27fe6e714d47bc26ae",
+      "owner": "Moonshot AI",
+      "pin": "git-blob:27f5f03f36678bfe3565af27fe6e714d47bc26ae",
+      "source_id": "kimi-code-config-27f5f03f",
+      "title": "Kimi Code configuration files",
+      "url": "https://github.com/MoonshotAI/kimi-code/blob/0401ec4286f37929d1d298527c05f5351850bf8a/docs/en/configuration/config-files.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:a6533c38f6b053db7a136f0b72bb5cad7160f1b6",
+      "owner": "Moonshot AI",
+      "pin": "git-blob:a6533c38f6b053db7a136f0b72bb5cad7160f1b6",
+      "source_id": "kimi-code-mcp-a6533c38",
+      "title": "Kimi Code MCP",
+      "url": "https://github.com/MoonshotAI/kimi-code/blob/0401ec4286f37929d1d298527c05f5351850bf8a/docs/en/customization/mcp.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:191cc5fa05064af7415b12344b5279fc52b3ed21",
+      "owner": "Moonshot AI",
+      "pin": "git-blob:191cc5fa05064af7415b12344b5279fc52b3ed21",
+      "source_id": "kimi-code-migration-191cc5fa",
+      "title": "Kimi Code migration",
+      "url": "https://github.com/MoonshotAI/kimi-code/blob/0401ec4286f37929d1d298527c05f5351850bf8a/docs/en/guides/migration.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:b63ee8d24a88123af8a12e8854b525a558574d93",
+      "owner": "Moonshot AI",
+      "pin": "git-blob:b63ee8d24a88123af8a12e8854b525a558574d93",
+      "source_id": "kimi-code-sessions-b63ee8d2",
+      "title": "Kimi Code sessions",
+      "url": "https://github.com/MoonshotAI/kimi-code/blob/0401ec4286f37929d1d298527c05f5351850bf8a/docs/en/guides/sessions.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:47eb0fa36c6fe1322c6b1bd7eeff83c2312bb07452f22cd74c77e87455417425",
+      "owner": "OpenAI",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "openai-codex-agents-20260810",
+      "title": "Custom instructions with AGENTS.md",
+      "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:3845ccd3ff0b412628d3eb392acc56b6b0778ffb33d6f26077663e0e57029607",
+      "owner": "OpenAI",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "openai-codex-config-20260810",
+      "title": "Codex configuration reference",
+      "url": "https://learn.chatgpt.com/docs/config-file/config-reference"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "sha256:102ef3e6e4864378b964ed8be37be1115a9962de7286e3d78567a6a893579a33",
+      "owner": "OpenAI",
+      "pin": "retrieved-2026-08-10",
+      "source_id": "openai-codex-mcp-20260810",
+      "title": "Codex MCP configuration",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:13a3f7b77f3ce0121e5400c8eb41b9da3a60280f",
+      "owner": "xAI",
+      "pin": "git-blob:13a3f7b77f3ce0121e5400c8eb41b9da3a60280f",
+      "source_id": "xai-grok-config-13a3f7b7",
+      "title": "Grok Build configuration",
+      "url": "https://github.com/xai-org/grok-build/blob/b13fa526f5112c0b20dad5f1f2300d3d3b127895/crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:fce8f3c7cc78a8c85579e7bb2e64805eca2e82e0",
+      "owner": "xAI",
+      "pin": "git-blob:fce8f3c7cc78a8c85579e7bb2e64805eca2e82e0",
+      "source_id": "xai-grok-mcp-fce8f3c7",
+      "title": "Grok Build MCP servers",
+      "url": "https://github.com/xai-org/grok-build/blob/b13fa526f5112c0b20dad5f1f2300d3d3b127895/crates/codegen/xai-grok-pager/docs/user-guide/07-mcp-servers.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:c94cc4b570fe31335883afe675943791782f723a",
+      "owner": "xAI",
+      "pin": "git-blob:c94cc4b570fe31335883afe675943791782f723a",
+      "source_id": "xai-grok-memory-c94cc4b5",
+      "title": "Grok Build memory",
+      "url": "https://github.com/xai-org/grok-build/blob/b13fa526f5112c0b20dad5f1f2300d3d3b127895/crates/codegen/xai-grok-pager/docs/user-guide/13-memory.md"
+    },
+    {
+      "accessed_on": "2026-08-10",
+      "content_digest": "git-blob-sha1:098628c396fb95d4a68da2cc5f56edb4e8347dcc",
+      "owner": "xAI",
+      "pin": "git-blob:098628c396fb95d4a68da2cc5f56edb4e8347dcc",
+      "source_id": "xai-grok-sandbox-098628c3",
+      "title": "Grok Build sandbox",
+      "url": "https://github.com/xai-org/grok-build/blob/b13fa526f5112c0b20dad5f1f2300d3d3b127895/crates/codegen/xai-grok-pager/docs/user-guide/18-sandbox.md"
+    }
+  ]
+}

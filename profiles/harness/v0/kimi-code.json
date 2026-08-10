@@ -1,0 +1,213 @@
+{
+  "admission": {
+    "expected": "refused",
+    "reason_code": "persistent-sessions-open-builtins-and-auto-update",
+    "requires_real_vendor_smoke": true
+  },
+  "artifact": {
+    "auto_update_policy": "tui-auto-install-must-be-disabled-before-smoke",
+    "config_precedence": "environment-overrides-config-project-mcp-and-runtime-rules",
+    "executable_sha256": null,
+    "install_source": "not-installed-exact-current-kimi-code-source-audit-only",
+    "limitations": [
+      "built-in-service-and-subagent-surface-not-yet-closed",
+      "current-kimi-code-and-legacy-kimi-cli-contracts-not-interchangeable",
+      "session-history-persistence-not-disabled"
+    ],
+    "migration_policy": "never-import-kimi-cli-claude-codex-or-personal-sessions",
+    "state_roots": [
+      "fresh-kimi-code-home-required"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "kimi-code-sessions-b63ee8d2"
+      ],
+      "note": "Sessions persist and no complete no-history mode is pinned.",
+      "state": "fail"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "KIMI_CODE_HOME relocates Kimi Code state.",
+      "state": "pass"
+    },
+    "proposal_only": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "secret_custody": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Global tools enabled and disabled lists are enforced before execution.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "kimi-code-migration-191cc5fa"
+      ],
+      "note": "Migration exists and TUI auto-install defaults on; both require closure.",
+      "state": "fail"
+    },
+    "version_pinned": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "write_approval": {
+      "evidence": [
+        "kimi-code-config-27f5f03f"
+      ],
+      "note": "Ordered allow, deny and ask rules can gate tools.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "documented-candidate",
+  "harness": {
+    "name": "Kimi Code CLI",
+    "source_refs": [
+      "kimi-code-config-27f5f03f",
+      "kimi-code-mcp-a6533c38",
+      "kimi-code-migration-191cc5fa",
+      "kimi-code-sessions-b63ee8d2"
+    ],
+    "surface": "cli-acp-mcp",
+    "vendor": "Moonshot AI",
+    "version": "source-commit-0401ec4286f37929d1d298527c05f5351850bf8a"
+  },
+  "launch": {
+    "argv": [
+      "kimi",
+      "-p",
+      "<matrix-task>"
+    ],
+    "configuration": [
+      "default_permission_mode=manual",
+      "telemetry=false",
+      "tools.enabled=matrix-only",
+      "upgrade.auto_install=false"
+    ],
+    "environment": [
+      "KIMI_CODE_HOME=<validated-disposable-root>"
+    ],
+    "status": "reference-only"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-kimi-code-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-kimi-code-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "kimi-code",
+  "schema": "dm.harness-profile/v0"
+}
