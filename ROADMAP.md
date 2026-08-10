@@ -3,23 +3,20 @@
 ## Active critical path
 
 The complete minimum protocol and the real same-being two-host path have now
-been exercised. DM-083 remains active because real incarnation succession
-exposed a safe, non-duplicating exact-response replay defect. The repaired
-candidate must be repinned, redeployed and confirmed before the roadmap moves
-to cross-being and fresh-host evidence. [`RESUME.md`](RESUME.md) is the
-cold-start handoff and Project 9 is the authoritative live board.
+been exercised. DM-083 is operationally accepted at exact Matrix runtime
+`f0181f7` and Cluster merge `5d3892e`, including repaired historical retry,
+successor convergence, rollback and checked recovery. [`RESUME.md`](RESUME.md)
+is the cold-start handoff and Project 9 is the authoritative live board.
 
 Resume in dependency order:
 
-1. freeze and validate the successor-retry repair, then repin, redeploy and
-   reverify Daimon Cluster plus both Matrix runtimes;
-2. finish successor-lane convergence and fresh checked recovery evidence;
-3. complete the consented cross-being exchange and fresh-host
+1. complete the consented cross-being native logical-message canary;
+2. complete the fresh-host
    rebirth/recovery gates;
-4. complete remaining collective-memory/additional-harness and adversarial
+3. complete remaining collective-memory/additional-harness and adversarial
    security gates required by the board;
-5. freeze and publish the V0.1.0 release; and
-6. retire/archive the transitional Tribe Bridge only through its explicit
+4. freeze and publish the V0.1.0 release; and
+5. retire/archive the transitional Tribe Bridge only through its explicit
    human-authorized migration cards.
 
 No live-host step is implied by a local conformance result or by this roadmap.

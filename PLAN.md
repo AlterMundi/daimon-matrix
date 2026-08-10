@@ -33,8 +33,9 @@ is explicitly outside the MVP.
 6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
    encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
    resolution; then remove the standalone runtime dependency (DM-050 through
-   DM-055). DM-055's native encrypted peer implementation is complete behind
-   bundle V3; its authorized two-host cutover remains an operational gate.
+   DM-055). DM-055's native encrypted peer implementation has passed the
+   same-being two-host DM-083 cutover. Cross-being authenticated intake and a
+   signed semantic receipt remain the replacement gate before Tribe removal.
 7. Complete birth/species/source behavior and their synthetic acceptance
    journeys. DM-060, DM-061 and DM-081 now implement those isolated journeys;
    DM-082 relationship grants precede the DM-071 external source canary.
@@ -45,9 +46,9 @@ is explicitly outside the MVP.
 9. Run local, cross-host, recovery, revocation, and rebirth journeys with real
    processes, cryptography, encrypted state, transport, Cluster bodies, and
    separately authorized synthetic/live evidence. The same-being two-host
-   journey reached a real authority-epoch succession; its exact historical
-   retry repair is the active release gate before cross-being and fresh-host
-   completion.
+   journey, authority-epoch succession, exact historical retry and checked
+   recovery passed. Cross-being delivery and fresh-host rebirth/recovery are
+   the active release gates.
 10. Freeze, audit, publish, and independently reinstall the V0.1 release.
 
 ## Release invariants

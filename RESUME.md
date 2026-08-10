@@ -1,17 +1,17 @@
 # Project resume checkpoint
 
 Status: autonomous V0 completion is active. The operator authorized reversible
-local and SSH work on the named systems on 2026-08-10. The same-being DM-083
-dogfood reached real succession and exposed one safe, non-duplicating exact
-retry failure. The current batch repairs that defect, repins Cluster and must
-redeploy the exact candidate before moving to the cross-being/fresh-host gates.
+local and SSH work on the named systems on 2026-08-10. DM-083 same-being live
+dogfood is operationally accepted at exact Matrix runtime `f0181f7` and Cluster
+merge `5d3892e`. The active dependency path is now consented cross-being native
+delivery followed by fresh-host rebirth/recovery.
 
 Last reconciled: 2026-08-10.
 
 ## Proven checkpoint
 
-- Matrix candidate `bcf6b9f6ef5a46fdd35dfc8036a7a4d458103c7b` and Cluster
-  merge `0a4bd1e5769874b4d91f476b1c1942db51ce0f97` ran on Legion and
+- Matrix runtime `f0181f7117859f3f9cc4afc7dfbdaf9b06e74754` and Cluster
+  merge `5d3892eaca1744e98874cab8d53be46e3eb186de` run on Legion and
   daimonmatrix as two embodiments of one fresh being. Native encrypted peer
   pull, pending intake, observer-local adoption/reversal, ordinary restart,
   ambiguous peer outage and separate Tribe v1 transport evidence succeeded.
@@ -22,17 +22,17 @@ Last reconciled: 2026-08-10.
   preserving accepted history on both hosts. Replaying an old exact request
   did not duplicate its event, but the daemon closed the reply because the
   service and client expected only the active server origin.
-- The current Matrix candidate fixes that exact historical-retry seam with
-  authority-history verification plus bounded client config V2. Focused tests,
-  typing and generators pass. Exact live redeployment is still required before
-  this repair becomes operational evidence.
+- The repaired V2 client returned the exact historical CLI output across the
+  succession without duplicating the event. A successor-lane event then
+  converged both hosts to six known events and one heads digest. Portable
+  restores, fresh encrypted backups and final service/integrity checks passed.
 
 ## Repositories and authority
 
 | Repository | Recorded state | Role and resume warning |
 |---|---|---|
-| `AlterMundi/daimon-matrix` | draft PR #112 branch at `bcf6b9f`; successor-retry repair in the working tree | Canonical identity, ledgers, scopes, relationship/grant authority, communication semantics and peer runtime. Freeze a new exact candidate after the repair gate. PR #112 still requires independent review. |
-| `nicoechaniz/daimon-cluster` | `main` at `0a4bd1e`; deployed exact Matrix pin `bcf6b9f` | Hosts bodies/storage/lifecycle and resource fences. Its deployment/backup path is operationally corrected, but it must be repinned to the repaired Matrix candidate. Cluster never gains social, grant or canonical-ledger authority. |
+| `AlterMundi/daimon-matrix` | draft PR #112; tested/deployed runtime commit `f0181f7` | Canonical identity, ledgers, scopes, relationship/grant authority, communication semantics and peer runtime. DM-083 runtime acceptance passed; PR #112 still requires independent review. Later documentation commits do not change the exact deployed runtime pin. |
+| `nicoechaniz/daimon-cluster` | `main` at `5d3892e`; deployed exact Matrix pin `f0181f7` | Hosts bodies/storage/lifecycle and resource fences. Deployment, whole-pair rollback and checked backup/restore passed. Cluster never gains social, grant or canonical-ledger authority. |
 | `nicoechaniz/tribe-bridge` | `main` at `0a465bf`; environment repair branch at `ecb51d8` | V1 remains the transitional deployed human-message carrier. Keep ACK/dedup evidence separate from Matrix intake and semantic receipts, then retire it only after the native live message and migration gates. |
 
 No repository named `tribe-chat` was found in the local project set or the
@@ -48,20 +48,18 @@ host” means the VPS, not a software component or being authority.
 
 1. Read this file, `CURRENT-STATE.md`, `ROADMAP.md`, DM-083 issue #111, draft
    PR #112, `reviews/DM-083.md` and `docs/dm083-two-host-dogfood.md`.
-2. Complete the successor-retry source gate, commit and push one immutable
-   Matrix candidate, and wait for its full CI.
-3. Repin Cluster from `bcf6b9f` to that exact candidate, run its clean installed
-   cross-repository gate and merge only after CI.
-4. Deploy the exact pair to the two authorized runtimes. Configure the retired
-   Legion origin in client config V2, replay the preserved request and require
-   its original response hash with no event-count change.
-5. Append one harmless successor-lane event, synchronize both directions until
-   heads converge, then take fresh checked snapshots/backups and update the
-   redacted issue evidence.
-6. Continue the V0 dependency path in Project 9: consented cross-being canary,
-   fresh-host rebirth/recovery, native logical-message cutover, remaining
-   adapter/security gates, release candidate and reference release.
-7. Remove transitional compatibility and archive Tribe Bridge only after the
+2. Preserve `f0181f7` as the exact deployed DM-083 runtime candidate and
+   `5d3892e` as its Cluster host pair; documentation-only successors do not
+   silently move that pin.
+3. Complete the Project 9 consented cross-being canary using Matrix's native
+   authenticated intake and signed semantic receipt. Do not infer that result
+   from the already-proven Tribe ACK lane.
+4. Complete fresh-host rebirth/recovery with a new root-authorized embodiment
+   credential, independent private custody and no copied writable database.
+5. Complete remaining adapter, collective-memory and adversarial security
+   gates, then freeze the exact release candidate and independently reinstall
+   it.
+6. Remove transitional compatibility and archive Tribe Bridge only after the
    native replacement and explicit migration gates prove it is unnecessary.
 
 ## Stop conditions

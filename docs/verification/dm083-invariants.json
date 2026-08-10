@@ -25,9 +25,12 @@
     "tests/test_dm025_client.py",
     "tests/test_dm079_authority_epochs.py"
   ],
-  "operational_confirmation_pending": [
-    "exact repaired candidate deployment",
-    "byte-identical historical retry after live succession",
-    "successor-lane two-host convergence"
-  ]
+  "operational_confirmation": {
+    "cluster_merge": "5d3892eaca1744e98874cab8d53be46e3eb186de",
+    "heads_digest": "509fe38e3a6d0278721b4cc0c2cc4c33a44ece41655ac9b29fcacce1ca8973df",
+    "historical_retry_output_sha256": "b4b35839e09acb27e3ec5e3e741812d7682cac104fa9099b0e0f76aecb34e215",
+    "known_events_per_host": 6,
+    "matrix_runtime_commit": "f0181f7117859f3f9cc4afc7dfbdaf9b06e74754",
+    "status": "passed"
+  }
 }

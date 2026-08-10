@@ -2,21 +2,21 @@
 
 ## Active completion checkpoint — 2026-08-10
 
-DM-083 has moved beyond preparation. Matrix `bcf6b9f` and Cluster `0a4bd1e`
-ran across the real Legion and daimonmatrix host embodiments of one fresh
-being. Encrypted peer exchange, pending import, observer-local
-adoption/reversal, ordinary exact retry, outage refusal, portable restore,
-checked off-host backup, scheduled quiesce/resume and one separate Tribe v1
-transport message were exercised. A signed authority epoch then advanced the
-Legion incarnation while preserving accepted history.
+DM-083 is operationally accepted. Exact Matrix runtime `f0181f7` and Cluster
+merge `5d3892e` run across the real Legion and daimonmatrix host embodiments of
+one fresh being. Encrypted peer exchange, pending import, observer-local
+adoption/reversal, ordinary exact retry, outage refusal, whole-pair rollback,
+portable restore, checked off-host backup, scheduled quiesce/resume and one
+separate Tribe v1 transport message were exercised. A signed authority epoch
+advanced the Legion incarnation while preserving accepted history.
 
-The real succession found one closed failure: a preserved exact request did
-not duplicate its event, but its old authenticated response was rejected solely
-because the server incarnation had retired. The active Matrix working tree
-adds authority-history-aware service replay and bounded client config V2. It
-must pass the full gate, become one immutable commit, repin Cluster and be
-redeployed before DM-083 is accepted. The exact sequence and remaining gates
-are in [`RESUME.md`](RESUME.md); the public audit is
+The real succession first exposed a safe historical-response rejection. The
+repaired V2 client then replayed the preserved request byte-identically without
+duplicating its event, and one successor event converged both hosts to six
+known events. Final service, Matrix integrity, Cluster audit-chain, portable
+restore and encrypted backup checks passed. The next dependency gates are
+cross-being native semantic delivery and fresh-host rebirth/recovery. The exact
+sequence is in [`RESUME.md`](RESUME.md); the public audit is
 [`reviews/DM-083.md`](reviews/DM-083.md).
 
 PR #112 remains subject to independent review. Tribe Bridge remains only the

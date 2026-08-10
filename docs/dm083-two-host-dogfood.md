@@ -1,8 +1,9 @@
 # DM-083 two-host CompAII dogfood
 
-Status: live same-being dogfood executed under operator authorization on
-2026-08-10; the successor-incarnation retry defect it exposed is repaired in
-the current candidate and awaits exact-candidate redeployment confirmation.
+Status: accepted live same-being dogfood executed under operator authorization
+on 2026-08-10. The successor-incarnation retry defect it exposed was repaired,
+redeployed as exact Matrix runtime commit `f0181f7`, and confirmed against
+Daimon Cluster merge `5d3892e`.
 Start from [`../RESUME.md`](../RESUME.md).
 
 “Matrix” means `daimon-matrix`; Matrix.org is outside this system. The two
@@ -174,8 +175,45 @@ only for a request issued no later than that incarnation's retirement. The
 stored response is never resigned or rewritten.
 
 The repair has focused regression, strict typing and deterministic-generator
-coverage. Its final operational gate is to deploy the exact repaired commit,
-configure the retired origin locally, retry the preserved request, prove the
-same response hash and unchanged event count, then converge the successor lane.
-Until that gate passes, DM-083 remains a candidate rather than completed live
-evidence.
+coverage. Matrix commit
+`f0181f7117859f3f9cc4afc7dfbdaf9b06e74754` passed the full 543-test source
+suite, installed cross-repository contract, reproducible build, secret scan and
+CI. Daimon Cluster merge
+`5d3892eaca1744e98874cab8d53be46e3eb186de` pins that exact runtime and passed
+297 tests plus its Python 3.11–3.14 CI matrix.
+
+## Repaired-candidate operational confirmation
+
+The exact pair was deployed to both authorized runtimes. The first remote
+attempt used the wrong readiness route and exercised the automated whole-pair
+rollback: the prior services and state returned cleanly before a corrected,
+bounded `/v1/health` probe allowed the second deployment. This is retained as
+rollback evidence rather than hidden as setup noise.
+
+- The preserved pre-succession CLI request replayed through client config V2
+  with byte-identical output SHA-256
+  `b4b35839e09acb27e3ec5e3e741812d7682cac104fa9099b0e0f76aecb34e215`.
+  Known events stayed at five during the retry, so no duplicate effect was
+  created.
+- One harmless event was then authored on the successor lane. The remote host
+  imported the bounded missing page and the final reverse pull imported zero.
+  Both hosts finished with six known events across three incarnation lanes and
+  the same frozen heads digest
+  `509fe38e3a6d0278721b4cc0c2cc4c33a44ece41655ac9b29fcacce1ca8973df`.
+- Fresh portable snapshots restored to separate verification roots. Their
+  public manifest hashes are
+  `4571f69579d85a1f4ebbc3d7045d8624688c4b93f98188c2485e501d903d2406`
+  and
+  `fb72ee46b921b4a3431eb1be94c5179c8cbae3c9b939fa656336cc78bb460c0c`.
+  Fresh encrypted restic snapshots `483c96c2` and `f53e2629` passed repository
+  checks and were mirrored off host.
+- Final runtime checks found both services active, Cluster health `ok` with
+  its audit chain valid, exact Matrix install metadata at `f0181f7`, valid
+  runtime integrity and six known events on each host.
+
+DM-083 same-being operational acceptance is therefore complete. Draft PR #112
+still requires independent review before merge, and offline root/recovery
+escrow remains a physical/governance release gate. Neither condition weakens
+the completed runtime evidence. The next roadmap gates are a consented
+cross-being native logical-message canary and fresh-host rebirth/recovery;
+Tribe Bridge remains transitional until those replacement gates pass.
