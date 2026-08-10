@@ -1,8 +1,8 @@
 # DM-083 two-host CompAII dogfood
 
-Status: preparation reconciled after DM-082, then intentionally paused. No host
-was contacted and no live service, route, key, database or Cluster resource was
-changed by this card. Start from [`../RESUME.md`](../RESUME.md).
+Status: active after operator authorization on 2026-08-10. Read-only preflight
+contacted Legion and daimonmatrix but changed no live service, route, key,
+database or Cluster resource. Start from [`../RESUME.md`](../RESUME.md).
 
 “Matrix” means `daimon-matrix`; Matrix.org is outside this system. The two
 participants are the existing Legion and daimonmatrix host embodiments of one
@@ -29,6 +29,15 @@ that must be refreshed:
    the public socket. A relocated root could pass Cluster's path check and then
    fail at `bind(2)`. The staging basename is now shorter and an exact 107-byte
    Linux `AF_UNIX` regression test protects the boundary.
+3. Read-only host inventory found no current root-bound Matrix being on either
+   host. The only remnants are matching all-zero historical fixture manifests
+   in trash; they are not migration authority. Matrix therefore now owns the
+   fresh plural-being `daimon-bootstrap` ceremony instead of asking Cluster to
+   invent identity.
+4. V6 configured only a local peer listener, forcing an operator to inject a
+   remote URL outside the runtime contract. V7 adds exact per-embodiment peer
+   targets and `we.sync.peer-pull`, so the ordinary CLI can execute the frozen
+   sync plan without receiving endpoint authority.
 
 DM-082 now proves authenticated recipient intake and semantic delivery through
 a real loopback DM-053 HTTP carrier between isolated beings. That closes the
@@ -80,8 +89,9 @@ window:
    snapshot; preserve the host-local client material separately;
 2. install one commit-bound Matrix artifact and the compatible Cluster release
    on both hosts;
-3. install public bundles atomically, with distinct local custody and explicit
-   AnyVPN peer endpoints, then start one process per embodiment;
+3. use the Matrix-owned bootstrap ceremony on the trusted bootstrap host, then
+   install V7 public bundles atomically, with distinct local custody and
+   explicit AnyVPN peer endpoints, and start one process per embodiment;
 4. verify local `/me` and `/we` before opening the remote path;
 5. exchange one encrypted `/me` request, then append one harmless novelty and
    synchronize bounded pages in both directions until heads converge;

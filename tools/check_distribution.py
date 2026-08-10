@@ -57,6 +57,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/local_api.py",
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
+        "src/daimon_matrix/operator_bootstrap.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
         "src/daimon_matrix/multihost.py",
@@ -108,6 +109,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/local_api.py",
         "daimon_matrix/local_we.py",
         "daimon_matrix/mcp_server.py",
+        "daimon_matrix/operator_bootstrap.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
         "daimon_matrix/multihost.py",
@@ -315,6 +317,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/local_api.py",
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
+        "src/daimon_matrix/operator_bootstrap.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
         "src/daimon_matrix/multihost.py",
@@ -387,6 +390,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     if files[f"{DIST_INFO}/entry_points.txt"] != (
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
+        b"daimon-bootstrap = daimon_matrix.operator_bootstrap:main\n"
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
@@ -451,6 +455,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",
         "daimon_matrix/local_we.py": "src/daimon_matrix/local_we.py",
         "daimon_matrix/mcp_server.py": "src/daimon_matrix/mcp_server.py",
+        "daimon_matrix/operator_bootstrap.py": (
+            "src/daimon_matrix/operator_bootstrap.py"
+        ),
         "daimon_matrix/memory_policy.py": "src/daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py": (
             "src/daimon_matrix/memory_projection.py"

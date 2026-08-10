@@ -46,6 +46,7 @@ class PackageMetadataTests(unittest.TestCase):
             project["scripts"],
             {
                 "daimon": "daimon_matrix.cli:main",
+                "daimon-bootstrap": "daimon_matrix.operator_bootstrap:main",
                 "daimon-codex-body": "daimon_matrix.codex_body:main",
                 "daimon-conformance": "daimon_matrix.conformance:main",
                 "daimon-curator-worker": "daimon_matrix.curator_worker_process:main",
@@ -175,6 +176,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/local_api.py",
                 "src/daimon_matrix/local_we.py",
                 "src/daimon_matrix/mcp_server.py",
+                "src/daimon_matrix/operator_bootstrap.py",
                 "src/daimon_matrix/memory_policy.py",
                 "src/daimon_matrix/memory_projection.py",
                 "src/daimon_matrix/multihost.py",
@@ -227,6 +229,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/local_api.py",
                 "daimon_matrix/local_we.py",
                 "daimon_matrix/mcp_server.py",
+                "daimon_matrix/operator_bootstrap.py",
                 "daimon_matrix/memory_policy.py",
                 "daimon_matrix/memory_projection.py",
                 "daimon_matrix/multihost.py",

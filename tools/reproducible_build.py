@@ -51,6 +51,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/local_api.py"),
     Path("src/daimon_matrix/local_we.py"),
     Path("src/daimon_matrix/mcp_server.py"),
+    Path("src/daimon_matrix/operator_bootstrap.py"),
     Path("src/daimon_matrix/memory_policy.py"),
     Path("src/daimon_matrix/memory_projection.py"),
     Path("src/daimon_matrix/multihost.py"),

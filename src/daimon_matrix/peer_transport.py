@@ -18,7 +18,7 @@ import stat
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 from urllib.parse import urlsplit
@@ -1040,6 +1040,7 @@ class PeerClientContext:
     custody: PeerCustody
     outbox: PeerOutbox
     clock: Clock
+    endpoints: Mapping[str, tuple[str, float]] = field(default_factory=dict)
 
     def target(self, embodiment_id: str) -> RecipientTarget:
         embodiment_id = _text(embodiment_id)
@@ -1063,6 +1064,18 @@ class PeerClientContext:
             outbox=self.outbox,
             round_trip=round_trip,
             clock=self.clock,
+        )
+
+    def configured(self, embodiment_id: str) -> tuple[RecipientTarget, PeerClient]:
+        """Resolve one exact configured peer without accepting an endpoint per call."""
+
+        target = self.target(embodiment_id)
+        configuration = self.endpoints.get(embodiment_id)
+        if configuration is None:
+            raise PeerTransportError()
+        endpoint, timeout_seconds = configuration
+        return target, self.client(
+            http_peer_round_trip(endpoint, timeout_seconds=timeout_seconds)
         )
 
 

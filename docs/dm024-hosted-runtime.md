@@ -44,6 +44,15 @@ policy and recovers every fenced application against the canonical ledger
 before serving. The public bundle contains no maintainer seed, pointer bytes,
 runner handle or mutable package source.
 
+DM-081 adds source custody in V5 and DM-082 adds relationship state in V6.
+DM-083 adds `dm.runtime.bundle/v7`: every active remote embodiment has one
+sorted, exact native-peer HTTP(S) target and timeout. The endpoint is fixed at
+startup rather than accepted from a sync call. `we.sync.peer-pull` reuses the
+DM-023 request frozen by `scope.we.sync-plan`, performs the encrypted peer
+round trip inside the daemon's custody boundary and atomically imports one
+bounded page. The installed `daimon-bootstrap` ceremony and operational steps
+are documented in `docs/runbooks/operator-bootstrap.md`.
+
 ## Local protocol
 
 The only release listener is an owner-local AF_UNIX stream socket. Linux peer
@@ -57,11 +66,12 @@ Authentication, expiry, peer UID and method scope are checked before params or
 runtime membership are disclosed. Unauthenticated framing/auth failures close
 without a response. Authenticated failures use stable bounded codes.
 
-The original closed registry is `runtime.status`; `we.heads`, `we.preview`, `we.diff`;
-`we.observe`, `we.decide`; `we.projection.get`, `we.projection.rebuild`; and the
-four DM-023 sync operations. There is no generic signing, secret retrieval,
-identity selection, TCP/HTTP, external effect, Tribe routing or live `/we`
-fan-out method.
+The original closed registry is `runtime.status`; `we.heads`, `we.preview`,
+`we.diff`; `we.observe`, `we.decide`; `we.projection.get`,
+`we.projection.rebuild`; and the four transport-neutral DM-023 sync operations.
+V7 adds the bounded configured `we.sync.peer-pull` composition. There is no
+generic signing, secret retrieval, identity selection, arbitrary endpoint,
+Tribe routing or implicit adoption method.
 
 DM-052 extends the daemon registry with closed `communication.*` operations for
 message/leg projection, attempts, delivery replay, route ACKs, terminal
@@ -125,6 +135,6 @@ not. Telegram, Buzz or another human gateway may be added later only behind
 the disabled generic edge. No carrier becomes event, scope, adoption, receipt
 or Weave-cursor authority.
 
-Schemas are in `schemas/hosted/v1/` through `schemas/hosted/v4/`; runnable
+Schemas are in `schemas/hosted/v1/` through `schemas/hosted/v7/`; runnable
 verification is in `tests/test_dm024_service.py`, `tests/test_dm024_runtime.py`
 and `tests/test_dm061_species.py`.

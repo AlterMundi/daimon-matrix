@@ -30,6 +30,7 @@ from daimon_matrix.service import (
     CURATOR_METHODS,
     MEMORY_METHODS,
     METHODS,
+    PEER_METHODS,
     RELATIONSHIP_METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
@@ -445,6 +446,14 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "--sync-request-id",
                 "80000000-0000-4000-8000-000000000002",
             ],
+            [
+                "sync",
+                "peer-pull",
+                "--sync-request-id",
+                "80000000-0000-4000-8000-000000000003",
+                "--target-embodiment-id",
+                "embodiment:remote",
+            ],
         ]
         for name in ("serve", "pull", "validate-receipt"):
             commands.append(
@@ -468,6 +477,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 CURATOR_METHODS
                 | MEMORY_METHODS
                 | METHODS
+                | PEER_METHODS
                 | RELATIONSHIP_METHODS
                 | REVIEW_METHODS
                 | SCOPE_METHODS
@@ -514,7 +524,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 66)
+        self.assertEqual(len(tools), 67)
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -581,6 +591,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "we_decide",
                 "we_projection_rebuild",
                 "we_sync_request",
+                "we_sync_peer_pull",
                 "we_sync_serve",
                 "we_sync_pull",
                 "we_sync_validate_receipt",
@@ -596,6 +607,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                     CURATOR_METHODS
                     | MEMORY_METHODS
                     | METHODS
+                    | PEER_METHODS
                     | RELATIONSHIP_METHODS
                     | REVIEW_METHODS
                     | SCOPE_METHODS

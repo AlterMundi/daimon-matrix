@@ -250,6 +250,12 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "request_id": args.sync_request_id,
             "limit": args.limit,
         }
+    if command == ("sync", "peer-pull"):
+        return "we.sync.peer-pull", {
+            "sync_request_id": args.sync_request_id,
+            "target_embodiment_id": args.target_embodiment_id,
+            "limit": args.limit,
+        }
     if command == ("sync", "serve"):
         return "we.sync.serve", {
             "request": _bounded_file(args.document),
@@ -669,6 +675,12 @@ def parser() -> argparse.ArgumentParser:
     request = sync_commands.add_parser("request", help="issue one sync request")
     request.add_argument("--sync-request-id", required=True)
     request.add_argument("--limit", type=int, default=100)
+    peer_pull = sync_commands.add_parser(
+        "peer-pull", help="pull one bounded page from a configured native peer"
+    )
+    peer_pull.add_argument("--sync-request-id", required=True)
+    peer_pull.add_argument("--target-embodiment-id", required=True)
+    peer_pull.add_argument("--limit", type=int, default=100)
     for name in ("serve", "pull", "validate-receipt"):
         _common_document(sync_commands.add_parser(name))
     return result

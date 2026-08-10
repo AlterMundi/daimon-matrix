@@ -517,6 +517,11 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("we.sync.request", params, request_id=request_id)
 
+    def sync_peer_pull(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("we.sync.peer-pull", params, request_id=request_id)
+
     def sync_serve(
         self, params: Mapping[str, Any], *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

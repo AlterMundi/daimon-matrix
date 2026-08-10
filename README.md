@@ -59,8 +59,10 @@ is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
 `/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
 fan-out independent of any live carrier. DM-055 adds the optional bundle-V3
 root-bound HPKE/Ed25519 peer transport and direct scope/sync HTTP carrier with
-durable replay. DM-070 proves deterministic convergence between two isolated
-installed processes through partition and restart; a fresh live two-host
+durable replay. DM-083 adds the installed plural-being bootstrap, closed V7
+peer targets and an authenticated configured peer-pull operation. DM-070 proves
+deterministic convergence between two isolated installed processes through
+partition and restart; a fresh live two-host
 cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix

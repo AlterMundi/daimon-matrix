@@ -36,6 +36,13 @@ password descriptor; only the exact validated signing and encryption seeds are
 retained by the purpose-bound custody object. When absent, no peer listener or
 client context exists. V1 and V2 retain their exact prior behavior.
 
+DM-083 closes the remaining operator seam with bundle V7. It adds a sorted,
+complete target map for every active remote embodiment and the authenticated
+`we.sync.peer-pull` composition. Callers provide only the target embodiment and
+the frozen DM-023 request ID; they cannot substitute an endpoint at runtime.
+Configured peers are visible as available in `/we`, while manifest membership
+continues to come only from root authority.
+
 The same `daimon-matrixd` process starts `POST /dm-peer/v1` only after the full
 bundle, root authority, current origin, encrypted custody and stores validate.
 The endpoint accepts one bounded canonical ciphertext and emits one bounded
@@ -77,8 +84,9 @@ being/control/manifest hashes, embodiment/incarnation/credential IDs and
 AnyVPN endpoint. Never copy or print keystore values.
 
 1. Back up and integrity-check each owner-local Matrix state root.
-2. Install the exact reviewed wheel and a V3 bundle with a distinct peer
-   encryption slot, exchange DB, outbox DB and explicit AnyVPN listen address.
+2. Install the exact reviewed wheel and a V7 bundle with a distinct peer
+   encryption slot, exchange DB, outbox DB, explicit AnyVPN listen address and
+   exact remote target.
 3. Start both `daimon-matrixd` processes and verify local `/me` before network
    traffic.
 4. From A, send one encrypted `/me` request to B and validate B's exact origin.
