@@ -11,12 +11,16 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
-from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
+    ValidationError,
+)
+from referencing import Registry, Resource
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA, CLIENT_CONFIG_SCHEMA_V2
 from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import (
     MAX_CAPABILITY_METHODS,
@@ -785,6 +789,45 @@ class ClientSchemaTests(unittest.TestCase):
             )
         )
         Draft202012Validator(schema).validate(tool_index)
+
+        client_schema = json.loads(
+            (ROOT / "schemas/clients/v1/client.schema.json").read_text(encoding="utf-8")
+        )
+        capability_schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        registry = Registry().with_resources(
+            (document["$id"], Resource.from_contents(document))
+            for document in (client_schema, capability_schema)
+        )
+        origin = {
+            "body_ref": "body:dm025-schema",
+            "embodiment_id": "embodiment:dm025-schema",
+            "incarnation_id": "incarnation:dm025-schema:1",
+            "principal_id": "compaii@dm025-schema",
+        }
+        config_v2 = {
+            "schema": CLIENT_CONFIG_SCHEMA_V2,
+            "capability": create_capability(
+                b"v" * 32,
+                client_id="client:dm025-schema",
+                methods=["runtime.status"],
+                not_before_ms=0,
+                not_after_ms=1,
+            ).descriptor,
+            "expected_server": {
+                **origin,
+                "incarnation_id": "incarnation:dm025-schema:2",
+            },
+            "historical_servers": [{"server": origin, "retired_at_ms": 1}],
+        }
+        Draft202012Validator(client_schema, registry=registry).validate(config_v2)
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(client_schema, registry=registry).validate(
+                {**config_v2, "unreviewed": True}
+            )
 
 
 if __name__ == "__main__":

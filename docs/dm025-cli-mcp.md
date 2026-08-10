@@ -24,6 +24,14 @@ after the ordinary 30-second freshness window only if the daemon already has
 its exact journal row and the capability remains active. A never-seen stale
 request is rejected.
 
+After a DM-079 incarnation succession, an already completed retry can carry
+the exact authenticated response of the retired server. Client config V2 keeps
+the current expected origin plus a sorted, bounded list of same-body,
+same-embodiment, same-principal historical origins and their retirement times.
+Only a request issued no later than that retirement may accept the named
+historical response; new work still requires the current server. Config V1
+remains the single-incarnation profile.
+
 The capability method allowlist is bounded at 128 entries. The current fixed
 service surface has 83 methods after DM-082, so one least-privilege operator
 capability may name the complete surface without truncation; exact-bound and

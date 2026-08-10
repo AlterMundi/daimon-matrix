@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import stat
 import threading
@@ -11,6 +12,7 @@ import uuid
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import (
     CLIENT_CONFIG_SCHEMA,
+    CLIENT_CONFIG_SCHEMA_V2,
     ClientConfig,
     ClientError,
     LocalClient,
@@ -161,6 +163,49 @@ class LocalClientTests(ClientFixture):
         self.runtime.socket_path.chmod(0o666)
         with self.assertRaisesRegex(ClientError, "daemon_socket_untrusted"):
             self.client().runtime_status()
+
+    def test_v2_accepts_only_pre_retirement_exact_responses_from_history(
+        self,
+    ) -> None:
+        old = self.origins["legion"]
+        current = {**old, "incarnation_id": "incarnation:client-successor"}
+        self.config_path.write_bytes(
+            canonical_bytes(
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA_V2,
+                    "capability": self.capability.descriptor,
+                    "expected_server": current,
+                    "historical_servers": [{"server": old, "retired_at_ms": NOW}],
+                }
+            )
+        )
+        config = ClientConfig.load(self.config_path, bytearray(self.capability.key))
+        client = LocalClient(
+            self.runtime.socket_path,
+            config,
+            clock=lambda: NOW,
+            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000011"),
+            nonce_factory=lambda size: b"h" * size,
+        )
+        request = client.prepare("runtime.status", {})
+        response = client.send(request)
+        self.assertEqual(response["server"], old)
+
+        late = LocalClient(
+            self.runtime.socket_path,
+            config,
+            clock=lambda: NOW + 1,
+            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000012"),
+            nonce_factory=lambda size: b"i" * size,
+        )
+        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
+            late.runtime_status()
+
+        invalid = json.loads(self.config_path.read_bytes())
+        invalid["historical_servers"][0]["server"]["principal_id"] = "compaii@other"
+        self.config_path.write_bytes(canonical_bytes(invalid))
+        with self.assertRaisesRegex(ClientError, "invalid_historical_servers"):
+            ClientConfig.load(self.config_path, bytearray(self.capability.key))
 
     def test_public_surface_has_no_arbitrary_method_call(self) -> None:
         client = self.client()

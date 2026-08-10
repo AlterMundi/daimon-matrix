@@ -1,38 +1,39 @@
 # Project resume checkpoint
 
-Status: intentionally paused after the local minimum functional slice. This
-checkpoint records repository state only; it authorizes no host access,
-deployment, service restart, route change, message, key operation, or Cluster
-effect.
+Status: autonomous V0 completion is active. The operator authorized reversible
+local and SSH work on the named systems on 2026-08-10. The same-being DM-083
+dogfood reached real succession and exposed one safe, non-duplicating exact
+retry failure. The current batch repairs that defect, repins Cluster and must
+redeploy the exact candidate before moving to the cross-being/fresh-host gates.
 
-Last reconciled: 2026-08-06.
+Last reconciled: 2026-08-10.
 
 ## Proven checkpoint
 
-- `daimon-matrix` PR #113 / DM-082 is merged on `main` at `dad012d`. The
-  installed synthetic journey covers two distinct beings and ledgers,
-  bilateral consent, Tribe membership, a bounded grant, DM-054 resolution,
-  DM-051/052 encrypted logical delivery through DM-053 loopback HTTP,
-  authenticated intake, an independently signed semantic receipt, revocation,
-  stale direct/hub refusal, restart, and exact replay.
-- The DM-082 source suite passed 539 tests; the installed wheel suite passed
-  420 tests. Two installed conformance runs were byte-identical and reported
-  `release_ready: true`. The public implementation/self-audit is
-  `reviews/DM-082.md`; the runnable entry point is documented in
-  `docs/dm082-relationships.md`.
-- DM-082 used disposable local state and loopback only. No real participant,
-  account, host, Cluster resource, or live route was contacted or changed.
-
-This is enough to iterate on the minimum protocol locally. It is not evidence
-of a live CompAII rebirth or of an ordinary two-host user experience.
+- Matrix candidate `bcf6b9f6ef5a46fdd35dfc8036a7a4d458103c7b` and Cluster
+  merge `0a4bd1e5769874b4d91f476b1c1942db51ce0f97` ran on Legion and
+  daimonmatrix as two embodiments of one fresh being. Native encrypted peer
+  pull, pending intake, observer-local adoption/reversal, ordinary restart,
+  ambiguous peer outage and separate Tribe v1 transport evidence succeeded.
+- Portable snapshots restored with exact manifests. Encrypted restic backups
+  were checked, mirrored off host and rerun through the corrected scheduled
+  quiesce/resume path.
+- A signed authority epoch advanced Legion to one successor incarnation while
+  preserving accepted history on both hosts. Replaying an old exact request
+  did not duplicate its event, but the daemon closed the reply because the
+  service and client expected only the active server origin.
+- The current Matrix candidate fixes that exact historical-retry seam with
+  authority-history verification plus bounded client config V2. Focused tests,
+  typing and generators pass. Exact live redeployment is still required before
+  this repair becomes operational evidence.
 
 ## Repositories and authority
 
 | Repository | Recorded state | Role and resume warning |
 |---|---|---|
-| `AlterMundi/daimon-matrix` | `main` at least `dad012d`; draft PR #112 on `dm-083-two-host-dogfood` | Canonical identity, ledgers, scopes, relationship/grant authority, communication semantics and peer runtime. PR #112 is preparation only and still requires the human gate. |
-| `nicoechaniz/daimon-cluster` | executable baseline `5cc2583`; documentation `main` includes PRs #53–#55 | Documentation may advance without changing executable bytes; inspect current Git head. The executable baseline hosts bodies/storage/lifecycle and resource fences, but its DM-083 pin still targets pre-DM-082 Matrix `8145b4c`; repin and reverify through issue #52 before any dogfood. Cluster never gains social, grant or canonical-ledger authority. |
-| `nicoechaniz/tribe-bridge` | deployed/runtime code baseline `b81a683`; documentation `main` includes PRs #51/#54 | Documentation may advance without redeployment; inspect current Git head. V1 remains the transitional deployed human-message carrier. Keep its ACK/dedup evidence separate from Matrix intake and semantic receipts. Do not archive it until the Matrix release and explicit migration cards authorize that effect. |
+| `AlterMundi/daimon-matrix` | draft PR #112 branch at `bcf6b9f`; successor-retry repair in the working tree | Canonical identity, ledgers, scopes, relationship/grant authority, communication semantics and peer runtime. Freeze a new exact candidate after the repair gate. PR #112 still requires independent review. |
+| `nicoechaniz/daimon-cluster` | `main` at `0a4bd1e`; deployed exact Matrix pin `bcf6b9f` | Hosts bodies/storage/lifecycle and resource fences. Its deployment/backup path is operationally corrected, but it must be repinned to the repaired Matrix candidate. Cluster never gains social, grant or canonical-ledger authority. |
+| `nicoechaniz/tribe-bridge` | `main` at `0a465bf`; environment repair branch at `ecb51d8` | V1 remains the transitional deployed human-message carrier. Keep ACK/dedup evidence separate from Matrix intake and semantic receipts, then retire it only after the native live message and migration gates. |
 
 No repository named `tribe-chat` was found in the local project set or the
 `nicoechaniz`/`AlterMundi` GitHub repositories at this checkpoint. If
@@ -46,29 +47,22 @@ host” means the VPS, not a software component or being authority.
 ## Exact resume order
 
 1. Read this file, `CURRENT-STATE.md`, `ROADMAP.md`, DM-083 issue #111, draft
-   PR #112, and `docs/dm083-two-host-dogfood.md`.
-2. Treat the latest Project 9 item state as authoritative over snapshot counts
-   in prose. Confirm that DM-082 remains Done and DM-083 remains the active
-   pause/resume card.
-3. Freeze one immutable Matrix DM-083 candidate from PR #112 after it contains
-   current `main`. Do not change that candidate silently after downstream
-   verification.
-4. Update Cluster from its stale `8145b4c` Matrix pin to that exact candidate,
-   accept the V6 relationship bundle without interpreting it, and run the
-   installed cross-repository suite. Record the resulting Cluster commit.
-5. Produce the bounded read-only two-host preflight from DM-083. Stop there and
-   obtain explicit operator authorization for the named hosts, effects,
-   maintenance window and rollback plan.
-6. Only after that approval, execute the reversible Legion ↔ daimonmatrix host
-   dogfood: installed `/me`, `/we`, diff/sync, observer-local
-   adoption/reversal, one separately accounted Tribe v1 inert message,
-   successor-incarnation restart, and rollback evidence.
-7. Record redacted evidence without changing the already verified runtime
-   bytes. If evidence must change a pinned repository commit, repin and rerun
-   the exact downstream gate before claiming completion.
-8. Continue the V0 dependency path in Project 9: consented cross-being canary
-   and fresh-host rebirth, remaining adapter/security gates, release candidate,
-   reference release, and only then the explicit Tribe Bridge archive cards.
+   PR #112, `reviews/DM-083.md` and `docs/dm083-two-host-dogfood.md`.
+2. Complete the successor-retry source gate, commit and push one immutable
+   Matrix candidate, and wait for its full CI.
+3. Repin Cluster from `bcf6b9f` to that exact candidate, run its clean installed
+   cross-repository gate and merge only after CI.
+4. Deploy the exact pair to the two authorized runtimes. Configure the retired
+   Legion origin in client config V2, replay the preserved request and require
+   its original response hash with no event-count change.
+5. Append one harmless successor-lane event, synchronize both directions until
+   heads converge, then take fresh checked snapshots/backups and update the
+   redacted issue evidence.
+6. Continue the V0 dependency path in Project 9: consented cross-being canary,
+   fresh-host rebirth/recovery, native logical-message cutover, remaining
+   adapter/security gates, release candidate and reference release.
+7. Remove transitional compatibility and archive Tribe Bridge only after the
+   native replacement and explicit migration gates prove it is unnecessary.
 
 ## Stop conditions
 

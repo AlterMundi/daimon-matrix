@@ -1,25 +1,27 @@
 # Current state
 
-## Pause checkpoint — 2026-08-06
+## Active completion checkpoint — 2026-08-10
 
-DM-082 is merged on `main` at `dad012d` and supplies the first complete local
-minimum relationship-to-message journey. Its installed synthetic evidence is
-release-ready and byte-reproducible; it contacted no live host or participant.
-The project is intentionally paused before DM-083 live effects. The exact
-cross-repository state, stale Cluster pin, human gate and resume sequence are
-recorded in [`RESUME.md`](RESUME.md). A future agent must read that file before
-using the older component-by-component history below.
+DM-083 has moved beyond preparation. Matrix `bcf6b9f` and Cluster `0a4bd1e`
+ran across the real Legion and daimonmatrix host embodiments of one fresh
+being. Encrypted peer exchange, pending import, observer-local
+adoption/reversal, ordinary exact retry, outage refusal, portable restore,
+checked off-host backup, scheduled quiesce/resume and one separate Tribe v1
+transport message were exercised. A signed authority epoch then advanced the
+Legion incarnation while preserving accepted history.
 
-Draft PR #112 is the active DM-083 preparation branch. It contains the
-Matrix-side Unix-socket boundary fix and the dogfood plan, but it is not live
-dogfood evidence. Daimon Cluster `main` at `5cc2583` still pins the earlier
-Matrix candidate `8145b4c`; that pin must be advanced to the frozen post-DM-082
-candidate and reverified before preflight can become an authorized session.
-Cluster documentation-only handoff PRs #53–#55 do not change that `5cc2583`
-executable baseline. Tribe Bridge documentation-only PRs #51/#54 record the
-pause without changing its deployed/runtime `b81a683` baseline; it remains the
-transitional human-message lane. Inspect current repository heads rather than
-equating a runtime baseline with documentation `main`. There is no separately
+The real succession found one closed failure: a preserved exact request did
+not duplicate its event, but its old authenticated response was rejected solely
+because the server incarnation had retired. The active Matrix working tree
+adds authority-history-aware service replay and bounded client config V2. It
+must pass the full gate, become one immutable commit, repin Cluster and be
+redeployed before DM-083 is accepted. The exact sequence and remaining gates
+are in [`RESUME.md`](RESUME.md); the public audit is
+[`reviews/DM-083.md`](reviews/DM-083.md).
+
+PR #112 remains subject to independent review. Tribe Bridge remains only the
+transitional human-message lane; its ACK cannot substitute for Matrix
+authenticated intake or a signed semantic receipt. There is still no separately
 identified `tribe-chat` repository in the recorded project set.
 
 The canonical model permits multiple simultaneous embodiments of one being.

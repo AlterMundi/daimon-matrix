@@ -1,18 +1,19 @@
 # Roadmap
 
-## Current pause and critical resume path
+## Active critical path
 
-The implementation is paused after DM-082: the complete minimum protocol can
-be exercised locally, but no current release has yet been dogfooded across the
-real Legion and daimonmatrix host embodiments. [`RESUME.md`](RESUME.md) is the
+The complete minimum protocol and the real same-being two-host path have now
+been exercised. DM-083 remains active because real incarnation succession
+exposed a safe, non-duplicating exact-response replay defect. The repaired
+candidate must be repinned, redeployed and confirmed before the roadmap moves
+to cross-being and fresh-host evidence. [`RESUME.md`](RESUME.md) is the
 cold-start handoff and Project 9 is the authoritative live board.
 
 Resume in dependency order:
 
-1. reconcile draft DM-083 with current Matrix `main`, freeze its exact
-   candidate, then repin and reverify Daimon Cluster;
-2. obtain explicit authorization and run the reversible real two-host DM-083
-   experience test;
+1. freeze and validate the successor-retry repair, then repin, redeploy and
+   reverify Daimon Cluster plus both Matrix runtimes;
+2. finish successor-lane convergence and fresh checked recovery evidence;
 3. complete the consented cross-being exchange and fresh-host
    rebirth/recovery gates;
 4. complete remaining collective-memory/additional-harness and adversarial

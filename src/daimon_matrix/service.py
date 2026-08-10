@@ -393,12 +393,22 @@ class HostedWeave:
                 error={"code": "request_conflict", "retryable": False},
             )
         if cached is not None:
+            cached_server = cached.get("server")
+            if not isinstance(cached_server, Mapping) or any(
+                cached_server.get(field) != self.origin[field]
+                for field in ("body_ref", "embodiment_id", "principal_id")
+            ):
+                raise LocalApiError("invalid_local_response")
+            try:
+                self.ledger.authority.validate_origin(cached_server)
+            except WeaveProtocolError as exception:
+                raise LocalApiError("invalid_local_response") from exception
             verified = verify_response(
                 cached,
                 capability,
                 expected_request_id=request_id,
                 expected_request_hash=digest,
-                expected_server=self.origin,
+                expected_server=cached_server,
             )
             if method == "curator.complete" and verified["ok"]:
                 curator = self.curator

@@ -1,8 +1,9 @@
 # DM-083 two-host CompAII dogfood
 
-Status: active after operator authorization on 2026-08-10. Read-only preflight
-contacted Legion and daimonmatrix but changed no live service, route, key,
-database or Cluster resource. Start from [`../RESUME.md`](../RESUME.md).
+Status: live same-being dogfood executed under operator authorization on
+2026-08-10; the successor-incarnation retry defect it exposed is repaired in
+the current candidate and awaits exact-candidate redeployment confirmation.
+Start from [`../RESUME.md`](../RESUME.md).
 
 “Matrix” means `daimon-matrix`; Matrix.org is outside this system. The two
 participants are the existing Legion and daimonmatrix host embodiments of one
@@ -126,3 +127,55 @@ own authenticated/deduplicated transport evidence. A future Matrix logical
 message lane additionally requires authenticated recipient intake and a signed
 semantic receipt; DM-083 must name that integration as pending rather than infer
 it from Tribe reachability or ACKs.
+
+## Executed candidate milestone
+
+The authorized session used Matrix commit
+`bcf6b9f6ef5a46fdd35dfc8036a7a4d458103c7b` and Daimon Cluster merge
+`0a4bd1e5769874b4d91f476b1c1942db51ce0f97`. Public evidence deliberately
+omits endpoints, custody locations and private content.
+
+- One fresh being manifest produced two independently writable host
+  embodiments with distinct origins, custody, state roots and local
+  capabilities. Both services reported valid integrity and the same active
+  manifest.
+- Encrypted native peer pull succeeded in both directions. Each side imported
+  exactly one initial foreign event; arrival remained pending and did not
+  silently adopt it.
+- One observer-local adoption and its explicit reversal changed only that
+  observer's projection. The final projection returned to the original state.
+- Replaying one exact durable request across an ordinary same-incarnation
+  service restart returned the byte-identical authenticated response with
+  SHA-256
+  `b4b35839e09acb27e3ec5e3e741812d7682cac104fa9099b0e0f76aecb34e215`
+  and created no second event.
+- A peer outage refused the pull as an ambiguous outcome; known event count
+  and heads did not move. The stopped peer and Cluster service recovered.
+- One distinct Tribe v1 message produced authenticated transport/dedup
+  evidence. It is intentionally not counted as Matrix recipient intake or a
+  Matrix semantic receipt.
+- Portable snapshots restored to fresh same-host roots with exact manifest
+  hashes. Encrypted restic snapshots were checked and mirrored off host. The
+  scheduled Cluster backup was then corrected to quiesce and resume the exact
+  previously active service set while covering the complete state and deployed
+  release.
+- A signed authority epoch retired the Legion incarnation and activated one
+  exact successor. Both hosts accepted the two-manifest history and retained
+  their existing events.
+
+That final succession revealed a real release defect: the daemon journal held
+the correct old exact response, but both service and client verified it only
+against the current server origin, so the daemon closed the connection. The
+candidate repair keeps client config V1 compatible and adds V2 with an exact,
+bounded historical-server list and retirement times. The service returns a
+cached response only when its origin is a recognized authority-history member
+for the same body, embodiment and principal. The client accepts such a response
+only for a request issued no later than that incarnation's retirement. The
+stored response is never resigned or rewritten.
+
+The repair has focused regression, strict typing and deterministic-generator
+coverage. Its final operational gate is to deploy the exact repaired commit,
+configure the retired origin locally, retry the preserved request, prove the
+same response hash and unchanged event count, then converge the successor lane.
+Until that gate passes, DM-083 remains a candidate rather than completed live
+evidence.

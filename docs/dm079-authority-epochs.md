@@ -46,6 +46,16 @@ leading to the next entry or the current `manifest`. V1 remains valid for a
 single unchanged epoch. Once a ledger accepts V2 history, reopening it with the
 old V1 bundle is a downgrade and fails.
 
+Owner-local exact retries can outlive the incarnation that first completed
+them. Client config V2 keeps the current `expected_server` and an ordered,
+bounded `historical_servers` list with exact retirement milliseconds. A cached
+response from a retired incarnation is accepted only when the authenticated
+request was issued no later than that retirement; new requests accept only the
+current origin. The service independently requires the cached response origin
+to be an authority-history member of the same body, embodiment and principal.
+This preserves byte-identical journal replay without making a retired daemon a
+valid responder for new work.
+
 Activated provisional history and root-authority history are deliberately
 separate mechanisms. V2 refuses to combine them in this first profile; the
 provisional binding must be completed before the first root-authority epoch

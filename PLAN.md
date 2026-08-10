@@ -44,7 +44,10 @@ is explicitly outside the MVP.
    still completion evidence rather than inferred from the synthetic adapter.
 9. Run local, cross-host, recovery, revocation, and rebirth journeys with real
    processes, cryptography, encrypted state, transport, Cluster bodies, and
-   separately authorized synthetic/live evidence.
+   separately authorized synthetic/live evidence. The same-being two-host
+   journey reached a real authority-epoch succession; its exact historical
+   retry repair is the active release gate before cross-being and fresh-host
+   completion.
 10. Freeze, audit, publish, and independently reinstall the V0.1 release.
 
 ## Release invariants
