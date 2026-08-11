@@ -1,0 +1,33 @@
+{
+  "schema": "dm-036-invariant-report/v0",
+  "scope": "synthetic-isolated-collective-memory-exchange",
+  "deployment": "not-applicable",
+  "upstream_contract_commit": "3e3b39416917f8e3c2bc5ca69362b20296205938",
+  "matrix_contract_id": "https://daimon.network/schemas/collective-memory/v1/contracts.schema.json",
+  "required_scenario_count": 4,
+  "invariants": {
+    "inbound_outbound_adapters_are_distinct": true,
+    "credentials_stores_queues_receipts_and_authority_are_separate": true,
+    "inbound_generations_are_complete_continuous_and_content_verified": true,
+    "all_imported_collective_content_enters_source_quarantine": true,
+    "collective_content_never_asserts_personal_memory": true,
+    "offline_catch_up_and_ledger_source_log_rebuild_are_deterministic": true,
+    "outbound_bytes_require_exact_subject_consent_and_independent_review": true,
+    "final_render_is_secret_scanned_before_effect": true,
+    "publication_replay_rechecks_external_effect_truth": true,
+    "successors_and_tombstones_are_monotonic": true,
+    "crash_recovery_exposes_only_all_old_or_all_new": true,
+    "real_isolated_fts_and_atlas_projection_verified": true,
+    "sqlite_integrity_and_unrelated_corpus_preservation_verified": true,
+    "no_live_corpus_or_matrix_org_dependency": true
+  },
+  "evidence": [
+    "conformance/registry-v1.json",
+    "docs/dm036-collective-memory.md",
+    "provenance/collective-memory-exchange-v1.json",
+    "schemas/collective-memory/v1/contracts.schema.json",
+    "src/daimon_matrix/collective_memory.py",
+    "tests/test_dm036_collective_memory.py",
+    "vectors/collective-memory/v1/index.json"
+  ]
+}

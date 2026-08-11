@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "99887a23c1e1b2dbfa7ed050102162d6fd32a8942b71810b1218e04ef6897ffc"
+    "12f01cb1704e9943b7f2069ba41fa3f7f9b153c8cf5a22f506e404ac918b963f"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -42,6 +42,10 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "causal_quarantine_promotion",
         "cli_closed_retry_surface",
         "cluster_effect_truth",
+        "collective_exchange_recovery",
+        "collective_publication_review",
+        "collective_real_io",
+        "collective_source_quarantine",
         "communication_cursor_contiguous",
         "communication_fanout_receipts",
         "communication_route_replay",

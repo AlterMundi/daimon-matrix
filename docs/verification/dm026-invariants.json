@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 97,
-  "registry_sha256": "ff903ff98b08c273ddea98e6a44bf7ca55834189c8c67c850d83ac02ad63ac20",
+  "required_scenario_count": 101,
+  "registry_sha256": "12f01cb1704e9943b7f2069ba41fa3f7f9b153c8cf5a22f506e404ac918b963f",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -33,7 +33,8 @@
     "relationship_three_being_signed_journey": true,
     "relationship_recipient_intake_and_signed_receipt": true,
     "relationship_revocation_refuses_stale_carriers": true,
-    "relationship_scenario_mapping": true
+    "relationship_scenario_mapping": true,
+    "collective_memory_bidirectional_exchange": true
   },
   "evidence": [
     "conformance/registry-v1.json",
@@ -44,6 +45,8 @@
     "docs/verification/dm079-invariants.json",
     "docs/verification/dm033-invariants.json",
     "docs/verification/dm042-invariants.json",
+    "docs/verification/dm036-invariants.json",
+    "docs/dm036-collective-memory.md",
     "docs/verification/dm061-invariants.json",
     "docs/verification/dm070-invariants.json",
     "docs/verification/dm081-invariants.json",
