@@ -79,10 +79,19 @@ The output contains:
 - `runtimes/<label>/transport-custody.json`: the separately generated transport
   principal key retained for future adapters; and
 - `runtimes/<label>/client.json` plus `client.key`: host-local CLI material.
+- `host-clients/<label>/client.json` plus `capability.key`: a distinct
+  least-authority status observer with exactly `runtime.status`, `scope.me`,
+  `scope.we`, `scope.we.diff`, and `scope.we.sync-plan`. Install this directory
+  into the host controller's owner-only, non-portable client root; never give
+  the controller the operator client key.
 
 Before service start, validate the V7 schema, open each custody with its own
 password, compare the common being/control/manifest hashes and prove every
 embodiment, incarnation, credential, root, ledger and socket is distinct.
+The status-observer key must differ from the operator key and remain outside
+portable snapshots. A relocated or restored runtime receives a freshly
+provisioned host-local copy only after the expected server origin matches the
+current root-authorized embodiment/incarnation.
 
 ## Configured peer pull
 

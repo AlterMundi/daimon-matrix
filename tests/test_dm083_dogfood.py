@@ -19,8 +19,13 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.daemon import _bind_private_socket, create_peer_http_server
-from daimon_matrix.local_api import LocalCapability, create_request
-from daimon_matrix.operator_bootstrap import PROFILE_SCHEMA, BootstrapError, _create
+from daimon_matrix.local_api import LocalApiError, LocalCapability, create_request
+from daimon_matrix.operator_bootstrap import (
+    PROFILE_SCHEMA,
+    STATUS_OBSERVER_METHODS,
+    BootstrapError,
+    _create,
+)
 from daimon_matrix.runtime import RuntimeError as MatrixRuntimeError
 from daimon_matrix.runtime import load_runtime
 
@@ -170,6 +175,28 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                 bundle = json.loads((state_root / "runtime.json").read_bytes())
                 Draft202012Validator(schema).validate(bundle)
                 self.assertNotIn(password, (state_root / "runtime.json").read_bytes())
+                bundle_capabilities = bundle["capabilities"]
+                self.assertEqual(len(bundle_capabilities), 2)
+                status_root = output / "host-clients" / label
+                self.assertEqual(status_root.stat().st_mode & 0o777, 0o700)
+                status_key_path = status_root / "capability.key"
+                status_config_path = status_root / "client.json"
+                self.assertEqual(status_key_path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(status_config_path.stat().st_mode & 0o777, 0o600)
+                status_key = status_key_path.read_bytes()
+                status_config = json.loads(status_config_path.read_bytes())
+                status_capability = LocalCapability.from_value(
+                    status_config["capability"], status_key
+                )
+                self.assertEqual(
+                    frozenset(status_capability.methods), STATUS_OBSERVER_METHODS
+                )
+                self.assertEqual(
+                    status_config["expected_server"], bundle["local_origin"]
+                )
+                self.assertNotEqual(
+                    status_key, (state_root / "client.key").read_bytes()
+                )
                 loaded[label] = load_runtime(
                     state_root,
                     "runtime.json",
@@ -200,6 +227,31 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
 
             remote = loaded["daimonmatrix"]
             legion = loaded["legion"]
+            status_config = json.loads(
+                (output / "host-clients/legion/client.json").read_bytes()
+            )
+            status_capability = LocalCapability.from_value(
+                status_config["capability"],
+                (output / "host-clients/legion/capability.key").read_bytes(),
+            )
+            status_response = legion.service.handle(
+                create_request(
+                    status_capability,
+                    request_id=str(uuid.uuid4()),
+                    issued_at_ms=time.time_ns() // 1_000_000,
+                    method="runtime.status",
+                    params={},
+                )
+            )
+            self.assertTrue(status_response["ok"], status_response)
+            with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+                create_request(
+                    status_capability,
+                    request_id=str(uuid.uuid4()),
+                    issued_at_ms=time.time_ns() // 1_000_000,
+                    method="we.sync.peer-pull",
+                    params={},
+                )
             event = remote.service.ledger.append_local(
                 kind="experience.observed",
                 subject="dm083/operator-bootstrap",
