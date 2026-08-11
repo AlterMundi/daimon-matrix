@@ -34,6 +34,33 @@ No process or artifact in this flow requires root seeds and embodiment private
 keys together. Root custody cannot impersonate the embodiment acceptance or
 transport proof; target custody cannot reach the root threshold.
 
+The installed-module interface keeps that boundary executable even before a
+dedicated console alias is published. `prepare` runs on the target and writes
+only target custody; `authorize` runs at the offline root and receives only the
+public request. Passwords use inherited descriptors and neither command accepts
+private key bytes through arguments or environment:
+
+```bash
+python -m daimon_matrix.operator_rebirth prepare \
+  --authority /public/current-authority.json \
+  --profile /public/fresh-target-profile.json \
+  --output /target-owner/rebirth-preparation \
+  --password-fd 3 3</target-owner/password
+
+python -m daimon_matrix.operator_rebirth authorize \
+  --authority /public/current-authority.json \
+  --request /public/enrollment-request.json \
+  --root-custody /offline/root-custody.json \
+  --root-password-fd 3 \
+  --output /public/activation.json 3</offline/root-password
+```
+
+Preparation is a one-shot, fsynced owner-only directory. It contains encrypted
+body custody, separately encrypted transitional transport custody, public
+operator/status capability descriptors, the target peer profile and the public
+request. Activation is an owner-only public artifact. Cluster still owns
+authenticated transfer, runtime assembly, target start and peer update.
+
 ## Only permitted manifest delta
 
 The enrollment validator accepts exactly one new active manifest row while

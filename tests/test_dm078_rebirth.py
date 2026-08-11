@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -19,12 +22,16 @@ from daimon_matrix.authority_epochs import (
 )
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.identity import signing_descriptor, verify_genesis
+from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.operator_rebirth import (
     RebirthError,
     apply_activation_to_runtime_bundle,
+    authority_from_document,
     authorize_enrollment_request,
+    authorize_from_root_custody,
     create_enrollment_request,
+    create_target_preparation,
     validate_activation,
     validate_enrollment_request,
 )
@@ -36,6 +43,38 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestAdditionalEmbodiment(RootLedgerFixture):
+    def authority_document(self) -> dict[str, Any]:
+        return {
+            "schema": "dm.operator.authority/v1",
+            "control_artifacts": [self.genesis],
+            "control_head": self.state.head,
+            "manifest": self.manifest.value,
+            "credentials": list(self.credentials.values()),
+            "incarnations": list(self.incarnations.values()),
+        }
+
+    def target_profile(self) -> dict[str, Any]:
+        return {
+            "schema": "dm.operator.rebirth-target-profile/v1",
+            "label": "fresh",
+            "body_ref": "cluster:daimonmatrix:dm078-fresh",
+            "principal_id": "compaii@dm078-fresh",
+            "listen_host": "127.0.0.1",
+            "listen_port": 28686,
+            "advertised_endpoint": "http://127.0.0.1:28686/dm-peer/v1",
+            "targets": [
+                {
+                    "embodiment_id": origin["embodiment_id"],
+                    "endpoint": f"http://127.0.0.1:{port}/dm-peer/v1",
+                    "timeout_ms": 5_000,
+                }
+                for origin, port in (
+                    (self.origins["daimonmatrix"], 18686),
+                    (self.origins["legion"], 8686),
+                )
+            ],
+        }
+
     def request(self, **changes: Any) -> dict[str, Any]:
         values: dict[str, Any] = {
             "signing_seed": seed("fresh-signing"),
@@ -235,6 +274,147 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         forged["body"]["origin"]["principal_id"] = "forged@principal"
         with self.assertRaisesRegex(RebirthError, "origin_mismatch"):
             validate_activation(forged, self.authority, request=request)
+
+    def test_target_preparation_and_offline_root_custody_are_separate(self) -> None:
+        parent = self.root_path / "rebirth"
+        parent.mkdir(mode=0o700)
+        target_password = b"target-password-dm078"
+        preparation = create_target_preparation(
+            parent / "target",
+            authority_from_document(self.authority_document()),
+            self.target_profile(),
+            lambda: bytearray(target_password),
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+        )
+        request = json.loads((parent / "target/request.json").read_bytes())
+        self.assertEqual(preparation["request_id"], request["request_id"])
+        body_custody = EncryptedKeystore(parent / "target/custody.json").open(
+            lambda: bytearray(target_password),
+            required_control_head=self.state.head,
+        )
+        transport_custody = EncryptedKeystore(
+            parent / "target/transport-custody.json"
+        ).open(
+            lambda: bytearray(target_password),
+            required_control_head=self.state.head,
+        )
+        self.assertEqual(len(body_custody.secrets), 4)
+        self.assertEqual(len(transport_custody.secrets), 1)
+        self.assertFalse(any(slot.startswith("root.") for slot in body_custody.secrets))
+
+        root_dir = parent / "offline"
+        root_dir.mkdir(mode=0o700)
+        root_password = b"offline-root-password-dm078"
+        EncryptedKeystore.create(
+            root_dir / "root-custody.json",
+            lambda: bytearray(root_password),
+            control_head=self.state.head,
+            secrets={
+                f"root.signing.v1:{index}": value
+                for index, value in enumerate(self.root_seeds)
+            },
+        )
+        activation = authorize_from_root_custody(
+            request,
+            self.authority,
+            root_dir / "root-custody.json",
+            lambda: bytearray(root_password),
+            issued_at_ms=NOW + 20,
+        )
+        validate_activation(activation, self.authority, request=request)
+        public = json.dumps({"request": request, "activation": activation})
+        self.assertNotIn("private", public)
+        self.assertNotIn(target_password.decode(), public)
+        self.assertNotIn(root_password.decode(), public)
+
+    def test_prepare_and_authorize_cli_run_in_distinct_processes(self) -> None:
+        root = self.root_path / "process-split"
+        root.mkdir(mode=0o700)
+        authority_path = root / "authority.json"
+        profile_path = root / "profile.json"
+        authority_path.write_bytes(canonical_bytes(self.authority_document()))
+        profile_path.write_bytes(canonical_bytes(self.target_profile()))
+        authority_path.chmod(0o600)
+        profile_path.chmod(0o600)
+        offline = root / "offline"
+        offline.mkdir(mode=0o700)
+        root_password = b"process-root-password-dm078"
+        target_password = b"process-target-password-dm078"
+        EncryptedKeystore.create(
+            offline / "root-custody.json",
+            lambda: bytearray(root_password),
+            control_head=self.state.head,
+            secrets={
+                f"root.signing.v1:{index}": value
+                for index, value in enumerate(self.root_seeds)
+            },
+        )
+
+        def invoke(
+            arguments: list[str], password: bytes
+        ) -> subprocess.CompletedProcess[bytes]:
+            reader, writer = os.pipe()
+            try:
+                os.write(writer, password)
+            finally:
+                os.close(writer)
+            try:
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "daimon_matrix.operator_rebirth",
+                        *(
+                            str(reader) if value == "{fd}" else value
+                            for value in arguments
+                        ),
+                    ],
+                    cwd=ROOT,
+                    env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+                    pass_fds=(reader,),
+                    capture_output=True,
+                    check=False,
+                )
+            finally:
+                os.close(reader)
+
+        prepared = invoke(
+            [
+                "prepare",
+                "--authority",
+                str(authority_path),
+                "--profile",
+                str(profile_path),
+                "--output",
+                str(root / "target"),
+                "--password-fd",
+                "{fd}",
+            ],
+            target_password,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr.decode())
+        request_path = root / "target/request.json"
+        authorized = invoke(
+            [
+                "authorize",
+                "--authority",
+                str(authority_path),
+                "--request",
+                str(request_path),
+                "--root-custody",
+                str(offline / "root-custody.json"),
+                "--root-password-fd",
+                "{fd}",
+                "--output",
+                str(root / "activation.json"),
+            ],
+            root_password,
+        )
+        self.assertEqual(authorized.returncode, 0, authorized.stderr.decode())
+        request = json.loads(request_path.read_bytes())
+        activation = json.loads((root / "activation.json").read_bytes())
+        validate_activation(activation, self.authority, request=request)
 
     def test_transition_matches_schema_and_canonical_round_trip(self) -> None:
         _, activation = self.activation()

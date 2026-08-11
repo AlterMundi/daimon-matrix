@@ -17,6 +17,7 @@ personal memory or writable database bytes.
   "root_and_body_custody_co_resident": false,
   "completed": [
     "target-embodiment-and-transport-possession",
+    "descriptor-only-two-process-ceremony",
     "offline-root-threshold-authorization",
     "exact-one-row-manifest-successor",
     "historical-event-verification",
