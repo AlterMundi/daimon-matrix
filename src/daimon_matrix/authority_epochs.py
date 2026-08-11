@@ -25,6 +25,7 @@ from .canonical import b64url, canonical_bytes, unb64url
 from .identity import (
     ControlState,
     VerificationError,
+    ed25519_public,
     key_id,
     verify_embodiment_credential,
     verify_incarnation_authorization,
@@ -33,6 +34,8 @@ from .weave import BeingManifest, RootAuthority, WeaveProtocolError
 
 AUTHORITY_EPOCH_SCHEMA: Final = "dm.we.authority-epoch/v1"
 AUTHORITY_EPOCH_DOMAIN: Final = b"daimon/weave-authority-epoch/v1\x00"
+EMBODIMENT_ENROLLMENT_SCHEMA: Final = "dm.we.embodiment-enrollment/v1"
+EMBODIMENT_ENROLLMENT_DOMAIN: Final = b"daimon/weave-embodiment-enrollment/v1\x00"
 
 
 class AuthorityEpochError(WeaveProtocolError):
@@ -277,6 +280,307 @@ def verify_authority_epoch(
     return copy.deepcopy(dict(value))
 
 
+def _enrollment_core(
+    previous: BeingManifest,
+    successor: BeingManifest,
+    *,
+    request_id: str,
+    body_ref: str,
+    embodiment_id: str,
+    incarnation_id: str,
+    embodiment_credential_id: str,
+    incarnation_authorization_id: str,
+    principal_id: str,
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    return {
+        "schema": EMBODIMENT_ENROLLMENT_SCHEMA,
+        "being_ref": previous.being_ref,
+        "previous_manifest_hash": previous.digest,
+        "previous_revision": previous.value["revision"],
+        "successor_manifest_hash": successor.digest,
+        "successor_revision": successor.value["revision"],
+        "request_id": request_id,
+        "body_ref": body_ref,
+        "embodiment_id": embodiment_id,
+        "incarnation_id": incarnation_id,
+        "embodiment_credential_id": embodiment_credential_id,
+        "incarnation_authorization_id": incarnation_authorization_id,
+        "principal_id": principal_id,
+        "issued_at_ms": issued_at_ms,
+    }
+
+
+def create_embodiment_enrollment(
+    previous: BeingManifest,
+    successor: BeingManifest,
+    *,
+    request_id: str,
+    body_ref: str,
+    embodiment_id: str,
+    incarnation_id: str,
+    embodiment_credential_id: str,
+    incarnation_authorization_id: str,
+    principal_id: str,
+    root_seeds: Sequence[bytes],
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    """Root-sign one exact additional-embodiment manifest successor."""
+
+    core = _enrollment_core(
+        previous,
+        successor,
+        request_id=request_id,
+        body_ref=body_ref,
+        embodiment_id=embodiment_id,
+        incarnation_id=incarnation_id,
+        embodiment_credential_id=embodiment_credential_id,
+        incarnation_authorization_id=incarnation_authorization_id,
+        principal_id=principal_id,
+        issued_at_ms=issued_at_ms,
+    )
+    content_hash = hashlib.sha256(
+        EMBODIMENT_ENROLLMENT_DOMAIN + canonical_bytes(core)
+    ).hexdigest()
+    signatures = []
+    for seed in root_seeds:
+        public = ed25519_public(seed)
+        signatures.append(
+            {
+                "alg": "Ed25519",
+                "kid": key_id("Ed25519", public),
+                "value": b64url(
+                    Ed25519PrivateKey.from_private_bytes(seed).sign(
+                        EMBODIMENT_ENROLLMENT_DOMAIN + bytes.fromhex(content_hash)
+                    )
+                ),
+            }
+        )
+    signatures.sort(key=lambda row: row["kid"])
+    return {**core, "content_hash": content_hash, "signatures": signatures}
+
+
+def _root_public_keys(state: ControlState) -> tuple[dict[str, bytes], int]:
+    policy = state.root_policy
+    keys = policy.get("keys")
+    threshold = policy.get("threshold")
+    if (
+        not isinstance(keys, list)
+        or not isinstance(threshold, int)
+        or isinstance(threshold, bool)
+        or not 1 <= threshold <= len(keys)
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_root_policy_invalid")
+    result: dict[str, bytes] = {}
+    for descriptor in keys:
+        if (
+            not isinstance(descriptor, Mapping)
+            or set(descriptor) != {"algorithm", "key_id", "public"}
+            or descriptor.get("algorithm") != "Ed25519"
+        ):
+            raise AuthorityEpochError("embodiment_enrollment_root_policy_invalid")
+        try:
+            public = unb64url(str(descriptor["public"]), length=32)
+        except (TypeError, ValueError) as exception:
+            raise AuthorityEpochError(
+                "embodiment_enrollment_root_policy_invalid"
+            ) from exception
+        kid = descriptor.get("key_id")
+        if (
+            not isinstance(kid, str)
+            or kid != key_id("Ed25519", public)
+            or kid in result
+        ):
+            raise AuthorityEpochError("embodiment_enrollment_root_policy_invalid")
+        result[kid] = public
+    return result, threshold
+
+
+def verify_embodiment_enrollment(
+    value: Mapping[str, Any],
+    previous: RootAuthority,
+    successor: RootAuthority,
+) -> dict[str, Any]:
+    """Verify one root-approved new body without accepting unrelated deltas."""
+
+    fields = {
+        "schema",
+        "being_ref",
+        "previous_manifest_hash",
+        "previous_revision",
+        "successor_manifest_hash",
+        "successor_revision",
+        "request_id",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "embodiment_credential_id",
+        "incarnation_authorization_id",
+        "principal_id",
+        "issued_at_ms",
+        "content_hash",
+        "signatures",
+    }
+    if set(value) != fields or value.get("schema") != EMBODIMENT_ENROLLMENT_SCHEMA:
+        raise AuthorityEpochError("invalid_embodiment_enrollment")
+    previous_manifest = previous.manifest
+    successor_manifest = successor.manifest
+    if (
+        value.get("being_ref") != previous_manifest.being_ref
+        or successor_manifest.being_ref != previous_manifest.being_ref
+        or value.get("previous_manifest_hash") != previous_manifest.digest
+        or value.get("successor_manifest_hash") != successor_manifest.digest
+        or value.get("previous_revision") != previous_manifest.value["revision"]
+        or value.get("successor_revision") != successor_manifest.value["revision"]
+        or successor_manifest.value["revision"]
+        != previous_manifest.value["revision"] + 1
+        or successor_manifest.value["control_head"]
+        != previous_manifest.value["control_head"]
+        or successor_manifest.value["history_binding_id"]
+        != previous_manifest.value["history_binding_id"]
+        or successor.state.head != previous.state.head
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_lineage_mismatch")
+    embodiment_id = value.get("embodiment_id")
+    incarnation_id = value.get("incarnation_id")
+    credential_id = value.get("embodiment_credential_id")
+    authorization_id = value.get("incarnation_authorization_id")
+    request_id = value.get("request_id")
+    body_ref = value.get("body_ref")
+    principal_id = value.get("principal_id")
+    if not all(
+        isinstance(item, str) and item
+        for item in (
+            request_id,
+            body_ref,
+            embodiment_id,
+            incarnation_id,
+            credential_id,
+            authorization_id,
+            principal_id,
+        )
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_member_mismatch")
+    assert isinstance(embodiment_id, str)
+    assert isinstance(incarnation_id, str)
+    assert isinstance(credential_id, str)
+    assert isinstance(authorization_id, str)
+    assert isinstance(body_ref, str)
+    assert isinstance(principal_id, str)
+    if any(
+        row["embodiment_id"] == embodiment_id
+        for row in previous_manifest.value["embodiments"]
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_reuses_identity")
+    try:
+        new_row = successor_manifest.member(embodiment_id, incarnation_id)
+    except (KeyError, TypeError, WeaveProtocolError) as exception:
+        raise AuthorityEpochError(
+            "embodiment_enrollment_member_mismatch"
+        ) from exception
+    expected_rows = copy.deepcopy(previous_manifest.value["embodiments"])
+    expected_rows.append(copy.deepcopy(new_row))
+    expected_rows.sort(key=lambda row: (row["embodiment_id"], row["incarnation_id"]))
+    if (
+        successor_manifest.value["embodiments"] != expected_rows
+        or new_row["status"] != "active"
+        or new_row["body_ref"] != body_ref
+        or new_row["embodiment_credential_id"] != credential_id
+        or new_row["incarnation_authorization_id"] != authorization_id
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_manifest_change_forbidden")
+    active_ids = [
+        row["embodiment_id"]
+        for row in successor_manifest.value["embodiments"]
+        if row["status"] == "active"
+    ]
+    if len(active_ids) != len(set(active_ids)):
+        raise AuthorityEpochError("ambiguous_active_incarnation")
+    credential = successor.credentials.get(credential_id)
+    authorization = successor.incarnations.get(authorization_id)
+    issued_at_ms = value.get("issued_at_ms")
+    if (
+        not isinstance(credential, Mapping)
+        or not isinstance(authorization, Mapping)
+        or not isinstance(issued_at_ms, int)
+        or isinstance(issued_at_ms, bool)
+        or issued_at_ms < 0
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_authorization_missing")
+    try:
+        credential_body = verify_embodiment_credential(
+            credential, successor.state, at_ms=issued_at_ms
+        )
+        incarnation_body = verify_incarnation_authorization(
+            authorization,
+            credential,
+            successor.state,
+            at_ms=issued_at_ms,
+        )
+    except VerificationError as exception:
+        raise AuthorityEpochError(
+            "embodiment_enrollment_authorization_invalid"
+        ) from exception
+    transport_principals = credential_body["transport_principals"]
+    matching_principals = [
+        row
+        for row in transport_principals
+        if row["scheme"] == "dm-peer-v1" and row["principal_id"] == principal_id
+    ]
+    if (
+        credential_body["embodiment_id"] != embodiment_id
+        or credential_body["body_ref"] != body_ref
+        or incarnation_body["incarnation_id"] != incarnation_id
+        or incarnation_body["incarnation_sequence"] != 0
+        or incarnation_body["started_at_ms"] > issued_at_ms
+        or "dm.we" not in credential_body["purposes"]
+        or len(matching_principals) != 1
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_authorization_invalid")
+    core = {
+        key: copy.deepcopy(item)
+        for key, item in value.items()
+        if key not in {"content_hash", "signatures"}
+    }
+    expected_hash = hashlib.sha256(
+        EMBODIMENT_ENROLLMENT_DOMAIN + canonical_bytes(core)
+    ).hexdigest()
+    if value.get("content_hash") != expected_hash:
+        raise AuthorityEpochError("embodiment_enrollment_hash_mismatch")
+    signatures = value.get("signatures")
+    if not isinstance(signatures, list) or not signatures:
+        raise AuthorityEpochError("embodiment_enrollment_signature_invalid")
+    public_keys, threshold = _root_public_keys(previous.state)
+    valid: set[str] = set()
+    normalized: list[Mapping[str, Any]] = []
+    for signature in signatures:
+        if (
+            not isinstance(signature, Mapping)
+            or set(signature) != {"alg", "kid", "value"}
+            or signature.get("alg") != "Ed25519"
+            or not isinstance(signature.get("kid"), str)
+            or signature["kid"] in valid
+            or signature["kid"] not in public_keys
+        ):
+            raise AuthorityEpochError("embodiment_enrollment_signature_invalid")
+        try:
+            Ed25519PublicKey.from_public_bytes(public_keys[signature["kid"]]).verify(
+                unb64url(str(signature["value"]), length=64),
+                EMBODIMENT_ENROLLMENT_DOMAIN + bytes.fromhex(expected_hash),
+            )
+        except (InvalidSignature, TypeError, ValueError) as exception:
+            raise AuthorityEpochError(
+                "embodiment_enrollment_signature_invalid"
+            ) from exception
+        valid.add(signature["kid"])
+        normalized.append(signature)
+    if len(valid) < threshold or list(signatures) != sorted(
+        normalized, key=lambda row: str(row["kid"])
+    ):
+        raise AuthorityEpochError("embodiment_enrollment_signature_invalid")
+    return copy.deepcopy(dict(value))
+
+
 @dataclass(frozen=True)
 class RootHistoryAuthority:
     """Select one exact verified root authority for every accepted epoch."""
@@ -295,7 +599,12 @@ class RootHistoryAuthority:
         for previous, successor, value in zip(
             chain[:-1], chain[1:], self.successors, strict=True
         ):
-            verify_authority_epoch(value, previous, successor)
+            if value.get("schema") == AUTHORITY_EPOCH_SCHEMA:
+                verify_authority_epoch(value, previous, successor)
+            elif value.get("schema") == EMBODIMENT_ENROLLMENT_SCHEMA:
+                verify_embodiment_enrollment(value, previous, successor)
+            else:
+                raise AuthorityEpochError("unsupported_authority_successor")
 
     @property
     def manifest(self) -> BeingManifest:
@@ -347,8 +656,11 @@ class RootHistoryAuthority:
 
 __all__ = [
     "AUTHORITY_EPOCH_SCHEMA",
+    "EMBODIMENT_ENROLLMENT_SCHEMA",
     "AuthorityEpochError",
     "RootHistoryAuthority",
     "create_authority_epoch",
+    "create_embodiment_enrollment",
     "verify_authority_epoch",
+    "verify_embodiment_enrollment",
 ]
