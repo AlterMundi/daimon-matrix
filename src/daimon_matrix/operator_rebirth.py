@@ -1383,6 +1383,7 @@ def activate_target_runtime(
         )
         _private_write(staging / "request.json", request)
         _private_write(staging / "activation.json", verified_activation)
+        _private_write(staging / "target-profile.json", profile)
         receipt = {
             "schema": "dm.operator.rebirth-runtime-receipt/v1",
             "request_id": verified_activation["body"]["request_id"],
