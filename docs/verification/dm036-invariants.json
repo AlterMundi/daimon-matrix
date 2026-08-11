@@ -24,6 +24,7 @@
   "evidence": [
     "conformance/registry-v1.json",
     "docs/dm036-collective-memory.md",
+    "docs/verification/dm036-dm083-integration.md",
     "provenance/collective-memory-exchange-v1.json",
     "schemas/collective-memory/v1/contracts.schema.json",
     "src/daimon_matrix/collective_memory.py",
