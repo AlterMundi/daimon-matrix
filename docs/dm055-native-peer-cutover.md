@@ -23,7 +23,8 @@ surface and remain unchanged during the canary.
 
 - root/current-manifest-bound direct encryption and signature verification;
 - exact active embodiment/incarnation/principal and recipient-key checks;
-- a durable randomized-ciphertext outbox keyed per recipient envelope;
+- a durable randomized-ciphertext outbox keyed per recipient envelope whose
+  semantic V2 call plan reuses the first bounded expiry across later retries;
 - a durable inbound processing lease and byte-exact committed response replay;
 - client correlation/reply checks and a bounded HTTP(S) round trip;
 - dispatch only to the existing DM-054 scope and DM-023 sync handlers; and
@@ -64,7 +65,8 @@ SQLite ledgers. They prove:
 - V3 load, exact key-slot binding, in-process daemon HTTP handler and backward
   disabled compatibility;
 - response loss after remote completion followed by byte-identical request and
-  response replay with one handler effect;
+  response replay with one handler effect, including a clock advance, process
+  reconstruction, legacy V1 outbox-plan recovery and fail-closed expiry;
 - concurrent duplicate serialization, expired-lease takeover, stale claimant
   rejection and corrupted exchange/outbox digest rejection;
 - one-shot password custody, absent/malformed/colliding/wrong-key V3 profiles,
