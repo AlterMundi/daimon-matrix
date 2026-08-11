@@ -53,6 +53,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-hermes-body": "daimon_matrix.hermes_body:main",
                 "daimon-matrixd": "daimon_matrix.daemon:main",
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
+                "daimon-rebirth": "daimon_matrix.operator_rebirth:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
                 "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
                 "daimon-synthetic-multihost": (
@@ -177,6 +178,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/local_we.py",
                 "src/daimon_matrix/mcp_server.py",
                 "src/daimon_matrix/operator_bootstrap.py",
+                "src/daimon_matrix/operator_rebirth.py",
                 "src/daimon_matrix/memory_policy.py",
                 "src/daimon_matrix/memory_projection.py",
                 "src/daimon_matrix/multihost.py",
@@ -230,6 +232,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/local_we.py",
                 "daimon_matrix/mcp_server.py",
                 "daimon_matrix/operator_bootstrap.py",
+                "daimon_matrix/operator_rebirth.py",
                 "daimon_matrix/memory_policy.py",
                 "daimon_matrix/memory_projection.py",
                 "daimon_matrix/multihost.py",

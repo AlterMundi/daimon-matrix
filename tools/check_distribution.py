@@ -58,6 +58,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
         "src/daimon_matrix/multihost.py",
@@ -110,6 +111,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/local_we.py",
         "daimon_matrix/mcp_server.py",
         "daimon_matrix/operator_bootstrap.py",
+        "daimon_matrix/operator_rebirth.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
         "daimon_matrix/multihost.py",
@@ -318,6 +320,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
         "src/daimon_matrix/multihost.py",
@@ -397,6 +400,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
+        b"daimon-rebirth = daimon_matrix.operator_rebirth:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
         b"daimon-synthetic-multihost = daimon_matrix.synthetic_multihost:main\n"
@@ -458,6 +462,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/operator_bootstrap.py": (
             "src/daimon_matrix/operator_bootstrap.py"
         ),
+        "daimon_matrix/operator_rebirth.py": ("src/daimon_matrix/operator_rebirth.py"),
         "daimon_matrix/memory_policy.py": "src/daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py": (
             "src/daimon_matrix/memory_projection.py"

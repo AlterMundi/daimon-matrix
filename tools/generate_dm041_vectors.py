@@ -883,7 +883,8 @@ def main() -> int:
         return 0
     for path, raw in expected.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(raw)
+        if not path.exists() or path.read_bytes() != raw:
+            path.write_bytes(raw)
     return 0
 
 

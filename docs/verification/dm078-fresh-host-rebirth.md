@@ -24,7 +24,9 @@ personal memory or writable database bytes.
     "fresh-ledger-ingest-and-new-origin-append",
     "loadable-v7-target-with-empty-writable-stores",
     "public-peer-forward-update",
-    "deterministic-positive-and-negative-vectors"
+    "deterministic-positive-and-negative-vectors",
+    "cluster-journaled-install-and-authenticated-start",
+    "remote-disposable-three-process-native-sync"
   ],
   "rejected": [
     "root-threshold-shortfall",
@@ -36,7 +38,7 @@ personal memory or writable database bytes.
     "transition-hash-tamper"
   ],
   "pending": [
-    "disposable-installed-three-host-journey",
+    "disposable-incus-or-distinct-host-journey",
     "journey-a-full-fault-matrix",
     "journey-b-true-volume-relocation",
     "journey-c-recovery-quorum-rebirth",
@@ -46,6 +48,27 @@ personal memory or writable database bytes.
   ]
 }
 ```
+
+## Installed remote checkpoint
+
+Cluster draft PRs #80 and #82 pin Matrix commit
+`1452bf6f7cea841ee1f1757f3b001708f8e72c84`. Their local gate passes 452
+tests with 2 intentional skips. The exact H8 candidate was installed into a
+fresh Python 3.13 environment under one unique temporary root on the authorized
+`daimonmatrix` host. `direct_url.json` proved the Matrix pin before import;
+changed-source lint/types and all 16 rebirth scenarios passed.
+
+The installed journey used three real Matrix daemon processes and three
+separate encrypted custody roots. The fresh embodiment authenticated as the
+same being and signed initial incarnation, exchanged one harmless event in each
+direction with an old peer through native encrypted peer pull, replayed one
+exact request without a second import, and retained both remote events as
+pending. The target password was absent from argv, environment and diagnostics.
+
+This is a same-host process-isolation checkpoint, not the final fresh physical
+host or Incus journey. Ports 18686, 19686 and 20686 were free before and after;
+all children stopped, the exact temporary root was removed and installed
+`clusterd` remained active. No production runtime, authority or custody changed.
 
 Reproduce the checkpoint from a clean checkout with:
 

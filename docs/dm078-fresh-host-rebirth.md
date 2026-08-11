@@ -1,7 +1,8 @@
 # DM-078 additional-embodiment rebirth
 
-Status: implemented V0 public-request/offline-root contract; disposable and
-live multi-host journeys remain operational gates.
+Status: implemented V0 public-request/offline-root contract plus installed
+same-host three-process rehearsal; disposable physical-host/Incus and live
+multi-host journeys remain operational gates.
 
 Rebirth in this contract means adding a new embodiment of the same being. It
 does not copy an old body's private keys or writable database, relocate an
@@ -70,7 +71,11 @@ request. Root activation is an owner-only public artifact. The target-only
 `activate` process reopens and revalidates its custody against the root-signed
 activation, emits a loadable V7 runtime with empty writable stores, and retains
 only hashes in its public receipt. Cluster still owns authenticated transfer,
-journaled installation, target start and peer update.
+journaled installation, target start and peer update. Cluster H7/H8 now
+implement and remotely rehearse that boundary: installation is crash-resumable
+and activation-idempotent, then a foreground supervisor admits only the signed
+initial incarnation, supplies the password by inherited descriptor and
+authenticates status, `/me` and `/we` before reporting `running-ready`.
 
 ## Only permitted manifest delta
 
@@ -111,10 +116,10 @@ it does not create Matrix identity.
 
 ## Operational gates
 
-The published vectors and unit journey are safe synthetic evidence only. DM-078
-is not complete until the issue's additional-embodiment, relocation and
-disaster-recovery journeys pass with installed Matrix, Cluster and transport
-components and their fault matrix.
+The vectors, unit journey and installed same-host process journey are synthetic
+evidence only. DM-078 is not complete until the issue's distinct-host/Incus
+additional-embodiment, relocation and disaster-recovery journeys pass with
+installed Matrix, Cluster and transport components and their fault matrix.
 
 Disposable Incus rehearsal may proceed autonomously. A live CompAII authority
 change still requires one exact preflight naming:
