@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures/harness/v0"))
 
-from checker import (
+from checker import (  # type: ignore[import-not-found]
     MANDATORY_CONTROLS,
     HarnessConformanceError,
     conformance_report,

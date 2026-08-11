@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests" / "fixtures" / "harness" / "v0"))
 
-from checker import (  # noqa: E402
+from checker import (  # type: ignore[import-not-found]  # noqa: E402
     FORBIDDEN_METHODS,
     MANDATORY_CONTROLS,
     PROFILE_SCHEMA,
