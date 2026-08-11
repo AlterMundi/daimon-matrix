@@ -50,11 +50,15 @@ jobs:
       - run: python -m ruff format --check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
       - run: python -m ruff check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
+      - run: python -m ruff format --check tools/generate_dm074_profiles.py tests/test_dm074_harness_conformance.py
+      - run: python -m ruff check tools/generate_dm074_profiles.py tests/test_dm074_harness_conformance.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm074_profiles.py tests/test_dm074_harness_conformance.py
       - run: python tools/generate_dm041_vectors.py --check
       - run: python tools/generate_dm042_vectors.py --check
       - run: python tools/generate_dm036_vectors.py --check
         env:
           COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
+      - run: python tools/generate_dm074_profiles.py --check
       - run: python tools/generate_dm061_vectors.py --check
       - run: python tools/generate_dm070_vectors.py --check
       - run: python tools/generate_dm081_vectors.py --check

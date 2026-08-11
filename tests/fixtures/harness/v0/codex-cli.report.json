@@ -1,0 +1,47 @@
+{
+  "admission": {
+    "blocking_controls": [],
+    "expected": "accepted",
+    "observed": "accepted"
+  },
+  "checks": [
+    {
+      "check": "closed-profile-and-fixture",
+      "ok": true
+    },
+    {
+      "check": "authority-boundary",
+      "ok": true
+    },
+    {
+      "check": "admission-matches-evidence",
+      "ok": true
+    },
+    {
+      "check": "offline-synthetic-corpus",
+      "ok": true
+    }
+  ],
+  "evidence_state": "synthetic-conformant",
+  "fixture_sha256": "4f9786169d8f8dcb8ca99dd8c0953e7490296793a365705bbf831adc4afdf740",
+  "passed": true,
+  "profile_id": "codex-cli",
+  "profile_sha256": "4a7011370aa63bfce3205e3f5c850966028cd35062df158d20ffe72a7b548917",
+  "schema": "dm.harness-conformance-report/v0",
+  "synthetic": {
+    "adapter_disable_replace_rebuild": true,
+    "authority_methods_refused": true,
+    "changed_request_conflict": true,
+    "effective_config_digest": "4f35e2bbef6b1fc13762d8c3864338a3ce9d00309dfc5c480cbacd593fbc422b",
+    "exact_retry_after_crash": true,
+    "isolated_profile": true,
+    "lifecycle_stable_and_stale_refused": true,
+    "malformed_and_oversized_refused": true,
+    "native_state_disabled": true,
+    "negotiation_and_downgrade_refusal": true,
+    "profile_cleanup": true,
+    "response_loss_recovered_once": true,
+    "tool_inventory_exact": true,
+    "transcript_export_log_scan_and_quarantine": true
+  }
+}

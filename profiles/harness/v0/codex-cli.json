@@ -1,0 +1,210 @@
+{
+  "admission": {
+    "expected": "accepted",
+    "reason_code": "exact-dm040-adapter-and-dm074-synthetic-corpus",
+    "requires_real_vendor_smoke": false
+  },
+  "artifact": {
+    "auto_update_policy": "exact-version-only-auto-update-disabled",
+    "config_precedence": "dm040-frozen-cli-managed-user-project-effective-chain",
+    "executable_sha256": "2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04",
+    "install_source": "npm-openai-codex-0-146-0-audited-by-dm040",
+    "limitations": [
+      "not-live-supported",
+      "provider-model-not-invoked-by-dm074"
+    ],
+    "migration_policy": "no-personal-profile-session-or-memory-import",
+    "state_roots": [
+      "fresh-owner-only-codex-home"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Identity, ledger, key, grant and deployment methods are refused.",
+      "state": "pass"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Harness transcript persistence is disabled.",
+      "state": "pass"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Effective instruction precedence is frozen and inspected.",
+      "state": "pass"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Stable process, session, turn, tool, park, wake, crash and resume IDs.",
+      "state": "pass"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Every accepted lifecycle transition has a bound receipt.",
+      "state": "pass"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Native harness memory is disabled.",
+      "state": "pass"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "The reference profile has no ambient network access.",
+      "state": "pass"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Fresh owner-only state root with no ambient fallback.",
+      "state": "pass"
+    },
+    "proposal_only": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "The harness can only read and propose a non-adopting observation.",
+      "state": "pass"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Request IDs, receipts, crash recovery and retry are deterministic.",
+      "state": "pass"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "The exact local Matrix boundary is startup-required.",
+      "state": "pass"
+    },
+    "secret_custody": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Capabilities use inherited descriptors and public evidence is scanned.",
+      "state": "pass"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Only the six frozen Matrix tools are visible.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Updates and profile migration fail closed pending revalidation.",
+      "state": "pass"
+    },
+    "version_pinned": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "Executable and protocol inputs are exact-pinned.",
+      "state": "pass"
+    },
+    "write_approval": {
+      "evidence": [
+        "dm040-codex-0-146-0"
+      ],
+      "note": "The sole write is separately gated and Matrix revalidates it.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "synthetic-conformant",
+  "harness": {
+    "name": "Codex CLI",
+    "source_refs": [
+      "dm040-codex-0-146-0",
+      "openai-codex-agents-20260810",
+      "openai-codex-config-20260810",
+      "openai-codex-mcp-20260810"
+    ],
+    "surface": "app-server-stdio",
+    "vendor": "OpenAI",
+    "version": "0.146.0"
+  },
+  "launch": {
+    "argv": [
+      "codex",
+      "app-server"
+    ],
+    "configuration": [
+      "history.persistence=none",
+      "mcp_servers.matrix.required=true",
+      "web_search=disabled"
+    ],
+    "environment": [
+      "CODEX_HOME=<validated-disposable-root>"
+    ],
+    "status": "synthetic-verified"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-codex-cli-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-codex-cli-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "codex-cli",
+  "schema": "dm.harness-profile/v0"
+}

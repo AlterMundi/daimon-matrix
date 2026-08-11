@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.daimon.local/harness/v0/profile.schema.json",
+  "title": "Daimon Matrix harness evidence profile V0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expected": {"enum": ["accepted", "refused"]},
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
+        },
+        "requires_real_vendor_smoke": {"type": "boolean"}
+      },
+      "required": ["expected", "reason_code", "requires_real_vendor_smoke"]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto_update_policy": {"$ref": "#/$defs/long-text"},
+        "config_precedence": {"$ref": "#/$defs/long-text"},
+        "executable_sha256": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          ]
+        },
+        "install_source": {"$ref": "#/$defs/long-text"},
+        "limitations": {"$ref": "#/$defs/text-set"},
+        "migration_policy": {"$ref": "#/$defs/long-text"},
+        "state_roots": {"$ref": "#/$defs/text-set"}
+      },
+      "required": [
+        "auto_update_policy",
+        "config_precedence",
+        "executable_sha256",
+        "install_source",
+        "limitations",
+        "migration_policy",
+        "state_roots"
+      ]
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authority_refusal": {"$ref": "#/$defs/control"},
+        "history_persistence_disabled": {"$ref": "#/$defs/control"},
+        "instruction_precedence_audited": {"$ref": "#/$defs/control"},
+        "lifecycle_boundaries": {"$ref": "#/$defs/control"},
+        "lifecycle_receipts": {"$ref": "#/$defs/control"},
+        "native_memory_disabled": {"$ref": "#/$defs/control"},
+        "network_default_deny": {"$ref": "#/$defs/control"},
+        "profile_isolation": {"$ref": "#/$defs/control"},
+        "proposal_only": {"$ref": "#/$defs/control"},
+        "receipt_retry": {"$ref": "#/$defs/control"},
+        "required_matrix_boundary": {"$ref": "#/$defs/control"},
+        "secret_custody": {"$ref": "#/$defs/control"},
+        "tool_allowlist": {"$ref": "#/$defs/control"},
+        "upgrade_migration_closed": {"$ref": "#/$defs/control"},
+        "version_pinned": {"$ref": "#/$defs/control"},
+        "write_approval": {"$ref": "#/$defs/control"}
+      },
+      "required": [
+        "authority_refusal",
+        "history_persistence_disabled",
+        "instruction_precedence_audited",
+        "lifecycle_boundaries",
+        "lifecycle_receipts",
+        "native_memory_disabled",
+        "network_default_deny",
+        "profile_isolation",
+        "proposal_only",
+        "receipt_retry",
+        "required_matrix_boundary",
+        "secret_custody",
+        "tool_allowlist",
+        "upgrade_migration_closed",
+        "version_pinned",
+        "write_approval"
+      ]
+    },
+    "evidence_state": {
+      "enum": [
+        "documented-candidate",
+        "live-supported",
+        "private-smoke",
+        "synthetic-conformant"
+      ]
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/text"},
+        "source_refs": {"$ref": "#/$defs/text-set"},
+        "surface": {"$ref": "#/$defs/text"},
+        "vendor": {"$ref": "#/$defs/text"},
+        "version": {"$ref": "#/$defs/text"}
+      },
+      "required": ["name", "source_refs", "surface", "vendor", "version"]
+    },
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/long-text"}
+        },
+        "configuration": {"$ref": "#/$defs/text-set"},
+        "environment": {"$ref": "#/$defs/text-set"},
+        "status": {"enum": ["reference-only", "synthetic-verified"]}
+      },
+      "required": ["argv", "configuration", "environment", "status"]
+    },
+    "matrix_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forbidden_methods": {
+          "const": [
+            "audience.expand",
+            "deploy.effect",
+            "fence.satisfy",
+            "key.rotate",
+            "ledger.append",
+            "membership.mint",
+            "memory.admit",
+            "presence.satisfy",
+            "root.sign",
+            "source.admit",
+            "species.admit"
+          ]
+        },
+        "harness_is_being_authority": {"const": false},
+        "harness_memory_is_canonical": {"const": false},
+        "matrix_revalidates_effects": {"const": true},
+        "protocol_version": {"const": "0"},
+        "required_tools": {
+          "const": [
+            "daimon_status",
+            "scope_me",
+            "scope_we",
+            "we_heads",
+            "we_projection_get",
+            "we_observe"
+          ]
+        },
+        "server_name": {"const": "matrix"},
+        "transport": {"const": "local-inherited-descriptor"},
+        "write_tools": {"const": ["we_observe"]}
+      },
+      "required": [
+        "forbidden_methods",
+        "harness_is_being_authority",
+        "harness_memory_is_canonical",
+        "matrix_revalidates_effects",
+        "protocol_version",
+        "required_tools",
+        "server_name",
+        "transport",
+        "write_tools"
+      ]
+    },
+    "overlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cleanup_policy": {"$ref": "#/$defs/long-text"},
+        "credential_channel": {"const": "inherited-descriptor-only"},
+        "effective_config_inspection": {"$ref": "#/$defs/long-text"},
+        "history_policy": {"$ref": "#/$defs/long-text"},
+        "home_isolation": {"$ref": "#/$defs/long-text"},
+        "instruction_policy": {"$ref": "#/$defs/long-text"},
+        "lifecycle_policy": {"$ref": "#/$defs/long-text"},
+        "log_policy": {"$ref": "#/$defs/long-text"},
+        "memory_policy": {"$ref": "#/$defs/long-text"},
+        "network_policy": {"$ref": "#/$defs/long-text"},
+        "retry_policy": {"$ref": "#/$defs/long-text"}
+      },
+      "required": [
+        "cleanup_policy",
+        "credential_channel",
+        "effective_config_inspection",
+        "history_policy",
+        "home_isolation",
+        "instruction_policy",
+        "lifecycle_policy",
+        "log_policy",
+        "memory_policy",
+        "network_policy",
+        "retry_policy"
+      ]
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,95}$"
+    },
+    "schema": {"const": "dm.harness-profile/v0"}
+  },
+  "required": [
+    "admission",
+    "artifact",
+    "controls",
+    "evidence_state",
+    "harness",
+    "launch",
+    "matrix_boundary",
+    "overlay",
+    "profile_id",
+    "schema"
+  ],
+  "$defs": {
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {"$ref": "#/$defs/text-set"},
+        "note": {"$ref": "#/$defs/long-text"},
+        "state": {"enum": ["fail", "pass", "unknown"]}
+      },
+      "required": ["evidence", "note", "state"]
+    },
+    "long-text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "text-set": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/long-text"}
+    }
+  }
+}
