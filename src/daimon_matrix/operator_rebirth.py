@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -1394,7 +1395,7 @@ def activate_target_runtime(
             "successor_manifest_hash": successor.manifest.digest,
             "origin": origin,
             "runtime_schema": bundle["schema"],
-            "runtime_sha256": digest("dm.operator.rebirth-runtime/v1", bundle).hex(),
+            "runtime_sha256": hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
             "peer_profile_sha256": digest(
                 "dm.operator.rebirth-peer-profile/v1", profile
             ).hex(),
