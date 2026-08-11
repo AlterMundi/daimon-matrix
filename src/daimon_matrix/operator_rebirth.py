@@ -37,6 +37,7 @@ from .authority_epochs import (
     verify_embodiment_enrollment,
 )
 from .canonical import b64url, canonical_bytes, digest, domain_bytes, unb64url
+from .client import CLIENT_CONFIG_SCHEMA
 from .identity import (
     DOMAINS,
     ControlChain,
@@ -54,7 +55,7 @@ from .identity import (
     x25519_public,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
-from .local_api import create_capability
+from .local_api import LocalCapability, create_capability
 from .peer_transport import PeerTransportError, http_peer_round_trip
 from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
@@ -712,6 +713,83 @@ def authority_from_document(value: Any) -> RootAuthority:
     return authority
 
 
+def authority_from_runtime_bundle(value: Any) -> RootAuthority:
+    """Verify the active root authority and signed history in one V7 bundle."""
+
+    fields = {
+        "schema",
+        "control_artifacts",
+        "control_head",
+        "manifest",
+        "authority_history",
+        "credentials",
+        "incarnations",
+        "binding",
+        "binding_activation",
+        "provisional_history",
+        "local_origin",
+        "ledger",
+        "socket",
+        "keystore",
+        "capabilities",
+        "routing",
+        "scopes",
+        "peer_transport",
+        "species",
+        "sources",
+        "relationships",
+    }
+    bundle = _closed(value, fields, "invalid_rebirth_runtime_bundle")
+    if bundle["schema"] != "dm.runtime.bundle/v7":
+        raise RebirthError("unsupported_rebirth_runtime_bundle")
+    if any(
+        bundle[field] is not None
+        for field in ("binding", "binding_activation", "provisional_history")
+    ):
+        raise RebirthError("incompatible_rebirth_runtime_history")
+    authority = authority_from_document(
+        {
+            "schema": AUTHORITY_SCHEMA,
+            "control_artifacts": bundle["control_artifacts"],
+            "control_head": bundle["control_head"],
+            "manifest": bundle["manifest"],
+            "credentials": bundle["credentials"],
+            "incarnations": bundle["incarnations"],
+        }
+    )
+    history = bundle["authority_history"]
+    if not isinstance(history, list) or len(history) > 256:
+        raise RebirthError("invalid_rebirth_runtime_history")
+    historical: list[RootAuthority] = []
+    successors: list[Mapping[str, Any]] = []
+    try:
+        for entry in history:
+            epoch = _closed(
+                entry,
+                {"manifest", "successor"},
+                "invalid_rebirth_runtime_history",
+            )
+            historical.append(
+                RootAuthority(
+                    BeingManifest.from_value(epoch["manifest"]),
+                    authority.state,
+                    authority.credentials,
+                    authority.incarnations,
+                )
+            )
+            successor = epoch["successor"]
+            if not isinstance(successor, Mapping):
+                raise RebirthError("invalid_rebirth_runtime_history")
+            successors.append(copy.deepcopy(dict(successor)))
+        if historical:
+            RootHistoryAuthority(authority, historical, successors)
+    except RebirthError:
+        raise
+    except (KeyError, TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_runtime_history") from exception
+    return authority
+
+
 def _safe_document(path: Path, code: str) -> Any:
     try:
         info = path.lstat()
@@ -1016,6 +1094,325 @@ def create_target_preparation(
             shutil.rmtree(staging)
 
 
+def _validated_preparation(
+    directory: Path,
+    preparation: Any,
+    request: Any,
+    authority: RootAuthority,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> tuple[dict[str, Any], Mapping[str, bytes], Mapping[str, bytes]]:
+    root = _owner_directory(directory, "rebirth_preparation_directory_rejected")
+    value = _closed(
+        preparation,
+        {
+            "schema",
+            "request_id",
+            "being_ref",
+            "control_head",
+            "base_manifest_hash",
+            "origin",
+            "profile",
+            "slots",
+            "capabilities",
+            "custody",
+            "created_at_ms",
+            "expires_at_ms",
+        },
+        "invalid_rebirth_preparation",
+    )
+    if value["schema"] != PREPARATION_SCHEMA:
+        raise RebirthError("unsupported_rebirth_preparation")
+    verified_request = validate_enrollment_request(
+        request, authority, observed_at_ms=observed_at_ms
+    )
+    origin = _origin(value["origin"])
+    profile = _target_profile(value["profile"], authority)
+    request_body = verified_request["body"]
+    if (
+        value["request_id"] != verified_request["request_id"]
+        or value["being_ref"] != authority.manifest.being_ref
+        or value["control_head"] != authority.state.head
+        or value["base_manifest_hash"] != authority.manifest.digest
+        or origin != request_body["origin"]
+        or origin["body_ref"] != profile["body_ref"]
+        or origin["principal_id"] != profile["principal_id"]
+        or value["created_at_ms"] != request_body["created_at_ms"]
+        or value["expires_at_ms"] != request_body["expires_at_ms"]
+    ):
+        raise RebirthError("rebirth_preparation_binding_mismatch")
+    slots = _closed(
+        value["slots"],
+        {"signing", "encryption", "capability", "status_capability", "transport"},
+        "invalid_rebirth_preparation",
+    )
+    label = profile["label"]
+    expected_slots = {
+        "signing": f"runtime.signing.v1:{label}",
+        "encryption": f"peer.encryption.v1:{label}",
+        "capability": f"runtime.capability.v1:{label}",
+        "status_capability": f"runtime.capability.v1:status:{label}",
+        "transport": f"transport.signing.v1:{label}",
+    }
+    if slots != expected_slots:
+        raise RebirthError("rebirth_preparation_slot_mismatch")
+    capabilities = _closed(
+        value["capabilities"],
+        {"operator", "status_observer"},
+        "invalid_rebirth_preparation",
+    )
+    custody = _closed(
+        value["custody"],
+        {"filename", "counter", "transport_filename", "transport_counter"},
+        "invalid_rebirth_preparation",
+    )
+    if custody != {
+        "filename": "custody.json",
+        "counter": 1,
+        "transport_filename": "transport-custody.json",
+        "transport_counter": 1,
+    }:
+        raise RebirthError("invalid_rebirth_preparation")
+    try:
+        body_contents = EncryptedKeystore(root / custody["filename"]).open(
+            password_reader,
+            minimum_counter=custody["counter"],
+            required_control_head=authority.state.head,
+        )
+        transport_contents = EncryptedKeystore(
+            root / custody["transport_filename"]
+        ).open(
+            password_reader,
+            minimum_counter=custody["transport_counter"],
+            required_control_head=authority.state.head,
+        )
+    except (KeystoreError, KeyError, TypeError) as exception:
+        raise RebirthError("rebirth_target_custody_rejected") from exception
+    if set(body_contents.secrets) != {
+        slots["signing"],
+        slots["encryption"],
+        slots["capability"],
+        slots["status_capability"],
+    } or set(transport_contents.secrets) != {slots["transport"]}:
+        raise RebirthError("rebirth_target_custody_rejected")
+    credential_body = request_body["credential"]["body"]
+    principals = credential_body["transport_principals"]
+    expected_principals = [
+        principal
+        for principal in principals
+        if principal["scheme"] == TRANSPORT_SCHEME
+        and principal["principal_id"] == origin["principal_id"]
+    ]
+    if len(expected_principals) != 1:
+        raise RebirthError("rebirth_target_custody_rejected")
+    if (
+        signing_descriptor(body_contents.secrets[slots["signing"]])
+        != credential_body["signing_key"]
+        or key_descriptor(
+            "X25519",
+            x25519_public(body_contents.secrets[slots["encryption"]]),
+        )
+        != credential_body["encryption_key"]
+        or key_descriptor(
+            "Ed25519",
+            ed25519_public(transport_contents.secrets[slots["transport"]]),
+        )
+        != expected_principals[0]["key"]
+    ):
+        raise RebirthError("rebirth_target_custody_rejected")
+    try:
+        operator = LocalCapability.from_value(
+            capabilities["operator"], body_contents.secrets[slots["capability"]]
+        )
+        status = LocalCapability.from_value(
+            capabilities["status_observer"],
+            body_contents.secrets[slots["status_capability"]],
+        )
+    except (KeyError, TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_target_custody_rejected") from exception
+    if (
+        frozenset(operator.methods) != SERVICE_METHODS
+        or frozenset(status.methods) != STATUS_OBSERVER_METHODS
+    ):
+        raise RebirthError("rebirth_target_capability_rejected")
+    return (
+        copy.deepcopy(dict(value)),
+        body_contents.secrets,
+        transport_contents.secrets,
+    )
+
+
+def activate_target_runtime(
+    output: Path,
+    preparation_directory: Path,
+    preparation: Any,
+    request: Any,
+    activation: Any,
+    base_bundle: Any,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Build one fresh V7 target package without copying writable body state."""
+
+    authority = authority_from_runtime_bundle(base_bundle)
+    verified_activation, successor, _history = validate_activation(
+        activation, authority, request=request
+    )
+    issued_at_ms = verified_activation["body"]["issued_at_ms"]
+    supplied = password_reader()
+    if not isinstance(supplied, (bytes, bytearray)) or not 12 <= len(supplied) <= 1024:
+        raise RebirthError("invalid_rebirth_password_length")
+    password = bytearray(supplied)
+    if isinstance(supplied, bytearray):
+        supplied[:] = b"\x00" * len(supplied)
+    staging: Path | None = None
+    try:
+        verified_preparation, body_secrets, transport_secrets = _validated_preparation(
+            preparation_directory,
+            preparation,
+            request,
+            authority,
+            _password_reader(password),
+            observed_at_ms=issued_at_ms,
+        )
+        target = Path(os.path.abspath(output))
+        parent = _owner_directory(target.parent, "rebirth_output_parent_rejected")
+        if target.exists() or target.is_symlink():
+            raise RebirthError("rebirth_output_exists")
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
+        staging.chmod(0o700)
+        runtime_root = staging / "runtime"
+        runtime_root.mkdir(mode=0o700)
+        host_client = staging / "host-client"
+        host_client.mkdir(mode=0o700)
+        slots = verified_preparation["slots"]
+        capabilities = verified_preparation["capabilities"]
+        profile = verified_preparation["profile"]
+        origin = verified_preparation["origin"]
+        bundle = apply_activation_to_runtime_bundle(
+            base_bundle, verified_activation, authority
+        )
+        if bundle.get("schema") != "dm.runtime.bundle/v7":
+            raise RebirthError("unsupported_rebirth_runtime_bundle")
+        bundle["local_origin"] = copy.deepcopy(origin)
+        bundle["ledger"] = "ledger.sqlite"
+        bundle["socket"] = "matrix.sock"
+        bundle["keystore"] = {
+            "filename": "custody.json",
+            "counter": 1,
+            "signing_slot": slots["signing"],
+        }
+        bundle["capabilities"] = [
+            {
+                "descriptor": capabilities["operator"],
+                "secret_slot": slots["capability"],
+            },
+            {
+                "descriptor": capabilities["status_observer"],
+                "secret_slot": slots["status_capability"],
+            },
+        ]
+        bundle["routing"] = None
+        bundle["scopes"] = {
+            "body_capabilities": [],
+            "relationships_filename": None,
+        }
+        bundle["peer_transport"] = {
+            "enabled": True,
+            "encryption_slot": slots["encryption"],
+            "exchange_filename": "peer-exchange.sqlite",
+            "listen_host": profile["listen_host"],
+            "listen_port": profile["listen_port"],
+            "outbox_filename": "peer-outbox.sqlite",
+            "targets": copy.deepcopy(profile["targets"]),
+        }
+        bundle["species"] = None
+        sources = bundle.get("sources")
+        known_beings = (
+            copy.deepcopy(sources.get("known_beings", []))
+            if isinstance(sources, Mapping)
+            else []
+        )
+        bundle["sources"] = {
+            "cas_filename": "sources.sqlite3",
+            "known_beings": known_beings,
+        }
+        relationships = bundle.get("relationships")
+        known_refs = (
+            copy.deepcopy(relationships.get("known_being_refs", []))
+            if isinstance(relationships, Mapping)
+            else []
+        )
+        bundle["relationships"] = {
+            "known_being_refs": known_refs,
+            "store_filename": "relationships.sqlite3",
+        }
+        EncryptedKeystore.create(
+            runtime_root / "custody.json",
+            _password_reader(password),
+            control_head=successor.state.head,
+            secrets=body_secrets,
+        )
+        EncryptedKeystore.create(
+            runtime_root / "transport-custody.json",
+            _password_reader(password),
+            control_head=successor.state.head,
+            secrets=transport_secrets,
+        )
+        _private_write(runtime_root / "runtime.json", bundle)
+        _private_write(
+            runtime_root / "client.json",
+            {
+                "schema": CLIENT_CONFIG_SCHEMA,
+                "capability": capabilities["operator"],
+                "expected_server": origin,
+            },
+        )
+        _private_write(runtime_root / "client.key", body_secrets[slots["capability"]])
+        _private_write(
+            host_client / "client.json",
+            {
+                "schema": CLIENT_CONFIG_SCHEMA,
+                "capability": capabilities["status_observer"],
+                "expected_server": origin,
+            },
+        )
+        _private_write(
+            host_client / "capability.key",
+            body_secrets[slots["status_capability"]],
+        )
+        _private_write(staging / "request.json", request)
+        _private_write(staging / "activation.json", verified_activation)
+        receipt = {
+            "schema": "dm.operator.rebirth-runtime-receipt/v1",
+            "request_id": verified_activation["body"]["request_id"],
+            "activation_id": verified_activation["activation_id"],
+            "being_ref": successor.manifest.being_ref,
+            "control_head": successor.state.head,
+            "previous_manifest_hash": authority.manifest.digest,
+            "successor_manifest_hash": successor.manifest.digest,
+            "origin": origin,
+            "runtime_schema": bundle["schema"],
+            "runtime_sha256": digest("dm.operator.rebirth-runtime/v1", bundle).hex(),
+            "peer_profile_sha256": digest(
+                "dm.operator.rebirth-peer-profile/v1", profile
+            ).hex(),
+            "empty_writable_state": True,
+        }
+        _private_write(staging / "receipt.json", receipt)
+        _fsync_directory(runtime_root)
+        _fsync_directory(host_client)
+        _fsync_directory(staging)
+        os.replace(staging, target)
+        _fsync_directory(parent)
+        staging = None
+        return receipt
+    finally:
+        password[:] = b"\x00" * len(password)
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging)
+
+
 def authorize_from_root_custody(
     request: Any,
     authority: RootAuthority,
@@ -1068,17 +1465,24 @@ def parser() -> argparse.ArgumentParser:
     authorize.add_argument("--root-custody", type=Path, required=True)
     authorize.add_argument("--root-password-fd", type=int, required=True)
     authorize.add_argument("--output", type=Path, required=True)
+    activate = commands.add_parser("activate", help="build a fresh target runtime")
+    activate.add_argument("--base-runtime", type=Path, required=True)
+    activate.add_argument("--preparation-dir", type=Path, required=True)
+    activate.add_argument("--request", type=Path, required=True)
+    activate.add_argument("--activation", type=Path, required=True)
+    activate.add_argument("--output", type=Path, required=True)
+    activate.add_argument("--password-fd", type=int, required=True)
     return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = parser().parse_args(argv)
-        authority = authority_from_document(
-            _safe_document(arguments.authority, "rebirth_authority_unavailable")
-        )
         now = time.time_ns() // 1_000_000
         if arguments.command == "prepare":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
             ttl = arguments.ttl_seconds
             if (
                 not isinstance(ttl, int)
@@ -1100,7 +1504,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             finally:
                 password[:] = b"\x00" * len(password)
-        else:
+        elif arguments.command == "authorize":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
             password = _password(arguments.root_password_fd)
             try:
                 receipt = authorize_from_root_custody(
@@ -1116,6 +1523,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise RebirthError("rebirth_output_exists")
                 _private_write(output, receipt)
                 _fsync_directory(output.parent)
+            finally:
+                password[:] = b"\x00" * len(password)
+        else:
+            password = _password(arguments.password_fd)
+            try:
+                preparation_directory = _owner_directory(
+                    arguments.preparation_dir,
+                    "rebirth_preparation_directory_rejected",
+                )
+                receipt = activate_target_runtime(
+                    arguments.output,
+                    preparation_directory,
+                    _safe_document(
+                        preparation_directory / "preparation.json",
+                        "rebirth_preparation_unavailable",
+                    ),
+                    _safe_document(arguments.request, "rebirth_request_unavailable"),
+                    _safe_document(
+                        arguments.activation, "rebirth_activation_unavailable"
+                    ),
+                    _safe_document(
+                        arguments.base_runtime, "rebirth_runtime_unavailable"
+                    ),
+                    _password_reader(password),
+                )
             finally:
                 password[:] = b"\x00" * len(password)
         sys.stdout.buffer.write(canonical_bytes(receipt) + b"\n")
@@ -1135,8 +1567,10 @@ __all__ = [
     "REQUEST_SCHEMA",
     "TARGET_PROFILE_SCHEMA",
     "RebirthError",
+    "activate_target_runtime",
     "apply_activation_to_runtime_bundle",
     "authority_from_document",
+    "authority_from_runtime_bundle",
     "authorize_enrollment_request",
     "authorize_from_root_custody",
     "create_enrollment_request",

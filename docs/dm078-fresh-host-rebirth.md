@@ -53,13 +53,24 @@ python -m daimon_matrix.operator_rebirth authorize \
   --root-custody /offline/root-custody.json \
   --root-password-fd 3 \
   --output /public/activation.json 3</offline/root-password
+
+python -m daimon_matrix.operator_rebirth activate \
+  --base-runtime /public/current-runtime.json \
+  --preparation-dir /target-owner/rebirth-preparation \
+  --request /public/enrollment-request.json \
+  --activation /public/activation.json \
+  --output /target-owner/rebirth-package \
+  --password-fd 3 3</target-owner/password
 ```
 
 Preparation is a one-shot, fsynced owner-only directory. It contains encrypted
 body custody, separately encrypted transitional transport custody, public
 operator/status capability descriptors, the target peer profile and the public
-request. Activation is an owner-only public artifact. Cluster still owns
-authenticated transfer, runtime assembly, target start and peer update.
+request. Root activation is an owner-only public artifact. The target-only
+`activate` process reopens and revalidates its custody against the root-signed
+activation, emits a loadable V7 runtime with empty writable stores, and retains
+only hashes in its public receipt. Cluster still owns authenticated transfer,
+journaled installation, target start and peer update.
 
 ## Only permitted manifest delta
 
@@ -91,8 +102,8 @@ an existing V7 peer: it appends the old manifest plus signed successor to
 configured endpoint. Body custody, ledgers, projection stores and endpoint
 reachability are not authority and are not copied by this function.
 
-The target runtime itself must be assembled on the target host from its own
-encrypted custody and fresh stores. Cluster owns that host-level transaction:
+The target runtime package must be assembled on the target host from its own
+encrypted custody and fresh stores. Cluster owns the surrounding host-level transaction:
 quiescence when needed, body registration, owner-only directory creation,
 release installation, durable-volume semantics, resource fences, service
 start, backup and rollback. Tribe/AnyVPN supplies authenticated reachability;

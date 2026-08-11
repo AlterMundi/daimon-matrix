@@ -22,6 +22,7 @@ personal memory or writable database bytes.
     "exact-one-row-manifest-successor",
     "historical-event-verification",
     "fresh-ledger-ingest-and-new-origin-append",
+    "loadable-v7-target-with-empty-writable-stores",
     "public-peer-forward-update",
     "deterministic-positive-and-negative-vectors"
   ],

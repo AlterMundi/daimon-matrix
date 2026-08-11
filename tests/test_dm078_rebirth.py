@@ -26,6 +26,7 @@ from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.operator_rebirth import (
     RebirthError,
+    activate_target_runtime,
     apply_activation_to_runtime_bundle,
     authority_from_document,
     authorize_enrollment_request,
@@ -35,6 +36,7 @@ from daimon_matrix.operator_rebirth import (
     validate_activation,
     validate_enrollment_request,
 )
+from daimon_matrix.runtime import load_runtime
 from daimon_matrix.weave import BeingManifest, EventSigner, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
 from tools.generate_dm078_vectors import generate as generate_vectors
@@ -73,6 +75,55 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
                     (self.origins["legion"], 8686),
                 )
             ],
+        }
+
+    def base_runtime_bundle(self) -> dict[str, Any]:
+        return {
+            "schema": "dm.runtime.bundle/v7",
+            "control_artifacts": [self.genesis],
+            "control_head": self.state.head,
+            "manifest": self.manifest.value,
+            "authority_history": [],
+            "credentials": list(self.credentials.values()),
+            "incarnations": list(self.incarnations.values()),
+            "binding": None,
+            "binding_activation": None,
+            "provisional_history": None,
+            "local_origin": self.origins["legion"],
+            "ledger": "ledger.sqlite",
+            "socket": "matrix.sock",
+            "keystore": {
+                "filename": "custody.json",
+                "counter": 1,
+                "signing_slot": "runtime.signing.v1:legion",
+            },
+            "capabilities": [],
+            "routing": None,
+            "scopes": {
+                "body_capabilities": [],
+                "relationships_filename": None,
+            },
+            "peer_transport": {
+                "enabled": True,
+                "encryption_slot": "peer.encryption.v1:legion",
+                "exchange_filename": "peer-exchange.sqlite",
+                "listen_host": "127.0.0.1",
+                "listen_port": 8686,
+                "outbox_filename": "peer-outbox.sqlite",
+                "targets": [
+                    {
+                        "embodiment_id": self.origins["daimonmatrix"]["embodiment_id"],
+                        "endpoint": "http://127.0.0.1:18686/dm-peer/v1",
+                        "timeout_ms": 5_000,
+                    }
+                ],
+            },
+            "species": None,
+            "sources": {"cas_filename": "sources.sqlite3", "known_beings": []},
+            "relationships": {
+                "known_being_refs": [],
+                "store_filename": "relationships.sqlite3",
+            },
         }
 
     def request(self, **changes: Any) -> dict[str, Any]:
@@ -415,6 +466,57 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         request = json.loads(request_path.read_bytes())
         activation = json.loads((root / "activation.json").read_bytes())
         validate_activation(activation, self.authority, request=request)
+
+    def test_activation_builds_loadable_empty_target_runtime(self) -> None:
+        root = self.root_path / "target-runtime"
+        root.mkdir(mode=0o700)
+        password = b"fresh-runtime-password-dm078"
+        preparation = create_target_preparation(
+            root / "preparation",
+            self.authority,
+            self.target_profile(),
+            lambda: bytearray(password),
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+        )
+        request = json.loads((root / "preparation/request.json").read_bytes())
+        activation = authorize_enrollment_request(
+            request,
+            self.authority,
+            root_seeds=self.root_seeds[:2],
+            issued_at_ms=NOW + 20,
+        )
+        receipt = activate_target_runtime(
+            root / "package",
+            root / "preparation",
+            preparation,
+            request,
+            activation,
+            self.base_runtime_bundle(),
+            lambda: bytearray(password),
+        )
+        self.assertTrue(receipt["empty_writable_state"])
+        runtime_root = root / "package/runtime"
+        loaded = load_runtime(
+            runtime_root,
+            "runtime.json",
+            lambda: bytearray(password),
+            clock=lambda: NOW + 30,
+        )
+        self.assertEqual(
+            loaded.service.ledger.local_origin, activation["body"]["origin"]
+        )
+        self.assertEqual(loaded.service.ledger.events(), [])
+        bundle = json.loads((runtime_root / "runtime.json").read_bytes())
+        self.assertEqual(bundle["manifest"]["revision"], 2)
+        self.assertEqual(len(bundle["authority_history"]), 1)
+        self.assertEqual(
+            {row["embodiment_id"] for row in bundle["peer_transport"]["targets"]},
+            {
+                self.origins["legion"]["embodiment_id"],
+                self.origins["daimonmatrix"]["embodiment_id"],
+            },
+        )
 
     def test_transition_matches_schema_and_canonical_round_trip(self) -> None:
         _, activation = self.activation()
