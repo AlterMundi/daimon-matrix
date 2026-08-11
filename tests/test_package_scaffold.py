@@ -301,7 +301,16 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 scan_archive(archive_path)
 
     def test_checkout_secret_scan_is_clean(self) -> None:
-        self.assertGreater(scan_path(ROOT), 0)
+        excluded_roots: tuple[Path, ...] = ()
+        configured = os.environ.get("COLLECTIVE_MEMORY_CONTRACT_ROOT")
+        if configured is not None:
+            collective_root = Path(configured).resolve()
+            if ROOT in collective_root.parents:
+                self.assertEqual(
+                    collective_root, (ROOT / ".collective-memory-contract").resolve()
+                )
+                excluded_roots = (collective_root,)
+        self.assertGreater(scan_path(ROOT, excluded_roots=excluded_roots), 0)
 
 
 if __name__ == "__main__":
