@@ -1,9 +1,9 @@
 # Current state
 
-## Active completion checkpoint — 2026-08-10
+## Active completion checkpoint — 2026-08-11
 
-DM-083 is operationally accepted. Exact Matrix runtime `f0181f7` and Cluster
-merge `5d3892e` run across the real Legion and daimonmatrix host embodiments of
+DM-083 is operationally accepted. Exact Matrix runtime `915c56c` and Cluster
+runtime `94d80ba` run across the real Legion and daimonmatrix host embodiments of
 one fresh being. Encrypted peer exchange, pending import, observer-local
 adoption/reversal, ordinary exact retry, outage refusal, whole-pair rollback,
 portable restore, checked off-host backup, scheduled quiesce/resume and one
@@ -12,10 +12,14 @@ advanced the Legion incarnation while preserving accepted history.
 
 The real succession first exposed a safe historical-response rejection. The
 repaired V2 client then replayed the preserved request byte-identically without
-duplicating its event, and one successor event converged both hosts to six
-known events. Final service, Matrix integrity, Cluster audit-chain, portable
-restore and encrypted backup checks passed. The next dependency gates are
-cross-being native semantic delivery and fresh-host rebirth/recovery. The exact
+duplicating its event. Subsequent bounded live work left both host views at
+nine known events and zero incomplete events. The final runtime also provisions
+a distinct five-method read-only host status client. A cold daimonmatrix reboot
+then recovered every service and container with unchanged audit/idempotency
+hashes and reconcile findings; the private-bridge bind preflight completed once
+with no crash or restart. Final service, Matrix integrity, Cluster audit-chain,
+portable restore and encrypted backup/mirror checks passed. The next dependency
+gates are cross-being native semantic delivery and fresh-host rebirth/recovery. The exact
 sequence is in [`RESUME.md`](RESUME.md); the public audit is
 [`reviews/DM-083.md`](reviews/DM-083.md).
 

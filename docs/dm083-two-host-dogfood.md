@@ -2,8 +2,10 @@
 
 Status: accepted live same-being dogfood executed under operator authorization
 on 2026-08-10. The successor-incarnation retry defect it exposed was repaired,
-redeployed as exact Matrix runtime commit `f0181f7`, and confirmed against
-Daimon Cluster merge `5d3892e`.
+redeployed as Matrix runtime commit `f0181f7`, and confirmed against Daimon
+Cluster merge `5d3892e`. A later host-qualification successor is deployed at
+exact Matrix `915c56c` with Cluster `94d80ba`; the final section records why
+that successor does not rewrite the original dogfood receipt.
 Start from [`../RESUME.md`](../RESUME.md).
 
 “Matrix” means `daimon-matrix`; Matrix.org is outside this system. The two
@@ -217,3 +219,36 @@ escrow remains a physical/governance release gate. Neither condition weakens
 the completed runtime evidence. The next roadmap gates are a consented
 cross-being native logical-message canary and fresh-host rebirth/recovery;
 Tribe Bridge remains transitional until those replacement gates pass.
+
+## 2026-08-11 host qualification successor
+
+The accepted dogfood state was advanced without changing its identity,
+transport, adoption or retry authority. Matrix
+`915c56c8899fd53d683bd7c7c81c3465b600bed9` adds a separately keyed,
+owner-only host status client with exactly five read methods. Cluster
+`94d80baca05f468287b7d2bf99c577350d654a36` pins that exact Matrix artifact
+and waits boundedly for the private Incus bridge before binding `clusterd`.
+Both repositories passed their complete local suites and Python 3.11–3.14 CI.
+
+The exact pair was deployed with the previous release preserved for rollback.
+Adaptation mistakes in the deployment wrapper exercised whole-pair rollback
+repeatedly; every attempt restored the prior healthy services and state before
+the corrected deployment proceeded. A fresh encrypted restic snapshot
+`89d801b1` passed `restic check` and the ciphertext repository was pulled to
+Legion with an empty rsync dry-run afterward.
+
+The final cold reboot changed the host boot ID and recovered SSH, ZeroTier,
+nftables, zram, Incus, three containers, Tribe v1, `clusterd`, Matrix and the
+backup timer without manual repair. `clusterd`'s bridge preflight exited zero,
+the service started once with `NRestarts=0`, and the boot journal contained no
+`EADDRNOTAVAIL`. Pre/post audit and idempotency hashes were byte-identical; the
+same five known reconcile findings remained. Authenticated Matrix status
+reported configured, integrity `ok`, nine known events, zero incomplete,
+authority epoch 2 and non-partial `/we` and sync-plan views. Tribe v1 remained
+healthy at directory epoch 5.
+
+This is runtime qualification of the already accepted same-being path, not a
+cross-being consent or semantic-delivery claim. Matrix PR #112 and Cluster PR
+#77 remain unmerged pending independent review. Fresh-host private custody,
+external participant consent and the final human cutover/archive decisions
+remain separate gates.
