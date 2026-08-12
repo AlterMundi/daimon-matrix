@@ -72,12 +72,16 @@ inherited descriptors. Captured stdout and stderr contained none of those
 passwords.
 
 The generated V7 runtime loaded with one active fresh embodiment, no peer
-targets and an empty writable ledger. Its enriched historical authority
-verified the pre-recovery manifest and accepted an old canonical signed event
-restored from the source ledger. Schema validation, a recovered-authority
-known-source parse, transition tampering tests and deterministic public vector
-regeneration also passed. This proves the local protocol boundary; it does not
-claim a backup archive, a distinct host, service cutover or rollback rehearsal.
+targets and an initially empty writable ledger. The recovery restore boundary
+opened the predecessor ledger under its exact old authority, then re-ingested
+only canonical events through the enriched historical authority. It accepted
+the old signed event, was idempotent on retry, and byte-preserved the fresh
+runtime bundle plus both fresh custody files; no predecessor custody, runtime
+configuration, derived store or transport/RPC journal was copied. Schema
+validation, a recovered-authority known-source parse, transition tampering
+tests and deterministic public vector regeneration also passed. This proves
+the local protocol boundary; it does not claim a backup archive, a distinct
+host, service cutover or rollback rehearsal.
 
 ## Installed remote checkpoint
 

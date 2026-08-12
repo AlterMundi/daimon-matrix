@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -44,6 +45,7 @@ from daimon_matrix.operator_rebirth import (
     create_recovery_custody,
     create_recovery_target_preparation,
     recovery_request_base,
+    restore_recovery_ledger,
     validate_activation,
     validate_enrollment_request,
     validate_recovery_activation,
@@ -677,25 +679,65 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             lambda: bytearray(target_password),
         )
         runtime_root = ceremony / "package/runtime"
+        snapshot_root = self.root_path / "legion"
+        (snapshot_root / "runtime.json").write_bytes(
+            canonical_bytes(self._base_runtime_bundle())
+        )
+        source_evidence = {
+            "bundle_sha256": hashlib.sha256(
+                (snapshot_root / "runtime.json").read_bytes()
+            ).hexdigest(),
+            "bundle_size": (snapshot_root / "runtime.json").stat().st_size,
+            "ledger_sha256": hashlib.sha256(
+                (snapshot_root / "ledger.sqlite").read_bytes()
+            ).hexdigest(),
+            "ledger_size": (snapshot_root / "ledger.sqlite").stat().st_size,
+        }
+        protected_before = {
+            name: hashlib.sha256((runtime_root / name).read_bytes()).hexdigest()
+            for name in ("runtime.json", "custody.json", "transport-custody.json")
+        }
+        restore_receipt = restore_recovery_ledger(
+            runtime_root,
+            snapshot_root,
+            lambda: bytearray(target_password),
+            source_evidence=source_evidence,
+            clock=lambda: NOW + 30,
+        )
         hosted = load_runtime(
             runtime_root,
             "runtime.json",
             lambda: bytearray(target_password),
             clock=lambda: NOW + 30,
         )
-        assert hosted.service.ledger.events() == []
+        assert hosted.service.ledger.events() == [old_event]
         assert receipt["empty_writable_state"] is True
+        assert restore_receipt["event_count"] == 1
+        assert restore_receipt["inserted_count"] == 1
+        assert protected_before == {
+            name: hashlib.sha256((runtime_root / name).read_bytes()).hexdigest()
+            for name in ("runtime.json", "custody.json", "transport-custody.json")
+        }
+        assert restore_recovery_ledger(
+            runtime_root,
+            snapshot_root,
+            lambda: bytearray(target_password),
+            source_evidence=source_evidence,
+            clock=lambda: NOW + 30,
+        ) == {**restore_receipt, "inserted_count": 0}
+        with self.assertRaisesRegex(RebirthError, "source_evidence_mismatch"):
+            restore_recovery_ledger(
+                runtime_root,
+                snapshot_root,
+                lambda: bytearray(target_password),
+                source_evidence={**source_evidence, "ledger_sha256": "0" * 64},
+                clock=lambda: NOW + 30,
+            )
         assert isinstance(hosted.service.ledger.authority, RootHistoryAuthority)
         assert set(hosted.service.ledger.authority.accepted_manifest_hashes) == {
             self.manifest.digest,
             receipt["successor_manifest_hash"],
         }
-        assert (
-            hosted.service.ledger.ingest(
-                self.ledger_a.delta([]), source="restored-canonical-backup"
-            )["missing"]
-            == 1
-        )
         assert hosted.service.ledger.event(old_event["event_id"]) == old_event
         bundle = json.loads((runtime_root / "runtime.json").read_bytes())
         assert bundle["control_head"] == recovery["artifact_id"]

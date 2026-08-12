@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,8 +61,10 @@ from .identity import (
     x25519_public,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
+from .ledger import Ledger
 from .local_api import LocalCapability, create_capability
 from .peer_transport import PeerTransportError, http_peer_round_trip
+from .runtime import load_runtime
 from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
 
@@ -1873,6 +1875,142 @@ def activate_recovery_target_runtime(
     )
 
 
+def restore_recovery_ledger(
+    target_runtime_directory: Path,
+    snapshot_runtime_directory: Path,
+    password_reader: PasswordReader,
+    *,
+    source_evidence: Mapping[str, Any],
+    clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+) -> dict[str, Any]:
+    """Restore only verified canonical events into a fresh recovered runtime.
+
+    A recovery snapshot also contains obsolete embodiment custody and public
+    runtime configuration.  Those bytes must never replace the fresh target.
+    This boundary therefore reads the predecessor ledger as an untrusted event
+    stream and lets the recovered history authority verify every event before
+    insertion.  Derived stores, transport journals and local RPC journals are
+    deliberately rebuilt rather than copied.
+    """
+
+    target_root = _owner_directory(
+        target_runtime_directory, "rebirth_recovery_target_directory_rejected"
+    )
+    source_root = _owner_directory(
+        snapshot_runtime_directory, "rebirth_recovery_snapshot_directory_rejected"
+    )
+    evidence = _closed(
+        source_evidence,
+        {"bundle_sha256", "bundle_size", "ledger_sha256", "ledger_size"},
+        "rebirth_recovery_source_evidence_rejected",
+    )
+    source_bundle = _safe_document(
+        source_root / "runtime.json", "rebirth_recovery_snapshot_bundle_rejected"
+    )
+    source_bundle_bytes = canonical_bytes(source_bundle)
+    if evidence["bundle_sha256"] != hashlib.sha256(
+        source_bundle_bytes
+    ).hexdigest() or evidence["bundle_size"] != len(source_bundle_bytes):
+        raise RebirthError("rebirth_recovery_source_evidence_mismatch")
+    try:
+        source_authority = authority_from_runtime_bundle(source_bundle)
+        hosted = load_runtime(
+            target_root,
+            "runtime.json",
+            password_reader,
+            clock=clock,
+        )
+        target_authority = hosted.service.ledger.authority
+        source_origin = _origin(source_bundle["local_origin"])
+        source_authority.validate_origin(source_origin, require_active=True)
+    except Exception as exception:
+        raise RebirthError(
+            "rebirth_recovery_snapshot_authority_rejected"
+        ) from exception
+    if (
+        not isinstance(target_authority, RootHistoryAuthority)
+        or source_authority.manifest.digest
+        not in target_authority.accepted_manifest_hashes
+        or source_authority.manifest.digest == target_authority.manifest.digest
+    ):
+        raise RebirthError("rebirth_recovery_snapshot_lineage_rejected")
+
+    ledger_name = source_bundle.get("ledger")
+    if (
+        not isinstance(ledger_name, str)
+        or not ledger_name
+        or Path(ledger_name).name != ledger_name
+    ):
+        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected")
+    source_ledger_path = source_root / ledger_name
+    try:
+        info = source_ledger_path.lstat()
+    except FileNotFoundError as exception:
+        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected") from exception
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected")
+
+    scratch = Path(tempfile.mkdtemp(prefix=".recovery-ledger-", dir=target_root.parent))
+    scratch.chmod(0o700)
+    try:
+        copied_ledger = scratch / "ledger.sqlite"
+        shutil.copyfile(source_ledger_path, copied_ledger)
+        copied_ledger.chmod(0o600)
+        copied_bytes = copied_ledger.read_bytes()
+        if evidence["ledger_sha256"] != hashlib.sha256(
+            copied_bytes
+        ).hexdigest() or evidence["ledger_size"] != len(copied_bytes):
+            raise RebirthError("rebirth_recovery_source_evidence_mismatch")
+        source_ledger = Ledger(
+            copied_ledger,
+            authority=source_authority,
+            local_origin=source_origin,
+        )
+        if source_ledger.incomplete_count() != 0:
+            raise RebirthError("rebirth_recovery_snapshot_incomplete")
+        source_events = source_ledger.events(include_incomplete=False)
+        before_events = hosted.service.ledger.events()
+        source_by_id = {event["event_id"]: event for event in source_events}
+        if len(source_by_id) != len(source_events) or any(
+            source_by_id.get(event["event_id"]) != event for event in before_events
+        ):
+            raise RebirthError("rebirth_recovery_target_not_pristine")
+        source_hash = hashlib.sha256(canonical_bytes(source_events)).hexdigest()
+        if before_events == source_events:
+            inserted_count = 0
+        else:
+            inserted_count = hosted.service.ledger.ingest(
+                source_events,
+                source=f"recovery-backup:{source_hash}",
+            )["missing"]
+        after_events = hosted.service.ledger.events()
+    except RebirthError:
+        raise
+    except Exception as exception:
+        raise RebirthError("rebirth_recovery_ledger_restore_rejected") from exception
+    finally:
+        shutil.rmtree(scratch)
+    if after_events != source_events or hosted.service.ledger.incomplete_count() != 0:
+        raise RebirthError("rebirth_recovery_ledger_restore_mismatch")
+    return {
+        "schema": "dm.operator.recovery-ledger-restore-receipt/v1",
+        "being_ref": target_authority.manifest.being_ref,
+        "predecessor_manifest_hash": source_authority.manifest.digest,
+        "successor_manifest_hash": target_authority.manifest.digest,
+        "source_origin": source_origin,
+        "event_count": len(source_events),
+        "event_set_sha256": source_hash,
+        "inserted_count": inserted_count,
+        "incomplete_count": 0,
+        "state": "restored-canonical-ledger",
+    }
+
+
 def create_recovery_custody(
     output: Path,
     previous: RootAuthority,
@@ -2293,6 +2431,7 @@ __all__ = [
     "main",
     "parser",
     "recovery_request_base",
+    "restore_recovery_ledger",
     "validate_activation",
     "validate_enrollment_request",
     "validate_recovery_activation",
