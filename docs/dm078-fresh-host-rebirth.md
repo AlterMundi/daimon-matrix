@@ -1,15 +1,18 @@
 # DM-078 additional-embodiment rebirth
 
-Status: implemented V0 public-request/offline-root contract plus installed
-same-host three-process rehearsal; disposable physical-host/Incus and live
-multi-host journeys remain operational gates.
+Status: implemented V0 public-request/offline-root contracts for both an
+additional embodiment and recovery-quorum rebirth. Installed distinct-host,
+true relocation and disposable restore journeys remain operational gates.
 
-Rebirth in this contract means adding a new embodiment of the same being. It
-does not copy an old body's private keys or writable database, relocate an
-existing embodiment, or create another being. The new body begins with a fresh
-embodiment ID, first incarnation, empty local writable stores and its own
-signing, encryption, transport and capability custody. It may then ingest the
-same being's accepted signed history.
+Rebirth in this contract means creating a new embodiment of the same being. In
+the ordinary path it adds that body beside the existing active embodiments. In
+the recovery path a recovery quorum revokes every old active embodiment,
+rotates root authority and authorizes exactly one fresh replacement body. Both
+paths begin with a fresh embodiment ID, first incarnation, empty local writable
+stores and independent signing, encryption, transport and capability custody.
+Neither copies an old body's private keys, local decisions or writable
+database, relocates an existing embodiment, or creates another being. The new
+body may ingest the same being's accepted signed history.
 
 ## Split-custody ceremony
 
@@ -99,6 +102,62 @@ original manifest hash. A fresh empty ledger may ingest those immutable events
 and append its first event with the new origin and successor hash; it never
 becomes a clone of another embodiment's local decisions or effective state.
 
+## Recovery-quorum rebirth
+
+The recovery path is a separate forward-only transition,
+`dm.we.recovery-rebirth/v1`. It first verifies a threshold recovery artifact
+against the old control chain. The artifact must revoke the complete set of old
+active embodiment IDs and install a fresh root threshold. No operational body
+is active in that intermediate control state.
+
+Four descriptor-only commands keep the custody roles separate:
+
+```bash
+daimon-rebirth recover \
+  --authority /public/old-authority.json \
+  --root-custody /offline/old-root-custody.json \
+  --current-password-fd 3 --replacement-password-fd 4 \
+  --output /offline/recovery 3</offline/old-password 4</offline/new-password
+
+daimon-rebirth prepare-recovery \
+  --authority /public/old-authority.json \
+  --recovery /public/recovery-artifact.json \
+  --profile /public/recovery-target-profile.json \
+  --output /target/recovery-preparation \
+  --password-fd 3 3</target/password
+
+daimon-rebirth authorize-recovery \
+  --authority /public/old-authority.json \
+  --recovery /public/recovery-artifact.json \
+  --request /public/recovery-enrollment-request.json \
+  --recovered-root-custody /offline/recovery/recovered-root-custody.json \
+  --root-password-fd 3 --output /public/recovery-activation.json \
+  3</offline/new-password
+
+daimon-rebirth activate-recovery \
+  --base-runtime /public/old-runtime.json \
+  --preparation-dir /target/recovery-preparation \
+  --request /public/recovery-enrollment-request.json \
+  --activation /public/recovery-activation.json \
+  --output /target/recovered-package \
+  --password-fd 3 3</target/password
+```
+
+`recover` consumes offline custody containing the old root and recovery roles.
+Its replacement custody retains the recovery seeds and fresh replacement root
+seeds, but drops every old root seed. Target preparation happens only after the
+public recovery artifact verifies. The activation binds the recovery artifact,
+old and new control heads, old and successor manifests, the full revocation
+set, and the fresh body's credential, incarnation and peer principal. It is
+signed by the new root threshold.
+
+The recovered V7 bundle has only the fresh embodiment active and therefore may
+have an empty peer target list. Its `authority_history` carries a self-contained
+snapshot of the previous control artifacts, credentials and incarnations so
+old signed events remain verifiable even though none of those credentials is
+active. The bundle contains no old private key and starts with an empty writable
+ledger; restoring canonical signed history is a distinct, auditable step.
+
 ## Forward-only runtime update
 
 `apply_activation_to_runtime_bundle` produces a public, non-mutating update for
@@ -116,10 +175,10 @@ it does not create Matrix identity.
 
 ## Operational gates
 
-The vectors, unit journey and installed same-host process journey are synthetic
-evidence only. DM-078 is not complete until the issue's distinct-host/Incus
-additional-embodiment, relocation and disaster-recovery journeys pass with
-installed Matrix, Cluster and transport components and their fault matrix.
+The vectors and local process journeys are synthetic evidence only. DM-078 is
+not complete until the issue's distinct-host/Incus additional-embodiment, true
+relocation and disaster-recovery restore journeys pass with installed Matrix,
+Cluster and transport components and their fault matrix.
 
 Disposable Incus rehearsal may proceed autonomously. A live CompAII authority
 change still requires one exact preflight naming:
@@ -137,9 +196,11 @@ the canary and remove its route with a signed successor. It never deletes
 canonical events, control artifacts, revocations, fence high-waters or the sole
 backup.
 
-The wire schema is
-`schemas/weave/v1/embodiment-enrollment.schema.json`. Deterministic positive and
-tampered vectors are under `vectors/weave/v1/embodiment-enrollment/` and are
-generated by `tools/generate_dm078_vectors.py`. Contract and ledger evidence is
-in `tests/test_dm078_rebirth.py`; the current verification boundary is recorded
-in `docs/verification/dm078-fresh-host-rebirth.md`.
+The wire schemas are `schemas/weave/v1/embodiment-enrollment.schema.json` and
+`schemas/weave/v1/recovery-rebirth.schema.json`. Deterministic positive and
+tampered vectors are under `vectors/weave/v1/embodiment-enrollment/` and
+`vectors/weave/v1/recovery-rebirth/`, generated by the corresponding
+`tools/generate_dm078*_vectors.py` scripts. Contract and ledger evidence is in
+`tests/test_dm078_rebirth.py` and `tests/test_dm078_recovery_rebirth.py`; the
+current verification boundary is recorded in
+`docs/verification/dm078-fresh-host-rebirth.md`.

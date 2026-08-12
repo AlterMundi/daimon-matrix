@@ -49,20 +49,7 @@
       "type": "array",
       "maxItems": 256,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "manifest",
-          "successor"
-        ],
-        "properties": {
-          "manifest": {
-            "type": "object"
-          },
-          "successor": {
-            "type": "object"
-          }
-        }
+        "$ref": "#/$defs/authorityHistoryEntry"
       }
     },
     "credentials": {
@@ -262,7 +249,6 @@
             },
             "targets": {
               "type": "array",
-              "minItems": 1,
               "maxItems": 255,
               "items": {
                 "type": "object",
@@ -361,13 +347,7 @@
                     "type": "array",
                     "maxItems": 256,
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": ["manifest", "successor"],
-                      "properties": {
-                        "manifest": {"type": "object"},
-                        "successor": {"type": "object"}
-                      }
+                      "$ref": "#/$defs/authorityHistoryEntry"
                     }
                   },
                   "control_artifacts": {
@@ -422,6 +402,54 @@
     }
   },
   "$defs": {
+    "authorityHistoryEntry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["manifest", "successor"],
+          "properties": {
+            "manifest": {"type": "object"},
+            "successor": {"type": "object"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "control_artifacts",
+            "control_head",
+            "credentials",
+            "incarnations",
+            "successor"
+          ],
+          "properties": {
+            "manifest": {"type": "object"},
+            "control_artifacts": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1024,
+              "items": {"$ref": "#/$defs/artifact"}
+            },
+            "control_head": {"$ref": "#/$defs/artifactId"},
+            "credentials": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {"$ref": "#/$defs/artifact"}
+            },
+            "incarnations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {"$ref": "#/$defs/artifact"}
+            },
+            "successor": {"type": "object"}
+          }
+        }
+      ]
+    },
     "artifactId": {
       "type": "string",
       "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"

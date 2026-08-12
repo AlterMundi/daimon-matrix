@@ -9,7 +9,7 @@ personal memory or writable database bytes.
 ```json
 {
   "schema": "dm.verification.dm078/v1",
-  "checkpoint": "additional-embodiment-contract",
+  "checkpoint": "additional-embodiment-and-recovery-contracts",
   "result": "pass",
   "scope": "synthetic-local",
   "private_material_published": false,
@@ -25,6 +25,15 @@ personal memory or writable database bytes.
     "loadable-v7-target-with-empty-writable-stores",
     "public-peer-forward-update",
     "deterministic-positive-and-negative-vectors",
+    "complete-old-embodiment-revocation",
+    "recovery-threshold-to-fresh-root-rotation",
+    "old-root-seeds-dropped-from-replacement-custody",
+    "recovery-target-only-loadable-v7-runtime",
+    "self-contained-old-authority-history",
+    "ordinary-enrollment-and-recovery-compose-in-both-orders",
+    "canonical-history-restore-after-recovery",
+    "recovery-custody-roles-in-distinct-processes",
+    "required-release-conformance-scenario",
     "cluster-journaled-install-and-authenticated-start",
     "remote-disposable-three-process-native-sync"
   ],
@@ -35,19 +44,40 @@ personal memory or writable database bytes.
     "existing-embodiment-replay",
     "unrelated-manifest-delta",
     "activation-origin-substitution",
-    "transition-hash-tamper"
+    "transition-hash-tamper",
+    "incomplete-old-embodiment-revocation",
+    "recovery-signature-tamper",
+    "old-root-reuse-after-recovery"
   ],
   "pending": [
     "disposable-incus-or-distinct-host-journey",
     "journey-a-full-fault-matrix",
     "journey-b-true-volume-relocation",
-    "journey-c-recovery-quorum-rebirth",
+    "journey-c-disposable-backup-restore-and-fault-matrix",
     "content-addressed-live-preflight",
     "same-plan-human-go",
     "live-canary-and-forward-rollback"
   ]
 }
 ```
+
+## Local recovery checkpoint
+
+The recovery contract was exercised without contacting any host. A synthetic
+recovery threshold rotated the old control chain into fresh root custody,
+revoked every active predecessor and authorized one separately keyed target.
+The four custody phases (`recover`, `prepare-recovery`, `authorize-recovery`,
+`activate-recovery`) ran in distinct subprocesses with passwords passed only by
+inherited descriptors. Captured stdout and stderr contained none of those
+passwords.
+
+The generated V7 runtime loaded with one active fresh embodiment, no peer
+targets and an empty writable ledger. Its enriched historical authority
+verified the pre-recovery manifest and accepted an old canonical signed event
+restored from the source ledger. Schema validation, a recovered-authority
+known-source parse, transition tampering tests and deterministic public vector
+regeneration also passed. This proves the local protocol boundary; it does not
+claim a backup archive, a distinct host, service cutover or rollback rehearsal.
 
 ## Installed remote checkpoint
 
@@ -74,20 +104,30 @@ Reproduce the checkpoint from a clean checkout with:
 
 ```bash
 python tools/generate_dm078_vectors.py --check
+python tools/generate_dm078_recovery_vectors.py --check
 PYTHONPATH=src python -W error::ResourceWarning -m unittest \
-  tests.test_dm078_rebirth -v
+  tests.test_dm078_rebirth tests.test_dm078_recovery_rebirth -v
 python -m ruff format --check \
   src/daimon_matrix/authority_epochs.py \
   src/daimon_matrix/operator_rebirth.py \
-  tools/generate_dm078_vectors.py tests/test_dm078_rebirth.py
+  src/daimon_matrix/runtime.py \
+  tools/generate_dm078_vectors.py \
+  tools/generate_dm078_recovery_vectors.py \
+  tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
 python -m ruff check \
   src/daimon_matrix/authority_epochs.py \
   src/daimon_matrix/operator_rebirth.py \
-  tools/generate_dm078_vectors.py tests/test_dm078_rebirth.py
+  src/daimon_matrix/runtime.py \
+  tools/generate_dm078_vectors.py \
+  tools/generate_dm078_recovery_vectors.py \
+  tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
 MYPYPATH=src python -m mypy \
   src/daimon_matrix/authority_epochs.py \
   src/daimon_matrix/operator_rebirth.py \
-  tools/generate_dm078_vectors.py tests/test_dm078_rebirth.py
+  src/daimon_matrix/runtime.py \
+  tools/generate_dm078_vectors.py \
+  tools/generate_dm078_recovery_vectors.py \
+  tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
 ```
 
 The disposable and live reports will be appended as separate checkpoints with

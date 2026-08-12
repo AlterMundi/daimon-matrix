@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.19",
+  "suite_version": "DM-026.20",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -813,6 +813,20 @@
       "cleanup": "Synthetic keys and encrypted temporary state are removed.",
       "platform": "all",
       "ci_lane": "fast",
+      "required": true
+    },
+    {
+      "id": "rebirth_additional_and_recovery",
+      "owners": ["DM-021", "DM-022", "DM-078"],
+      "specifications": ["docs/dm078-fresh-host-rebirth.md", "schemas/weave/v1/embodiment-enrollment.schema.json", "schemas/weave/v1/recovery-rebirth.schema.json"],
+      "setup": "A root-bound being, split offline root and recovery custody, and a separately keyed target with empty writable state.",
+      "stimulus": "Authorize an additional embodiment under the current root, then independently rotate a recovery quorum into fresh roots and one fresh replacement body.",
+      "fault": "Threshold shortfall, signature or hash tamper, stale or reused identifiers, incomplete revocation, old-root reuse, unexpected custody roles or writable-state copying.",
+      "expected": "Both ceremonies preserve exact signed history while target and authority custody stay separate; recovery revokes every active predecessor, drops old roots and starts one fresh target-only runtime.",
+      "evidence": ["tests.test_dm078_rebirth.TestAdditionalEmbodiment.test_activation_builds_loadable_empty_target_runtime", "tests.test_dm078_rebirth.TestAdditionalEmbodiment.test_target_and_root_never_share_private_material", "tests.test_dm078_recovery_rebirth.TestRecoveryRebirthAuthority.test_offline_recovery_custody_drops_old_roots_and_authorizes_target", "tests.test_dm078_recovery_rebirth.TestRecoveryRebirthAuthority.test_recovery_and_ordinary_enrollment_compose_in_both_orders", "tests.test_dm078_recovery_rebirth.TestRecoveryRebirthAuthority.test_recovery_must_revoke_every_predecessor_and_bind_exact_bytes", "tests.test_dm078_recovery_rebirth.TestRecoveryRebirthAuthority.test_recovery_preparation_builds_loadable_target_only_runtime"],
+      "cleanup": "Close SQLite handles and remove only fixture-owned owner-only temporary ceremony and runtime roots.",
+      "platform": "all",
+      "ci_lane": "complete",
       "required": true
     },
     {

@@ -23,8 +23,9 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -35,7 +36,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from .authority_epochs import (
     RootHistoryAuthority,
     create_embodiment_enrollment,
+    create_recovery_rebirth,
     verify_embodiment_enrollment,
+    verify_recovery_rebirth,
 )
 from .canonical import b64url, canonical_bytes, digest, domain_bytes, unb64url
 from .client import CLIENT_CONFIG_SCHEMA
@@ -45,6 +48,7 @@ from .identity import (
     ControlState,
     create_embodiment_credential,
     create_incarnation_authorization,
+    create_recovery,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
@@ -53,6 +57,7 @@ from .identity import (
     signing_descriptor,
     verify_embodiment_credential,
     verify_incarnation_authorization,
+    verify_recovery,
     x25519_public,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
@@ -68,6 +73,9 @@ REQUEST_ID_PREFIX: Final = "dm:embodiment-request:v1:"
 ACTIVATION_SCHEMA: Final = "dm.operator.embodiment-activation/v1"
 ACTIVATION_DOMAIN: Final = "dm.operator.embodiment-activation/v1"
 ACTIVATION_ID_PREFIX: Final = "dm:embodiment-activation:v1:"
+RECOVERY_ACTIVATION_SCHEMA: Final = "dm.operator.recovery-activation/v1"
+RECOVERY_ACTIVATION_DOMAIN: Final = "dm.operator.recovery-activation/v1"
+RECOVERY_ACTIVATION_ID_PREFIX: Final = "dm:recovery-activation:v1:"
 TRANSPORT_SCHEME: Final = "dm-peer-v1"
 MAX_TIME: Final = 2**53 - 1
 MAX_ARTIFACT_BYTES: Final = 1024 * 1024
@@ -88,6 +96,23 @@ _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 class RebirthError(RuntimeError):
     """The enrollment ceremony is malformed, stale, or unauthorized."""
+
+
+class _RequestBase(Protocol):
+    @property
+    def manifest(self) -> BeingManifest: ...
+
+    @property
+    def state(self) -> ControlState: ...
+
+
+@dataclass(frozen=True)
+class RecoveryRequestBase:
+    """Public pre-activation view; it is never a runnable authority."""
+
+    manifest: BeingManifest
+    state: ControlState
+    recovery_artifact: Mapping[str, Any]
 
 
 def _closed(value: Any, fields: set[str], code: str) -> Mapping[str, Any]:
@@ -165,7 +190,7 @@ def _origin(value: Any) -> dict[str, str]:
 
 
 def create_enrollment_request(
-    base: RootAuthority,
+    base: _RequestBase,
     *,
     signing_seed: bytes,
     encryption_private: bytes,
@@ -253,7 +278,7 @@ def create_enrollment_request(
 
 def validate_enrollment_request(
     value: Any,
-    base: RootAuthority,
+    base: _RequestBase,
     *,
     observed_at_ms: int,
 ) -> dict[str, Any]:
@@ -439,6 +464,62 @@ def _authorized_root_seeds(state: ControlState, seeds: Sequence[bytes]) -> list[
     return [selected[kid] for kid in sorted(selected)]
 
 
+def _exact_custody_role_seeds(
+    secrets: Mapping[str, bytes],
+    *,
+    prefix: str,
+    policy: Mapping[str, Any],
+    code: str,
+) -> list[bytes]:
+    """Require custody to contain every and only one seed for a public role."""
+
+    allowed = {row["key_id"] for row in policy["keys"]}
+    selected: dict[str, bytes] = {}
+    for slot, seed in sorted(secrets.items()):
+        if not slot.startswith(prefix):
+            continue
+        kid = key_id("Ed25519", ed25519_public(seed))
+        if kid not in allowed or kid in selected:
+            raise RebirthError(code)
+        selected[kid] = seed
+    if set(selected) != allowed:
+        raise RebirthError(code)
+    return [selected[kid] for kid in sorted(selected)]
+
+
+def recovery_request_base(
+    previous: RootAuthority, recovery_artifact: Mapping[str, Any]
+) -> RecoveryRequestBase:
+    """Verify a recovery quorum artifact before target custody is generated."""
+
+    try:
+        recovered = verify_recovery(recovery_artifact, [previous.state])
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_artifact_invalid") from exception
+    expected_revocations = sorted(
+        {
+            row["embodiment_id"]
+            for row in previous.manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+    )
+    body = recovery_artifact.get("body")
+    previous_root_ids = {row["key_id"] for row in previous.state.root_policy["keys"]}
+    recovered_root_ids = {row["key_id"] for row in recovered.root_policy["keys"]}
+    if (
+        not isinstance(body, Mapping)
+        or body.get("revoked_embodiments") != expected_revocations
+    ):
+        raise RebirthError("rebirth_recovery_incomplete_revocation")
+    if previous_root_ids & recovered_root_ids:
+        raise RebirthError("rebirth_recovery_root_reuse")
+    return RecoveryRequestBase(
+        previous.manifest,
+        recovered,
+        copy.deepcopy(dict(recovery_artifact)),
+    )
+
+
 def authorize_enrollment_request(
     request: Any,
     base: RootAuthority,
@@ -613,6 +694,195 @@ def validate_activation(
     return normalized, successor, history
 
 
+def authorize_recovery_enrollment_request(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    replacement_root_seeds: Sequence[bytes],
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    """Authorize the first fresh body directly under a recovered root."""
+
+    issued = _uint(issued_at_ms, "invalid_rebirth_time")
+    request_base = recovery_request_base(previous, recovery_artifact)
+    verified = validate_enrollment_request(request, request_base, observed_at_ms=issued)
+    selected = _authorized_root_seeds(request_base.state, replacement_root_seeds)
+    partial = verified["body"]["credential"]
+    credential = copy.deepcopy(partial)
+    root_preimage = domain_bytes(DOMAINS["embodiment-credential"], credential["body"])
+    credential["signatures"].extend(
+        _identity_signature(seed, "root-authorization", root_preimage)
+        for seed in selected
+    )
+    credential["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+    incarnation = copy.deepcopy(verified["body"]["incarnation"])
+    try:
+        credential_body = verify_embodiment_credential(
+            credential, request_base.state, at_ms=issued
+        )
+        incarnation_body = verify_incarnation_authorization(
+            incarnation, credential, request_base.state, at_ms=issued
+        )
+    except ValueError as exception:
+        raise RebirthError("rebirth_recovery_authorization_invalid") from exception
+    origin = _origin(verified["body"]["origin"])
+    if (
+        credential_body["embodiment_id"] != origin["embodiment_id"]
+        or credential_body["body_ref"] != origin["body_ref"]
+        or incarnation_body["incarnation_id"] != origin["incarnation_id"]
+        or incarnation_body["incarnation_sequence"] != 0
+        or incarnation_body["started_at_ms"] > issued
+    ):
+        raise RebirthError("rebirth_recovery_authorization_invalid")
+    manifest = BeingManifest.from_value(
+        {
+            "schema": "being-manifest/v2",
+            "being_ref": previous.manifest.being_ref,
+            "control_head": request_base.state.head,
+            "history_binding_id": previous.manifest.value["history_binding_id"],
+            "revision": previous.manifest.value["revision"] + 1,
+            "embodiments": [
+                {
+                    "body_ref": origin["body_ref"],
+                    "embodiment_credential_id": credential["artifact_id"],
+                    "embodiment_id": origin["embodiment_id"],
+                    "incarnation_authorization_id": incarnation["artifact_id"],
+                    "incarnation_id": origin["incarnation_id"],
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    successor = RootAuthority(
+        manifest,
+        request_base.state,
+        {credential["artifact_id"]: credential},
+        {incarnation["artifact_id"]: incarnation},
+    )
+    transition = create_recovery_rebirth(
+        previous.manifest,
+        manifest,
+        recovery_artifact=recovery_artifact,
+        body_ref=origin["body_ref"],
+        embodiment_id=origin["embodiment_id"],
+        incarnation_id=origin["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=incarnation["artifact_id"],
+        principal_id=origin["principal_id"],
+        root_seeds=selected,
+        issued_at_ms=issued,
+    )
+    verify_recovery_rebirth(transition, previous, successor, recovery_artifact)
+    RootHistoryAuthority(successor, [previous], [transition])
+    body = {
+        "request_id": verified["request_id"],
+        "being_ref": previous.manifest.being_ref,
+        "previous_control_head": previous.state.head,
+        "previous_manifest_hash": previous.manifest.digest,
+        "recovery_artifact": copy.deepcopy(dict(recovery_artifact)),
+        "recovered_control_head": request_base.state.head,
+        "successor_manifest": manifest.value,
+        "credential": credential,
+        "incarnation": incarnation,
+        "origin": origin,
+        "transition": transition,
+        "issued_at_ms": issued,
+    }
+    activation = {
+        "schema": RECOVERY_ACTIVATION_SCHEMA,
+        "activation_id": RECOVERY_ACTIVATION_ID_PREFIX
+        + b64url(digest(RECOVERY_ACTIVATION_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(activation, "invalid_rebirth_recovery_activation")
+    return activation
+
+
+def validate_recovery_activation(
+    value: Any,
+    previous: RootAuthority,
+    *,
+    request: Any | None = None,
+) -> tuple[dict[str, Any], RootAuthority, RootHistoryAuthority]:
+    """Verify the recovery artifact, fresh-body request, and exact successor."""
+
+    row = _closed(
+        value,
+        {"schema", "activation_id", "body"},
+        "invalid_rebirth_recovery_activation",
+    )
+    if row["schema"] != RECOVERY_ACTIVATION_SCHEMA:
+        raise RebirthError("unsupported_rebirth_recovery_activation")
+    body = _closed(
+        row["body"],
+        {
+            "request_id",
+            "being_ref",
+            "previous_control_head",
+            "previous_manifest_hash",
+            "recovery_artifact",
+            "recovered_control_head",
+            "successor_manifest",
+            "credential",
+            "incarnation",
+            "origin",
+            "transition",
+            "issued_at_ms",
+        },
+        "invalid_rebirth_recovery_activation",
+    )
+    recovery_artifact = body["recovery_artifact"]
+    if not isinstance(recovery_artifact, Mapping):
+        raise RebirthError("rebirth_recovery_artifact_invalid")
+    request_base = recovery_request_base(previous, recovery_artifact)
+    if (
+        body["being_ref"] != previous.manifest.being_ref
+        or body["previous_control_head"] != previous.state.head
+        or body["previous_manifest_hash"] != previous.manifest.digest
+        or body["recovered_control_head"] != request_base.state.head
+    ):
+        raise RebirthError("rebirth_recovery_activation_base_mismatch")
+    if request is not None:
+        verified_request = validate_enrollment_request(
+            request, request_base, observed_at_ms=body["issued_at_ms"]
+        )
+        if verified_request["request_id"] != body["request_id"]:
+            raise RebirthError("rebirth_recovery_activation_request_mismatch")
+    credential = copy.deepcopy(body["credential"])
+    incarnation = copy.deepcopy(body["incarnation"])
+    manifest = BeingManifest.from_value(body["successor_manifest"])
+    successor = RootAuthority(
+        manifest,
+        request_base.state,
+        {credential["artifact_id"]: credential},
+        {incarnation["artifact_id"]: incarnation},
+    )
+    transition = verify_recovery_rebirth(
+        body["transition"], previous, successor, recovery_artifact
+    )
+    origin = _origin(body["origin"])
+    if (
+        transition["embodiment_id"] != origin["embodiment_id"]
+        or transition["incarnation_id"] != origin["incarnation_id"]
+        or transition["body_ref"] != origin["body_ref"]
+        or transition["principal_id"] != origin["principal_id"]
+    ):
+        raise RebirthError("rebirth_recovery_activation_origin_mismatch")
+    history = RootHistoryAuthority(successor, [previous], [transition])
+    expected_id = RECOVERY_ACTIVATION_ID_PREFIX + b64url(
+        digest(RECOVERY_ACTIVATION_DOMAIN, body)
+    )
+    if row["activation_id"] != expected_id:
+        raise RebirthError("rebirth_recovery_activation_id_mismatch")
+    normalized = copy.deepcopy(dict(row))
+    if _canonical(normalized, "invalid_rebirth_recovery_activation") != _canonical(
+        value, "invalid_rebirth_recovery_activation"
+    ):
+        raise RebirthError("noncanonical_rebirth_recovery_activation")
+    return normalized, successor, history
+
+
 def apply_activation_to_runtime_bundle(
     bundle: Mapping[str, Any],
     activation: Any,
@@ -655,6 +925,60 @@ def apply_activation_to_runtime_bundle(
             }
         )
         peer["targets"].sort(key=lambda row: row["embodiment_id"])
+    return result
+
+
+def apply_recovery_activation_to_runtime_bundle(
+    bundle: Mapping[str, Any],
+    activation: Any,
+    previous: RootAuthority,
+) -> dict[str, Any]:
+    """Return a target-only V7 bundle while preserving old public history."""
+
+    verified, successor, _history = validate_recovery_activation(activation, previous)
+    if (
+        bundle.get("manifest") != previous.manifest.value
+        or bundle.get("control_head") != previous.state.head
+    ):
+        raise RebirthError("rebirth_recovery_runtime_base_mismatch")
+    result = copy.deepcopy(dict(bundle))
+    authority_history = result.get("authority_history")
+    control_artifacts = result.get("control_artifacts")
+    credentials = result.get("credentials")
+    incarnations = result.get("incarnations")
+    if (
+        not isinstance(authority_history, list)
+        or not isinstance(control_artifacts, list)
+        or not isinstance(credentials, list)
+        or not isinstance(incarnations, list)
+    ):
+        raise RebirthError("rebirth_runtime_history_invalid")
+    authority_history.append(
+        {
+            "manifest": copy.deepcopy(previous.manifest.value),
+            "control_artifacts": copy.deepcopy(control_artifacts),
+            "control_head": previous.state.head,
+            "credentials": copy.deepcopy(credentials),
+            "incarnations": copy.deepcopy(incarnations),
+            "successor": copy.deepcopy(verified["body"]["transition"]),
+        }
+    )
+    recovery_artifact = verified["body"]["recovery_artifact"]
+    if any(
+        artifact.get("artifact_id") == recovery_artifact.get("artifact_id")
+        for artifact in control_artifacts
+        if isinstance(artifact, Mapping)
+    ):
+        raise RebirthError("rebirth_recovery_artifact_replay")
+    control_artifacts.append(copy.deepcopy(recovery_artifact))
+    result["control_head"] = successor.state.head
+    result["manifest"] = copy.deepcopy(successor.manifest.value)
+    result["credentials"] = list(successor.credentials.values())
+    result["incarnations"] = list(successor.incarnations.values())
+    peer = result.get("peer_transport")
+    if not isinstance(peer, dict) or not isinstance(peer.get("targets"), list):
+        raise RebirthError("rebirth_runtime_peer_transport_missing")
+    peer["targets"] = []
     return result
 
 
@@ -761,28 +1085,60 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
     history = bundle["authority_history"]
     if not isinstance(history, list) or len(history) > 256:
         raise RebirthError("invalid_rebirth_runtime_history")
-    historical: list[RootAuthority] = []
-    successors: list[Mapping[str, Any]] = []
+    epochs: list[Mapping[str, Any]] = []
     try:
         for entry in history:
-            epoch = _closed(
-                entry,
-                {"manifest", "successor"},
-                "invalid_rebirth_runtime_history",
-            )
-            historical.append(
-                RootAuthority(
-                    BeingManifest.from_value(epoch["manifest"]),
-                    authority.state,
-                    authority.credentials,
-                    authority.incarnations,
+            if isinstance(entry, Mapping) and set(entry) == {
+                "manifest",
+                "successor",
+            }:
+                epochs.append(entry)
+            else:
+                epochs.append(
+                    _closed(
+                        entry,
+                        {
+                            "manifest",
+                            "control_artifacts",
+                            "control_head",
+                            "credentials",
+                            "incarnations",
+                            "successor",
+                        },
+                        "invalid_rebirth_runtime_history",
+                    )
                 )
-            )
-            successor = epoch["successor"]
-            if not isinstance(successor, Mapping):
-                raise RebirthError("invalid_rebirth_runtime_history")
-            successors.append(copy.deepcopy(dict(successor)))
-        if historical:
+        historical_reversed: list[RootAuthority] = []
+        next_authority = authority
+        for epoch in reversed(epochs):
+            if set(epoch) == {"manifest", "successor"}:
+                historical_authority = RootAuthority(
+                    BeingManifest.from_value(epoch["manifest"]),
+                    next_authority.state,
+                    next_authority.credentials,
+                    next_authority.incarnations,
+                )
+            else:
+                historical_authority = authority_from_document(
+                    {
+                        "schema": AUTHORITY_SCHEMA,
+                        "control_artifacts": epoch["control_artifacts"],
+                        "control_head": epoch["control_head"],
+                        "manifest": epoch["manifest"],
+                        "credentials": epoch["credentials"],
+                        "incarnations": epoch["incarnations"],
+                    }
+                )
+            historical_reversed.append(historical_authority)
+            next_authority = historical_authority
+        if epochs:
+            historical = list(reversed(historical_reversed))
+            successors = []
+            for epoch in epochs:
+                successor = epoch["successor"]
+                if not isinstance(successor, Mapping):
+                    raise RebirthError("invalid_rebirth_runtime_history")
+                successors.append(copy.deepcopy(dict(successor)))
             RootHistoryAuthority(authority, historical, successors)
     except RebirthError:
         raise
@@ -871,7 +1227,12 @@ def _password_reader(password: bytearray) -> PasswordReader:
     return read
 
 
-def _target_profile(value: Any, base: RootAuthority) -> dict[str, Any]:
+def _target_profile(
+    value: Any,
+    base: _RequestBase,
+    *,
+    expected_targets: set[str] | None = None,
+) -> dict[str, Any]:
     document = _closed(
         value,
         {
@@ -921,7 +1282,7 @@ def _target_profile(value: Any, base: RootAuthority) -> dict[str, Any]:
     except (PeerTransportError, TypeError, ValueError) as exception:
         raise RebirthError("invalid_rebirth_target_profile") from exception
     targets = document["targets"]
-    if not isinstance(targets, list) or not 1 <= len(targets) <= 255:
+    if not isinstance(targets, list) or len(targets) > 255:
         raise RebirthError("invalid_rebirth_target_profile")
     for target in targets:
         row = _closed(
@@ -952,11 +1313,15 @@ def _target_profile(value: Any, base: RootAuthority) -> dict[str, Any]:
                 "timeout_ms": timeout,
             }
         )
-    expected = {
-        str(row["embodiment_id"])
-        for row in base.manifest.value["embodiments"]
-        if row["status"] == "active"
-    }
+    expected = (
+        {
+            str(row["embodiment_id"])
+            for row in base.manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+        if expected_targets is None
+        else set(expected_targets)
+    )
     normalized["targets"].sort(key=lambda row: row["embodiment_id"])
     if (
         {row["embodiment_id"] for row in normalized["targets"]} != expected
@@ -972,16 +1337,19 @@ def _target_profile(value: Any, base: RootAuthority) -> dict[str, Any]:
 
 def create_target_preparation(
     output: Path,
-    authority: RootAuthority,
+    authority: _RequestBase,
     profile: Any,
     password_reader: PasswordReader,
     *,
     created_at_ms: int,
     expires_at_ms: int,
+    expected_targets: set[str] | None = None,
 ) -> dict[str, Any]:
     """Generate target-only encrypted custody and one public request atomically."""
 
-    target_profile = _target_profile(profile, authority)
+    target_profile = _target_profile(
+        profile, authority, expected_targets=expected_targets
+    )
     target = Path(os.path.abspath(output))
     parent = _owner_directory(target.parent, "rebirth_output_parent_rejected")
     if target.exists() or target.is_symlink():
@@ -1095,14 +1463,38 @@ def create_target_preparation(
             shutil.rmtree(staging)
 
 
+def create_recovery_target_preparation(
+    output: Path,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    profile: Any,
+    password_reader: PasswordReader,
+    *,
+    created_at_ms: int,
+    expires_at_ms: int,
+) -> dict[str, Any]:
+    """Generate target custody only after the recovery quorum is public."""
+
+    return create_target_preparation(
+        output,
+        recovery_request_base(previous, recovery_artifact),
+        profile,
+        password_reader,
+        created_at_ms=created_at_ms,
+        expires_at_ms=expires_at_ms,
+        expected_targets=set(),
+    )
+
+
 def _validated_preparation(
     directory: Path,
     preparation: Any,
     request: Any,
-    authority: RootAuthority,
+    authority: _RequestBase,
     password_reader: PasswordReader,
     *,
     observed_at_ms: int,
+    expected_targets: set[str] | None = None,
 ) -> tuple[dict[str, Any], Mapping[str, bytes], Mapping[str, bytes]]:
     root = _owner_directory(directory, "rebirth_preparation_directory_rejected")
     value = _closed(
@@ -1129,7 +1521,9 @@ def _validated_preparation(
         request, authority, observed_at_ms=observed_at_ms
     )
     origin = _origin(value["origin"])
-    profile = _target_profile(value["profile"], authority)
+    profile = _target_profile(
+        value["profile"], authority, expected_targets=expected_targets
+    )
     request_body = verified_request["body"]
     if (
         value["request_id"] != verified_request["request_id"]
@@ -1244,7 +1638,7 @@ def _validated_preparation(
     )
 
 
-def activate_target_runtime(
+def _activate_target_runtime(
     output: Path,
     preparation_directory: Path,
     preparation: Any,
@@ -1252,13 +1646,24 @@ def activate_target_runtime(
     activation: Any,
     base_bundle: Any,
     password_reader: PasswordReader,
+    *,
+    recovery: bool,
 ) -> dict[str, Any]:
     """Build one fresh V7 target package without copying writable body state."""
 
     authority = authority_from_runtime_bundle(base_bundle)
-    verified_activation, successor, _history = validate_activation(
-        activation, authority, request=request
-    )
+    if recovery:
+        verified_activation, successor, _history = validate_recovery_activation(
+            activation, authority, request=request
+        )
+        request_base: _RequestBase = recovery_request_base(
+            authority, verified_activation["body"]["recovery_artifact"]
+        )
+    else:
+        verified_activation, successor, _history = validate_activation(
+            activation, authority, request=request
+        )
+        request_base = authority
     issued_at_ms = verified_activation["body"]["issued_at_ms"]
     supplied = password_reader()
     if not isinstance(supplied, (bytes, bytearray)) or not 12 <= len(supplied) <= 1024:
@@ -1272,9 +1677,10 @@ def activate_target_runtime(
             preparation_directory,
             preparation,
             request,
-            authority,
+            request_base,
             _password_reader(password),
             observed_at_ms=issued_at_ms,
+            expected_targets=set() if recovery else None,
         )
         target = Path(os.path.abspath(output))
         parent = _owner_directory(target.parent, "rebirth_output_parent_rejected")
@@ -1290,8 +1696,14 @@ def activate_target_runtime(
         capabilities = verified_preparation["capabilities"]
         profile = verified_preparation["profile"]
         origin = verified_preparation["origin"]
-        bundle = apply_activation_to_runtime_bundle(
-            base_bundle, verified_activation, authority
+        bundle = (
+            apply_recovery_activation_to_runtime_bundle(
+                base_bundle, verified_activation, authority
+            )
+            if recovery
+            else apply_activation_to_runtime_bundle(
+                base_bundle, verified_activation, authority
+            )
         )
         if bundle.get("schema") != "dm.runtime.bundle/v7":
             raise RebirthError("unsupported_rebirth_runtime_bundle")
@@ -1415,6 +1827,207 @@ def activate_target_runtime(
             shutil.rmtree(staging)
 
 
+def activate_target_runtime(
+    output: Path,
+    preparation_directory: Path,
+    preparation: Any,
+    request: Any,
+    activation: Any,
+    base_bundle: Any,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Build one additional-embodiment package under the current root."""
+
+    return _activate_target_runtime(
+        output,
+        preparation_directory,
+        preparation,
+        request,
+        activation,
+        base_bundle,
+        password_reader,
+        recovery=False,
+    )
+
+
+def activate_recovery_target_runtime(
+    output: Path,
+    preparation_directory: Path,
+    preparation: Any,
+    request: Any,
+    activation: Any,
+    base_bundle: Any,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Build a target-only package under a recovery-quorum successor."""
+
+    return _activate_target_runtime(
+        output,
+        preparation_directory,
+        preparation,
+        request,
+        activation,
+        base_bundle,
+        password_reader,
+        recovery=True,
+    )
+
+
+def create_recovery_custody(
+    output: Path,
+    previous: RootAuthority,
+    custody_path: Path,
+    current_password_reader: PasswordReader,
+    replacement_password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Rotate a recovery quorum into fresh root custody without a body key."""
+
+    try:
+        contents = EncryptedKeystore(custody_path).open(
+            current_password_reader,
+            minimum_counter=1,
+            required_control_head=previous.state.head,
+        )
+    except KeystoreError as exception:
+        raise RebirthError("rebirth_recovery_custody_rejected") from exception
+    if any(
+        not slot.startswith(("root.signing.v1:", "recovery.signing.v1:"))
+        for slot in contents.secrets
+    ):
+        raise RebirthError("rebirth_recovery_custody_rejected")
+    _exact_custody_role_seeds(
+        contents.secrets,
+        prefix="root.signing.v1:",
+        policy=previous.state.root_policy,
+        code="rebirth_recovery_custody_rejected",
+    )
+    recovery_seeds = _exact_custody_role_seeds(
+        contents.secrets,
+        prefix="recovery.signing.v1:",
+        policy=previous.state.recovery_policy,
+        code="rebirth_recovery_custody_rejected",
+    )
+    threshold = previous.state.recovery_policy["threshold"]
+    if len(recovery_seeds) < threshold:
+        raise RebirthError("rebirth_recovery_threshold_shortfall")
+    replacement_count = len(previous.state.root_policy["keys"])
+    replacement_threshold = previous.state.root_policy["threshold"]
+    replacement_roots = [generate_ed25519_seed() for _ in range(replacement_count)]
+    revoked = sorted(
+        {
+            row["embodiment_id"]
+            for row in previous.manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+    )
+    recovery_artifact = create_recovery(
+        [previous.state],
+        recovery_seeds[:threshold],
+        replacement_roots,
+        replacement_threshold,
+        revoke_embodiments=revoked,
+    )
+    recovered = recovery_request_base(previous, recovery_artifact).state
+    target = Path(os.path.abspath(output))
+    parent = _owner_directory(target.parent, "rebirth_output_parent_rejected")
+    if target.exists() or target.is_symlink():
+        raise RebirthError("rebirth_output_exists")
+    staging: Path | None = None
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
+        staging.chmod(0o700)
+        EncryptedKeystore.create(
+            staging / "root-custody.json",
+            replacement_password_reader,
+            control_head=recovered.head,
+            secrets={
+                **{
+                    f"root.signing.v1:{index}": seed
+                    for index, seed in enumerate(replacement_roots)
+                },
+                **{
+                    f"recovery.signing.v1:{index}": seed
+                    for index, seed in enumerate(recovery_seeds)
+                },
+            },
+        )
+        _private_write(staging / "recovery.json", recovery_artifact)
+        receipt = {
+            "schema": "dm.operator.recovery-custody-receipt/v1",
+            "being_ref": previous.state.being_ref,
+            "previous_control_head": previous.state.head,
+            "recovered_control_head": recovered.head,
+            "recovery_artifact_id": recovery_artifact["artifact_id"],
+            "recovery_artifact_sha256": hashlib.sha256(
+                canonical_bytes(recovery_artifact)
+            ).hexdigest(),
+            "revoked_embodiment_ids": revoked,
+            "replacement_root_key_count": replacement_count,
+            "replacement_root_threshold": replacement_threshold,
+            "recovery_key_count": len(recovery_seeds),
+            "recovery_threshold": threshold,
+            "old_root_material_retained": False,
+        }
+        _private_write(staging / "receipt.json", receipt)
+        _fsync_directory(staging)
+        os.replace(staging, target)
+        _fsync_directory(parent)
+        staging = None
+        return receipt
+    finally:
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging)
+
+
+def authorize_recovery_from_root_custody(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    custody_path: Path,
+    password_reader: PasswordReader,
+    *,
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    """Sign a recovered target request from only the replacement root store."""
+
+    request_base = recovery_request_base(previous, recovery_artifact)
+    try:
+        contents = EncryptedKeystore(custody_path).open(
+            password_reader,
+            minimum_counter=1,
+            required_control_head=request_base.state.head,
+        )
+    except KeystoreError as exception:
+        raise RebirthError("rebirth_recovered_root_custody_rejected") from exception
+    if any(
+        not slot.startswith(("root.signing.v1:", "recovery.signing.v1:"))
+        for slot in contents.secrets
+    ):
+        raise RebirthError("rebirth_recovered_root_custody_rejected")
+    roots = _exact_custody_role_seeds(
+        contents.secrets,
+        prefix="root.signing.v1:",
+        policy=request_base.state.root_policy,
+        code="rebirth_recovered_root_custody_rejected",
+    )
+    _exact_custody_role_seeds(
+        contents.secrets,
+        prefix="recovery.signing.v1:",
+        policy=request_base.state.recovery_policy,
+        code="rebirth_recovered_root_custody_rejected",
+    )
+    threshold = request_base.state.root_policy["threshold"]
+    if len(roots) < threshold:
+        raise RebirthError("rebirth_root_threshold_shortfall")
+    return authorize_recovery_enrollment_request(
+        request,
+        previous,
+        recovery_artifact,
+        replacement_root_seeds=roots[:threshold],
+        issued_at_ms=issued_at_ms,
+    )
+
+
 def authorize_from_root_custody(
     request: Any,
     authority: RootAuthority,
@@ -1474,6 +2087,43 @@ def parser() -> argparse.ArgumentParser:
     activate.add_argument("--activation", type=Path, required=True)
     activate.add_argument("--output", type=Path, required=True)
     activate.add_argument("--password-fd", type=int, required=True)
+    recover = commands.add_parser(
+        "recover", help="rotate a recovery quorum into fresh root custody"
+    )
+    recover.add_argument("--authority", type=Path, required=True)
+    recover.add_argument("--root-custody", type=Path, required=True)
+    recover.add_argument("--current-password-fd", type=int, required=True)
+    recover.add_argument("--replacement-password-fd", type=int, required=True)
+    recover.add_argument("--output", type=Path, required=True)
+    prepare_recovery = commands.add_parser(
+        "prepare-recovery", help="generate target custody after recovery"
+    )
+    prepare_recovery.add_argument("--authority", type=Path, required=True)
+    prepare_recovery.add_argument("--recovery", type=Path, required=True)
+    prepare_recovery.add_argument("--profile", type=Path, required=True)
+    prepare_recovery.add_argument("--output", type=Path, required=True)
+    prepare_recovery.add_argument("--password-fd", type=int, required=True)
+    prepare_recovery.add_argument("--ttl-seconds", type=int, default=3600)
+    authorize_recovery = commands.add_parser(
+        "authorize-recovery", help="authorize a target with recovered root custody"
+    )
+    authorize_recovery.add_argument("--authority", type=Path, required=True)
+    authorize_recovery.add_argument("--recovery", type=Path, required=True)
+    authorize_recovery.add_argument("--request", type=Path, required=True)
+    authorize_recovery.add_argument(
+        "--recovered-root-custody", type=Path, required=True
+    )
+    authorize_recovery.add_argument("--root-password-fd", type=int, required=True)
+    authorize_recovery.add_argument("--output", type=Path, required=True)
+    activate_recovery = commands.add_parser(
+        "activate-recovery", help="build a recovered target-only runtime"
+    )
+    activate_recovery.add_argument("--base-runtime", type=Path, required=True)
+    activate_recovery.add_argument("--preparation-dir", type=Path, required=True)
+    activate_recovery.add_argument("--request", type=Path, required=True)
+    activate_recovery.add_argument("--activation", type=Path, required=True)
+    activate_recovery.add_argument("--output", type=Path, required=True)
+    activate_recovery.add_argument("--password-fd", type=int, required=True)
     return result
 
 
@@ -1481,7 +2131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = parser().parse_args(argv)
         now = time.time_ns() // 1_000_000
-        if arguments.command == "prepare":
+        if arguments.command in {"prepare", "prepare-recovery"}:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -1494,30 +2144,63 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise RebirthError("invalid_rebirth_ttl")
             password = _password(arguments.password_fd)
             try:
-                receipt = create_target_preparation(
-                    arguments.output,
-                    authority,
-                    _safe_document(
-                        arguments.profile, "rebirth_target_profile_unavailable"
-                    ),
-                    _password_reader(password),
-                    created_at_ms=now,
-                    expires_at_ms=now + ttl * 1000,
+                profile = _safe_document(
+                    arguments.profile, "rebirth_target_profile_unavailable"
+                )
+                receipt = (
+                    create_recovery_target_preparation(
+                        arguments.output,
+                        authority,
+                        _safe_document(
+                            arguments.recovery,
+                            "rebirth_recovery_artifact_unavailable",
+                        ),
+                        profile,
+                        _password_reader(password),
+                        created_at_ms=now,
+                        expires_at_ms=now + ttl * 1000,
+                    )
+                    if arguments.command == "prepare-recovery"
+                    else create_target_preparation(
+                        arguments.output,
+                        authority,
+                        profile,
+                        _password_reader(password),
+                        created_at_ms=now,
+                        expires_at_ms=now + ttl * 1000,
+                    )
                 )
             finally:
                 password[:] = b"\x00" * len(password)
-        elif arguments.command == "authorize":
+        elif arguments.command in {"authorize", "authorize-recovery"}:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
             password = _password(arguments.root_password_fd)
             try:
-                receipt = authorize_from_root_custody(
-                    _safe_document(arguments.request, "rebirth_request_unavailable"),
-                    authority,
-                    arguments.root_custody,
-                    _password_reader(password),
-                    issued_at_ms=now,
+                request = _safe_document(
+                    arguments.request, "rebirth_request_unavailable"
+                )
+                receipt = (
+                    authorize_recovery_from_root_custody(
+                        request,
+                        authority,
+                        _safe_document(
+                            arguments.recovery,
+                            "rebirth_recovery_artifact_unavailable",
+                        ),
+                        arguments.recovered_root_custody,
+                        _password_reader(password),
+                        issued_at_ms=now,
+                    )
+                    if arguments.command == "authorize-recovery"
+                    else authorize_from_root_custody(
+                        request,
+                        authority,
+                        arguments.root_custody,
+                        _password_reader(password),
+                        issued_at_ms=now,
+                    )
                 )
                 output = Path(os.path.abspath(arguments.output))
                 _owner_directory(output.parent, "rebirth_output_parent_rejected")
@@ -1527,6 +2210,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _fsync_directory(output.parent)
             finally:
                 password[:] = b"\x00" * len(password)
+        elif arguments.command == "recover":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            current_password = _password(arguments.current_password_fd)
+            replacement_password = _password(arguments.replacement_password_fd)
+            try:
+                receipt = create_recovery_custody(
+                    arguments.output,
+                    authority,
+                    arguments.root_custody,
+                    _password_reader(current_password),
+                    _password_reader(replacement_password),
+                )
+            finally:
+                current_password[:] = b"\x00" * len(current_password)
+                replacement_password[:] = b"\x00" * len(replacement_password)
         else:
             password = _password(arguments.password_fd)
             try:
@@ -1534,7 +2234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     arguments.preparation_dir,
                     "rebirth_preparation_directory_rejected",
                 )
-                receipt = activate_target_runtime(
+                values = (
                     arguments.output,
                     preparation_directory,
                     _safe_document(
@@ -1549,6 +2249,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         arguments.base_runtime, "rebirth_runtime_unavailable"
                     ),
                     _password_reader(password),
+                )
+                receipt = (
+                    activate_recovery_target_runtime(*values)
+                    if arguments.command == "activate-recovery"
+                    else activate_target_runtime(*values)
                 )
             finally:
                 password[:] = b"\x00" * len(password)
@@ -1566,21 +2271,31 @@ __all__ = [
     "ACTIVATION_SCHEMA",
     "AUTHORITY_SCHEMA",
     "PREPARATION_SCHEMA",
+    "RECOVERY_ACTIVATION_SCHEMA",
     "REQUEST_SCHEMA",
     "TARGET_PROFILE_SCHEMA",
     "RebirthError",
+    "RecoveryRequestBase",
+    "activate_recovery_target_runtime",
     "activate_target_runtime",
     "apply_activation_to_runtime_bundle",
+    "apply_recovery_activation_to_runtime_bundle",
     "authority_from_document",
     "authority_from_runtime_bundle",
     "authorize_enrollment_request",
     "authorize_from_root_custody",
+    "authorize_recovery_enrollment_request",
+    "authorize_recovery_from_root_custody",
     "create_enrollment_request",
+    "create_recovery_custody",
+    "create_recovery_target_preparation",
     "create_target_preparation",
     "main",
     "parser",
+    "recovery_request_base",
     "validate_activation",
     "validate_enrollment_request",
+    "validate_recovery_activation",
 ]
 
 

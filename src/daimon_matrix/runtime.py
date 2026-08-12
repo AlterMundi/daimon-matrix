@@ -335,20 +335,63 @@ def load_runtime(
                 or (schema == BUNDLE_SCHEMA_V2 and not authority_history)
             ):
                 raise RuntimeError("invalid_authority_history")
-            historical_authorities = []
-            successors = []
+            epochs: list[Mapping[str, Any]] = []
             for entry in authority_history:
-                epoch = _closed(entry, {"manifest", "successor"})
-                historical_authorities.append(
-                    RootAuthority(
-                        BeingManifest.from_value(epoch["manifest"]),
-                        state,
-                        credentials,
-                        incarnations,
+                if isinstance(entry, Mapping) and set(entry) == {
+                    "manifest",
+                    "successor",
+                }:
+                    epochs.append(entry)
+                else:
+                    if schema != BUNDLE_SCHEMA_V7:
+                        raise RuntimeError("invalid_authority_history")
+                    epochs.append(
+                        _closed(
+                            entry,
+                            {
+                                "manifest",
+                                "control_artifacts",
+                                "control_head",
+                                "credentials",
+                                "incarnations",
+                                "successor",
+                            },
+                        )
                     )
-                )
-                successors.append(epoch["successor"])
+            historical_reversed: list[RootAuthority] = []
+            next_authority = active
+            for epoch in reversed(epochs):
+                if set(epoch) == {"manifest", "successor"}:
+                    historical_authority = RootAuthority(
+                        BeingManifest.from_value(epoch["manifest"]),
+                        next_authority.state,
+                        next_authority.credentials,
+                        next_authority.incarnations,
+                    )
+                else:
+                    historical_controls = epoch["control_artifacts"]
+                    if (
+                        not isinstance(historical_controls, list)
+                        or not 1 <= len(historical_controls) <= 1024
+                    ):
+                        raise RuntimeError("invalid_authority_history")
+                    historical_chain = ControlChain(historical_controls[0])
+                    for artifact in historical_controls[1:]:
+                        historical_chain.add(artifact)
+                    historical_state = historical_chain.state
+                    if epoch["control_head"] != historical_state.head:
+                        raise RuntimeError("invalid_authority_history")
+                    historical_authority = RootAuthority(
+                        BeingManifest.from_value(epoch["manifest"]),
+                        historical_state,
+                        _indexed(epoch["credentials"]),
+                        _indexed(epoch["incarnations"]),
+                    )
+                historical_reversed.append(historical_authority)
+                next_authority = historical_authority
             if authority_history:
+                historical_authorities = list(reversed(historical_reversed))
+                successors = [epoch["successor"] for epoch in epochs]
                 authority = RootHistoryAuthority(
                     active, historical_authorities, successors
                 )
@@ -598,7 +641,7 @@ def load_runtime(
     peer_endpoints: dict[str, tuple[str, float]] = {}
     if peer_configuration is not None and schema == BUNDLE_SCHEMA_V7:
         raw_targets = peer_configuration["targets"]
-        if not isinstance(raw_targets, list) or not 1 <= len(raw_targets) <= 255:
+        if not isinstance(raw_targets, list) or len(raw_targets) > 255:
             raise RuntimeError("invalid_peer_target_configuration")
         normalized_targets: list[tuple[str, str, int]] = []
         for raw_target in raw_targets:
@@ -809,20 +852,63 @@ def load_runtime(
                 known_history = known["authority_history"]
                 if not isinstance(known_history, list) or len(known_history) > 256:
                     raise RuntimeError("runtime_source_configuration_rejected")
-                historical_authorities = []
-                known_successors = []
+                known_epochs: list[Mapping[str, Any]] = []
                 for raw_epoch in known_history:
-                    epoch = _closed(raw_epoch, {"manifest", "successor"})
-                    historical_authorities.append(
-                        RootAuthority(
-                            BeingManifest.from_value(epoch["manifest"]),
-                            known_state,
-                            known_credentials,
-                            known_incarnations,
+                    if isinstance(raw_epoch, Mapping) and set(raw_epoch) == {
+                        "manifest",
+                        "successor",
+                    }:
+                        known_epochs.append(raw_epoch)
+                    else:
+                        if schema != BUNDLE_SCHEMA_V7:
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        known_epochs.append(
+                            _closed(
+                                raw_epoch,
+                                {
+                                    "manifest",
+                                    "control_artifacts",
+                                    "control_head",
+                                    "credentials",
+                                    "incarnations",
+                                    "successor",
+                                },
+                            )
                         )
-                    )
-                    known_successors.append(epoch["successor"])
+                known_historical_reversed: list[RootAuthority] = []
+                next_known_authority = known_active
+                for epoch in reversed(known_epochs):
+                    if set(epoch) == {"manifest", "successor"}:
+                        historical_authority = RootAuthority(
+                            BeingManifest.from_value(epoch["manifest"]),
+                            next_known_authority.state,
+                            next_known_authority.credentials,
+                            next_known_authority.incarnations,
+                        )
+                    else:
+                        historical_controls = epoch["control_artifacts"]
+                        if (
+                            not isinstance(historical_controls, list)
+                            or not 1 <= len(historical_controls) <= 1024
+                        ):
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        historical_chain = ControlChain(historical_controls[0])
+                        for artifact in historical_controls[1:]:
+                            historical_chain.add(artifact)
+                        historical_state = historical_chain.state
+                        if epoch["control_head"] != historical_state.head:
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        historical_authority = RootAuthority(
+                            BeingManifest.from_value(epoch["manifest"]),
+                            historical_state,
+                            _indexed(epoch["credentials"]),
+                            _indexed(epoch["incarnations"]),
+                        )
+                    known_historical_reversed.append(historical_authority)
+                    next_known_authority = historical_authority
                 if known_history:
+                    historical_authorities = list(reversed(known_historical_reversed))
+                    known_successors = [epoch["successor"] for epoch in known_epochs]
                     known_authority = RootHistoryAuthority(
                         known_active, historical_authorities, known_successors
                     )
