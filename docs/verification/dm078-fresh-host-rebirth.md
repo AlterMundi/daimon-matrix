@@ -77,8 +77,11 @@ opened the predecessor ledger under its exact old authority, then re-ingested
 only canonical events through the enriched historical authority. It accepted
 the old signed event, was idempotent on retry, and byte-preserved the fresh
 runtime bundle plus both fresh custody files; no predecessor custody, runtime
-configuration, derived store or transport/RPC journal was copied. Schema
-validation, a recovered-authority known-source parse, transition tampering
+configuration, derived store or transport/RPC journal was copied.
+The bundle and ledger were opened through stable owner-only descriptors with
+`O_NOFOLLOW`; an injected path-to-symlink replacement between `lstat` and open
+was rejected without changing the target ledger. Schema validation, a
+recovered-authority known-source parse, transition tampering
 tests and deterministic public vector regeneration also passed. This proves
 the local protocol boundary; it does not claim a backup archive, a distinct
 host, service cutover or rollback rehearsal.

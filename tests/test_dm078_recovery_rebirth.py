@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest import mock
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from referencing import Registry, Resource
@@ -680,9 +681,9 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         )
         runtime_root = ceremony / "package/runtime"
         snapshot_root = self.root_path / "legion"
-        (snapshot_root / "runtime.json").write_bytes(
-            canonical_bytes(self._base_runtime_bundle())
-        )
+        snapshot_bundle = snapshot_root / "runtime.json"
+        snapshot_bundle.write_bytes(canonical_bytes(self._base_runtime_bundle()))
+        snapshot_bundle.chmod(0o600)
         source_evidence = {
             "bundle_sha256": hashlib.sha256(
                 (snapshot_root / "runtime.json").read_bytes()
@@ -733,6 +734,37 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
                 source_evidence={**source_evidence, "ledger_sha256": "0" * 64},
                 clock=lambda: NOW + 30,
             )
+        outside = self.root_path / "outside-ledger.sqlite"
+        outside.write_bytes(b"must-not-be-read")
+        outside.chmod(0o600)
+        source_ledger = snapshot_root / "ledger.sqlite"
+        original_ledger = snapshot_root / "ledger-original.sqlite"
+        real_open = os.open
+        swapped = False
+
+        def swap_before_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            nonlocal swapped
+            if Path(path) == source_ledger:
+                swapped = True
+                source_ledger.rename(original_ledger)
+                source_ledger.symlink_to(outside)
+            return real_open(path, flags, *args, **kwargs)
+
+        with (
+            mock.patch(
+                "daimon_matrix.operator_rebirth.os.open", side_effect=swap_before_open
+            ),
+            self.assertRaisesRegex(RebirthError, "snapshot_ledger_rejected"),
+        ):
+            restore_recovery_ledger(
+                runtime_root,
+                snapshot_root,
+                lambda: bytearray(target_password),
+                source_evidence=source_evidence,
+                clock=lambda: NOW + 30,
+            )
+        assert swapped is True
+        assert hosted.service.ledger.events() == [old_event]
         assert isinstance(hosted.service.ledger.authority, RootHistoryAuthority)
         assert set(hosted.service.ledger.authority.accepted_manifest_hashes) == {
             self.manifest.digest,

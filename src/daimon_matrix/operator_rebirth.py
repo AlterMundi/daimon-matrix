@@ -1150,13 +1150,22 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
 
 
 def _safe_document(path: Path, code: str) -> Any:
+    maximum_size = 4 * MAX_ARTIFACT_BYTES
+    descriptor = _owner_file_descriptor(
+        path,
+        code,
+        minimum_size=1,
+        maximum_size=maximum_size,
+    )
     try:
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-            raise RebirthError(code)
-        raw = path.read_bytes()
-        if not 1 <= len(raw) <= 4 * MAX_ARTIFACT_BYTES:
-            raise RebirthError(code)
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := os.read(descriptor, 1024 * 1024):
+            size += len(chunk)
+            if size > maximum_size:
+                raise RebirthError(code)
+            chunks.append(chunk)
+        raw = b"".join(chunks)
         value = json.loads(raw)
         if canonical_bytes(value) != raw.rstrip(b"\n"):
             raise RebirthError(code)
@@ -1165,6 +1174,8 @@ def _safe_document(path: Path, code: str) -> Any:
         raise
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exception:
         raise RebirthError(code) from exception
+    finally:
+        os.close(descriptor)
 
 
 def _owner_directory(path: Path, code: str) -> Path:
@@ -1181,6 +1192,54 @@ def _owner_directory(path: Path, code: str) -> Path:
     ):
         raise RebirthError(code)
     return absolute
+
+
+def _owner_file_descriptor(
+    path: Path,
+    code: str,
+    *,
+    minimum_size: int = 0,
+    maximum_size: int = MAX_TIME,
+) -> int:
+    """Open one stable owner-only regular file without following replacements."""
+
+    absolute = Path(os.path.abspath(path))
+    try:
+        before = absolute.lstat()
+    except FileNotFoundError as exception:
+        raise RebirthError(code) from exception
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or stat.S_IMODE(before.st_mode) & 0o077
+        or not minimum_size <= before.st_size <= maximum_size
+    ):
+        raise RebirthError(code)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            absolute,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        after = os.fstat(descriptor)
+        if (
+            (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or not stat.S_ISREG(after.st_mode)
+            or after.st_uid != os.geteuid()
+            or stat.S_IMODE(after.st_mode) & 0o077
+            or not minimum_size <= after.st_size <= maximum_size
+        ):
+            raise RebirthError(code)
+        return descriptor
+    except RebirthError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    except OSError as exception:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise RebirthError(code) from exception
 
 
 def _private_write(path: Path, value: Mapping[str, Any] | bytes) -> None:
@@ -1904,6 +1963,17 @@ def restore_recovery_ledger(
         {"bundle_sha256", "bundle_size", "ledger_sha256", "ledger_size"},
         "rebirth_recovery_source_evidence_rejected",
     )
+    if any(
+        not isinstance(evidence[key], str)
+        or re.fullmatch(r"[0-9a-f]{64}", evidence[key]) is None
+        for key in ("bundle_sha256", "ledger_sha256")
+    ) or any(
+        not isinstance(evidence[key], int)
+        or isinstance(evidence[key], bool)
+        or not 0 <= evidence[key] <= MAX_TIME
+        for key in ("bundle_size", "ledger_size")
+    ):
+        raise RebirthError("rebirth_recovery_source_evidence_rejected")
     source_bundle = _safe_document(
         source_root / "runtime.json", "rebirth_recovery_snapshot_bundle_rejected"
     )
@@ -1943,28 +2013,46 @@ def restore_recovery_ledger(
     ):
         raise RebirthError("rebirth_recovery_snapshot_ledger_rejected")
     source_ledger_path = source_root / ledger_name
-    try:
-        info = source_ledger_path.lstat()
-    except FileNotFoundError as exception:
-        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected") from exception
-    if (
-        stat.S_ISLNK(info.st_mode)
-        or not stat.S_ISREG(info.st_mode)
-        or info.st_uid != os.geteuid()
-        or stat.S_IMODE(info.st_mode) & 0o077
-    ):
-        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected")
+    source_descriptor = _owner_file_descriptor(
+        source_ledger_path,
+        "rebirth_recovery_snapshot_ledger_rejected",
+        minimum_size=evidence["ledger_size"],
+        maximum_size=evidence["ledger_size"],
+    )
 
-    scratch = Path(tempfile.mkdtemp(prefix=".recovery-ledger-", dir=target_root.parent))
-    scratch.chmod(0o700)
+    scratch: Path | None = None
     try:
+        scratch = Path(
+            tempfile.mkdtemp(prefix=".recovery-ledger-", dir=target_root.parent)
+        )
+        scratch.chmod(0o700)
         copied_ledger = scratch / "ledger.sqlite"
-        shutil.copyfile(source_ledger_path, copied_ledger)
-        copied_ledger.chmod(0o600)
-        copied_bytes = copied_ledger.read_bytes()
-        if evidence["ledger_sha256"] != hashlib.sha256(
-            copied_bytes
-        ).hexdigest() or evidence["ledger_size"] != len(copied_bytes):
+        copied_descriptor = os.open(
+            copied_ledger,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        copied_size = 0
+        copied_hash = hashlib.sha256()
+        try:
+            while chunk := os.read(source_descriptor, 1024 * 1024):
+                copied_hash.update(chunk)
+                copied_size += len(chunk)
+                if copied_size > evidence["ledger_size"]:
+                    raise RebirthError("rebirth_recovery_source_evidence_mismatch")
+                offset = 0
+                while offset < len(chunk):
+                    written = os.write(copied_descriptor, chunk[offset:])
+                    if written == 0:
+                        raise RebirthError("rebirth_recovery_snapshot_ledger_rejected")
+                    offset += written
+            os.fsync(copied_descriptor)
+        finally:
+            os.close(copied_descriptor)
+        if (
+            evidence["ledger_sha256"] != copied_hash.hexdigest()
+            or evidence["ledger_size"] != copied_size
+        ):
             raise RebirthError("rebirth_recovery_source_evidence_mismatch")
         source_ledger = Ledger(
             copied_ledger,
@@ -1994,7 +2082,9 @@ def restore_recovery_ledger(
     except Exception as exception:
         raise RebirthError("rebirth_recovery_ledger_restore_rejected") from exception
     finally:
-        shutil.rmtree(scratch)
+        os.close(source_descriptor)
+        if scratch is not None:
+            shutil.rmtree(scratch)
     if after_events != source_events or hosted.service.ledger.incomplete_count() != 0:
         raise RebirthError("rebirth_recovery_ledger_restore_mismatch")
     return {
