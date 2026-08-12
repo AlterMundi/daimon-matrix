@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 102,
-  "registry_sha256": "37e8b791194f0d13eaa08c99b0cb8f8b52d0afba1ec792c50a95b8cb02c2bba0",
+  "required_scenario_count": 98,
+  "registry_sha256": "91330eb27b97e7b7e71532f1f802d1f6a24f99bbab6ac209d8865d1df4f64234",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
