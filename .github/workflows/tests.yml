@@ -17,8 +17,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -50,7 +50,7 @@ jobs:
       - run: python tools/generate_dm082_vectors.py --check
       - run: python -m compileall -q coordination src tools tests
       - run: PYTHONPATH=src python -W error::ResourceWarning -m unittest discover -s tests -v
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
@@ -59,7 +59,7 @@ jobs:
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
       - run: python tools/check_tribe_provenance.py provenance/tribe-bridge-v1.json
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/daimon-cluster
           ref: 676495e852e6772a60de8221271ee9fc976f77ce
@@ -73,8 +73,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -85,7 +85,7 @@ jobs:
             requirements-vectors.txt
       - run: python -m pip install -r requirements-dev.txt -r requirements-hermes-contract.txt -r requirements-vectors.txt
       - run: python -m pip install -r requirements-species.txt
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-agent
           ref: 0db1912911fafa384aa5ee0145929658a9d1dd33
@@ -101,8 +101,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -112,7 +112,7 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: python tools/reproducible_build.py --output dist
       - run: python tools/scan_secrets.py . dist/daimon_matrix-0.0.0.tar.gz dist/daimon_matrix-0.0.0-py3-none-any.whl
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
@@ -180,8 +180,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -191,7 +191,7 @@ jobs:
             requirements-vectors.txt
       - run: python -m pip install -r requirements-build.txt -r requirements-vectors.txt
       - run: python tools/reproducible_build.py --output dist
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
