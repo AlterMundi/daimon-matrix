@@ -18,7 +18,7 @@ import stat
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 from urllib.parse import urlsplit
@@ -420,6 +420,8 @@ class PeerOutbox:
         request_id: str,
         plan_sha256: str,
         factory: Callable[[], bytes],
+        *,
+        compatible_plan_sha256: Callable[[bytes], str] | None = None,
     ) -> bytes:
         request_id = _uuid(request_id)
         if len(plan_sha256) != 64 or any(
@@ -433,9 +435,6 @@ class PeerOutbox:
                 (request_id,),
             ).fetchone()
             if row is not None:
-                if row["plan_sha256"] != plan_sha256:
-                    database.rollback()
-                    raise PeerTransportConflict()
                 stored_request = row["request"]
                 stored_digest = row["request_sha256"]
                 if not isinstance(stored_request, bytes) or not isinstance(
@@ -447,6 +446,18 @@ class PeerOutbox:
                 if hashlib.sha256(request).hexdigest() != stored_digest:
                     database.rollback()
                     raise PeerTransportError()
+                if row["plan_sha256"] != plan_sha256:
+                    try:
+                        compatible = (
+                            compatible_plan_sha256 is not None
+                            and compatible_plan_sha256(request) == row["plan_sha256"]
+                        )
+                    except Exception:
+                        database.rollback()
+                        raise
+                    if not compatible:
+                        database.rollback()
+                        raise PeerTransportConflict()
                 database.commit()
                 return request
             request = factory()
@@ -976,12 +987,11 @@ class PeerClient:
             )
         )
         plan = {
-            "schema": "dm.peer-call-plan/v1",
+            "schema": "dm.peer-call-plan/v2",
             "being_ref": self.authority.state.being_ref,
             "manifest_hash": self.authority.manifest.digest,
             "correlation_id": correlation_id,
             "envelope_id": envelope_id,
-            "deadline_ms": deadline,
             "request_content_type": request_content_type,
             "response_content_type": response_content_type,
             "sender": self.local_origin,
@@ -989,6 +999,17 @@ class PeerClient:
             "payload": copy.deepcopy(dict(payload)),
         }
         plan_hash = hashlib.sha256(canonical_bytes(plan)).hexdigest()
+
+        def legacy_plan_hash(request: bytes) -> str:
+            value = _parse(request)
+            expires_at_ms = _uint(value.get("expires_at_ms"))
+            legacy_plan = {
+                **plan,
+                "schema": "dm.peer-call-plan/v1",
+                "deadline_ms": expires_at_ms,
+            }
+            return hashlib.sha256(canonical_bytes(legacy_plan)).hexdigest()
+
         raw_request = self.outbox.get_or_create(
             envelope_id,
             plan_hash,
@@ -1004,7 +1025,11 @@ class PeerClient:
                 correlation_id=correlation_id,
                 envelope_id=envelope_id,
             ),
+            compatible_plan_sha256=legacy_plan_hash,
         )
+        persisted_deadline = _uint(_parse(raw_request).get("expires_at_ms"))
+        if now >= persisted_deadline:
+            raise PeerTransportError()
         try:
             raw_response = self.round_trip(raw_request)
         except PeerTransportError:
@@ -1040,6 +1065,7 @@ class PeerClientContext:
     custody: PeerCustody
     outbox: PeerOutbox
     clock: Clock
+    endpoints: Mapping[str, tuple[str, float]] = field(default_factory=dict)
 
     def target(self, embodiment_id: str) -> RecipientTarget:
         embodiment_id = _text(embodiment_id)
@@ -1063,6 +1089,18 @@ class PeerClientContext:
             outbox=self.outbox,
             round_trip=round_trip,
             clock=self.clock,
+        )
+
+    def configured(self, embodiment_id: str) -> tuple[RecipientTarget, PeerClient]:
+        """Resolve one exact configured peer without accepting an endpoint per call."""
+
+        target = self.target(embodiment_id)
+        configuration = self.endpoints.get(embodiment_id)
+        if configuration is None:
+            raise PeerTransportError()
+        endpoint, timeout_seconds = configuration
+        return target, self.client(
+            http_peer_round_trip(endpoint, timeout_seconds=timeout_seconds)
         )
 
 

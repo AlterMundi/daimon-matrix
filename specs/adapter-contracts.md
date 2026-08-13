@@ -167,3 +167,27 @@ one writer. Successor, withdrawal and rollback are new reviewed monotonic
 transactions; they never erase audit history or lower a high-water. The exact
 contracts, crash matrix, private-provider CI split and rollback procedure are
 normative in `docs/dm035-publication.md`.
+
+### collective-memory exchange
+
+DM-036 defines two deliberately separate adapters over the
+`collective-memory` exchange boundary pinned at
+`3e3b39416917f8e3c2bc5ca69362b20296205938`. The inbound source adapter reads
+and verifies immutable export generations into an append-only source log, then
+authors only `source.imported` quarantine receipts. It may walk an immutable
+predecessor chain oldest-first for offline catch-up, but it never promotes an
+artifact or asserts personal memory.
+
+The outbound publisher accepts only deterministic derived bytes bound to exact
+current Matrix events, current subject consent and a distinct current human
+review. It authors `collective.publication.requested`, invokes the supported
+upstream transaction and authors `collective.publication.receipted` only after
+validating the complete provider receipt and freshly observing
+`reconcile=verified`.
+
+The directions have different adapter IDs, DM-018 manifests, transport
+identities, credentials, capabilities, stores, locks, queues, idempotency
+spaces, events and receipts. No outbound receipt admits an inbound source; no
+inbound trust grants publication, review or consent authority. Their closed
+contracts, vectors, recovery state machines and isolated real-I/O gate are
+normative in `docs/dm036-collective-memory.md`.

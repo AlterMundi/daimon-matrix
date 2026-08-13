@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/weave/v1/recovery-rebirth.schema.json",
+  "title": "Recovery-quorum to fresh-embodiment successor V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "being_ref", "previous_control_head", "previous_manifest_hash",
+    "previous_revision", "successor_control_head", "successor_manifest_hash",
+    "successor_revision", "recovery_artifact", "recovery_artifact_id",
+    "revoked_embodiment_ids", "body_ref", "embodiment_id", "incarnation_id",
+    "embodiment_credential_id", "incarnation_authorization_id", "principal_id",
+    "issued_at_ms", "content_hash", "signatures"
+  ],
+  "properties": {
+    "schema": {"const": "dm.we.recovery-rebirth/v1"},
+    "being_ref": {"type": "string", "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"},
+    "previous_control_head": {"$ref": "#/$defs/identityId"},
+    "previous_manifest_hash": {"$ref": "#/$defs/hash"},
+    "previous_revision": {"$ref": "#/$defs/positiveInteger"},
+    "successor_control_head": {"$ref": "#/$defs/identityId"},
+    "successor_manifest_hash": {"$ref": "#/$defs/hash"},
+    "successor_revision": {"$ref": "#/$defs/positiveInteger"},
+    "recovery_artifact": {
+      "$ref": "https://daimon-matrix.local/schemas/identity/v1/artifact.schema.json"
+    },
+    "recovery_artifact_id": {"$ref": "#/$defs/identityId"},
+    "revoked_embodiment_ids": {
+      "type": "array", "maxItems": 256, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^embodiment:.{1,240}$"}
+    },
+    "body_ref": {"type": "string", "pattern": "^\\S{1,256}$"},
+    "embodiment_id": {"type": "string", "pattern": "^embodiment:.{1,240}$"},
+    "incarnation_id": {"type": "string", "pattern": "^incarnation:.{1,240}$"},
+    "embodiment_credential_id": {"$ref": "#/$defs/identityId"},
+    "incarnation_authorization_id": {"$ref": "#/$defs/identityId"},
+    "principal_id": {"type": "string", "pattern": "^\\S{1,128}$"},
+    "issued_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "content_hash": {"$ref": "#/$defs/hash"},
+    "signatures": {
+      "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/signature"}
+    }
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identityId": {
+      "type": "string", "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "positiveInteger": {
+      "type": "integer", "minimum": 1, "maximum": 9007199254740991
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "kid", "value"],
+      "properties": {
+        "alg": {"const": "Ed25519"},
+        "kid": {"type": "string", "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"},
+        "value": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+      }
+    }
+  }
+}

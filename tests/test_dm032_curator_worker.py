@@ -856,18 +856,21 @@ class CuratorWorkerTests(RootLedgerFixture):
         for path in SCHEMA_ROOT.rglob("*.schema.json"):
             schema = json.loads(path.read_text(encoding="utf-8"))
             resources.append((schema["$id"], schema))
-            schemas[path.name] = schema
+            schemas[path.relative_to(SCHEMA_ROOT).as_posix()] = schema
         registry = Registry().with_resources(
             (uri, Resource.from_contents(schema)) for uri, schema in resources
         )
         for filename, document in documents.items():
             validator = Draft202012Validator(
-                schemas[filename], registry=registry, format_checker=FormatChecker()
+                schemas[f"curator-worker/v1/{filename}"],
+                registry=registry,
+                format_checker=FormatChecker(),
             )
             self.assertEqual(list(validator.iter_errors(document)), [])
             self.assertTrue(list(validator.iter_errors({**document, "unknown": True})))
         self.assertEqual(
-            provider_output_schema(), schemas["provider-output.schema.json"]
+            provider_output_schema(),
+            schemas["curator-worker/v1/provider-output.schema.json"],
         )
         example = json.loads(
             (ROOT / "config/examples/curator-worker-deepseek-v1.json").read_bytes()
@@ -881,7 +884,7 @@ class CuratorWorkerTests(RootLedgerFixture):
             example,
         )
         example_validator = Draft202012Validator(
-            schemas["registration.schema.json"],
+            schemas["curator-worker/v1/registration.schema.json"],
             registry=registry,
             format_checker=FormatChecker(),
         )

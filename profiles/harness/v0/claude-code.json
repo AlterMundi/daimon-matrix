@@ -1,0 +1,210 @@
+{
+  "admission": {
+    "expected": "refused",
+    "reason_code": "exact-executable-lifecycle-history-and-receipts-unproven",
+    "requires_real_vendor_smoke": true
+  },
+  "artifact": {
+    "auto_update_policy": "disable-and-pin-before-any-real-smoke",
+    "config_precedence": "managed-settings-before-user-project-and-cli-requires-real-inspection",
+    "executable_sha256": null,
+    "install_source": "not-installed-documentation-audit-only",
+    "limitations": [
+      "exact-required-mcp-startup-gate-unproven",
+      "lifecycle-receipt-adapter-unimplemented",
+      "transcript-disablement-unproven"
+    ],
+    "migration_policy": "no-import-of-personal-claude-profile-memory-or-sessions",
+    "state_roots": [
+      "fresh-dedicated-claude-configuration-root-required"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "anthropic-claude-memory-20260810"
+      ],
+      "note": "Documented instruction order can be audited, but is not authority.",
+      "state": "pass"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "anthropic-claude-memory-20260810"
+      ],
+      "note": "Auto memory can be disabled in a future exact profile.",
+      "state": "pass"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "anthropic-claude-permissions-20260810"
+      ],
+      "note": "Sandbox network restrictions are documented.",
+      "state": "pass"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "proposal_only": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "secret_custody": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "anthropic-claude-permissions-20260810"
+      ],
+      "note": "MCP tools can be allowed and denied by name.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "version_pinned": {
+      "evidence": [
+        "anthropic-claude-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "write_approval": {
+      "evidence": [
+        "anthropic-claude-permissions-20260810"
+      ],
+      "note": "Permissions can ask before the single write.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "documented-candidate",
+  "harness": {
+    "name": "Claude Code",
+    "source_refs": [
+      "anthropic-claude-mcp-20260810",
+      "anthropic-claude-memory-20260810",
+      "anthropic-claude-permissions-20260810"
+    ],
+    "surface": "cli-stdio-mcp",
+    "vendor": "Anthropic",
+    "version": "documentation-snapshot-2026-08-10"
+  },
+  "launch": {
+    "argv": [
+      "claude",
+      "<matrix-task>"
+    ],
+    "configuration": [
+      "auto-memory=disabled",
+      "matrix-mcp=local-stdio-required",
+      "permissions=deny-default-ask-we-observe"
+    ],
+    "environment": [
+      "CLAUDE_CONFIG_DIR=<validated-disposable-root>"
+    ],
+    "status": "reference-only"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-claude-code-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-claude-code-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "claude-code",
+  "schema": "dm.harness-profile/v0"
+}

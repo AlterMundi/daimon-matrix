@@ -801,8 +801,14 @@ Conformance vectors and implementation tests MUST cover at least:
 - DM-018 freezes adapters without granting them source or policy authority.
 - DM-023 persists cursors, forks, blobs, transaction journals, and receipts
   without changing event IDs or intrinsic/local-state separation.
-- DM-036 implements separate inbound collective-memory and reviewed outbound
-  HMK publication adapters from Section 10.
+- DM-036 implements separate inbound collective-memory source and reviewed
+  outbound collective-memory publication adapters. Inbound generations author
+  only `source.imported` quarantine receipts and may catch up through an exact
+  immutable predecessor chain; outbound requests and accepted effects use
+  `collective.publication.requested` and
+  `collective.publication.receipted`. The two directions never share authority,
+  stores or receipts. See
+  [`dm036-collective-memory.md`](../docs/dm036-collective-memory.md).
 - DM-054 routes the already-resolved recipients; routes never create source
   membership.
 - DM-071 validates consented cross-daimon source exchange, pagination,

@@ -23,7 +23,8 @@ surface and remain unchanged during the canary.
 
 - root/current-manifest-bound direct encryption and signature verification;
 - exact active embodiment/incarnation/principal and recipient-key checks;
-- a durable randomized-ciphertext outbox keyed per recipient envelope;
+- a durable randomized-ciphertext outbox keyed per recipient envelope whose
+  semantic V2 call plan reuses the first bounded expiry across later retries;
 - a durable inbound processing lease and byte-exact committed response replay;
 - client correlation/reply checks and a bounded HTTP(S) round trip;
 - dispatch only to the existing DM-054 scope and DM-023 sync handlers; and
@@ -35,6 +36,13 @@ listen address. The encrypted keystore is opened once with the one-shot runtime
 password descriptor; only the exact validated signing and encryption seeds are
 retained by the purpose-bound custody object. When absent, no peer listener or
 client context exists. V1 and V2 retain their exact prior behavior.
+
+DM-083 closes the remaining operator seam with bundle V7. It adds a sorted,
+complete target map for every active remote embodiment and the authenticated
+`we.sync.peer-pull` composition. Callers provide only the target embodiment and
+the frozen DM-023 request ID; they cannot substitute an endpoint at runtime.
+Configured peers are visible as available in `/we`, while manifest membership
+continues to come only from root authority.
 
 The same `daimon-matrixd` process starts `POST /dm-peer/v1` only after the full
 bundle, root authority, current origin, encrypted custody and stores validate.
@@ -57,7 +65,8 @@ SQLite ledgers. They prove:
 - V3 load, exact key-slot binding, in-process daemon HTTP handler and backward
   disabled compatibility;
 - response loss after remote completion followed by byte-identical request and
-  response replay with one handler effect;
+  response replay with one handler effect, including a clock advance, process
+  reconstruction, legacy V1 outbox-plan recovery and fail-closed expiry;
 - concurrent duplicate serialization, expired-lease takeover, stale claimant
   rejection and corrupted exchange/outbox digest rejection;
 - one-shot password custody, absent/malformed/colliding/wrong-key V3 profiles,
@@ -77,8 +86,9 @@ being/control/manifest hashes, embodiment/incarnation/credential IDs and
 AnyVPN endpoint. Never copy or print keystore values.
 
 1. Back up and integrity-check each owner-local Matrix state root.
-2. Install the exact reviewed wheel and a V3 bundle with a distinct peer
-   encryption slot, exchange DB, outbox DB and explicit AnyVPN listen address.
+2. Install the exact reviewed wheel and a V7 bundle with a distinct peer
+   encryption slot, exchange DB, outbox DB, explicit AnyVPN listen address and
+   exact remote target.
 3. Start both `daimon-matrixd` processes and verify local `/me` before network
    traffic.
 4. From A, send one encrypted `/me` request to B and validate B's exact origin.

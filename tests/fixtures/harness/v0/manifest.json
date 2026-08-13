@@ -1,0 +1,92 @@
+{
+  "forbidden_methods": [
+    "audience.expand",
+    "deploy.effect",
+    "fence.satisfy",
+    "key.rotate",
+    "ledger.append",
+    "membership.mint",
+    "memory.admit",
+    "presence.satisfy",
+    "root.sign",
+    "source.admit",
+    "species.admit"
+  ],
+  "lifecycle": [
+    {
+      "event": "process.start",
+      "event_id": "life-process-1"
+    },
+    {
+      "event": "session.start",
+      "event_id": "life-session-1"
+    },
+    {
+      "event": "turn.start",
+      "event_id": "life-turn-1"
+    },
+    {
+      "event": "tool.call",
+      "event_id": "life-tool-1"
+    },
+    {
+      "event": "tool.receipt",
+      "event_id": "life-receipt-1"
+    },
+    {
+      "event": "turn.end",
+      "event_id": "life-turn-end-1"
+    },
+    {
+      "event": "park",
+      "event_id": "life-park-1"
+    },
+    {
+      "event": "wake",
+      "event_id": "life-wake-1"
+    },
+    {
+      "event": "crash",
+      "event_id": "life-crash-1"
+    },
+    {
+      "event": "resume",
+      "event_id": "life-resume-1"
+    },
+    {
+      "event": "session.end",
+      "event_id": "life-session-end-1"
+    },
+    {
+      "event": "process.end",
+      "event_id": "life-process-end-1"
+    }
+  ],
+  "limits": {
+    "max_document_bytes": 1048576,
+    "max_line_bytes": 131072
+  },
+  "protocol_version": "0",
+  "required_tools": [
+    "daimon_status",
+    "scope_me",
+    "scope_we",
+    "we_heads",
+    "we_projection_get",
+    "we_observe"
+  ],
+  "scenarios": [
+    "adapter-disable-replace-rebuild",
+    "ambiguous-timeout-crash-retry",
+    "authority-refusal",
+    "closed-negotiation-downgrade-refusal",
+    "isolated-profile-effective-config",
+    "lifecycle-stable-ids-stale-resume",
+    "malformed-oversized-missing-receipt",
+    "native-state-disabled-and-cleanup",
+    "same-id-same-bytes-and-conflict",
+    "tool-surface-and-observation-only",
+    "transcript-export-log-scan-cleanup"
+  ],
+  "schema": "dm.harness-adoption-fixture/v0"
+}

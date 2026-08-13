@@ -1,5 +1,12 @@
 # DM-010 identity-boundary correction reviews
 
+> Historical review only. The hierarchy below was superseded by the
+> 2026-08-04 ontology rectification: one being may authorize plural concurrent
+> embodiments, `/me` is situated, `/we` navigates embodiments of that same
+> being, and distinct beings use explicit relationships/Tribes. See
+> [`../RESUME.md`](../RESUME.md), [`../ONTOLOGY.md`](../ONTOLOGY.md), and
+> [`DM-010.md`](DM-010.md). Do not reapply the singleton-body conclusion.
+
 Date: 2026-08-01
 
 Scope: the correction from the superseded one-`/me`/many-simultaneous-

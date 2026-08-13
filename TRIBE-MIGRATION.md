@@ -1,5 +1,25 @@
 # Tribe Bridge Integration
 
+## Current checkpoint and repository name
+
+As reconciled on 2026-08-11, the only identified chat-facing Tribe repository is
+`nicoechaniz/tribe-bridge`. PR #61 is at runtime-repair code `ecb51d8`, while
+the deployed broker reports build `d49bf22`; documentation-only commits do not
+silently move either runtime. Inspect Git and service health independently. No separate
+`tribe-chat` repository was found locally or under the recorded GitHub owners.
+Treat “tribe-chat” as an informal reference to the current Tribe Bridge
+experience unless an exact repository and authority boundary are recorded
+later.
+
+DM-082 completed the local relationship, grant, encrypted delivery,
+authenticated intake and semantic-receipt slice inside `daimon-matrix`.
+DM-083 then completed the authorized real same-being two-host dogfood and kept
+one ordinary Tribe v1 message as explicitly separate transport evidence.
+Matrix/Cluster now run the host-qualified `915c56c`/`94d80ba` pair, while Tribe
+Bridge v1 remains deployed as the transitional ordinary human-message lane at
+directory epoch 5. It must not be archived, dual-written or silently replaced.
+The exact resume and retirement order is in [`RESUME.md`](RESUME.md).
+
 ## Decision
 
 The Tribe Bridge implementation will be absorbed into `daimon-matrix` as the
@@ -47,7 +67,7 @@ parsers, commands, ports, downgrade paths, and message-history migration have
 been retired. Rollback means repairing v1 with a successor state; it never
 means reinstalling v0.
 
-The active transitional runtime is Tribe Bridge v1 directory epoch 3. It uses
+The active transitional runtime is Tribe Bridge v1 directory epoch 5. It uses
 signed directory chaining, recipient encryption, authenticated envelopes,
 stable IDs, leases, and direct/hub routing. This is useful transport evidence,
 but its directory still must not become Daimon `/me` authority.

@@ -46,12 +46,14 @@ class PackageMetadataTests(unittest.TestCase):
             project["scripts"],
             {
                 "daimon": "daimon_matrix.cli:main",
+                "daimon-bootstrap": "daimon_matrix.operator_bootstrap:main",
                 "daimon-codex-body": "daimon_matrix.codex_body:main",
                 "daimon-conformance": "daimon_matrix.conformance:main",
                 "daimon-curator-worker": "daimon_matrix.curator_worker_process:main",
                 "daimon-hermes-body": "daimon_matrix.hermes_body:main",
                 "daimon-matrixd": "daimon_matrix.daemon:main",
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
+                "daimon-rebirth": "daimon_matrix.operator_rebirth:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
                 "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
                 "daimon-synthetic-multihost": (
@@ -161,6 +163,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/client.py",
                 "src/daimon_matrix/cluster.py",
                 "src/daimon_matrix/codex_body.py",
+                "src/daimon_matrix/collective_memory.py",
                 "src/daimon_matrix/communication.py",
                 "src/daimon_matrix/conformance.py",
                 "src/daimon_matrix/curator.py",
@@ -175,6 +178,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/local_api.py",
                 "src/daimon_matrix/local_we.py",
                 "src/daimon_matrix/mcp_server.py",
+                "src/daimon_matrix/operator_bootstrap.py",
+                "src/daimon_matrix/operator_rebirth.py",
                 "src/daimon_matrix/memory_policy.py",
                 "src/daimon_matrix/memory_projection.py",
                 "src/daimon_matrix/multihost.py",
@@ -213,6 +218,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/client.py",
                 "daimon_matrix/cluster.py",
                 "daimon_matrix/codex_body.py",
+                "daimon_matrix/collective_memory.py",
                 "daimon_matrix/communication.py",
                 "daimon_matrix/conformance.py",
                 "daimon_matrix/curator.py",
@@ -227,6 +233,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/local_api.py",
                 "daimon_matrix/local_we.py",
                 "daimon_matrix/mcp_server.py",
+                "daimon_matrix/operator_bootstrap.py",
+                "daimon_matrix/operator_rebirth.py",
                 "daimon_matrix/memory_policy.py",
                 "daimon_matrix/memory_projection.py",
                 "daimon_matrix/multihost.py",
@@ -296,7 +304,16 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 scan_archive(archive_path)
 
     def test_checkout_secret_scan_is_clean(self) -> None:
-        self.assertGreater(scan_path(ROOT), 0)
+        excluded_roots: tuple[Path, ...] = ()
+        configured = os.environ.get("COLLECTIVE_MEMORY_CONTRACT_ROOT")
+        if configured is not None:
+            collective_root = Path(configured).resolve()
+            if ROOT in collective_root.parents:
+                self.assertEqual(
+                    collective_root, (ROOT / ".collective-memory-contract").resolve()
+                )
+                excluded_roots = (collective_root,)
+        self.assertGreater(scan_path(ROOT, excluded_roots=excluded_roots), 0)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@
   "deployment": "not-applicable",
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
-  "required_scenario_count": 97,
-  "registry_sha256": "ff903ff98b08c273ddea98e6a44bf7ca55834189c8c67c850d83ac02ad63ac20",
+  "required_scenario_count": 102,
+  "registry_sha256": "37e8b791194f0d13eaa08c99b0cb8f8b52d0afba1ec792c50a95b8cb02c2bba0",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -26,6 +26,7 @@
     "two_installed_process_multihost_convergence_exercised": true,
     "multihost_receipt_and_cluster_provenance_fail_closed": true,
     "signed_authority_epoch_succession": true,
+    "split_custody_additional_and_recovery_rebirth": true,
     "local_codex_hermes_plural_body_weave": true,
     "species_section14_complete_mapping": true,
     "source_section14_complete_mapping": true,
@@ -33,7 +34,8 @@
     "relationship_three_being_signed_journey": true,
     "relationship_recipient_intake_and_signed_receipt": true,
     "relationship_revocation_refuses_stale_carriers": true,
-    "relationship_scenario_mapping": true
+    "relationship_scenario_mapping": true,
+    "collective_memory_bidirectional_exchange": true
   },
   "evidence": [
     "conformance/registry-v1.json",
@@ -42,8 +44,11 @@
     "docs/verification/dm055-invariants.json",
     "docs/verification/dm037-invariants.json",
     "docs/verification/dm079-invariants.json",
+    "docs/verification/dm078-fresh-host-rebirth.md",
     "docs/verification/dm033-invariants.json",
     "docs/verification/dm042-invariants.json",
+    "docs/verification/dm036-invariants.json",
+    "docs/dm036-collective-memory.md",
     "docs/verification/dm061-invariants.json",
     "docs/verification/dm070-invariants.json",
     "docs/verification/dm081-invariants.json",
@@ -56,11 +61,15 @@
     "schemas/hosted/v3/bundle.schema.json",
     "schemas/transport/v1/peer-envelope.schema.json",
     "schemas/weave/v1/authority-epoch.schema.json",
+    "schemas/weave/v1/embodiment-enrollment.schema.json",
+    "schemas/weave/v1/recovery-rebirth.schema.json",
     "schemas/source/v0/contracts.schema.json",
     "schemas/source/v0/runtime.schema.json",
     "schemas/conformance/v1/registry.schema.json",
     "schemas/conformance/v1/report.schema.json",
     "src/daimon_matrix/conformance.py",
+    "tests/test_dm078_rebirth.py",
+    "tests/test_dm078_recovery_rebirth.py",
     "tests/test_dm026_conformance.py",
     ".github/workflows/tests.yml"
   ]

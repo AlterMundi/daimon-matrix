@@ -38,6 +38,11 @@ from .memory_policy import (
     memory_checkpoint,
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
+from .peer_transport import (
+    PeerClientContext,
+    PeerTransportAmbiguous,
+    PeerTransportError,
+)
 from .projections import ProjectionEngine, ProjectionError
 from .relationship_store import (
     RelationshipServiceContext,
@@ -72,6 +77,7 @@ METHODS: Final = frozenset(
         "we.sync.validate-receipt",
     }
 )
+PEER_METHODS: Final = frozenset({"we.sync.peer-pull"})
 COMMUNICATION_METHODS: Final = frozenset(
     {
         "communication.accept",
@@ -173,6 +179,7 @@ SERVICE_METHODS: Final = (
     | COMMUNICATION_METHODS
     | CURATOR_METHODS
     | MEMORY_METHODS
+    | PEER_METHODS
     | REVIEW_METHODS
     | ROUTE_METHODS
     | SCOPE_METHODS
@@ -274,6 +281,7 @@ class HostedWeave:
     species: SpeciesServiceContext | None = None
     sources: SourceServiceContext | None = None
     relationships: RelationshipServiceContext | None = None
+    peer_context: PeerClientContext | None = None
 
     def __post_init__(self) -> None:
         if self.ledger.authority.manifest.trust_mode != "root-bound":
@@ -328,6 +336,12 @@ class HostedWeave:
             self.sources.registry.initialize()
         if self.relationships is not None:
             self.relationships.store.initialize()
+        if self.peer_context is not None and (
+            self.peer_context.authority.manifest.digest
+            != self.ledger.authority.manifest.digest
+            or dict(self.peer_context.local_origin) != self.origin
+        ):
+            raise ServiceError("peer_context_mismatch")
 
     @property
     def origin(self) -> dict[str, str]:
@@ -379,12 +393,22 @@ class HostedWeave:
                 error={"code": "request_conflict", "retryable": False},
             )
         if cached is not None:
+            cached_server = cached.get("server")
+            if not isinstance(cached_server, Mapping) or any(
+                cached_server.get(field) != self.origin[field]
+                for field in ("body_ref", "embodiment_id", "principal_id")
+            ):
+                raise LocalApiError("invalid_local_response")
+            try:
+                self.ledger.authority.validate_origin(cached_server)
+            except WeaveProtocolError as exception:
+                raise LocalApiError("invalid_local_response") from exception
             verified = verify_response(
                 cached,
                 capability,
                 expected_request_id=request_id,
                 expected_request_hash=digest,
-                expected_server=self.origin,
+                expected_server=cached_server,
             )
             if method == "curator.complete" and verified["ok"]:
                 curator = self.curator
@@ -457,6 +481,24 @@ class HostedWeave:
                 server=self.origin,
                 completed_at_ms=self.clock(),
                 error={"code": "protocol_rejected", "retryable": False},
+            )
+        except PeerTransportAmbiguous:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": "peer_outcome_ambiguous", "retryable": True},
+            )
+        except PeerTransportError:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": "peer_transport_rejected", "retryable": False},
             )
         except ProjectionError:
             response = create_response(
@@ -1497,6 +1539,47 @@ class HostedWeave:
                 request_id=_uuid(request_params["request_id"]),
                 limit=_uint(request_params["limit"], minimum=1, maximum=256),
             )
+        if method == "we.sync.peer-pull":
+            request_params = _closed(
+                params, {"limit", "sync_request_id", "target_embodiment_id"}
+            )
+            if self.peer_context is None:
+                raise ServiceError("peer_transport_unavailable")
+            target_id = _optional_text(request_params["target_embodiment_id"], 256)
+            if target_id is None:
+                raise ServiceError("invalid_params")
+            engine = SyncEngine(self.ledger)
+            request_document = engine.request(
+                request_id=_uuid(request_params["sync_request_id"]),
+                limit=_uint(request_params["limit"], minimum=1, maximum=256),
+            )
+            target, peer = self.peer_context.configured(target_id)
+            now = self.clock()
+            delta = peer.call(
+                request_document,
+                recipient_target=target,
+                request_content_type="application/vnd.daimon.sync-request+json",
+                response_content_type="application/vnd.daimon.sync-delta+json",
+                correlation_id=request_document["request_id"],
+                deadline_ms=now + 30_000,
+            )
+            sender = delta.get("sender")
+            if (
+                not isinstance(sender, Mapping)
+                or sender.get("embodiment_id") != target_id
+            ):
+                raise PeerTransportError()
+            receipt = engine.pull(delta)
+            return {
+                "schema": "dm.we.peer-pull-result/v1",
+                "target_embodiment_id": target_id,
+                "request_id": request_document["request_id"],
+                "request_hash": delta["request_hash"],
+                "page_hash": delta["page_hash"],
+                "more": delta["more"],
+                "events": len(delta["events"]),
+                "receipt": receipt,
+            }
         if method == "we.sync.serve":
             request_params = _closed(params, {"request", "transport"})
             request_document = request_params["request"]
@@ -1710,6 +1793,7 @@ __all__ = [
     "COMMUNICATION_METHODS",
     "MEMORY_METHODS",
     "METHODS",
+    "PEER_METHODS",
     "RELATIONSHIP_METHODS",
     "SCOPE_METHODS",
     "SERVICE_METHODS",

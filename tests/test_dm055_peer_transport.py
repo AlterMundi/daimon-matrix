@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import http.client
 import json
 import socket
@@ -539,11 +540,12 @@ class PeerTransportTests(PeerTransportFixture):
                 request_content_type=("application/vnd.daimon.scope-request+json"),
                 response_content_type=("application/vnd.daimon.scope-response+json"),
                 correlation_id="05500000-0000-4000-8000-000000000010",
-                deadline_ms=NOW + 30_000,
+                deadline_ms=self.now + 30_000,
             )
 
         with self.assertRaises(PeerTransportAmbiguous):
             invoke()
+        self.now += 1_000
         client = PeerClient(
             authority=self.authority,
             local_origin=self.origins["legion"],
@@ -574,6 +576,39 @@ class PeerTransportTests(PeerTransportFixture):
         self.assertEqual(effects, 1)
         self.assertEqual(len(requests), 2)
         self.assertEqual(requests[0], requests[1])
+
+        envelope = json.loads(requests[0])
+        legacy_plan = {
+            "schema": "dm.peer-call-plan/v1",
+            "being_ref": self.authority.state.being_ref,
+            "manifest_hash": self.authority.manifest.digest,
+            "correlation_id": envelope["correlation_id"],
+            "envelope_id": envelope["envelope_id"],
+            "deadline_ms": envelope["expires_at_ms"],
+            "request_content_type": ("application/vnd.daimon.scope-request+json"),
+            "response_content_type": ("application/vnd.daimon.scope-response+json"),
+            "sender": self.origins["legion"],
+            "recipient_credential_id": self.targets["daimonmatrix"].credential_id,
+            "payload": {"schema": "dm.scope.request/v1", "scope": "/me"},
+        }
+        with closing(sqlite3.connect(client_state / "outbox.sqlite")) as database:
+            database.execute(
+                "UPDATE peer_outbox SET plan_sha256=? WHERE request_id=?",
+                (
+                    hashlib.sha256(canonical_bytes(legacy_plan)).hexdigest(),
+                    envelope["envelope_id"],
+                ),
+            )
+            database.commit()
+        self.now += 1_000
+        self.assertEqual(invoke()["echo"], "/me")
+        self.assertEqual(effects, 1)
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(requests[0], requests[2])
+        self.now = envelope["expires_at_ms"]
+        with self.assertRaisesRegex(PeerTransportError, "peer_transport_rejected"):
+            invoke()
+        self.assertEqual(len(requests), 3)
 
     def test_envelope_matches_closed_schema(self) -> None:
         schema = json.loads(

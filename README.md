@@ -35,7 +35,8 @@ Matrix.org clients, homeservers and federation are intentionally outside the
 MVP. To avoid ambiguity, documentation uses `daimon-matrix`, `Matrix.org`, and
 “daimonmatrix host” for the software, external protocol, and VPS.
 
-Start with [ONTOLOGY.md](ONTOLOGY.md), the
+For a cold start after the current pause, read [RESUME.md](RESUME.md) first.
+Then continue with [ONTOLOGY.md](ONTOLOGY.md), the
 [operational stack contract](specs/operational-stack-contract.md), and the
 [being-root contract](specs/identity-root-v1.md). Delivery order and acceptance
 are in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
@@ -58,13 +59,15 @@ is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
 `/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
 fan-out independent of any live carrier. DM-055 adds the optional bundle-V3
 root-bound HPKE/Ed25519 peer transport and direct scope/sync HTTP carrier with
-durable replay. DM-070 proves deterministic convergence between two isolated
-installed processes through partition and restart; a fresh live two-host
+durable replay. DM-083 adds the installed plural-being bootstrap, closed V7
+peer targets and an authenticated configured peer-pull operation. DM-070 proves
+deterministic convergence between two isolated installed processes through
+partition and restart; a fresh live two-host
 cutover remains human-authorized. Cluster remains its
 lifecycle/state-volume host; frozen fixtures preserve the old canary as a
 migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
 peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 91-scenario report; its
+implementation and reproducible artifacts to a closed 97-scenario report; its
 route, birth and multihost evidence is synthetic/isolated and does not yet
 certify a fresh live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
 supervises one daemon per embodiment, preserves quiesced relocatable state and
@@ -119,6 +122,15 @@ adopts a shared target and Hermes locally rejects it. The published
 `dm.local-we.validation/v1` receipt is deterministic and path-free; the card is
 a synthetic single-host gate, not a Matrix.org, multihost Cluster or CompAII
 rebirth claim.
+DM-036 adds independent inbound and outbound `collective-memory` adapters over
+the exact public exchange-v1 contract. Immutable generations enter only an
+append-only source log plus `source.imported` quarantine evidence, with offline
+catch-up and ledger/source-log rebuild. Publication requires exact current
+Matrix source refs, recomputable checkpoints, subject consent, independent
+human review, deterministic final-byte secret scanning and fresh upstream
+effect truth. The directions have content-addressed DM-018 identities and no
+shared credential, store, queue, receipt or authority; the real-I/O lane uses
+only isolated synthetic corpus roots.
 DM-060 adds the root-authorized birth V1 ceremony and installed
 `daimon-synthetic-birth` acceptance. A parent can offer attributed context but
 cannot precommit or retain the newborn root; the newborn independently accepts,

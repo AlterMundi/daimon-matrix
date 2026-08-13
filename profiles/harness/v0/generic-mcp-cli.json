@@ -1,0 +1,208 @@
+{
+  "admission": {
+    "expected": "accepted",
+    "reason_code": "matrix-owned-vendor-neutral-fixture",
+    "requires_real_vendor_smoke": false
+  },
+  "artifact": {
+    "auto_update_policy": "protocol-version-change-requires-new-profile",
+    "config_precedence": "single-generated-overlay-no-vendor-precedence",
+    "executable_sha256": "8935fc63dbab262dd02107a473ff8654f882cc3afe8739824a6b2e0744bdfa65",
+    "install_source": "daimon-matrix-dad012d669947a81b26d847035787caa937f8705-harness-checker",
+    "limitations": [
+      "not-a-claim-about-any-unknown-vendor-host"
+    ],
+    "migration_policy": "no-ambient-state-import-or-fallback",
+    "state_roots": [
+      "fresh-owner-only-disposable-supervisor-root"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Identity, ledger, key, grant and deployment methods are refused.",
+      "state": "pass"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Harness transcript persistence is disabled.",
+      "state": "pass"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Effective instruction precedence is frozen and inspected.",
+      "state": "pass"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Stable process, session, turn, tool, park, wake, crash and resume IDs.",
+      "state": "pass"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Every accepted lifecycle transition has a bound receipt.",
+      "state": "pass"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Native harness memory is disabled.",
+      "state": "pass"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "The reference profile has no ambient network access.",
+      "state": "pass"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Fresh owner-only state root with no ambient fallback.",
+      "state": "pass"
+    },
+    "proposal_only": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "The harness can only read and propose a non-adopting observation.",
+      "state": "pass"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Request IDs, receipts, crash recovery and retry are deterministic.",
+      "state": "pass"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "The exact local Matrix boundary is startup-required.",
+      "state": "pass"
+    },
+    "secret_custody": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Capabilities use inherited descriptors and public evidence is scanned.",
+      "state": "pass"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Only the six frozen Matrix tools are visible.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Updates and profile migration fail closed pending revalidation.",
+      "state": "pass"
+    },
+    "version_pinned": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "Executable and protocol inputs are exact-pinned.",
+      "state": "pass"
+    },
+    "write_approval": {
+      "evidence": [
+        "dm025-generic-mcp"
+      ],
+      "note": "The sole write is separately gated and Matrix revalidates it.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "synthetic-conformant",
+  "harness": {
+    "name": "Generic MCP or CLI host",
+    "source_refs": [
+      "dm025-generic-mcp"
+    ],
+    "surface": "local-inherited-descriptor",
+    "vendor": "vendor-neutral",
+    "version": "dm074-fixture-v0"
+  },
+  "launch": {
+    "argv": [
+      "python",
+      "tests/fixtures/harness/v0/checker.py",
+      "--fixture",
+      "<fixture>",
+      "<profile>"
+    ],
+    "configuration": [
+      "only-matrix-local-endpoint",
+      "protocol-version=0"
+    ],
+    "environment": [
+      "HARNESS_HOME=<validated-disposable-root>"
+    ],
+    "status": "synthetic-verified"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-generic-mcp-cli-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-generic-mcp-cli-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "generic-mcp-cli",
+  "schema": "dm.harness-profile/v0"
+}

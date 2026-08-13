@@ -3,7 +3,8 @@
 > Historical gate: DM-000 completed on 2026-07-31. Do not ask an existing
 > session to repeat that audit. Use this procedure only for newly discovered
 > concurrent work, then record its disposition on the owning open card. The
-> current operational baseline is in [`CURRENT-STATE.md`](CURRENT-STATE.md).
+> current operational baseline is in [`RESUME.md`](RESUME.md) and
+> [`CURRENT-STATE.md`](CURRENT-STATE.md).
 
 Use this document to decide whether work already in progress remains relevant
 to Daimon Matrix V0.
@@ -16,12 +17,13 @@ work.
 
 Read, in order:
 
-1. [`docs/foundation/daimon-matrix.md`](docs/foundation/daimon-matrix.md)
-2. [`ONTOLOGY.md`](ONTOLOGY.md)
-3. [`PLAN.md`](PLAN.md)
-4. [`TRIBE-MIGRATION.md`](TRIBE-MIGRATION.md)
-5. [`ISSUES.md`](ISSUES.md)
-6. [DM-000: concurrent-work relevance audit](https://github.com/AlterMundi/daimon-matrix/issues/1)
+1. [`RESUME.md`](RESUME.md)
+2. [`docs/foundation/daimon-matrix.md`](docs/foundation/daimon-matrix.md)
+3. [`ONTOLOGY.md`](ONTOLOGY.md)
+4. [`PLAN.md`](PLAN.md)
+5. [`TRIBE-MIGRATION.md`](TRIBE-MIGRATION.md)
+6. [`ISSUES.md`](ISSUES.md)
+7. [DM-000: concurrent-work relevance audit](https://github.com/AlterMundi/daimon-matrix/issues/1)
 
 Then inspect the concrete work in your session and report:
 
@@ -54,12 +56,18 @@ notes can be updated before implementation continues.
 
 The reviewer must account for these decisions:
 
-- `/me` is one continuing cryptographic and experiential identity with at most
-  one awake body.
-- `/we` is a collective scope over distinct signed `/me` identities, not
+- A being is one continuing cryptographic and experiential identity that may
+  authorize zero, one or many simultaneously awake embodiments. There is no
+  identity-wide singleton-body lease.
+- `/me` is the situated current embodiment; `/we` is the set/navigation scope
+  over embodiments of that same being. It is not a set of different beings,
   another identity, a species, or a mandatory answer integrator.
-- Multiple `/we` members may be awake simultaneously; duplicate active bodies
-  for one `/me` are split-brain and fail closed.
+- Every embodiment has distinct credentials, incarnation, writable state and
+  attributable origin. Only stale writers competing for the same concrete
+  resource fail closed through a resource-scoped Cluster fence.
+- Relationships and founded-Tribe membership connect distinct beings through
+  explicit signed consent/grants; transport directories, reachability and
+  Cluster presence never create that authority.
 - `/tribe` is a resource-sharing relationship scope, not the transport.
 - Tribe Bridge is planned for absorption as the first transport implementation.
 - Tribe v0 public-roster-derived encryption did not provide confidentiality;
