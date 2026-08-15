@@ -1,5 +1,28 @@
 # Roadmap
 
+## Active critical path
+
+The complete minimum protocol and the real same-being two-host path have now
+been exercised. DM-083 is operationally accepted, and its final host-qualified
+runtime successor is exact Matrix `915c56c` hosted by Cluster `94d80ba`.
+Historical retry, successor convergence, rollback, checked recovery,
+least-authority host status and a cold full-host reboot all passed. The release
+branches remain unmerged pending independent review. [`RESUME.md`](RESUME.md)
+is the cold-start handoff and Project 9 is the authoritative live board.
+
+Resume in dependency order:
+
+1. complete the consented cross-being native logical-message canary;
+2. complete the fresh-host
+   rebirth/recovery gates;
+3. complete remaining collective-memory/additional-harness and adversarial
+   security gates required by the board;
+4. freeze and publish the V0.1.0 release; and
+5. retire/archive the transitional Tribe Bridge only through its explicit
+   human-authorized migration cards.
+
+No live-host step is implied by a local conformance result or by this roadmap.
+
 ## V0.1 MVP
 
 - Canonical ontology and cross-runtime contracts.
@@ -31,7 +54,7 @@
   claim/publication/quarantine policy.
 - `daimon-cluster` owns body/container lifecycle, storage, deployment evidence,
   and resource-scoped exclusion.
-- Cluster hosts Matrix V6 relationship state under the exact adaptation
+- Cluster hosts Matrix V7 relationship state under the exact adaptation
   contract but never derives social or grant authority from lifecycle truth.
 - Tribe Bridge is a transitional source/runtime and is archived after
   DM-050–DM-055 replacement gates and the release handoff.

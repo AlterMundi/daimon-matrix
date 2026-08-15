@@ -1,0 +1,45 @@
+{
+  "admission": {
+    "blocking_controls": [
+      "authority_refusal",
+      "history_persistence_disabled",
+      "lifecycle_boundaries",
+      "lifecycle_receipts",
+      "proposal_only",
+      "receipt_retry",
+      "required_matrix_boundary",
+      "secret_custody",
+      "upgrade_migration_closed",
+      "version_pinned"
+    ],
+    "expected": "refused",
+    "observed": "refused"
+  },
+  "checks": [
+    {
+      "check": "closed-profile-and-fixture",
+      "ok": true
+    },
+    {
+      "check": "authority-boundary",
+      "ok": true
+    },
+    {
+      "check": "admission-matches-evidence",
+      "ok": true
+    },
+    {
+      "check": "offline-synthetic-corpus",
+      "ok": true
+    }
+  ],
+  "evidence_state": "documented-candidate",
+  "fixture_sha256": "4f9786169d8f8dcb8ca99dd8c0953e7490296793a365705bbf831adc4afdf740",
+  "passed": true,
+  "profile_id": "grok-build",
+  "profile_sha256": "146018a721c6455ffe0de8db95e9ddb1c96c468f44af58cd6906b54965c3d87e",
+  "schema": "dm.harness-conformance-report/v0",
+  "synthetic": {
+    "skipped": "mandatory-controls-fail-closed"
+  }
+}

@@ -86,8 +86,14 @@ def scan_archive(path: Path) -> int:
     return count
 
 
-def _source_files(root: Path) -> Iterable[Path]:
+def _source_files(
+    root: Path, *, excluded_roots: frozenset[Path] = frozenset()
+) -> Iterable[Path]:
     for path in sorted(root.rglob("*")):
+        if any(
+            path == excluded or excluded in path.parents for excluded in excluded_roots
+        ):
+            continue
         parts = path.relative_to(root).parts
         if any(part in SKIP_DIRECTORIES for part in parts) or (
             parts and parts[0] in SKIP_ROOT_DIRECTORIES
@@ -99,13 +105,21 @@ def _source_files(root: Path) -> Iterable[Path]:
             yield path
 
 
-def scan_path(path: Path) -> int:
+def scan_path(path: Path, *, excluded_roots: Iterable[Path] = ()) -> int:
     """Scan one source tree, regular file, or package archive."""
 
     path = path.resolve()
     if path.is_dir():
+        resolved_exclusions = frozenset(root.resolve() for root in excluded_roots)
+        for excluded in resolved_exclusions:
+            if excluded == path or path not in excluded.parents:
+                raise SecretScanError(
+                    f"excluded scan root must be a strict descendant: {excluded}"
+                )
+            if excluded.is_symlink():
+                raise SecretScanError(f"excluded scan root is a symlink: {excluded}")
         count = 0
-        for member in _source_files(path):
+        for member in _source_files(path, excluded_roots=resolved_exclusions):
             relative = member.relative_to(path).as_posix()
             if member.stat().st_size > MAX_FILE_SIZE:
                 raise SecretScanError(f"oversized source file: {relative}")

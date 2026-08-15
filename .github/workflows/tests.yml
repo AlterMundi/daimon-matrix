@@ -17,8 +17,13 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: nicoechaniz/collective-memory
+          ref: 3e3b39416917f8e3c2bc5ca69362b20296205938
+          path: .collective-memory-contract
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -30,24 +35,40 @@ jobs:
             requirements-vectors.txt
       - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt
       - run: python -m pip install -r requirements-species.txt
-      - run: python -m ruff format --check src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/generate_dm082_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm082_relationships.py
-      - run: python -m ruff check src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/generate_dm082_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm082_relationships.py
-      - run: MYPYPATH=src python -m mypy src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/generate_dm082_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm082_relationships.py
+      - run: python -m ruff format --check src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm083_dogfood.py
+      - run: python -m ruff check src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm083_dogfood.py
+      - run: MYPYPATH=src python -m mypy src tools/check_distribution.py tools/check_tribe_provenance.py tools/generate_dm021_vectors.py tools/generate_dm022_vectors.py tools/generate_dm030_vectors.py tools/generate_dm031_vectors.py tools/generate_dm032_vectors.py tools/generate_dm033_vectors.py tools/generate_dm034_vectors.py tools/generate_dm035_vectors.py tools/generate_dm040_vectors.py tools/generate_dm041_vectors.py tools/generate_dm061_vectors.py tools/generate_dm079_vectors.py tools/generate_dm081_vectors.py tools/reproducible_build.py tools/scan_secrets.py tests/test_package_scaffold.py tests/test_dm021_identity.py tests/test_dm021_keystore.py tests/test_dm021_process.py tests/test_dm021_vectors.py tests/test_dm022_ledger.py tests/test_dm023_sync.py tests/test_dm024_service.py tests/test_dm024_runtime.py tests/test_dm025_client.py tests/test_dm025_cli_mcp.py tests/test_dm026_conformance.py tests/test_dm030_memory_policy.py tests/test_dm031_curator.py tests/test_dm032_curator_worker.py tests/test_dm033_human_review.py tests/test_dm034_memory_projection.py tests/test_dm035_publication.py tests/test_dm037_cluster_effects.py tests/test_dm040_codex_body.py tests/test_dm041_hermes_body.py tests/test_dm050_tribe_provenance.py tests/test_dm051_sealed.py tests/test_dm052_communication.py tests/test_dm053_routes.py tests/test_dm054_scopes.py tests/test_dm055_peer_transport.py tests/test_dm060_synthetic_birth.py tests/test_dm061_species.py tests/test_dm079_authority_epochs.py tests/test_dm081_sources.py tests/test_dm083_dogfood.py
+      - run: python -m ruff format --check tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
+      - run: python -m ruff check tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
+      - run: python -m ruff format --check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
+      - run: python -m ruff check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
       - run: python -m ruff format --check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: python -m ruff check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: python -m ruff format --check tools/generate_dm070_vectors.py tests/test_dm070_multihost.py
       - run: python -m ruff check tools/generate_dm070_vectors.py tests/test_dm070_multihost.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm070_vectors.py tests/test_dm070_multihost.py
+      - run: python -m ruff format --check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
+      - run: python -m ruff check tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm036_vectors.py tests/test_dm036_collective_memory.py
       - run: python tools/generate_dm041_vectors.py --check
       - run: python tools/generate_dm042_vectors.py --check
+      - run: python tools/generate_dm036_vectors.py --check
+        env:
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
       - run: python tools/generate_dm061_vectors.py --check
       - run: python tools/generate_dm070_vectors.py --check
+      - run: python tools/generate_dm078_vectors.py --check
+      - run: python tools/generate_dm078_recovery_vectors.py --check
       - run: python tools/generate_dm081_vectors.py --check
       - run: python tools/generate_dm082_vectors.py --check
       - run: python -m compileall -q coordination src tools tests
       - run: PYTHONPATH=src python -W error::ResourceWarning -m unittest discover -s tests -v
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        env:
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
@@ -56,7 +77,7 @@ jobs:
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
       - run: python tools/check_tribe_provenance.py provenance/tribe-bridge-v1.json
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/daimon-cluster
           ref: 676495e852e6772a60de8221271ee9fc976f77ce
@@ -70,8 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -82,7 +103,7 @@ jobs:
             requirements-vectors.txt
       - run: python -m pip install -r requirements-dev.txt -r requirements-hermes-contract.txt -r requirements-vectors.txt
       - run: python -m pip install -r requirements-species.txt
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-agent
           ref: 0db1912911fafa384aa5ee0145929658a9d1dd33
@@ -98,8 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -109,7 +130,12 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: python tools/reproducible_build.py --output dist
       - run: python tools/scan_secrets.py . dist/daimon_matrix-0.0.0.tar.gz dist/daimon_matrix-0.0.0-py3-none-any.whl
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: nicoechaniz/collective-memory
+          ref: 3e3b39416917f8e3c2bc5ca69362b20296205938
+          path: .collective-memory-contract
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
@@ -117,6 +143,7 @@ jobs:
       - name: Smoke-test the installed wheel
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
         run: |
           python -m venv "${RUNNER_TEMP}/dm020-wheel"
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install -r requirements-vectors.txt
@@ -126,6 +153,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import importlib.metadata as m; import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"; assert m.requires("daimon-matrix") == ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.identity import create_genesis, verify_genesis; roots=[bytes([n])*32 for n in (1,2,3)]; recovery=[bytes([n])*32 for n in (4,5,6)]; artifact=create_genesis(roots,2,recovery,2,created_at_ms=1); assert verify_genesis(artifact).being_ref.startswith("dm:being:v1:")'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.ledger import Ledger; from daimon_matrix.weave import BeingManifest; assert Ledger and BeingManifest'
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.collective_memory import create_source_manifest, create_publisher_manifest; assert create_source_manifest()["adapter_id"] != create_publisher_manifest()["adapter_id"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.sealed import PROFILE; from cryptography.hazmat.primitives.hpke import Suite; assert PROFILE.startswith("HPKE-X25519") and Suite'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm022_ledger -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm023_sync -q
@@ -134,7 +162,10 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm033_human_review -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm034_memory_projection -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm035_publication.DM035PublicContractTests -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm036_collective_memory.DM036ContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-matrixd" --help
+          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-bootstrap" --help
+          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-rebirth" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-conformance" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-codex-body" --help
@@ -144,7 +175,6 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-reviewer" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-birth" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-multihost" --help
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-relationships" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-species" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-sources" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm040_codex_body -q
@@ -155,6 +185,9 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm070_multihost.DM070PublishedContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm081_sources -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm082_relationships -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm083_dogfood -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_rebirth -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_recovery_rebirth -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm024_service tests.test_dm024_runtime tests.test_dm025_client tests.test_dm025_cli_mcp tests.test_dm026_conformance tests.test_dm030_memory_policy tests.test_dm037_cluster_effects tests.test_dm051_sealed tests.test_dm052_communication tests.test_dm053_routes tests.test_dm054_scopes tests.test_dm055_peer_transport tests.test_dm079_authority_epochs -q
           dm070_state="$(mktemp -d "${RUNNER_TEMP}/dm070-state-XXXXXX")"
           dm070_receipt="${RUNNER_TEMP}/dm070-receipt.json"
@@ -166,11 +199,6 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-sources" --state-root "${dm081_state}" > "${dm081_report}"
           cmp "${dm081_report}" conformance/fixtures/dm081-synthetic-source.json
           python tools/scan_secrets.py "${dm081_report}"
-          dm082_state="$(mktemp -d "${RUNNER_TEMP}/dm082-state-XXXXXX")"
-          dm082_report="${RUNNER_TEMP}/dm082-report.json"
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-relationships" --state-root "${dm082_state}" > "${dm082_report}"
-          cmp "${dm082_report}" conformance/fixtures/dm082-synthetic-relationships.json
-          python tools/scan_secrets.py "${dm082_report}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: daimon-matrix-python-${{ github.sha }}
@@ -181,8 +209,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -192,7 +220,12 @@ jobs:
             requirements-vectors.txt
       - run: python -m pip install -r requirements-build.txt -r requirements-vectors.txt
       - run: python tools/reproducible_build.py --output dist
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: nicoechaniz/collective-memory
+          ref: 3e3b39416917f8e3c2bc5ca69362b20296205938
+          path: .collective-memory-contract
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
@@ -200,6 +233,7 @@ jobs:
       - name: Run installed deterministic conformance twice
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
+          COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
         run: |
           python -m venv "${RUNNER_TEMP}/dm026-wheel"
           "${RUNNER_TEMP}/dm026-wheel/bin/python" -m pip install -r requirements-vectors.txt mcp==2.0.0

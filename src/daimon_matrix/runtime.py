@@ -34,6 +34,7 @@ from .peer_transport import (
     PeerDispatcher,
     PeerExchangeStore,
     PeerOutbox,
+    PeerTransportError,
     http_peer_round_trip,
     protocol_handlers,
 )
@@ -78,6 +79,7 @@ BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
 BUNDLE_SCHEMA_V4: Final = "dm.runtime.bundle/v4"
 BUNDLE_SCHEMA_V5: Final = "dm.runtime.bundle/v5"
 BUNDLE_SCHEMA_V6: Final = "dm.runtime.bundle/v6"
+BUNDLE_SCHEMA_V7: Final = "dm.runtime.bundle/v7"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -257,6 +259,7 @@ def load_runtime(
         BUNDLE_SCHEMA_V4,
         BUNDLE_SCHEMA_V5,
         BUNDLE_SCHEMA_V6,
+        BUNDLE_SCHEMA_V7,
     }:
         fields.add("authority_history")
     if schema in {
@@ -264,13 +267,19 @@ def load_runtime(
         BUNDLE_SCHEMA_V4,
         BUNDLE_SCHEMA_V5,
         BUNDLE_SCHEMA_V6,
+        BUNDLE_SCHEMA_V7,
     }:
         fields.add("peer_transport")
-    if schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}:
+    if schema in {
+        BUNDLE_SCHEMA_V4,
+        BUNDLE_SCHEMA_V5,
+        BUNDLE_SCHEMA_V6,
+        BUNDLE_SCHEMA_V7,
+    }:
         fields.add("species")
-    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}:
+    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
         fields.add("sources")
-    if schema == BUNDLE_SCHEMA_V6:
+    if schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
         fields.add("relationships")
     bundle = _closed(raw_bundle, fields)
     if schema not in {
@@ -280,6 +289,7 @@ def load_runtime(
         BUNDLE_SCHEMA_V4,
         BUNDLE_SCHEMA_V5,
         BUNDLE_SCHEMA_V6,
+        BUNDLE_SCHEMA_V7,
     }:
         raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
@@ -316,6 +326,7 @@ def load_runtime(
             BUNDLE_SCHEMA_V4,
             BUNDLE_SCHEMA_V5,
             BUNDLE_SCHEMA_V6,
+            BUNDLE_SCHEMA_V7,
         }:
             authority_history = bundle["authority_history"]
             if (
@@ -324,20 +335,63 @@ def load_runtime(
                 or (schema == BUNDLE_SCHEMA_V2 and not authority_history)
             ):
                 raise RuntimeError("invalid_authority_history")
-            historical_authorities = []
-            successors = []
+            epochs: list[Mapping[str, Any]] = []
             for entry in authority_history:
-                epoch = _closed(entry, {"manifest", "successor"})
-                historical_authorities.append(
-                    RootAuthority(
-                        BeingManifest.from_value(epoch["manifest"]),
-                        state,
-                        credentials,
-                        incarnations,
+                if isinstance(entry, Mapping) and set(entry) == {
+                    "manifest",
+                    "successor",
+                }:
+                    epochs.append(entry)
+                else:
+                    if schema != BUNDLE_SCHEMA_V7:
+                        raise RuntimeError("invalid_authority_history")
+                    epochs.append(
+                        _closed(
+                            entry,
+                            {
+                                "manifest",
+                                "control_artifacts",
+                                "control_head",
+                                "credentials",
+                                "incarnations",
+                                "successor",
+                            },
+                        )
                     )
-                )
-                successors.append(epoch["successor"])
+            historical_reversed: list[RootAuthority] = []
+            next_authority = active
+            for epoch in reversed(epochs):
+                if set(epoch) == {"manifest", "successor"}:
+                    historical_authority = RootAuthority(
+                        BeingManifest.from_value(epoch["manifest"]),
+                        next_authority.state,
+                        next_authority.credentials,
+                        next_authority.incarnations,
+                    )
+                else:
+                    historical_controls = epoch["control_artifacts"]
+                    if (
+                        not isinstance(historical_controls, list)
+                        or not 1 <= len(historical_controls) <= 1024
+                    ):
+                        raise RuntimeError("invalid_authority_history")
+                    historical_chain = ControlChain(historical_controls[0])
+                    for artifact in historical_controls[1:]:
+                        historical_chain.add(artifact)
+                    historical_state = historical_chain.state
+                    if epoch["control_head"] != historical_state.head:
+                        raise RuntimeError("invalid_authority_history")
+                    historical_authority = RootAuthority(
+                        BeingManifest.from_value(epoch["manifest"]),
+                        historical_state,
+                        _indexed(epoch["credentials"]),
+                        _indexed(epoch["incarnations"]),
+                    )
+                historical_reversed.append(historical_authority)
+                next_authority = historical_authority
             if authority_history:
+                historical_authorities = list(reversed(historical_reversed))
+                successors = [epoch["successor"] for epoch in epochs]
                 authority = RootHistoryAuthority(
                     active, historical_authorities, successors
                 )
@@ -348,6 +402,7 @@ def load_runtime(
                 BUNDLE_SCHEMA_V4,
                 BUNDLE_SCHEMA_V5,
                 BUNDLE_SCHEMA_V6,
+                BUNDLE_SCHEMA_V7,
             }:
                 raise RuntimeError("incompatible_authority_histories")
             history_value = _closed(history, {"events", "manifest", "public_keys"})
@@ -536,20 +591,21 @@ def load_runtime(
             BUNDLE_SCHEMA_V4,
             BUNDLE_SCHEMA_V5,
             BUNDLE_SCHEMA_V6,
+            BUNDLE_SCHEMA_V7,
         }
         and bundle["peer_transport"] is not None
     ):
-        peer_configuration = _closed(
-            bundle["peer_transport"],
-            {
-                "enabled",
-                "encryption_slot",
-                "exchange_filename",
-                "listen_host",
-                "listen_port",
-                "outbox_filename",
-            },
-        )
+        peer_fields = {
+            "enabled",
+            "encryption_slot",
+            "exchange_filename",
+            "listen_host",
+            "listen_port",
+            "outbox_filename",
+        }
+        if schema == BUNDLE_SCHEMA_V7:
+            peer_fields.add("targets")
+        peer_configuration = _closed(bundle["peer_transport"], peer_fields)
         peer_slot = peer_configuration["encryption_slot"]
         listen_host = peer_configuration["listen_host"]
         listen_port = peer_configuration["listen_port"]
@@ -582,6 +638,46 @@ def load_runtime(
             raise RuntimeError("runtime_filename_collision")
         filenames.update(path.name for path in peer_files)
         required_slots.add(peer_slot)
+    peer_endpoints: dict[str, tuple[str, float]] = {}
+    if peer_configuration is not None and schema == BUNDLE_SCHEMA_V7:
+        raw_targets = peer_configuration["targets"]
+        if not isinstance(raw_targets, list) or len(raw_targets) > 255:
+            raise RuntimeError("invalid_peer_target_configuration")
+        normalized_targets: list[tuple[str, str, int]] = []
+        for raw_target in raw_targets:
+            target = _closed(raw_target, {"embodiment_id", "endpoint", "timeout_ms"})
+            embodiment_id = target["embodiment_id"]
+            endpoint = target["endpoint"]
+            timeout_ms = target["timeout_ms"]
+            if (
+                not isinstance(embodiment_id, str)
+                or not isinstance(endpoint, str)
+                or not isinstance(timeout_ms, int)
+                or isinstance(timeout_ms, bool)
+                or not 1 <= timeout_ms <= 30_000
+            ):
+                raise RuntimeError("invalid_peer_target_configuration")
+            try:
+                http_peer_round_trip(endpoint, timeout_seconds=timeout_ms / 1000)
+            except (PeerTransportError, TypeError, ValueError) as exception:
+                raise RuntimeError("invalid_peer_target_configuration") from exception
+            normalized_targets.append((embodiment_id, endpoint, timeout_ms))
+        if normalized_targets != sorted(normalized_targets) or len(
+            {row[0] for row in normalized_targets}
+        ) != len(normalized_targets):
+            raise RuntimeError("invalid_peer_target_configuration")
+        active_remote_ids = {
+            str(row["embodiment_id"])
+            for row in active.manifest.value["embodiments"]
+            if row["status"] == "active"
+            and row["embodiment_id"] != local_origin["embodiment_id"]
+        }
+        if {row[0] for row in normalized_targets} != active_remote_ids:
+            raise RuntimeError("invalid_peer_target_configuration")
+        peer_endpoints = {
+            embodiment_id: (endpoint, timeout_ms / 1000)
+            for embodiment_id, endpoint, timeout_ms in normalized_targets
+        }
     body_capabilities: tuple[str, ...] = ()
     tribes: dict[str, VerifiedTribeSnapshot] = {}
     scopes_bundle = bundle["scopes"]
@@ -631,7 +727,13 @@ def load_runtime(
                 raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
     species_context: SpeciesServiceContext | None = None
     if (
-        schema in {BUNDLE_SCHEMA_V4, BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6}
+        schema
+        in {
+            BUNDLE_SCHEMA_V4,
+            BUNDLE_SCHEMA_V5,
+            BUNDLE_SCHEMA_V6,
+            BUNDLE_SCHEMA_V7,
+        }
         and bundle["species"] is not None
     ):
         species_value = _closed(
@@ -669,7 +771,10 @@ def load_runtime(
             raise RuntimeError("runtime_species_configuration_rejected") from exception
     relationship_store_path: Path | None = None
     relationship_known_refs: tuple[str, ...] = ()
-    if schema == BUNDLE_SCHEMA_V6 and bundle["relationships"] is not None:
+    if (
+        schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}
+        and bundle["relationships"] is not None
+    ):
         relationship_value = _closed(
             bundle["relationships"], {"known_being_refs", "store_filename"}
         )
@@ -693,7 +798,10 @@ def load_runtime(
         relationship_known_refs = tuple(raw_refs)
     source_cas_path: Path | None = None
     known_source_configurations: list[tuple[str, Path, Any, Mapping[str, str]]] = []
-    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6} and bundle["sources"] is not None:
+    if (
+        schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}
+        and bundle["sources"] is not None
+    ):
         source_value = _closed(bundle["sources"], {"cas_filename", "known_beings"})
         source_cas_path = _safe_file(
             root, source_value["cas_filename"], must_exist=False
@@ -744,20 +852,63 @@ def load_runtime(
                 known_history = known["authority_history"]
                 if not isinstance(known_history, list) or len(known_history) > 256:
                     raise RuntimeError("runtime_source_configuration_rejected")
-                historical_authorities = []
-                known_successors = []
+                known_epochs: list[Mapping[str, Any]] = []
                 for raw_epoch in known_history:
-                    epoch = _closed(raw_epoch, {"manifest", "successor"})
-                    historical_authorities.append(
-                        RootAuthority(
-                            BeingManifest.from_value(epoch["manifest"]),
-                            known_state,
-                            known_credentials,
-                            known_incarnations,
+                    if isinstance(raw_epoch, Mapping) and set(raw_epoch) == {
+                        "manifest",
+                        "successor",
+                    }:
+                        known_epochs.append(raw_epoch)
+                    else:
+                        if schema != BUNDLE_SCHEMA_V7:
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        known_epochs.append(
+                            _closed(
+                                raw_epoch,
+                                {
+                                    "manifest",
+                                    "control_artifacts",
+                                    "control_head",
+                                    "credentials",
+                                    "incarnations",
+                                    "successor",
+                                },
+                            )
                         )
-                    )
-                    known_successors.append(epoch["successor"])
+                known_historical_reversed: list[RootAuthority] = []
+                next_known_authority = known_active
+                for epoch in reversed(known_epochs):
+                    if set(epoch) == {"manifest", "successor"}:
+                        historical_authority = RootAuthority(
+                            BeingManifest.from_value(epoch["manifest"]),
+                            next_known_authority.state,
+                            next_known_authority.credentials,
+                            next_known_authority.incarnations,
+                        )
+                    else:
+                        historical_controls = epoch["control_artifacts"]
+                        if (
+                            not isinstance(historical_controls, list)
+                            or not 1 <= len(historical_controls) <= 1024
+                        ):
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        historical_chain = ControlChain(historical_controls[0])
+                        for artifact in historical_controls[1:]:
+                            historical_chain.add(artifact)
+                        historical_state = historical_chain.state
+                        if epoch["control_head"] != historical_state.head:
+                            raise RuntimeError("runtime_source_configuration_rejected")
+                        historical_authority = RootAuthority(
+                            BeingManifest.from_value(epoch["manifest"]),
+                            historical_state,
+                            _indexed(epoch["credentials"]),
+                            _indexed(epoch["incarnations"]),
+                        )
+                    known_historical_reversed.append(historical_authority)
+                    next_known_authority = historical_authority
                 if known_history:
+                    historical_authorities = list(reversed(known_historical_reversed))
+                    known_successors = [epoch["successor"] for epoch in known_epochs]
                     known_authority = RootHistoryAuthority(
                         known_active, historical_authorities, known_successors
                     )
@@ -998,6 +1149,7 @@ def load_runtime(
             body_capabilities=body_capabilities,
             body_reader=body_reader if scopes_bundle is not None else None,
             tribes=tribes,
+            peer_embodiments=frozenset(peer_endpoints),
             tribe_provider=(
                 None
                 if relationship_context is None
@@ -1053,6 +1205,7 @@ def load_runtime(
                 custody=peer_custody,
                 outbox=peer_outbox,
                 clock=clock,
+                endpoints=peer_endpoints,
             )
         except (OSError, TypeError, ValueError) as exception:
             raise RuntimeError("runtime_peer_transport_rejected") from exception
@@ -1078,6 +1231,7 @@ def load_runtime(
         species=species_context,
         sources=source_context,
         relationships=relationship_context,
+        peer_context=peer_context,
     )
     ledger.integrity_check()
     final_root = root.lstat()
@@ -1103,6 +1257,7 @@ __all__ = [
     "BUNDLE_SCHEMA_V4",
     "BUNDLE_SCHEMA_V5",
     "BUNDLE_SCHEMA_V6",
+    "BUNDLE_SCHEMA_V7",
     "HostedRuntime",
     "RuntimeError",
     "load_runtime",

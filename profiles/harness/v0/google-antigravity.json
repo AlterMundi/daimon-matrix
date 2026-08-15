@@ -1,0 +1,209 @@
+{
+  "admission": {
+    "expected": "refused",
+    "reason_code": "isolation-lifecycle-native-state-and-version-unproven",
+    "requires_real_vendor_smoke": true
+  },
+  "artifact": {
+    "auto_update_policy": "unknown-release-channel-refuses-canary",
+    "config_precedence": "plugins-rules-skills-hooks-and-mcp-order-not-fully-proven",
+    "executable_sha256": null,
+    "install_source": "not-installed-documentation-audit-only",
+    "limitations": [
+      "headless-lifecycle-contract-unproven",
+      "native-memory-and-history-disablement-unproven",
+      "version-pin-unavailable-in-audited-docs"
+    ],
+    "migration_policy": "no-shared-gemini-or-antigravity-profile-import",
+    "state_roots": [
+      "disposable-os-home-required-but-exact-product-root-unproven"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "antigravity-permissions-20260810"
+      ],
+      "note": "Documented deny rules can close known network tools.",
+      "state": "pass"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "proposal_only": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "secret_custody": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "antigravity-permissions-20260810"
+      ],
+      "note": "MCP resources support allow, ask and deny with deny precedence.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "version_pinned": {
+      "evidence": [
+        "antigravity-mcp-20260810"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "write_approval": {
+      "evidence": [
+        "antigravity-permissions-20260810"
+      ],
+      "note": "Ask rules can gate the proposed write.",
+      "state": "pass"
+    }
+  },
+  "evidence_state": "documented-candidate",
+  "harness": {
+    "name": "Google Antigravity",
+    "source_refs": [
+      "antigravity-mcp-20260810",
+      "antigravity-permissions-20260810",
+      "antigravity-plugins-20260810"
+    ],
+    "surface": "editor-cli-mcp",
+    "vendor": "Google",
+    "version": "documentation-snapshot-2026-08-10"
+  },
+  "launch": {
+    "argv": [
+      "<unbound-antigravity-executable>"
+    ],
+    "configuration": [
+      "all-plugins-disabled-except-matrix-overlay",
+      "matrix-mcp=local-only",
+      "permissions=deny-default-ask-we-observe"
+    ],
+    "environment": [
+      "HOME=<validated-disposable-os-home>"
+    ],
+    "status": "reference-only"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-google-antigravity-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-google-antigravity-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "google-antigravity",
+  "schema": "dm.harness-profile/v0"
+}

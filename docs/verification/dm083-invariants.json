@@ -1,0 +1,36 @@
+{
+  "card": "DM-083",
+  "schema": "dm.verification-invariants/v1",
+  "invariants": {
+    "arrival_does_not_imply_adoption": true,
+    "cluster_lifecycle_grants_no_being_authority": true,
+    "custody_and_writable_state_are_per_runtime": true,
+    "exact_retry_survives_same_incarnation_restart": true,
+    "historical_retry_requires_same_origin_lineage": true,
+    "historical_retry_requires_pre_retirement_request": true,
+    "historical_retry_returns_stored_bytes_without_resigning": true,
+    "native_peer_exchange_is_encrypted_and_authenticated": true,
+    "observer_local_decision_is_explicit_and_reversible": true,
+    "offline_peer_failure_does_not_advance_state": true,
+    "portable_restore_preserves_exact_manifest": true,
+    "root_authorized_successor_retires_only_its_predecessor": true,
+    "scheduled_backup_restores_only_previously_active_services": true,
+    "tribe_ack_is_not_matrix_semantic_delivery": true,
+    "two_host_origins_do_not_share_private_runtime_material": true
+  },
+  "published_evidence": [
+    "docs/dm079-authority-epochs.md",
+    "docs/dm083-two-host-dogfood.md",
+    "schemas/clients/v1/client.schema.json",
+    "tests/test_dm025_client.py",
+    "tests/test_dm079_authority_epochs.py"
+  ],
+  "operational_confirmation": {
+    "cluster_merge": "5d3892eaca1744e98874cab8d53be46e3eb186de",
+    "heads_digest": "509fe38e3a6d0278721b4cc0c2cc4c33a44ece41655ac9b29fcacce1ca8973df",
+    "historical_retry_output_sha256": "b4b35839e09acb27e3ec5e3e741812d7682cac104fa9099b0e0f76aecb34e215",
+    "known_events_per_host": 6,
+    "matrix_runtime_commit": "f0181f7117859f3f9cc4afc7dfbdaf9b06e74754",
+    "status": "passed"
+  }
+}

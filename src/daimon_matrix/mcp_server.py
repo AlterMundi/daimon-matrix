@@ -656,6 +656,22 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         ),
         False,
     ),
+    "we_sync_peer_pull": (
+        "we.sync.peer-pull",
+        _object_schema(
+            {
+                "sync_request_id": _UUID,
+                "target_embodiment_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+            },
+            ("sync_request_id", "target_embodiment_id"),
+        ),
+        False,
+    ),
     "we_sync_serve": (
         "we.sync.serve",
         _object_schema(
@@ -881,6 +897,11 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         "we.projection.get": set(),
         "we.projection.rebuild": set(),
         "we.sync.request": {"limit", "request_id"},
+        "we.sync.peer-pull": {
+            "limit",
+            "sync_request_id",
+            "target_embodiment_id",
+        },
         "we.sync.serve": {"request", "transport"},
         "we.sync.pull": {"delta", "transport"},
         "we.sync.validate-receipt": {"receipt", "transport"},

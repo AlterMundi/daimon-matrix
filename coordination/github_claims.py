@@ -745,6 +745,12 @@ def _receipt_body(
     source = current if decision == "rejected" and current is not None else command or current
     if source is None:
         raise CoordinationError("receipt requires command or current state")
+    pull_request = current.pull_request if current is not None else None
+    if decision == "accepted" and command is not None:
+        if command.action == "claim":
+            pull_request = None
+        elif command.action == "review":
+            pull_request = command.pull_request
     return {
         "schema": RECEIPT_SCHEMA,
         "decision": decision,
@@ -760,15 +766,7 @@ def _receipt_body(
         "lease_until": format_timestamp(lease_until) if lease_until else None,
         "resources": list(source.resources),
         "branch": source.branch,
-        "pull_request": (
-            command.pull_request
-            if command is not None and command.action == "review"
-            else current.pull_request
-            if current is not None
-            else command.pull_request
-            if command is not None
-            else None
-        ),
+        "pull_request": pull_request,
         "previous_receipt_id": current.receipt_id if current else None,
         "previous_receipt_hash": current.receipt_hash if current else None,
         "workflow_sha": workflow_sha,

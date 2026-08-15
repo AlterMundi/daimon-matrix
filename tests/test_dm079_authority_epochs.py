@@ -448,6 +448,23 @@ class HostedAuthorityEpochTests(RuntimeFixture):
             signer=old_runtime.service.signer,
             occurred_at_ms=now_ms,
         )
+        retry_request = create_request(
+            capability,
+            request_id="30000000-0000-4000-8000-000000000078",
+            issued_at_ms=now_ms,
+            method="we.observe",
+            params={
+                "subject": "before-hosted-restart-retry",
+                "payload": {"summary": "before-hosted-restart-retry"},
+                "sensitivity": "personal",
+                "causal_parents": [],
+                "occurred_at_ms": now_ms,
+                "event_id": None,
+            },
+            nonce=b"d" * 16,
+        )
+        old_response = old_runtime.service.handle(retry_request)
+        self.assertTrue(old_response["ok"], old_response)
         old_origin = self.origins["legion"]
         credential = next(iter(self.credentials.values()))
         new_authorization = create_incarnation_authorization(
@@ -521,6 +538,9 @@ class HostedAuthorityEpochTests(RuntimeFixture):
         self.assertEqual(
             restarted.service.ledger.event(old_event["event_id"]), old_event
         )
+        replayed = restarted.service.handle(retry_request)
+        self.assertEqual(canonical_bytes(replayed), canonical_bytes(old_response))
+        self.assertEqual(len(restarted.service.ledger.events()), 2)
         request = create_request(
             capability,
             request_id="30000000-0000-4000-8000-000000000079",

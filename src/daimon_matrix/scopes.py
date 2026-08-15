@@ -239,6 +239,7 @@ class ScopeResolver:
     body_reader: BodyReader | None = None
     tribes: Mapping[str, VerifiedTribeSnapshot] | None = None
     tribe_provider: TribeProvider | None = None
+    peer_embodiments: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not isinstance(
@@ -267,6 +268,14 @@ class ScopeResolver:
         ]
         if len({row["embodiment_id"] for row in active}) != len(active):
             raise ScopeError("ambiguous_active_incarnation")
+        active_ids = {str(row["embodiment_id"]) for row in active}
+        local_id = self.ledger.local_origin["embodiment_id"]
+        if (
+            not isinstance(self.peer_embodiments, frozenset)
+            or local_id in self.peer_embodiments
+            or not self.peer_embodiments <= active_ids
+        ):
+            raise ScopeError("invalid_peer_topology")
 
     @property
     def authority(self) -> RootAuthority:
@@ -372,6 +381,11 @@ class ScopeResolver:
         availability = "retired" if member["status"] == "retired" else "unconfigured"
         if member["status"] == "active" and local:
             availability = "local"
+        elif (
+            member["status"] == "active"
+            and member["embodiment_id"] in self.peer_embodiments
+        ):
+            availability = "available"
         elif member["status"] == "active" and self.router is not None:
             try:
                 route = self.router.inspect_recipient(

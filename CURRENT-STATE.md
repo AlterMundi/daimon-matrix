@@ -1,5 +1,33 @@
 # Current state
 
+## Active completion checkpoint — 2026-08-11
+
+DM-083 is operationally accepted. Exact Matrix runtime `915c56c` and Cluster
+runtime `94d80ba` run across the real Legion and daimonmatrix host embodiments of
+one fresh being. Encrypted peer exchange, pending import, observer-local
+adoption/reversal, ordinary exact retry, outage refusal, whole-pair rollback,
+portable restore, checked off-host backup, scheduled quiesce/resume and one
+separate Tribe v1 transport message were exercised. A signed authority epoch
+advanced the Legion incarnation while preserving accepted history.
+
+The real succession first exposed a safe historical-response rejection. The
+repaired V2 client then replayed the preserved request byte-identically without
+duplicating its event. Subsequent bounded live work left both host views at
+nine known events and zero incomplete events. The final runtime also provisions
+a distinct five-method read-only host status client. A cold daimonmatrix reboot
+then recovered every service and container with unchanged audit/idempotency
+hashes and reconcile findings; the private-bridge bind preflight completed once
+with no crash or restart. Final service, Matrix integrity, Cluster audit-chain,
+portable restore and encrypted backup/mirror checks passed. The next dependency
+gates are cross-being native semantic delivery and fresh-host rebirth/recovery. The exact
+sequence is in [`RESUME.md`](RESUME.md); the public audit is
+[`reviews/DM-083.md`](reviews/DM-083.md).
+
+PR #112 remains subject to independent review. Tribe Bridge remains only the
+transitional human-message lane; its ACK cannot substitute for Matrix
+authenticated intake or a signed semantic receipt. There is still no separately
+identified `tribe-chat` repository in the recorded project set.
+
 The canonical model permits multiple simultaneous embodiments of one being.
 The previously documented identity-wide singleton lease is not part of the
 supported architecture.
@@ -47,11 +75,11 @@ authority plus purpose-separated encrypted runtime secrets, journals exact RPC
 responses, and survives retry across semantic-commit/response-write failures.
 DM-025 adds the typed authenticated local client, installed `daimon` CLI and
 closed MCP `2026-07-28` stdio adapter. Durable retry files preserve exact RPC
-bytes, MCP exposes only the current forty-six closed methods and
+bytes, the daemon exposes 83 closed methods, MCP advertises 66 closed tools and
 `daimon:` resources, and legacy MCP and Matrix.org transports remain absent.
 The merged Cluster host adapter supervises the process. DM-026 closes the local
 release gate with a deterministic installed conformance report over the current
-91-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
+97-scenario closed registry; it exercises real process, AF_UNIX, filesystem and
 SQLite paths. DM-070 extends that gate with two isolated installed processes,
 native encrypted peer exchange, partition/restart convergence, observer-local
 adoption, authority-epoch succession and injected Cluster fence truth. Neither
@@ -133,8 +161,8 @@ external-reference promotion, retraction/reassertion and tombstone are exposed
 through runtime bundle V5 and twelve typed daemon/CLI/MCP methods. The installed
 two-being journey recovers at every durable boundary and the generated 84-row
 Section 14 registry is release-blocking. It performs no live disclosure,
-source fetch, memory admission, host mutation or Cluster effect. DM-082 owns
-DM-082 now implements those relationship grants plus bilateral consent,
+source fetch, memory admission, host mutation or Cluster effect. DM-082 now
+implements the relationship grants plus bilateral consent,
 founded-Tribe membership, founder succession and strict delegation. Runtime
 bundle V6 feeds DM-054 from verified signed history, publishes fixed owner
 daemon/CLI/MCP surfaces and retains forks without an arrival-order winner. Its
