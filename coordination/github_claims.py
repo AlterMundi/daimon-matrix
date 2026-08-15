@@ -762,7 +762,7 @@ def _receipt_body(
         "branch": source.branch,
         "pull_request": (
             command.pull_request
-            if command is not None and command.action == "review"
+            if command is not None and command.action in {"claim", "review"}
             else current.pull_request
             if current is not None
             else command.pull_request

@@ -388,6 +388,87 @@ class ClaimStateMachineTests(unittest.TestCase):
         self.assertEqual(heartbeat_receipt.state, "in_review")
         self.assertEqual(heartbeat_receipt.pull_request, 68)
 
+    def test_reclaim_after_expiry_clears_historical_pull_request(self) -> None:
+        current = self.accept_claim()
+        first_review = self.next_command(
+            current,
+            action="review",
+            pull_request=68,
+            lease_seconds=6 * 60 * 60,
+        )
+        reviewed = validate_receipt(
+            decide_command(
+                first_review,
+                current,
+                now=NOW + dt.timedelta(hours=1),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        expired_wrapper = expire_if_due(
+            reviewed,
+            now=NOW + dt.timedelta(hours=8),
+            workflow_sha=WORKFLOW_SHA,
+        )
+        self.assertIsNotNone(expired_wrapper)
+        expired = validate_receipt(expired_wrapper)
+
+        replacement_key = Ed25519PrivateKey.from_private_bytes(bytes(range(33, 65)))
+        replacement_resources = [
+            "issue:AlterMundi/daimon-matrix#6",
+            "protocol:replacement",
+        ]
+        replacement = signed_command(
+            replacement_key,
+            command_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            claim_id="22222222-2222-4222-8222-222222222222",
+            at=NOW + dt.timedelta(hours=9),
+            resources=replacement_resources,
+            branch="issue-6-replacement",
+            previous_receipt_id=expired.receipt_id,
+            previous_receipt_hash=expired.receipt_hash,
+        )
+        reclaimed = validate_receipt(
+            decide_command(
+                replacement,
+                expired,
+                now=NOW + dt.timedelta(hours=9),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=True,
+            )
+        )
+        self.assertEqual(reclaimed.decision, "accepted")
+        self.assertEqual(reclaimed.claim_id, replacement.claim_id)
+        self.assertEqual(reclaimed.branch, "issue-6-replacement")
+        self.assertEqual(reclaimed.resources, tuple(replacement_resources))
+        self.assertIsNone(reclaimed.pull_request)
+
+        replacement_review = signed_command(
+            replacement_key,
+            action="review",
+            command_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            claim_id=replacement.claim_id,
+            at=NOW + dt.timedelta(hours=10),
+            lease_seconds=6 * 60 * 60,
+            resources=replacement_resources,
+            branch="issue-6-replacement",
+            pull_request=69,
+            previous_receipt_id=reclaimed.receipt_id,
+            previous_receipt_hash=reclaimed.receipt_hash,
+        )
+        rebound = validate_receipt(
+            decide_command(
+                replacement_review,
+                reclaimed,
+                now=NOW + dt.timedelta(hours=10),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        self.assertEqual(rebound.decision, "accepted")
+        self.assertEqual(rebound.state, "in_review")
+        self.assertEqual(rebound.pull_request, 69)
+
     def test_stale_command_head_is_rejected(self) -> None:
         current = self.accept_claim()
         heartbeat = signed_command(
