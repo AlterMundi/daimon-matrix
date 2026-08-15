@@ -469,6 +469,69 @@ class ClaimStateMachineTests(unittest.TestCase):
         self.assertEqual(rebound.state, "in_review")
         self.assertEqual(rebound.pull_request, 69)
 
+    def test_reclaim_after_release_clears_historical_pull_request(self) -> None:
+        claimed = self.accept_claim()
+        review = self.next_command(
+            claimed,
+            action="review",
+            pull_request=68,
+            lease_seconds=6 * 60 * 60,
+        )
+        reviewed = validate_receipt(
+            decide_command(
+                review,
+                claimed,
+                now=NOW + dt.timedelta(hours=1),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        release = self.next_command(
+            reviewed,
+            action="release",
+            command_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            at=NOW + dt.timedelta(hours=2),
+            lease_seconds=None,
+        )
+        released = validate_receipt(
+            decide_command(
+                release,
+                reviewed,
+                now=NOW + dt.timedelta(hours=2),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        self.assertEqual(released.state, "ready")
+        self.assertEqual(released.pull_request, 68)
+
+        replacement_key = Ed25519PrivateKey.from_private_bytes(bytes(range(33, 65)))
+        replacement = signed_command(
+            replacement_key,
+            command_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            claim_id="22222222-2222-4222-8222-222222222222",
+            at=NOW + dt.timedelta(hours=3),
+            resources=[
+                "issue:AlterMundi/daimon-matrix#6",
+                "protocol:replacement",
+            ],
+            branch="issue-6-replacement",
+            previous_receipt_id=released.receipt_id,
+            previous_receipt_hash=released.receipt_hash,
+        )
+        reclaimed = validate_receipt(
+            decide_command(
+                replacement,
+                released,
+                now=NOW + dt.timedelta(hours=3),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=True,
+            )
+        )
+        self.assertEqual(reclaimed.decision, "accepted")
+        self.assertEqual(reclaimed.state, "in_progress")
+        self.assertIsNone(reclaimed.pull_request)
+
     def test_stale_command_head_is_rejected(self) -> None:
         current = self.accept_claim()
         heartbeat = signed_command(
