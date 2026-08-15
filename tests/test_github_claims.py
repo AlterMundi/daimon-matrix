@@ -510,7 +510,22 @@ class ClaimStateMachineTests(unittest.TestCase):
         self.assertEqual(receipt.reason, "resource_conflict")
 
     def test_rejected_receipt_preserves_live_effective_claim(self) -> None:
-        current = self.accept_claim()
+        claimed = self.accept_claim()
+        review = self.next_command(
+            claimed,
+            action="review",
+            pull_request=68,
+            lease_seconds=6 * 60 * 60,
+        )
+        current = validate_receipt(
+            decide_command(
+                review,
+                claimed,
+                now=NOW + dt.timedelta(hours=1),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
         attacker = signed_command(
             Ed25519PrivateKey.from_private_bytes(bytes(range(33, 65))),
             command_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -518,18 +533,64 @@ class ClaimStateMachineTests(unittest.TestCase):
             principal="compaii@localhost",
             previous_receipt_id=current.receipt_id,
             previous_receipt_hash=current.receipt_hash,
+            at=NOW + dt.timedelta(hours=2),
         )
         rejected = validate_receipt(
             decide_command(
                 attacker,
                 current,
-                now=NOW,
+                now=NOW + dt.timedelta(hours=2),
                 workflow_sha=WORKFLOW_SHA,
                 issue_ready=False,
             )
         )
         self.assertTrue(rejected.is_live(NOW))
         self.assertEqual(rejected.claim_id, current.claim_id)
+        self.assertEqual(rejected.state, "in_review")
+        self.assertEqual(rejected.pull_request, 68)
+
+    def test_rejected_review_cannot_substitute_live_pull_request(self) -> None:
+        claimed = self.accept_claim()
+        review = self.next_command(
+            claimed,
+            action="review",
+            pull_request=68,
+            lease_seconds=6 * 60 * 60,
+        )
+        current = validate_receipt(
+            decide_command(
+                review,
+                claimed,
+                now=NOW + dt.timedelta(hours=1),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        attacker = signed_command(
+            Ed25519PrivateKey.from_private_bytes(bytes(range(33, 65))),
+            action="review",
+            command_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            claim_id="22222222-2222-4222-8222-222222222222",
+            principal="compaii@localhost",
+            pull_request=999,
+            previous_receipt_id=current.receipt_id,
+            previous_receipt_hash=current.receipt_hash,
+            at=NOW + dt.timedelta(hours=2),
+        )
+        rejected = validate_receipt(
+            decide_command(
+                attacker,
+                current,
+                now=NOW + dt.timedelta(hours=2),
+                workflow_sha=WORKFLOW_SHA,
+                issue_ready=False,
+            )
+        )
+        self.assertEqual(rejected.decision, "rejected")
+        self.assertEqual(rejected.reason, "claim_id_mismatch")
+        self.assertEqual(rejected.claim_id, current.claim_id)
+        self.assertEqual(rejected.state, "in_review")
+        self.assertEqual(rejected.pull_request, 68)
 
 
 class ReceiptAuditTests(unittest.TestCase):
