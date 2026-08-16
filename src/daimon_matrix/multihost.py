@@ -368,7 +368,7 @@ def _validate_receipt_core(value: Any) -> dict[str, Any]:
     )
     if package != {
         "name": "daimon-matrix",
-        "version": "0.0.0",
+        "version": "0.1.0rc1",
         "entrypoint": "daimon-synthetic-multihost",
     }:
         raise MultihostEvidenceError("invalid_multihost_receipt")

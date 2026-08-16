@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "daimon-matrix"
-version = "0.0.0"
+version = "0.1.0rc1"
 description = "Reference contracts for portable beings with plural AI embodiments"
 readme = "README.md"
 requires-python = ">=3.11"

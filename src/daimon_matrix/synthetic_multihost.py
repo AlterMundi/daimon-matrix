@@ -1416,7 +1416,7 @@ def run_synthetic_multihost(
         "source_commit": source_commit,
         "package": {
             "name": "daimon-matrix",
-            "version": "0.0.0",
+            "version": "0.1.0rc1",
             "entrypoint": "daimon-synthetic-multihost",
         },
         "authority": {

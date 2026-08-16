@@ -2,74 +2,41 @@
 
 ## Product boundary
 
-The V0.1 MVP is a coordinated `daimon-matrix` + Daimon Cluster release.
-`daimon-matrix` owns the being root, canonical state, scopes, synchronization,
-memory policy, and communication runtime. Cluster owns bodies, incarnations,
-resource fences, storage, and lifecycle effects.
-
-Tribe Bridge v1 is the transitional transport while DM-050 through DM-055
-absorb its reusable secure-delivery behavior into `daimon-matrix`; it is not a
-third permanent authority. Matrix.org is an unrelated external protocol and
-is explicitly outside the MVP.
+The release candidate coordinates `daimon-matrix` and `daimon-cluster`.
+Matrix owns identity continuity, canonical history, scopes, relationships,
+grants, memory policy and communication semantics. Cluster owns bodies,
+incarnations, storage, lifecycle effects and shared-resource admission/fencing.
+Tribe Bridge is a transitional component, not a third authority.
 
 ## Delivery sequence
 
-1. Freeze ontology, lifecycle identifiers, the being manifest, `dm.we.v1`,
-   Tribe membership, and resource-fence semantics.
-2. Publish shared schemas and positive/negative conformance vectors.
-3. Implement Matrix root custody, plural embodiment credentials, recovery,
-   revocation, and explicit binding of provisional history (DM-021).
-4. Implement the installed local Matrix narrow waist: canonical ledger,
-   projections/cursors, authenticated daemon, CLI/MCP, and adversarial
-   crash/rebuild invariants (DM-022 through DM-026).
-5. Integrate personal-memory policy/projections and Codex/Hermes embodiment
-   adapters without granting harnesses identity authority (DM-030 through
-   DM-042). DM-030's evaluator/transactional executor and DM-031's
-   resource-scoped curator coordination are implemented; DM-032 onward consume
-   those frozen boundaries without an exclusive being-wide lease. DM-032
-   through DM-042 now provide the worker, human-review, personal/publication
-   adapters and locally validated Codex/Hermes embodiments; DM-036 remains
-   integration-blocked only on its external collective-memory dependency.
-6. Absorb Tribe Bridge's reusable implementation into Matrix: recipient
-   encryption, typed messages, cursors, routes, and `/me`/`/we`/`/tribe`
-   resolution; then remove the standalone runtime dependency (DM-050 through
-   DM-055). DM-055's native encrypted peer implementation has passed the
-   same-being two-host DM-083 cutover. Cross-being authenticated intake and a
-   signed semantic receipt remain the replacement gate before Tribe removal.
-7. Complete birth/species/source behavior and their synthetic acceptance
-   journeys. DM-060, DM-061 and DM-081 now implement those isolated journeys;
-   DM-082 relationship grants precede the DM-071 external source canary.
-8. Bind Matrix embodiment evidence to Cluster lifecycle and resource fences;
-   retain the reconciled effect-truth guarantees (DM-037). The installed host
-   adapter and DM-080 evaluation-time binding are merged; real Incus/rebirth is
-   still completion evidence rather than inferred from the synthetic adapter.
-9. Run local, cross-host, recovery, revocation, and rebirth journeys with real
-   processes, cryptography, encrypted state, transport, Cluster bodies, and
-   separately authorized synthetic/live evidence. The same-being two-host
-   journey, authority-epoch succession, exact historical retry and checked
-   recovery passed. Cross-being delivery and fresh-host rebirth/recovery are
-   the active release gates.
-10. Freeze, audit, publish, and independently reinstall the V0.1 release.
-
-## Release invariants
-
-- Multiple embodiments of one being can be awake.
-- Every event and response retains origin.
-- Preview is read-only; pull is idempotent; pull does not adopt.
-- Decisions are local and reversible through successor events.
-- Secret values never enter synchronized bytes.
-- High-impact projections require a human confirmation.
-- Resource fences reject stale writers only for the exact resource.
-- No shared writable database is copied between embodiments.
-- Matrix.org is not installed, contacted, or required.
-- A fresh host can receive a new root-authorized embodiment credential and
-  recover accepted history without copying another embodiment's private key.
+1. Qualify the merged Matrix baseline and set package/application metadata to
+   `0.1.0rc1`.
+2. Remove or explicitly fixture-isolate never-deployed runtime-bundle V1–V6
+   and pre-V3 client compatibility before the package surface is frozen.
+3. Land the final Cluster admission, recovery handoff and Matrix V7 package
+   adaptation; pin exact commits in both directions.
+4. Keep Tribe on its native transitional path while finishing zero-SSH
+   provisioning/rotation preparation and expiration handling in code, tests
+   and documentation.
+5. Build Matrix artifacts reproducibly and verify metadata, allowlists,
+   signatures, hashes and clean installation.
+6. Run cross-repository local/CI suites and disposable end-to-end lifecycle
+   journeys without contacting existing infrastructure.
+7. Produce one content-addressed RC manifest with provenance, supported Python
+   versions, commands, limitations and rollback instructions.
+8. Obtain independent review for each exact final candidate and merge through
+   normal repository protection.
+9. Prepare the physical and cross-being canary plans. Stop at their human
+   authorization gates.
 
 ## Completion evidence
 
-Completion requires green conformance, installed-process, fault-injection and
-cross-repository suites; removal of the standalone Tribe runtime dependency;
-and real multi-host runs proving simultaneous embodiments, rebirth/recovery,
-paginated sync, navigable differences, independent adoption, reversal,
-fan-out, revocation, restart-resume, and resource-fence rejection. CI and
-self-audit are the review gate; no recursive review ceremony is required.
+Automatable work is complete only when all three repository heads and their
+cross-pins are exact, clean and green; artifacts reproduce; empty-environment
+installation succeeds; lifecycle journeys pass without reruns masking flakes;
+and documentation/tracking describe the same state.
+
+Passing compilation or unit tests alone is insufficient. Historical
+experiments remain useful evidence, but are not substituted for the final RC
+qualification and do not imply a present deployment.

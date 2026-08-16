@@ -3,37 +3,37 @@
   "files": [
     {
       "name": "negative/adoption-collapsed.json",
-      "sha256": "8b31dc8de2f36af98a90ea591e92bea311645ba9b3b67beb5dfb2ffc6ff7cbd5",
+      "sha256": "55ffac2923714740f24381614895e7909f06888041b19483c963cbab49232bbd",
       "valid": false
     },
     {
       "name": "negative/fence-authority-fabricated.json",
-      "sha256": "9186972043d7c47a49582e67a508ea9909a6d029ccc30f4acd82cb25d7d1dc06",
+      "sha256": "303aa7cd98d11c070ae3c17d2de3d612c4141e2e793484c9337a94c4f3e9d66d",
       "valid": false
     },
     {
       "name": "negative/private-path-leaked.json",
-      "sha256": "99f2b11ef8d92f2d5f69779dec1f8790c2f96df8303a57536df1a0b0869b7b44",
+      "sha256": "416357a1eaf1c8182ec59c8ca7952220787d0c8f182dd56bcf7c73d62d9d4bce",
       "valid": false
     },
     {
       "name": "negative/receipt-hash-tampered.json",
-      "sha256": "6b85459c5f3908b101e7c1d0037d43310d556b5d5356b307280251ef9d40e0ab",
+      "sha256": "a67d42f65ae29b942307f262ef1d1e000451dd68ab8fda6635650304bc56a73e",
       "valid": false
     },
     {
       "name": "negative/schedule-reordered.json",
-      "sha256": "8b64feee4b04d0dfeacecac1a00d1325660341c1202602a374f02ca593e08538",
+      "sha256": "09e760885fb5028044a2e9da09a37caa1a727d18768c574a76f089810c317ffd",
       "valid": false
     },
     {
       "name": "negative/signing-key-aliased.json",
-      "sha256": "6fd4ed5f273a46da19d84a36640f86b51d68adbbdc9e422cbf685479733e2ac1",
+      "sha256": "289e20f0595325b1578bcab176ee9cf814e463d44ed4a803512d22e7a620e63a",
       "valid": false
     },
     {
       "name": "valid/receipt.json",
-      "sha256": "d4050223fc2f76bc4c9b3541b82f479156127f20c78031335ebb8b3500c2ea95",
+      "sha256": "39e8eb8e9c5253becec1b211659095e1a56d946e507f4a7bd4b7fbb7101e4f23",
       "valid": true
     }
   ]

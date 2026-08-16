@@ -241,7 +241,10 @@ class CodexBodyFixture(unittest.TestCase):
                     "authStatus": "unsupported",
                     "resourceTemplates": [],
                     "resources": [],
-                    "serverInfo": {"name": "daimon-matrix", "version": "0.0.0"},
+                    "serverInfo": {
+                        "name": "daimon-matrix",
+                        "version": "0.1.0rc1",
+                    },
                     "tools": {
                         name: {"name": name, "inputSchema": {}} for name in MATRIX_TOOLS
                     },

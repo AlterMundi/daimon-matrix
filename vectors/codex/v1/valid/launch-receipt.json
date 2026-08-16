@@ -8,7 +8,7 @@
     "hook_python_sha256": "9fdd4659ed3e6e05639bb099d9f195a5a16b55d1ca12a93fb94723df8bfac36e",
     "matrix_mcp_binary_sha256": "43afa4fbc7b69d569d8b223e8472abae2631ba8125c2306edd0a5df992f6c467",
     "matrix_mcp_name": "daimon-matrix",
-    "matrix_mcp_version": "0.0.0",
+    "matrix_mcp_version": "0.1.0rc1",
     "matrix_tools": [
       "daimon_status",
       "scope_me",
@@ -30,7 +30,7 @@
   "outcome": "started",
   "plan_hash": "3cf4e862d7d82b77a90fee5c47fbfe39ca8d31acf9daffbf3feecc2f7aa3212c",
   "profile_id": "dm:codex-profile:v1:BnSke1Dpe0Rf7iMGJKL_6YQriG2DG_YLePhBUpnbzSM",
-  "receipt_id": "dm:codex-launch-receipt:v1:ebtk29Gh8sfUaFWlOHjZBqeXwcORm6wPjh2r5T_OJuI",
+  "receipt_id": "dm:codex-launch-receipt:v1:Jk9kwYNNC3GgY-lEmCSeVGi_qROvw3iwbf2nYhHdk60",
   "reviewed_files": {
     "agents_sha256": "98787423b018be91c418cb47d47fd241bb86d31c527c79f26d38007df25b43e0",
     "bootstrap_sha256": "b03181aaea9b57c6f3dee88f02116d407f0ad3b9c0784a01441b61f07d31c771",

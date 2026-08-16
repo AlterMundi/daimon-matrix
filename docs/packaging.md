@@ -1,26 +1,17 @@
 # Package scaffold and reproducible builds
 
-DM-020 introduced the closed package scaffold. DM-021 through DM-026 add
-identity/custody, the independent Weave ledger, hosted daemon, authenticated
-client, CLI, MCP stdio adapter and local conformance runner while preserving
-the explicit reproducible artifact boundary. DM-040 adds the authority-safe
-Codex body adapter and `daimon-codex-body` contract checker; it packages only
-reviewed code and embeds no Codex binary, profile, auth, thread or memory.
-DM-041 likewise adds the `daimon-hermes-body` verifier and external-provider
-implementation, but embeds no Hermes source/binary, virtual environment,
-profile, auth, session, prompt, memory database or provider output. Its public
-templates, schemas, vectors and provenance remain repository evidence rather
-than wheel runtime state. DM-042 packages the path-free local plural-body
-receipt verifier; its synthetic profiles, ledgers, vectors and validation
-harness remain repository/test evidence and never enter the wheel. DM-081 adds
-the source contract/runtime and `daimon-synthetic-sources` isolated acceptance
-entry point; its vectors, schemas, two-being fixture and generated Section 14
-map remain repository evidence rather than wheel state. DM-082 adds the
-relationship verifier/store and `daimon-synthetic-relationships`; its schemas,
-vectors and synthetic roots remain repository evidence rather than wheel
-state. The package
-contains no remote carrier, Matrix.org
-client, deployment/provider integration or live state.
+The `0.1.0rc1` package contains the reviewed Matrix V0 runtime: identity and
+recovery custody contracts, ledgers, daemon, authenticated clients, CLI/MCP,
+native peer transport and isolated acceptance entry points. Public schemas,
+vectors, templates, provenance and synthetic roots remain repository evidence
+rather than wheel runtime state. The distribution contains no operator
+credentials, private keys, writable databases, provider profile or live state.
+Matrix.org is not a dependency.
+
+The merged pre-version-bump tree and its old artifact hashes are classified in
+[`verification/v0-rc-qualification.md`](verification/v0-rc-qualification.md).
+Changing package metadata changes distribution bytes, so those hashes cannot
+identify `0.1.0rc1`; fresh reproducible hashes are required before freeze.
 
 ## Supported interpreter baseline
 
@@ -67,8 +58,9 @@ The checker rejects absolute/traversing paths, links and special archive
 members, generated `egg-info`, bytecode/caches, SQLite or WAL state, private
 keys, credentials, messages, experimental modules, and every unexpected file.
 It independently verifies wheel `RECORD` hashes/sizes, metadata name/version,
-Python requirement, exact `cryptography` and `mcp==2.0.0` runtime dependency
-metadata, pure-Python tag, source-byte identity, and fixed timestamps.
+Python requirement, exact `cryptography==50.0.0`, `mcp==2.0.0` and
+`wasmtime==45.0.0` runtime dependency metadata, pure-Python tag, source-byte
+identity, and fixed timestamps.
 
 ## Installed smoke test
 
@@ -76,11 +68,12 @@ Install only the built wheel into an empty environment:
 
 ```bash
 python -m venv /tmp/daimon-matrix-wheel-smoke
-/tmp/daimon-matrix-wheel-smoke/bin/python -m pip install mcp==2.0.0
+/tmp/daimon-matrix-wheel-smoke/bin/python -m pip install \
+  cryptography==50.0.0 mcp==2.0.0 wasmtime==45.0.0
 /tmp/daimon-matrix-wheel-smoke/bin/python -m pip install --no-deps \
-  dist/daimon_matrix-0.0.0-py3-none-any.whl
+  dist/daimon_matrix-0.1.0rc1-py3-none-any.whl
 /tmp/daimon-matrix-wheel-smoke/bin/python -c \
-  'import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"'
+  'import daimon_matrix; assert daimon_matrix.__version__ == "0.1.0rc1"'
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-conformance --help
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-hermes-body --help
 /tmp/daimon-matrix-wheel-smoke/bin/daimon-synthetic-sources --help

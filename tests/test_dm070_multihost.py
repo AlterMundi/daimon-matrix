@@ -69,7 +69,7 @@ class DM070InstalledJourneyTests(unittest.TestCase):
         self.assertEqual(validate_multihost_receipt(receipt), receipt)
         self.assertEqual(
             receipt["receipt_id"],
-            "dm:multihost-receipt:v1:tZWfwHImP5mBHX8aGkDD2Vzsup_xctpULGvKx85TdPI",
+            "dm:multihost-receipt:v1:dbuhl6lSXvDyhvgdblFznURaXIa5coLVi5pPCCdFH64",
         )
         self.assertEqual(receipt["sync"]["event_count"], 9)
         self.assertEqual(

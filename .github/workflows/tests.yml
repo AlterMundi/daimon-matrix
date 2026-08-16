@@ -129,7 +129,7 @@ jobs:
             requirements-species.txt
       - run: python -m pip install -r requirements-build.txt
       - run: python tools/reproducible_build.py --output dist
-      - run: python tools/scan_secrets.py . dist/daimon_matrix-0.0.0.tar.gz dist/daimon_matrix-0.0.0-py3-none-any.whl
+      - run: python tools/scan_secrets.py . dist/daimon_matrix-0.1.0rc1.tar.gz dist/daimon_matrix-0.1.0rc1-py3-none-any.whl
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/collective-memory
@@ -149,8 +149,8 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install -r requirements-vectors.txt
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install -r requirements-species.txt
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install mcp==2.0.0
-          "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install --no-deps dist/daimon_matrix-0.0.0-py3-none-any.whl
-          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import importlib.metadata as m; import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"; assert m.requires("daimon-matrix") == ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]'
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install --no-deps dist/daimon_matrix-0.1.0rc1-py3-none-any.whl
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import importlib.metadata as m; import daimon_matrix; assert daimon_matrix.__version__ == "0.1.0rc1"; assert m.requires("daimon-matrix") == ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.identity import aggregate_genesis, create_genesis_holder_share, prepare_genesis, threshold_policy, verify_genesis; roots=[bytes([n])*32 for n in (1,2,3)]; recovery=[bytes([n])*32 for n in (4,5,6)]; prepared=prepare_genesis(threshold_policy(roots,2),threshold_policy(recovery,2),created_at_ms=1,nonce=bytes(32)); shares=[create_genesis_holder_share(prepared,seed,role=role) for role,seeds in (("root",roots),("recovery",recovery)) for seed in seeds]; artifact=aggregate_genesis(prepared,shares); assert verify_genesis(artifact).being_ref.startswith("dm:being:v1:")'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.ledger import Ledger; from daimon_matrix.weave import BeingManifest; assert Ledger and BeingManifest'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.collective_memory import create_source_manifest, create_publisher_manifest; assert create_source_manifest()["adapter_id"] != create_publisher_manifest()["adapter_id"]'
@@ -238,12 +238,12 @@ jobs:
           python -m venv "${RUNNER_TEMP}/dm026-wheel"
           "${RUNNER_TEMP}/dm026-wheel/bin/python" -m pip install -r requirements-vectors.txt mcp==2.0.0
           "${RUNNER_TEMP}/dm026-wheel/bin/python" -m pip install -r requirements-species.txt
-          "${RUNNER_TEMP}/dm026-wheel/bin/python" -m pip install --no-deps dist/daimon_matrix-0.0.0-py3-none-any.whl
+          "${RUNNER_TEMP}/dm026-wheel/bin/python" -m pip install --no-deps dist/daimon_matrix-0.1.0rc1-py3-none-any.whl
           mkdir -p reports
-          "${RUNNER_TEMP}/dm026-wheel/bin/daimon-conformance" --registry conformance/registry-v1.json --source-commit "${GITHUB_SHA}" --seed dm026-v1 --output reports/dm026-a.json --artifact wheel=dist/daimon_matrix-0.0.0-py3-none-any.whl --artifact sdist=dist/daimon_matrix-0.0.0.tar.gz
-          "${RUNNER_TEMP}/dm026-wheel/bin/daimon-conformance" --registry conformance/registry-v1.json --source-commit "${GITHUB_SHA}" --seed dm026-v1 --output reports/dm026-b.json --artifact wheel=dist/daimon_matrix-0.0.0-py3-none-any.whl --artifact sdist=dist/daimon_matrix-0.0.0.tar.gz
+          "${RUNNER_TEMP}/dm026-wheel/bin/daimon-conformance" --registry conformance/registry-v1.json --source-commit "${GITHUB_SHA}" --seed dm026-v1 --output reports/dm026-a.json --artifact wheel=dist/daimon_matrix-0.1.0rc1-py3-none-any.whl --artifact sdist=dist/daimon_matrix-0.1.0rc1.tar.gz
+          "${RUNNER_TEMP}/dm026-wheel/bin/daimon-conformance" --registry conformance/registry-v1.json --source-commit "${GITHUB_SHA}" --seed dm026-v1 --output reports/dm026-b.json --artifact wheel=dist/daimon_matrix-0.1.0rc1-py3-none-any.whl --artifact sdist=dist/daimon_matrix-0.1.0rc1.tar.gz
           cmp reports/dm026-a.json reports/dm026-b.json
-          python tools/scan_secrets.py reports dist/daimon_matrix-0.0.0.tar.gz dist/daimon_matrix-0.0.0-py3-none-any.whl
+          python tools/scan_secrets.py reports dist/daimon_matrix-0.1.0rc1.tar.gz dist/daimon_matrix-0.1.0rc1-py3-none-any.whl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dm026-conformance-${{ github.sha }}

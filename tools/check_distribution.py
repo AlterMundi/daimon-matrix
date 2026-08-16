@@ -21,7 +21,7 @@ from typing import Final
 
 NAME: Final = "daimon-matrix"
 NORMALIZED: Final = "daimon_matrix"
-VERSION: Final = "0.0.0"
+VERSION: Final = "0.1.0rc1"
 SOURCE_DATE_EPOCH: Final = 946_684_800
 SDIST_NAME: Final = f"{NORMALIZED}-{VERSION}.tar.gz"
 WHEEL_NAME: Final = f"{NORMALIZED}-{VERSION}-py3-none-any.whl"

@@ -162,7 +162,7 @@
               "const": "daimon-matrix"
             },
             "matrix_mcp_version": {
-              "const": "0.0.0"
+              "const": "0.1.0rc1"
             },
             "matrix_tools": {
               "const": [

@@ -21,7 +21,7 @@
           "const": "daimon-matrix"
         },
         "version": {
-          "const": "0.0.0"
+          "const": "0.1.0rc1"
         },
         "entrypoint": {
           "const": "daimon-synthetic-multihost"

@@ -4,4 +4,4 @@ from typing import Final
 
 __all__ = ["__version__"]
 
-__version__: Final = "0.0.0"
+__version__: Final = "0.1.0rc1"
