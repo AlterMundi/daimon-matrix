@@ -164,7 +164,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm035_publication.DM035PublicContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm036_collective_memory.DM036ContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-matrixd" --help
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-bootstrap" --help
+          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-genesis" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-rebirth" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-conformance" --help
