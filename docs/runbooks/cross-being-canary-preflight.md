@@ -38,7 +38,8 @@ dereferences it.
 `tools/build_cross_being_canary_preflight.py` accepts an input path and a new
 output path. The input must be canonical JSON, ending in one LF, in an
 owner-only regular file with no additional hard links.
-The output path must not exist. A successful freeze creates an owner-only
+The output path must not exist and its real parent directory must be owned by
+the caller with mode `0700`. A successful freeze creates an owner-only
 canonical receipt containing the exact plan, the SHA-256 of those exact input
 bytes, and the corresponding
 `GO <sha256>` text.
@@ -51,7 +52,10 @@ states all of the following:
 - `execution_authorized` is false.
 
 Changing any plan byte requires a new freeze and a new hash. Re-running against
-an existing output fails closed and does not overwrite it.
+an existing output fails closed and does not overwrite it. The freezer keeps
+the created descriptor open through file and directory synchronization and
+revalidates the final name-to-inode binding; a concurrent replacement is
+reported as failure and is never mistaken for the frozen receipt.
 
 ## Human gates that remain
 
