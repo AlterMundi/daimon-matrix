@@ -38,6 +38,7 @@ from daimon_matrix.service import (
     RELATIONSHIP_METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SERVICE_METHODS,
     SOURCE_METHODS,
     SPECIES_METHODS,
 )
@@ -186,6 +187,17 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(value["schema"], "dm.cli.result/v1")
         self.assertEqual(value["response"]["result"]["integrity"], "ok")
         self.assertNotIn("auth", value["response"])
+        client_schema = json.loads(
+            (ROOT / "schemas/clients/v1/client.schema.json").read_bytes()
+        )
+        local_schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        registry = Registry().with_resources(
+            (document["$id"], Resource.from_contents(document))
+            for document in (client_schema, local_schema)
+        )
+        Draft202012Validator(client_schema, registry=registry).validate(value)
 
         payload = self.state_root / "payload.json"
         payload.write_bytes(canonical_bytes({"model_text": "$(touch /tmp/nope)"}))
@@ -748,6 +760,15 @@ class InstalledSurfaceTests(RuntimeFixture):
 
 
 class ClientSchemaTests(unittest.TestCase):
+    def test_local_request_schema_covers_exact_service_surface(self) -> None:
+        schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        rows = schema["$defs"]["request"]["allOf"][0]["oneOf"]
+        methods = [row["properties"]["method"]["const"] for row in rows]
+        self.assertEqual(len(methods), len(set(methods)))
+        self.assertEqual(set(methods), set(SERVICE_METHODS))
+
     def test_capability_method_bound_covers_full_service_surface(self) -> None:
         key = b"x" * 32
         methods = [f"method.{index:03d}" for index in range(MAX_CAPABILITY_METHODS)]

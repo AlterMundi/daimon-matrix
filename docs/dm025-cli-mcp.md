@@ -35,7 +35,7 @@ removed; an old daemon response fails closed and the caller must issue a fresh
 request to the current incarnation.
 
 The capability method allowlist is bounded at 128 entries. The current fixed
-service surface has 83 methods after DM-082, so one least-privilege operator
+service surface has 84 methods after DM-082, so one least-privilege operator
 capability may name the complete surface without truncation; exact-bound and
 plus-one tests keep the widened bound finite.
 
@@ -82,7 +82,7 @@ switch eras and missing/wrong modern envelopes fail before daemon dispatch.
 Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
 reserved for MCP frames.
 
-The 66 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+The 67 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
 tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed

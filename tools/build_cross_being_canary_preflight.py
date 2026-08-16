@@ -498,6 +498,15 @@ def _write_new_owner_only(path: Path, raw: bytes) -> None:
                 for field in stable_fields
             ):
                 raise PreflightError("output_changed_during_write")
+            final_parent = path.parent.lstat()
+            opened_parent = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(final_parent.st_mode)
+                or stat.S_ISLNK(final_parent.st_mode)
+                or (final_parent.st_dev, final_parent.st_ino)
+                != (opened_parent.st_dev, opened_parent.st_ino)
+            ):
+                raise PreflightError("output_parent_changed_during_write")
         finally:
             if descriptor is not None:
                 os.close(descriptor)

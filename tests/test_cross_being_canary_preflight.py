@@ -447,6 +447,36 @@ class CrossBeingCanaryFilesystemTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), replacement)
         self.assertTrue(displaced.exists())
 
+    def test_output_parent_swap_during_sync_fails(self) -> None:
+        self.write_plan()
+        output_parent = self.root / "output"
+        output_parent.mkdir(mode=0o700)
+        output = output_parent / "receipt.json"
+        displaced = self.root / "displaced-output"
+        real_fsync = os.fsync
+        calls = 0
+
+        def swapping_fsync(descriptor: int) -> None:
+            nonlocal calls
+            real_fsync(descriptor)
+            calls += 1
+            if calls == 1:
+                output_parent.rename(displaced)
+                output_parent.mkdir(mode=0o700)
+
+        with (
+            mock.patch(
+                "tools.build_cross_being_canary_preflight.os.fsync",
+                side_effect=swapping_fsync,
+            ),
+            self.assertRaisesRegex(
+                PreflightError, "output_parent_changed_during_write"
+            ),
+        ):
+            freeze_plan(self.input, output)
+        self.assertFalse(output.exists())
+        self.assertFalse((displaced / "receipt.json").exists())
+
     def test_cli_reports_success_and_does_not_overwrite(self) -> None:
         self.write_plan()
         stdout = io.StringIO()

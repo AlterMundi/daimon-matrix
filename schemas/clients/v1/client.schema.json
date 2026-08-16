@@ -32,12 +32,13 @@
         "response": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["schema", "request_id", "request_hash", "server", "completed_at_ms", "ok", "result", "error"],
+          "required": ["schema", "request_id", "request_hash", "server", "runtime", "completed_at_ms", "ok", "result", "error"],
           "properties": {
             "schema": {"const": "dm.local.response/v1"},
             "request_id": {"type": "string", "format": "uuid"},
             "request_hash": {"$ref": "#/$defs/hash"},
             "server": {"$ref": "#/$defs/origin"},
+            "runtime": {"$ref": "#/$defs/runtimeIdentity"},
             "completed_at_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
             "ok": {"type": "boolean"},
             "result": {"type": ["object", "null"]},
@@ -66,6 +67,21 @@
         "expected_server": {
           "$ref": "#/$defs/origin"
         },
+        "runtime_id": {
+          "type": "string",
+          "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "runtime_label": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        }
+      }
+    },
+    "runtimeIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_id", "runtime_label"],
+      "properties": {
         "runtime_id": {
           "type": "string",
           "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"

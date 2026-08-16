@@ -54,8 +54,9 @@ states all of the following:
 Changing any plan byte requires a new freeze and a new hash. Re-running against
 an existing output fails closed and does not overwrite it. The freezer keeps
 the created descriptor open through file and directory synchronization and
-revalidates the final name-to-inode binding; a concurrent replacement is
-reported as failure and is never mistaken for the frozen receipt.
+revalidates both the parent-path binding and the final name-to-inode binding; a
+concurrent replacement is reported as failure and is never mistaken for the
+frozen receipt.
 
 ## Human gates that remain
 

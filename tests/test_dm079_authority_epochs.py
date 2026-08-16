@@ -26,7 +26,7 @@ from daimon_matrix.identity import (
     verify_genesis,
 )
 from daimon_matrix.ledger import Ledger, LedgerStateError
-from daimon_matrix.local_api import create_request
+from daimon_matrix.local_api import LocalApiError, create_request
 from daimon_matrix.operator_capabilities import (
     create_operator_capability_binding,
     operator_runtime_id,
@@ -581,8 +581,9 @@ class HostedAuthorityEpochTests(RuntimeFixture):
         self.assertEqual(
             restarted.service.ledger.event(old_event["event_id"]), old_event
         )
-        replayed = restarted.service.handle(retry_request)
-        self.assertEqual(canonical_bytes(replayed), canonical_bytes(old_response))
+        with self.assertRaisesRegex(LocalApiError, "invalid_local_response"):
+            restarted.service.handle(retry_request)
+        self.assertNotEqual(old_response["runtime"], restarted.service.runtime_identity)
         self.assertEqual(len(restarted.service.ledger.events()), 2)
         request = create_request(
             capability,
