@@ -69,7 +69,7 @@ python -m daimon_matrix.operator_rebirth activate \
 
 Preparation is a one-shot, fsynced owner-only directory. It contains encrypted
 body custody, separately encrypted transitional transport custody, ten public
-least-authority operator descriptors, the target peer profile and the public
+least-authority operator descriptors, two dedicated host-bound descriptors, the target peer profile and the public
 request. Every operator role has an independent random key and custody slot;
 the default client is the non-mutating `observe` role and no descriptor spans
 the full service surface. Root activation is an owner-only public artifact. The
@@ -85,7 +85,7 @@ authenticates status, `/me` and `/we` before reporting `running-ready`.
 Operator capabilities have a fixed 30-day lifetime. Preparation and activation
 receipts bind a reprovision instant seven days before hard expiry. Before that
 instant, repeat the split-custody rebirth ceremony to create a fresh
-root-authorized embodiment with a completely new role-key set, cut over, and
+root-authorized embodiment with a completely new twelve-key role set, cut over, and
 park or revoke the predecessor. Rebirth never regroups the roles and never
 copies capability keys. Expired or revoked descriptors are rejected at runtime
 load as well as at request authentication; in-place rotation of a live bundle,

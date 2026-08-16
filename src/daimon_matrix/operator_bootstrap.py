@@ -38,10 +38,14 @@ from .identity import (
 )
 from .keystore import EncryptedKeystore
 from .operator_capabilities import (
+    HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
+    STATUS_OBSERVER_METHODS,
+    create_host_capability_set,
     create_operator_capability_binding,
     create_operator_capability_set,
+    host_capability_profile,
     operator_capability_lifecycle,
     operator_capability_profile,
     operator_runtime_id,
@@ -251,6 +255,11 @@ def _create(
             operator_capabilities, operator_keys, operator_slots = (
                 create_operator_capability_set(label, issued_at_ms=created_at_ms)
             )
+            host_capabilities, host_keys, host_slots = create_host_capability_set(
+                label, issued_at_ms=created_at_ms
+            )
+            if not set(operator_keys.values()).isdisjoint(host_keys.values()):
+                raise BootstrapError("duplicate_runtime_capability_key")
             origin = {
                 "body_ref": row["body_ref"],
                 "embodiment_id": f"embodiment:{uuid.uuid4()}",
@@ -299,6 +308,9 @@ def _create(
                 "operator_capabilities": operator_capabilities,
                 "operator_keys": operator_keys,
                 "operator_slots": operator_slots,
+                "host_capabilities": host_capabilities,
+                "host_keys": host_keys,
+                "host_slots": host_slots,
             }
         manifest_rows.sort(
             key=lambda row: (row["embodiment_id"], row["incarnation_id"])
@@ -349,6 +361,8 @@ def _create(
             runtime.mkdir(mode=0o700)
             operator_clients = runtime / "operator-clients"
             operator_clients.mkdir(mode=0o700)
+            host_clients = runtime / "host-clients"
+            host_clients.mkdir(mode=0o700)
             signing_slot = f"runtime.signing.v1:{label}"
             encryption_slot = f"peer.encryption.v1:{label}"
             password = runtime_passwords[label]
@@ -361,6 +375,10 @@ def _create(
                     **{
                         item["operator_slots"][profile]: item["operator_keys"][profile]
                         for profile in OPERATOR_PROFILE_NAMES
+                    },
+                    **{
+                        item["host_slots"][profile]: item["host_keys"][profile]
+                        for profile in HOST_PROFILE_NAMES
                     },
                     encryption_slot: item["encryption_seed"],
                 },
@@ -398,6 +416,15 @@ def _create(
                 }
                 for profile in OPERATOR_PROFILE_NAMES
             ]
+            capability_rows.extend(
+                {
+                    "descriptor": item["host_capabilities"][profile].descriptor,
+                    "profile": host_capability_profile(profile),
+                    "runtime_id": runtime_id,
+                    "secret_slot": item["host_slots"][profile],
+                }
+                for profile in HOST_PROFILE_NAMES
+            )
             capability_binding = create_operator_capability_binding(
                 runtime_id=runtime_id,
                 runtime_label=label,
@@ -485,6 +512,22 @@ def _create(
                     role_client / "capability.key",
                     item["operator_keys"][profile],
                 )
+            for profile in HOST_PROFILE_NAMES:
+                host_client = host_clients / profile
+                host_client.mkdir(mode=0o700)
+                _private_write(
+                    host_client / "client.json",
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
+                        "capability": item["host_capabilities"][profile].descriptor,
+                        "expected_server": item["origin"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": label,
+                    },
+                )
+                _private_write(
+                    host_client / "capability.key", item["host_keys"][profile]
+                )
 
         receipt = {
             "schema": RECEIPT_SCHEMA,
@@ -517,6 +560,10 @@ def _create(
             for role_path in operator_clients.iterdir():
                 _fsync_directory(role_path)
             _fsync_directory(operator_clients)
+            host_clients = path / "host-clients"
+            for role_path in host_clients.iterdir():
+                _fsync_directory(role_path)
+            _fsync_directory(host_clients)
             _fsync_directory(path)
         _fsync_directory(runtimes)
         _fsync_directory(staging)
@@ -577,6 +624,7 @@ __all__ = [
     "AUTHORITY_SCHEMA",
     "PROFILE_SCHEMA",
     "RECEIPT_SCHEMA",
+    "STATUS_OBSERVER_METHODS",
     "BootstrapError",
     "main",
     "parser",

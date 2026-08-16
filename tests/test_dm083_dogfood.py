@@ -36,8 +36,11 @@ from daimon_matrix.operator_bootstrap import (
     _create,
 )
 from daimon_matrix.operator_capabilities import (
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
+    create_operator_capability_binding,
     operator_capability_lifecycle,
     operator_capability_set_hash,
 )
@@ -210,17 +213,30 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                         validator.validate(duplicate_role)
                 self.assertNotIn(password, (state_root / "runtime.json").read_bytes())
                 bundle_capabilities = bundle["capabilities"]
-                self.assertEqual(len(bundle_capabilities), len(OPERATOR_PROFILE_NAMES))
+                self.assertEqual(
+                    len(bundle_capabilities),
+                    len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES),
+                )
                 self.assertEqual(
                     {
-                        row["descriptor"]["client_id"].rsplit(":", 1)[-1]
+                        row["profile"]["role"]
                         for row in bundle_capabilities
+                        if row["profile"]["schema"]
+                        == "dm.operator.capability-profile/v1"
                     },
                     set(OPERATOR_PROFILE_NAMES),
                 )
                 self.assertEqual(
+                    {
+                        row["profile"]["role"]
+                        for row in bundle_capabilities
+                        if row["profile"]["schema"] == "dm.host.capability-profile/v1"
+                    },
+                    set(HOST_PROFILE_NAMES),
+                )
+                self.assertEqual(
                     len({row["descriptor"]["key_id"] for row in bundle_capabilities}),
-                    len(OPERATOR_PROFILE_NAMES),
+                    len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES),
                 )
                 self.assertEqual(
                     {row["runtime_id"] for row in bundle_capabilities},
@@ -262,6 +278,28 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     self.assertNotEqual(
                         status_key, (role_root / "capability.key").read_bytes()
                     )
+                host_keys = []
+                for role in HOST_PROFILE_NAMES:
+                    role_root = state_root / "host-clients" / role
+                    host_key = (role_root / "capability.key").read_bytes()
+                    host_config = json.loads((role_root / "client.json").read_bytes())
+                    host_capability = LocalCapability.from_value(
+                        host_config["capability"], host_key
+                    )
+                    self.assertEqual(
+                        frozenset(host_capability.methods),
+                        HOST_CAPABILITY_PROFILES[role],
+                    )
+                    self.assertEqual(
+                        host_config["expected_server"], bundle["local_origin"]
+                    )
+                    self.assertEqual(host_config["runtime_id"], bundle["runtime_id"])
+                    self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual(
+                        (role_root / "capability.key").stat().st_mode & 0o777, 0o600
+                    )
+                    host_keys.append(host_key)
+                self.assertEqual(len(set(host_keys)), len(HOST_PROFILE_NAMES))
                 loaded[label] = load_runtime(
                     state_root,
                     "runtime.json",
@@ -307,6 +345,165 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     "signing_key_id"
                 ],
             )
+            with tempfile.TemporaryDirectory(prefix="dm083-host-widening-") as mixed:
+                mixed_root = Path(mixed) / "runtime"
+                alpha_root = output / "runtimes/legion"
+                shutil.copytree(alpha_root, mixed_root)
+                mixed_bundle = copy.deepcopy(bundles["legion"])
+                host_row = next(
+                    row
+                    for row in mixed_bundle["capabilities"]
+                    if row["profile"]
+                    == {
+                        "schema": "dm.host.capability-profile/v1",
+                        "role": "status",
+                        "client_directory": "host-clients/status",
+                        "client_config_filename": "client.json",
+                        "client_key_filename": "capability.key",
+                    }
+                )
+                alpha_contents = EncryptedKeystore(alpha_root / "custody.json").open(
+                    _runtime_password_reader(password_legion)
+                )
+                host_key = alpha_contents.secrets[host_row["secret_slot"]]
+                descriptor = host_row["descriptor"]
+                widened = create_capability(
+                    host_key,
+                    client_id=descriptor["client_id"],
+                    methods=sorted({*descriptor["methods"], "we.observe"}),
+                    not_before_ms=descriptor["not_before_ms"],
+                    not_after_ms=descriptor["not_after_ms"],
+                ).descriptor
+                host_row["descriptor"] = widened
+                host_config_path = mixed_root / "host-clients/status/client.json"
+                host_config = json.loads(host_config_path.read_bytes())
+                host_config["capability"] = widened
+                host_config_path.write_bytes(canonical_bytes(host_config))
+                signing_slot = mixed_bundle["keystore"]["signing_slot"]
+                mixed_bundle["operator_capability_binding"] = (
+                    create_operator_capability_binding(
+                        runtime_id=mixed_bundle["runtime_id"],
+                        runtime_label=mixed_bundle["runtime_label"],
+                        being_ref=mixed_bundle["manifest"]["being_ref"],
+                        origin=mixed_bundle["local_origin"],
+                        signing_seed=alpha_contents.secrets[signing_slot],
+                        capability_rows=mixed_bundle["capabilities"],
+                    )
+                )
+                hostile_path = mixed_root / "host-widened-runtime.json"
+                hostile_path.write_bytes(canonical_bytes(mixed_bundle))
+                hostile_path.chmod(0o600)
+                with self.assertRaisesRegex(
+                    MatrixRuntimeError, "invalid_operator_capability_profile"
+                ):
+                    load_runtime(
+                        mixed_root,
+                        hostile_path.name,
+                        _runtime_password_reader(password_legion),
+                        clock=lambda: time.time_ns() // 1_000_000,
+                    )
+
+            with tempfile.TemporaryDirectory(
+                prefix="dm083-hostile-host-swap-"
+            ) as mixed:
+                mixed_root = Path(mixed) / "runtime"
+                alpha_root = output / "runtimes/legion"
+                shutil.copytree(alpha_root, mixed_root)
+                mixed_bundle = copy.deepcopy(bundles["legion"])
+                alpha_row = next(
+                    row
+                    for row in mixed_bundle["capabilities"]
+                    if row["profile"].get("schema") == "dm.host.capability-profile/v1"
+                    and row["profile"]["role"] == "status"
+                )
+                beta_row = copy.deepcopy(
+                    next(
+                        row
+                        for row in beta_legion_bundle["capabilities"]
+                        if row["profile"].get("schema")
+                        == "dm.host.capability-profile/v1"
+                        and row["profile"]["role"] == "status"
+                    )
+                )
+                beta_row["runtime_id"] = mixed_bundle["runtime_id"]
+                beta_row["secret_slot"] = alpha_row["secret_slot"]
+                mixed_bundle["capabilities"][
+                    mixed_bundle["capabilities"].index(alpha_row)
+                ] = beta_row
+                mixed_bundle["operator_capability_binding"]["body"][
+                    "capability_set_hash"
+                ] = operator_capability_set_hash(mixed_bundle["capabilities"])
+                beta_config = json.loads(
+                    (beta_legion_root / "host-clients/status/client.json").read_bytes()
+                )
+                beta_config["runtime_id"] = mixed_bundle["runtime_id"]
+                beta_config["expected_server"] = mixed_bundle["local_origin"]
+                (mixed_root / "host-clients/status/client.json").write_bytes(
+                    canonical_bytes(beta_config)
+                )
+                beta_contents = EncryptedKeystore(
+                    beta_legion_root / "custody.json"
+                ).open(_runtime_password_reader(beta_password_legion))
+                alpha_contents = EncryptedKeystore(alpha_root / "custody.json").open(
+                    _runtime_password_reader(password_legion)
+                )
+                mixed_secrets = dict(alpha_contents.secrets)
+                mixed_secrets[alpha_row["secret_slot"]] = beta_contents.secrets[
+                    next(
+                        slot
+                        for slot in beta_contents.secrets
+                        if slot.startswith("runtime.host-capability.v1:status:")
+                    )
+                ]
+                EncryptedKeystore.create(
+                    mixed_root / "host-swap-custody.json",
+                    _runtime_password_reader(password_legion),
+                    control_head=mixed_bundle["control_head"],
+                    secrets=mixed_secrets,
+                )
+                mixed_bundle["keystore"]["filename"] = "host-swap-custody.json"
+                hostile_path = mixed_root / "host-swap-runtime.json"
+                hostile_path.write_bytes(canonical_bytes(mixed_bundle))
+                hostile_path.chmod(0o600)
+                with self.assertRaisesRegex(
+                    MatrixRuntimeError, "invalid_operator_capability_binding"
+                ):
+                    load_runtime(
+                        mixed_root,
+                        hostile_path.name,
+                        _runtime_password_reader(password_legion),
+                        clock=lambda: time.time_ns() // 1_000_000,
+                    )
+            for case in ("origin", "key", "path"):
+                with (
+                    self.subTest(host_client_case=case),
+                    tempfile.TemporaryDirectory(prefix=f"dm083-host-{case}-") as mixed,
+                ):
+                    mixed_root = Path(mixed) / "runtime"
+                    shutil.copytree(output / "runtimes/legion", mixed_root)
+                    status_root = mixed_root / "host-clients/status"
+                    if case == "origin":
+                        config_path = status_root / "client.json"
+                        config = json.loads(config_path.read_bytes())
+                        config["expected_server"]["principal_id"] = "forged@host"
+                        config_path.write_bytes(canonical_bytes(config))
+                        expected_error = "runtime_operator_client_mismatch"
+                    elif case == "key":
+                        shutil.copyfile(
+                            mixed_root / "host-clients/curator/capability.key",
+                            status_root / "capability.key",
+                        )
+                        expected_error = "runtime_operator_client_mismatch"
+                    else:
+                        status_root.rename(mixed_root / "host-clients/wrong-status")
+                        expected_error = "state_root_missing"
+                    with self.assertRaisesRegex(MatrixRuntimeError, expected_error):
+                        load_runtime(
+                            mixed_root,
+                            "runtime.json",
+                            _runtime_password_reader(password_legion),
+                            clock=lambda: time.time_ns() // 1_000_000,
+                        )
             with tempfile.TemporaryDirectory(prefix="dm083-hostile-relabel-") as mixed:
                 mixed_root = Path(mixed) / "runtime"
                 alpha_root = output / "runtimes/legion"

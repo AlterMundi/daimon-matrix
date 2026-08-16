@@ -8,11 +8,15 @@ import uuid
 
 from daimon_matrix.local_api import LocalApiError, create_capability, create_request
 from daimon_matrix.operator_capabilities import (
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
     OPERATOR_CAPABILITY_TTL_MS,
     OPERATOR_PROFILE_NAMES,
     OperatorCapabilityError,
+    create_host_capability_set,
     create_operator_capability_set,
     operator_capability_lifecycle,
+    validate_host_capability_set,
     validate_operator_capability_set,
 )
 from daimon_matrix.service import (
@@ -23,6 +27,103 @@ from daimon_matrix.service import (
 
 
 class OperatorCapabilityProfileTests(unittest.TestCase):
+    def test_host_profiles_are_exact_and_outside_operator_partition(self) -> None:
+        self.assertEqual(
+            HOST_CAPABILITY_PROFILES,
+            {
+                "status": frozenset(
+                    {
+                        "runtime.status",
+                        "scope.me",
+                        "scope.we",
+                        "scope.we.diff",
+                        "scope.we.sync-plan",
+                    }
+                ),
+                "curator": frozenset(
+                    {
+                        "curator.claim",
+                        "curator.complete",
+                        "curator.enqueue",
+                        "curator.inspect",
+                    }
+                ),
+            },
+        )
+        self.assertEqual(HOST_PROFILE_NAMES, ("curator", "status"))
+        self.assertNotIn("status", OPERATOR_CAPABILITY_PROFILES)
+        self.assertNotEqual(
+            HOST_CAPABILITY_PROFILES["curator"],
+            OPERATOR_CAPABILITY_PROFILES["curator"],
+        )
+
+    def test_host_profiles_have_distinct_bounded_revocable_keys(self) -> None:
+        now_ms = 1_800_000_000_000
+        with self.assertRaisesRegex(
+            OperatorCapabilityError, "duplicate_host_capability_key"
+        ):
+            create_host_capability_set(
+                "legion", issued_at_ms=now_ms, key_factory=lambda size: b"x" * size
+            )
+
+        counter = iter((1, 2))
+        capabilities, keys, slots = create_host_capability_set(
+            "legion",
+            issued_at_ms=now_ms,
+            key_factory=lambda size: bytes([next(counter)]) * size,
+        )
+        descriptors = {
+            profile: capability.descriptor
+            for profile, capability in capabilities.items()
+        }
+        secrets_by_slot = {
+            slots[profile]: keys[profile] for profile in HOST_PROFILE_NAMES
+        }
+        validated = validate_host_capability_set(
+            descriptors,
+            slots,
+            secrets_by_slot,
+            label="legion",
+            issued_at_ms=now_ms,
+            observed_at_ms=now_ms,
+        )
+        self.assertEqual(set(validated), set(HOST_PROFILE_NAMES))
+        self.assertEqual(len(set(keys.values())), len(HOST_PROFILE_NAMES))
+
+        expiry = operator_capability_lifecycle(now_ms)["expires_at_ms"]
+        with self.assertRaisesRegex(
+            OperatorCapabilityError, "host_capability_policy_rejected"
+        ):
+            validate_host_capability_set(
+                descriptors,
+                slots,
+                secrets_by_slot,
+                label="legion",
+                issued_at_ms=now_ms,
+                observed_at_ms=expiry,
+            )
+
+        revoked = dict(descriptors)
+        revoked["status"] = create_capability(
+            keys["status"],
+            client_id="client:host:legion:status",
+            methods=sorted(HOST_CAPABILITY_PROFILES["status"]),
+            not_before_ms=now_ms - 60_000,
+            not_after_ms=expiry,
+            status="revoked",
+        ).descriptor
+        with self.assertRaisesRegex(
+            OperatorCapabilityError, "host_capability_policy_rejected"
+        ):
+            validate_host_capability_set(
+                revoked,
+                slots,
+                secrets_by_slot,
+                label="legion",
+                issued_at_ms=now_ms,
+                observed_at_ms=now_ms,
+            )
+
     def test_profiles_partition_the_complete_service_surface(self) -> None:
         profiles = OPERATOR_CAPABILITY_PROFILES
         self.assertEqual(

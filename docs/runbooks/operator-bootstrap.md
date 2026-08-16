@@ -116,10 +116,16 @@ The output contains:
   owner-only client directory for each mutating role (`weave`, `communication`,
   `curator`, `memory`, `relationships`, `review`, `routes`, `sources`, and
   `species`). Every role has a distinct random key and encrypted-custody slot.
+- `runtimes/<label>/host-clients/status/` and `host-clients/curator/`: two
+  additional owner-only host-bound clients. Status contains exactly
+  `runtime.status`, `scope.me`, `scope.we`, `scope.we.diff` and
+  `scope.we.sync-plan`; curator contains exactly the four `curator.*` methods.
+  Neither is the broader operator `observe` profile, and their keys and slots
+  are distinct from all ten operator roles.
 
 The bundle's `runtime_id` is derived from its label, being root, root-authorized
-origin and operational signing key. Exactly ten capability rows are required,
-one per role. The root-authorized embodiment signing key signs a domain-separated
+origin and operational signing key. Exactly twelve capability rows are required:
+ten operator roles plus the two host-bound roles. The root-authorized embodiment signing key signs a domain-separated
 hash of that exact capability row set together with the runtime ID, label, being,
 origin and signing-key ID. Startup verifies the signature against the active
 credential. Each row and each `dm.local.client-config/v3` document also repeats
@@ -130,7 +136,7 @@ binding signature and fails closed.
 Before service start, validate the V7 schema, open each custody with its own
 password, compare the common being/control/manifest hashes and prove every
 embodiment, incarnation, credential, root, ledger and socket is distinct.
-The ten profiles are disjoint and together cover the service surface; no
+The ten operator profiles are disjoint and together cover the service surface; no
 capability is an all-method signer oracle. A caller must select the narrow role
 for the operation it is about to perform. A relocated or restored runtime is
 reprovisioned as a fresh embodiment and never inherits these client keys from

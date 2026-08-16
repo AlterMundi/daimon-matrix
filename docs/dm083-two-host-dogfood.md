@@ -258,8 +258,10 @@ remain separate gates.
 
 The historical five-method status client above is superseded for future
 provisioning. Current bootstrap and rebirth packages mint ten disjoint,
-independently keyed operator roles. `observe` is the default and contains no
-mutation; every mutation family requires its own owner-only client directory.
+independently keyed operator roles plus dedicated status and curator host roles.
+The status role has only the five methods Cluster needs; it does not inherit the
+broader `observe` profile. `observe` remains the default operator client and
+contains no mutation; every mutation family requires its own owner-only client directory.
 All role descriptors expire after 30 days and advertise a seven-day
 reprovisioning window. This changes no historical dogfood evidence and has not
 been deployed to those hosts.

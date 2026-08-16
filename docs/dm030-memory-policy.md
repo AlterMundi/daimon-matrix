@@ -89,6 +89,7 @@ may manufacture a policy decision, rewrite category/author, execute a review
 plan, or treat delivery as adoption.
 
 The Cluster matrix-host adapter remains pinned to an exact Matrix commit and its
-five-method host-control capability. Memory access belongs to a separately
-issued least-authority client capability; DM-030 does not silently expand the
-Cluster controller.
+dedicated five-method host-status capability. It does not receive the broader
+operator `observe` profile. Memory access belongs to a separately issued
+least-authority client capability; DM-030 does not silently expand the Cluster
+controller.

@@ -68,14 +68,19 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .operator_capabilities import (
+    HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
     OperatorCapabilityError,
+    create_host_capability_set,
     create_operator_capability_binding,
     create_operator_capability_set,
+    host_capability_profile,
+    host_capability_slot,
     operator_capability_lifecycle,
     operator_capability_profile,
     operator_runtime_id,
+    validate_host_capability_set,
     validate_operator_capability_set,
 )
 from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
@@ -1963,6 +1968,11 @@ def create_target_preparation(
             operator_capabilities, operator_keys, operator_slots = (
                 create_operator_capability_set(label, issued_at_ms=created_at_ms)
             )
+            host_capabilities, host_keys, host_slots = create_host_capability_set(
+                label, issued_at_ms=created_at_ms
+            )
+            if not set(operator_keys.values()).isdisjoint(host_keys.values()):
+                raise RebirthError("rebirth_target_capability_rejected")
             capability_lifecycle = operator_capability_lifecycle(created_at_ms)
             runtime_id = operator_runtime_id(
                 label,
@@ -1976,6 +1986,7 @@ def create_target_preparation(
             "signing": f"runtime.signing.v1:{label}",
             "encryption": f"peer.encryption.v1:{label}",
             "operator_capabilities": operator_slots,
+            "host_capabilities": host_slots,
             "transport": f"transport.signing.v1:{label}",
         }
         EncryptedKeystore.create(
@@ -1988,6 +1999,10 @@ def create_target_preparation(
                 **{
                     operator_slots[profile]: operator_keys[profile]
                     for profile in OPERATOR_PROFILE_NAMES
+                },
+                **{
+                    host_slots[profile]: host_keys[profile]
+                    for profile in HOST_PROFILE_NAMES
                 },
             },
         )
@@ -2010,6 +2025,10 @@ def create_target_preparation(
             "capabilities": {
                 profile: operator_capabilities[profile].descriptor
                 for profile in OPERATOR_PROFILE_NAMES
+            },
+            "host_capabilities": {
+                profile: host_capabilities[profile].descriptor
+                for profile in HOST_PROFILE_NAMES
             },
             "capability_lifecycle": capability_lifecycle,
             "custody": {
@@ -2080,6 +2099,7 @@ def _validated_preparation(
             "profile",
             "slots",
             "capabilities",
+            "host_capabilities",
             "custody",
             "created_at_ms",
             "expires_at_ms",
@@ -2122,7 +2142,13 @@ def _validated_preparation(
         raise RebirthError("rebirth_preparation_binding_mismatch")
     slots = _closed(
         value["slots"],
-        {"signing", "encryption", "operator_capabilities", "transport"},
+        {
+            "signing",
+            "encryption",
+            "operator_capabilities",
+            "host_capabilities",
+            "transport",
+        },
         "invalid_rebirth_preparation",
     )
     label = profile["label"]
@@ -2133,11 +2159,16 @@ def _validated_preparation(
             profile: f"runtime.capability.v1:{profile}:{label}"
             for profile in OPERATOR_PROFILE_NAMES
         },
+        "host_capabilities": {
+            profile: host_capability_slot(label, profile)
+            for profile in HOST_PROFILE_NAMES
+        },
         "transport": f"transport.signing.v1:{label}",
     }
     if slots != expected_slots:
         raise RebirthError("rebirth_preparation_slot_mismatch")
     capabilities = value["capabilities"]
+    host_capabilities = value["host_capabilities"]
     lifecycle = _closed(
         value["capability_lifecycle"],
         {"expires_at_ms", "reprovision_at_ms"},
@@ -2180,6 +2211,7 @@ def _validated_preparation(
         slots["signing"],
         slots["encryption"],
         *slots["operator_capabilities"].values(),
+        *slots["host_capabilities"].values(),
     } or set(transport_contents.secrets) != {slots["transport"]}:
         raise RebirthError("rebirth_target_custody_rejected")
     credential_body = request_body["credential"]["body"]
@@ -2216,6 +2248,22 @@ def _validated_preparation(
             issued_at_ms=value["created_at_ms"],
             observed_at_ms=observed_at_ms,
         )
+        validate_host_capability_set(
+            host_capabilities,
+            slots["host_capabilities"],
+            body_contents.secrets,
+            label=label,
+            issued_at_ms=value["created_at_ms"],
+            observed_at_ms=observed_at_ms,
+        )
+        all_capability_slots = [
+            *slots["operator_capabilities"].values(),
+            *slots["host_capabilities"].values(),
+        ]
+        if len({body_contents.secrets[slot] for slot in all_capability_slots}) != len(
+            all_capability_slots
+        ):
+            raise OperatorCapabilityError("duplicate_runtime_capability_key")
     except OperatorCapabilityError as exception:
         raise RebirthError("rebirth_target_capability_rejected") from exception
     return (
@@ -2279,8 +2327,11 @@ def _activate_target_runtime(
         runtime_root.mkdir(mode=0o700)
         operator_clients = runtime_root / "operator-clients"
         operator_clients.mkdir(mode=0o700)
+        host_clients = runtime_root / "host-clients"
+        host_clients.mkdir(mode=0o700)
         slots = verified_preparation["slots"]
         capabilities = verified_preparation["capabilities"]
+        host_capabilities = verified_preparation["host_capabilities"]
         profile = verified_preparation["profile"]
         origin = verified_preparation["origin"]
         runtime_id = verified_preparation["runtime_id"]
@@ -2314,6 +2365,15 @@ def _activate_target_runtime(
             }
             for profile_name in OPERATOR_PROFILE_NAMES
         ]
+        capability_rows.extend(
+            {
+                "descriptor": host_capabilities[profile_name],
+                "profile": host_capability_profile(profile_name),
+                "runtime_id": runtime_id,
+                "secret_slot": slots["host_capabilities"][profile_name],
+            }
+            for profile_name in HOST_PROFILE_NAMES
+        )
         try:
             capability_binding = create_operator_capability_binding(
                 runtime_id=runtime_id,
@@ -2408,6 +2468,23 @@ def _activate_target_runtime(
                 role_client / "capability.key",
                 body_secrets[slots["operator_capabilities"][profile_name]],
             )
+        for profile_name in HOST_PROFILE_NAMES:
+            host_client = host_clients / profile_name
+            host_client.mkdir(mode=0o700)
+            _private_write(
+                host_client / "client.json",
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
+                    "capability": host_capabilities[profile_name],
+                    "expected_server": origin,
+                    "runtime_id": runtime_id,
+                    "runtime_label": profile["label"],
+                },
+            )
+            _private_write(
+                host_client / "capability.key",
+                body_secrets[slots["host_capabilities"][profile_name]],
+            )
         _private_write(staging / "request.json", request)
         _private_write(staging / "activation.json", verified_activation)
         _private_write(staging / "target-profile.json", profile)
@@ -2433,6 +2510,9 @@ def _activate_target_runtime(
         for path in operator_clients.iterdir():
             _fsync_directory(path)
         _fsync_directory(operator_clients)
+        for path in host_clients.iterdir():
+            _fsync_directory(path)
+        _fsync_directory(host_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)

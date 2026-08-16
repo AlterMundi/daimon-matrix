@@ -42,10 +42,13 @@ from daimon_matrix.identity import (
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.operator_capabilities import (
+    HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
+    create_host_capability_set,
     create_operator_capability_binding,
     create_operator_capability_set,
+    host_capability_profile,
     operator_capability_profile,
     operator_runtime_id,
 )
@@ -495,6 +498,9 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         operator_capabilities, operator_keys, operator_slots = (
             create_operator_capability_set("ordinary-then-recovery", issued_at_ms=NOW)
         )
+        host_capabilities, host_keys, host_slots = create_host_capability_set(
+            "ordinary-then-recovery", issued_at_ms=NOW
+        )
         runtime_label = "ordinary-then-recovery"
         runtime_id = operator_runtime_id(
             runtime_label,
@@ -519,6 +525,15 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             }
             for profile in OPERATOR_PROFILE_NAMES
         ]
+        reverse_bundle["capabilities"].extend(
+            {
+                "descriptor": host_capabilities[profile].descriptor,
+                "profile": host_capability_profile(profile),
+                "runtime_id": runtime_id,
+                "secret_slot": host_slots[profile],
+            }
+            for profile in HOST_PROFILE_NAMES
+        )
         reverse_bundle["operator_capability_binding"] = (
             create_operator_capability_binding(
                 runtime_id=runtime_id,
@@ -541,6 +556,10 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
                 **{
                     operator_slots[profile]: operator_keys[profile]
                     for profile in OPERATOR_PROFILE_NAMES
+                },
+                **{
+                    host_slots[profile]: host_keys[profile]
+                    for profile in HOST_PROFILE_NAMES
                 },
             },
         )
@@ -578,6 +597,25 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             )
             (role_root / "client.json").chmod(0o600)
             (role_root / "capability.key").write_bytes(operator_keys[profile])
+            (role_root / "capability.key").chmod(0o600)
+        host_clients = runtime_root / "host-clients"
+        host_clients.mkdir(mode=0o700)
+        for profile in HOST_PROFILE_NAMES:
+            role_root = host_clients / profile
+            role_root.mkdir(mode=0o700)
+            (role_root / "client.json").write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
+                        "capability": host_capabilities[profile].descriptor,
+                        "expected_server": origin,
+                        "runtime_id": runtime_id,
+                        "runtime_label": runtime_label,
+                    }
+                )
+            )
+            (role_root / "client.json").chmod(0o600)
+            (role_root / "capability.key").write_bytes(host_keys[profile])
             (role_root / "capability.key").chmod(0o600)
         runtime_path = runtime_root / "runtime.json"
         runtime_path.write_bytes(canonical_bytes(reverse_bundle))

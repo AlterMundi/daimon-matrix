@@ -139,8 +139,8 @@
     },
     "capabilities": {
       "type": "array",
-      "minItems": 10,
-      "maxItems": 10,
+      "minItems": 12,
+      "maxItems": 12,
       "allOf": [
         {
           "contains": {"$ref": "#/$defs/communicationCapability"},
@@ -191,6 +191,16 @@
           "contains": {"$ref": "#/$defs/weaveCapability"},
           "minContains": 1,
           "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/hostCuratorCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/hostStatusCapability"},
+          "minContains": 1,
+          "maxContains": 1
         }
       ],
       "items": {
@@ -232,7 +242,9 @@
                   "operator-clients/routes",
                   "operator-clients/sources",
                   "operator-clients/species",
-                  "operator-clients/weave"
+                  "operator-clients/weave",
+                  "host-clients/curator",
+                  "host-clients/status"
                 ]
               },
               "client_key_filename": {
@@ -254,11 +266,15 @@
                   "routes",
                   "sources",
                   "species",
+                  "status",
                   "weave"
                 ]
               },
               "schema": {
-                "const": "dm.operator.capability-profile/v1"
+                "enum": [
+                  "dm.operator.capability-profile/v1",
+                  "dm.host.capability-profile/v1"
+                ]
               }
             }
           },
@@ -268,7 +284,7 @@
           },
           "secret_slot": {
             "type": "string",
-            "pattern": "^runtime\\.capability\\.v1:[A-Za-z0-9._:-]{1,128}$"
+            "pattern": "^runtime\\.(?:host-)?capability\\.v1:[A-Za-z0-9._:-]{1,128}$"
           }
         }
       }
@@ -596,8 +612,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "communication"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "communication"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -607,8 +623,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "curator"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "curator"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -618,8 +634,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "memory"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "memory"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -629,8 +645,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "observe"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "observe"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -640,8 +656,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "relationships"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "relationships"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -651,8 +667,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "review"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "review"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -662,8 +678,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "routes"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "routes"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -673,8 +689,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "sources"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "sources"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -684,8 +700,8 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "species"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "species"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
         }
       }
     },
@@ -695,8 +711,30 @@
       "properties": {
         "profile": {
           "type": "object",
-          "required": ["role"],
-          "properties": {"role": {"const": "weave"}}
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "weave"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "hostCuratorCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "curator"}, "schema": {"const": "dm.host.capability-profile/v1"}}
+        }
+      }
+    },
+    "hostStatusCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "status"}, "schema": {"const": "dm.host.capability-profile/v1"}}
         }
       }
     },

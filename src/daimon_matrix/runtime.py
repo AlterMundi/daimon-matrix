@@ -29,8 +29,13 @@ from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
 from .operator_capabilities import (
+    HOST_CAPABILITY_PROFILE_SCHEMA,
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
     OPERATOR_PROFILE_NAMES,
     OperatorCapabilityError,
+    host_capability_profile,
+    host_capability_slot,
     operator_capability_profile,
     operator_capability_slot,
     operator_runtime_id,
@@ -547,6 +552,7 @@ def load_runtime(
     required_slots = {signing_slot}
     capabilities: dict[str, LocalCapability] = {}
     operator_clients: dict[str, tuple[LocalCapability, bytes, Mapping[str, Any]]] = {}
+    host_clients: dict[str, tuple[LocalCapability, bytes, Mapping[str, Any]]] = {}
     capabilities_observed_at_ms = clock()
     for row in capability_rows:
         value = _closed(
@@ -560,7 +566,9 @@ def load_runtime(
         slot = value["secret_slot"]
         if schema == BUNDLE_SCHEMA_V7 and value["runtime_id"] != runtime_id:
             raise RuntimeError("invalid_operator_runtime_identity")
-        if not isinstance(slot, str) or not slot.startswith("runtime.capability.v1:"):
+        if not isinstance(slot, str) or not slot.startswith(
+            ("runtime.capability.v1:", "runtime.host-capability.v1:")
+        ):
             raise RuntimeError("invalid_capability_slot")
         if slot in required_slots:
             raise RuntimeError("duplicate_runtime_slot")
@@ -586,41 +594,65 @@ def load_runtime(
             if not isinstance(profile_value, Mapping):
                 raise RuntimeError("invalid_operator_capability_profile")
             role = profile_value.get("role")
-            if not isinstance(role, str) or role not in OPERATOR_CAPABILITY_PROFILES:
+            profile_schema = profile_value.get("schema")
+            if not isinstance(role, str):
                 raise RuntimeError("invalid_operator_capability_profile")
             try:
-                expected_profile = operator_capability_profile(role)
-                if capability.client_id != f"client:operator:{runtime_label}:{role}":
+                if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
+                    expected_profile = host_capability_profile(role)
+                    expected_methods = HOST_CAPABILITY_PROFILES[role]
+                    expected_client_id = f"client:host:{runtime_label}:{role}"
+                    assert runtime_label is not None
+                    expected_slot = host_capability_slot(runtime_label, role)
+                    clients = host_clients
+                else:
+                    expected_profile = operator_capability_profile(role)
+                    expected_methods = OPERATOR_CAPABILITY_PROFILES[role]
+                    expected_client_id = f"client:operator:{runtime_label}:{role}"
+                    assert runtime_label is not None
+                    expected_slot = operator_capability_slot(runtime_label, role)
+                    clients = operator_clients
+                if capability.client_id != expected_client_id:
                     raise OperatorCapabilityError(
                         "invalid_operator_capability_identity"
                     )
-                assert runtime_label is not None
-                expected_slot = operator_capability_slot(runtime_label, role)
-            except OperatorCapabilityError as exception:
+            except (KeyError, OperatorCapabilityError) as exception:
                 raise RuntimeError("invalid_operator_capability_profile") from exception
             if (
                 dict(profile_value) != expected_profile
                 or slot != expected_slot
-                or frozenset(capability.methods) != OPERATOR_CAPABILITY_PROFILES[role]
-                or role in operator_clients
+                or frozenset(capability.methods) != expected_methods
+                or role in clients
             ):
                 raise RuntimeError("invalid_operator_capability_profile")
-            operator_clients[role] = (capability, key, profile_value)
+            clients[role] = (capability, key, profile_value)
         capabilities[capability.capability_id] = capability
 
     if schema == BUNDLE_SCHEMA_V7:
-        if set(operator_clients) != set(OPERATOR_PROFILE_NAMES) or len(
-            {capability.key_id for capability, _, _ in operator_clients.values()}
-        ) != len(OPERATOR_PROFILE_NAMES):
+        all_clients = {
+            **operator_clients,
+            **{f"host:{k}": v for k, v in host_clients.items()},
+        }
+        if (
+            set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
+            or set(host_clients) != set(HOST_PROFILE_NAMES)
+            or len({capability.key_id for capability, _, _ in all_clients.values()})
+            != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+        ):
             raise RuntimeError("invalid_operator_capability_profile")
-        for role in OPERATOR_PROFILE_NAMES:
-            capability, key, profile_value = operator_clients[role]
+        for role, (capability, key, profile_value) in all_clients.items():
+            directory_role = role.removeprefix("host:")
             if profile_value["client_directory"] == ".":
                 client_root = root
+            elif profile_value["schema"] == HOST_CAPABILITY_PROFILE_SCHEMA:
+                clients_root = root / "host-clients"
+                _owner_directory(clients_root)
+                client_root = clients_root / directory_role
+                _owner_directory(client_root)
             else:
                 clients_root = root / "operator-clients"
                 _owner_directory(clients_root)
-                client_root = clients_root / role
+                client_root = clients_root / directory_role
                 _owner_directory(client_root)
             config_path = _safe_file(
                 client_root,
