@@ -29,7 +29,7 @@ from .identity import (
     key_id,
     verify_embodiment_credential,
     verify_incarnation_authorization,
-    verify_recovery,
+    verify_recovery_from_anchor,
 )
 from .weave import BeingManifest, RootAuthority, WeaveProtocolError
 
@@ -600,6 +600,13 @@ def _recovery_rebirth_core(
     recovery_body = recovery_artifact.get("body")
     if not isinstance(recovery_body, Mapping):
         raise AuthorityEpochError("recovery_rebirth_artifact_invalid")
+    revoked = recovery_body.get("revoked_embodiments")
+    if (
+        not isinstance(revoked, list)
+        or not all(isinstance(item, str) and item for item in revoked)
+        or revoked != sorted(set(revoked))
+    ):
+        raise AuthorityEpochError("recovery_rebirth_artifact_invalid")
     return {
         "schema": RECOVERY_REBIRTH_SCHEMA,
         "being_ref": previous.being_ref,
@@ -717,7 +724,7 @@ def verify_recovery_rebirth(
         raise AuthorityEpochError("recovery_rebirth_artifact_invalid")
     recovery_artifact = embedded
     try:
-        recovered_state = verify_recovery(recovery_artifact, [previous.state])
+        recovered_state = verify_recovery_from_anchor(recovery_artifact, previous.state)
     except VerificationError as exception:
         raise AuthorityEpochError("recovery_rebirth_artifact_invalid") from exception
     previous_manifest = previous.manifest
@@ -750,9 +757,9 @@ def verify_recovery_rebirth(
         or successor_manifest.value["history_binding_id"]
         != previous_manifest.value["history_binding_id"]
         or value.get("recovery_artifact_id") != recovery_artifact.get("artifact_id")
-        or value.get("revoked_embodiment_ids") != active_predecessors
-        or recovery_artifact.get("body", {}).get("revoked_embodiments")
-        != active_predecessors
+        or value.get("revoked_embodiment_ids")
+        != recovery_artifact.get("body", {}).get("revoked_embodiments")
+        or not set(active_predecessors).issubset(value["revoked_embodiment_ids"])
         or previous_root_ids & recovered_root_ids
     ):
         raise AuthorityEpochError("recovery_rebirth_lineage_mismatch")

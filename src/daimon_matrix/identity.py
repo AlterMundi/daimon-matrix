@@ -340,7 +340,103 @@ class ControlState:
     activated_binding: str | None = None
 
 
-def create_genesis(
+def prepare_genesis(
+    root_policy: Mapping[str, Any],
+    recovery_policy: Mapping[str, Any],
+    *,
+    created_at_ms: int,
+    nonce: bytes,
+) -> Artifact:
+    """Freeze public genesis material before isolated holders sign it."""
+
+    root = copy.deepcopy(dict(root_policy))
+    recovery = copy.deepcopy(dict(recovery_policy))
+    _validate_threshold_policy(root)
+    _validate_threshold_policy(recovery)
+    _require_separate_policies(root, recovery)
+    if len(nonce) != 32:
+        raise IdentityError("genesis nonce must be 32 bytes")
+    core = {
+        "nonce": b64url(nonce),
+        "protocol": "daimon-matrix",
+        "recovery": recovery,
+        "root": root,
+        "version": 1,
+    }
+    being_ref = "dm:being:v1:" + b64url(digest("dm.identity.being/v1", core))
+    return _artifact(
+        "genesis",
+        {
+            "being_ref": being_ref,
+            "control_generation": 0,
+            "control_sequence": 0,
+            "core": core,
+            "created_at_ms": created_at_ms,
+        },
+        [],
+    )
+
+
+def _prepared_genesis(artifact: Mapping[str, Any]) -> Artifact:
+    body, _ = _verify_wrapper(artifact, "genesis")
+    if artifact["signatures"]:
+        raise IdentityError("prepared genesis already contains signatures")
+    core = body.get("core")
+    if not isinstance(core, Mapping):
+        raise IdentityError("prepared genesis is invalid")
+    from .canonical import unb64url
+
+    try:
+        expected = prepare_genesis(
+            core.get("root", {}),
+            core.get("recovery", {}),
+            created_at_ms=body["created_at_ms"],
+            nonce=unb64url(str(core.get("nonce")), length=32),
+        )
+    except (KeyError, TypeError, ValueError) as exception:
+        raise IdentityError("prepared genesis is invalid") from exception
+    if canonical_bytes(expected) != canonical_bytes(artifact):
+        raise IdentityError("prepared genesis is invalid")
+    return expected
+
+
+def create_genesis_holder_share(
+    prepared: Mapping[str, Any], seed: bytes, *, role: Literal["root", "recovery"]
+) -> dict[str, str]:
+    """Sign genesis while holding exactly one root or recovery seed."""
+
+    expected = _prepared_genesis(prepared)
+    body = expected["body"]
+    policy = body["core"][role]
+    _require_policy_seed(seed, policy, role=f"genesis-{role}")
+    if role == "root":
+        return _signature(
+            seed, "root-authorization", domain_bytes(DOMAINS["genesis"], body)
+        )
+    raw_hash = digest(DOMAINS["genesis"], body)
+    return _signature(
+        seed,
+        "recovery-possession",
+        DOMAINS["genesis"].encode("ascii") + b"/possession\x00" + raw_hash,
+    )
+
+
+def aggregate_genesis(
+    prepared: Mapping[str, Any], shares: Sequence[Mapping[str, Any]]
+) -> Artifact:
+    """Aggregate public genesis shares without access to any holder store."""
+
+    expected = _prepared_genesis(prepared)
+    artifact = _artifact(
+        "genesis",
+        expected["body"],
+        [copy.deepcopy(dict(share)) for share in shares],
+    )
+    verify_genesis(artifact)
+    return artifact
+
+
+def create_synthetic_genesis_in_process(
     root_seeds: Sequence[bytes],
     root_threshold: int,
     recovery_seeds: Sequence[bytes],
@@ -349,40 +445,27 @@ def create_genesis(
     created_at_ms: int,
     nonce: bytes | None = None,
 ) -> Artifact:
-    """Create a self-certifying being genesis with independent thresholds."""
+    """Synthetic fixture that centralizes every genesis seed in-process."""
 
-    root = threshold_policy(root_seeds, root_threshold)
-    recovery = threshold_policy(recovery_seeds, recovery_threshold)
-    _require_separate_policies(root, recovery)
-    core = {
-        "nonce": b64url(nonce if nonce is not None else secrets.token_bytes(32)),
-        "protocol": "daimon-matrix",
-        "recovery": recovery,
-        "root": root,
-        "version": 1,
-    }
-    being_ref = "dm:being:v1:" + b64url(digest("dm.identity.being/v1", core))
-    body = {
-        "being_ref": being_ref,
-        "control_generation": 0,
-        "control_sequence": 0,
-        "core": core,
-        "created_at_ms": created_at_ms,
-    }
-    signatures = _signatures(
-        _seed_map(root_seeds),
-        "root-authorization",
-        domain_bytes(DOMAINS["genesis"], body),
+    prepared = prepare_genesis(
+        threshold_policy(root_seeds, root_threshold),
+        threshold_policy(recovery_seeds, recovery_threshold),
+        created_at_ms=created_at_ms,
+        nonce=nonce if nonce is not None else secrets.token_bytes(32),
     )
-    raw_hash = digest(DOMAINS["genesis"], body)
-    signatures.extend(
-        _signatures(
-            _seed_map(recovery_seeds),
-            "recovery-possession",
-            DOMAINS["genesis"].encode("ascii") + b"/possession\x00" + raw_hash,
-        )
+    return aggregate_genesis(
+        prepared,
+        [
+            *(
+                create_genesis_holder_share(prepared, seed, role="root")
+                for seed in root_seeds
+            ),
+            *(
+                create_genesis_holder_share(prepared, seed, role="recovery")
+                for seed in recovery_seeds
+            ),
+        ],
     )
-    return _artifact("genesis", body, signatures)
 
 
 def verify_genesis(artifact: Mapping[str, Any]) -> ControlState:
@@ -529,7 +612,7 @@ def create_revocation(
     )
 
 
-def create_recovery(
+def create_synthetic_recovery_in_process(
     states: Sequence[ControlState],
     current_recovery_seeds: Sequence[bytes],
     replacement_root_seeds: Sequence[bytes],
@@ -537,7 +620,32 @@ def create_recovery(
     *,
     revoke_embodiments: Sequence[str],
 ) -> Artifact:
-    """Recover a unique head while naming every currently known branch head."""
+    """Synthetic fixture that centralizes every recovery/root seed in-process."""
+
+    prepared = prepare_recovery(
+        states,
+        threshold_policy(replacement_root_seeds, replacement_threshold),
+        revoke_embodiments=revoke_embodiments,
+    )
+    body = prepared["body"]
+    signatures = [
+        create_recovery_authorization_share(prepared, states, seed)
+        for seed in current_recovery_seeds
+    ]
+    signatures.extend(
+        create_recovery_possession_share(prepared, states, seed)
+        for seed in replacement_root_seeds
+    )
+    return _artifact("recovery", body, signatures)
+
+
+def prepare_recovery(
+    states: Sequence[ControlState],
+    replacement_root_policy: Mapping[str, Any],
+    *,
+    revoke_embodiments: Sequence[str],
+) -> Artifact:
+    """Freeze an unsigned recovery artifact for independent threshold holders."""
 
     if not states:
         raise IdentityError("recovery needs at least one known control head")
@@ -545,23 +653,94 @@ def create_recovery(
     recovery_policies = {canonical_bytes(state.recovery_policy) for state in states}
     if len(being_refs) != 1 or len(recovery_policies) != 1:
         raise IdentityError("recovery heads do not share being/recovery authority")
-    replacement_policy = threshold_policy(replacement_root_seeds, replacement_threshold)
+    replacement_policy = copy.deepcopy(dict(replacement_root_policy))
+    _validate_threshold_policy(replacement_policy)
     _require_separate_policies(replacement_policy, states[0].recovery_policy)
     body = {
         "being_ref": states[0].being_ref,
         "competing_control_heads": sorted({state.head for state in states}),
         "control_generation": max(state.generation for state in states) + 1,
         "control_sequence": 0,
+        "revocation_high_water": _merge_revocations(states),
         "replacement_root": replacement_policy,
         "revoked_embodiments": sorted(set(revoke_embodiments)),
     }
-    return _sign_control(
-        "recovery",
-        body,
-        _seed_map(current_recovery_seeds),
-        "recovery-authorization",
-        _seed_map(replacement_root_seeds),
+    return _artifact("recovery", body, [])
+
+
+def _require_policy_seed(seed: bytes, policy: Mapping[str, Any], *, role: str) -> None:
+    kid = signing_descriptor(seed)["key_id"]
+    if kid not in _public_map(policy):
+        raise IdentityError(f"seed is not authorized for {role}")
+
+
+def _prepared_recovery(
+    artifact: Mapping[str, Any], states: Sequence[ControlState]
+) -> Artifact:
+    body, _ = _verify_wrapper(artifact, "recovery")
+    if artifact["signatures"]:
+        raise IdentityError("prepared recovery already contains signatures")
+    expected = prepare_recovery(
+        states,
+        body.get("replacement_root", {}),
+        revoke_embodiments=body.get("revoked_embodiments", []),
     )
+    if canonical_bytes(expected) != canonical_bytes(artifact):
+        raise IdentityError("prepared recovery does not match known heads")
+    return expected
+
+
+def create_recovery_authorization_share(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    recovery_seed: bytes,
+) -> dict[str, str]:
+    """Sign one recovery authorization without exposing any other holder key."""
+
+    expected = _prepared_recovery(prepared, states)
+    _require_policy_seed(
+        recovery_seed, states[0].recovery_policy, role="recovery-authorization"
+    )
+    return _signature(
+        recovery_seed,
+        "recovery-authorization",
+        domain_bytes(DOMAINS["recovery"], expected["body"]),
+    )
+
+
+def create_recovery_possession_share(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    replacement_root_seed: bytes,
+) -> dict[str, str]:
+    """Prove possession of one replacement root without sharing its seed."""
+
+    expected = _prepared_recovery(prepared, states)
+    policy = expected["body"]["replacement_root"]
+    _require_policy_seed(replacement_root_seed, policy, role="new-root-possession")
+    raw_hash = digest(DOMAINS["recovery"], expected["body"])
+    return _signature(
+        replacement_root_seed,
+        "new-root-possession",
+        DOMAINS["recovery"].encode("ascii") + b"/possession\x00" + raw_hash,
+    )
+
+
+def aggregate_recovery(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    shares: Sequence[Mapping[str, Any]],
+) -> Artifact:
+    """Keyless aggregation of independently produced recovery shares."""
+
+    expected = _prepared_recovery(prepared, states)
+    artifact = _artifact(
+        "recovery",
+        expected["body"],
+        [copy.deepcopy(dict(share)) for share in shares],
+    )
+    verify_recovery(artifact, states)
+    return artifact
 
 
 def _verify_position(body: Mapping[str, Any], state: ControlState) -> None:
@@ -691,6 +870,7 @@ def verify_recovery(
             "competing_control_heads",
             "control_generation",
             "control_sequence",
+            "revocation_high_water",
             "replacement_root",
             "revoked_embodiments",
         },
@@ -726,7 +906,9 @@ def verify_recovery(
         "new-root-possession",
         DOMAINS["recovery"].encode("ascii") + b"/possession\x00" + raw_hash,
     )
-    revoked = _merge_revocations(states)
+    if body["revocation_high_water"] != _merge_revocations(states):
+        raise VerificationError("recovery revocation high-water mismatch")
+    revoked = copy.deepcopy(body["revocation_high_water"])
     for embodiment_id in revoked_embodiments:
         previous = revoked.get(embodiment_id, {})
         revoked[embodiment_id] = {
@@ -742,6 +924,109 @@ def verify_recovery(
         sequence=0,
         root_policy=copy.deepcopy(body["replacement_root"]),
         recovery_policy=copy.deepcopy(states[0].recovery_policy),
+        revocations=revoked,
+        credential_authorities={
+            artifact["artifact_id"]: copy.deepcopy(body["replacement_root"])
+        },
+        carried_credential_authorities={},
+    )
+
+
+def verify_recovery_from_anchor(
+    artifact: Mapping[str, Any], anchor: ControlState
+) -> ControlState:
+    """Verify a quorum-attested fork recovery from any cited verified head.
+
+    Exact fork discovery belongs to the recovery holders.  The signed artifact
+    carries the complete head set and the conservative revocation high-water;
+    a later verifier only needs one already-verified cited head as its trust
+    anchor.  Ceremony aggregation still uses :func:`verify_recovery` with every
+    known state and therefore checks the holder-attested values exactly.
+    """
+
+    body, raw_hash = _verify_wrapper(artifact, "recovery")
+    _closed(
+        body,
+        {
+            "being_ref",
+            "competing_control_heads",
+            "control_generation",
+            "control_sequence",
+            "revocation_high_water",
+            "replacement_root",
+            "revoked_embodiments",
+        },
+        "recovery body",
+    )
+    heads = body["competing_control_heads"]
+    if (
+        body["being_ref"] != anchor.being_ref
+        or not isinstance(heads, list)
+        or not all(isinstance(head, str) and head for head in heads)
+        or heads != sorted(set(heads))
+        or anchor.head not in heads
+        or not isinstance(body["control_generation"], int)
+        or isinstance(body["control_generation"], bool)
+        or body["control_generation"] <= anchor.generation
+        or body["control_sequence"] != 0
+    ):
+        raise VerificationError("recovery anchor mismatch")
+    high_water = body["revocation_high_water"]
+    if not isinstance(high_water, Mapping) or any(
+        not isinstance(embodiment_id, str)
+        or not embodiment_id
+        or not isinstance(value, Mapping)
+        or set(value) != {"cutoff_incarnation_sequence", "revocation_generation"}
+        or any(
+            not isinstance(value[field], int)
+            or isinstance(value[field], bool)
+            or value[field] < 0
+            for field in ("cutoff_incarnation_sequence", "revocation_generation")
+        )
+        for embodiment_id, value in high_water.items()
+    ):
+        raise VerificationError("recovery revocation high-water mismatch")
+    for embodiment_id, value in anchor.revocations.items():
+        merged = high_water.get(embodiment_id)
+        if (
+            not isinstance(merged, Mapping)
+            or merged.get("revocation_generation", -1) < value["revocation_generation"]
+            or merged.get("cutoff_incarnation_sequence", 2**63 - 1)
+            > value["cutoff_incarnation_sequence"]
+        ):
+            raise VerificationError("recovery revocation high-water mismatch")
+    revoked_embodiments = body["revoked_embodiments"]
+    if revoked_embodiments != sorted(set(revoked_embodiments)):
+        raise VerificationError("recovery revocations must be sorted and unique")
+    _require_separate_policies(body["replacement_root"], anchor.recovery_policy)
+    _verify_threshold(
+        artifact,
+        anchor.recovery_policy,
+        "recovery-authorization",
+        domain_bytes(DOMAINS["recovery"], body),
+    )
+    _verify_threshold(
+        artifact,
+        body["replacement_root"],
+        "new-root-possession",
+        DOMAINS["recovery"].encode("ascii") + b"/possession\x00" + raw_hash,
+    )
+    revoked = copy.deepcopy(dict(high_water))
+    for embodiment_id in revoked_embodiments:
+        previous = revoked.get(embodiment_id, {})
+        revoked[embodiment_id] = {
+            "cutoff_incarnation_sequence": previous.get(
+                "cutoff_incarnation_sequence", 0
+            ),
+            "revocation_generation": previous.get("revocation_generation", 0) + 1,
+        }
+    return ControlState(
+        being_ref=anchor.being_ref,
+        head=artifact["artifact_id"],
+        generation=body["control_generation"],
+        sequence=0,
+        root_policy=copy.deepcopy(body["replacement_root"]),
+        recovery_policy=copy.deepcopy(anchor.recovery_policy),
         revocations=revoked,
         credential_authorities={
             artifact["artifact_id"]: copy.deepcopy(body["replacement_root"])
@@ -1225,12 +1510,12 @@ __all__ = [
     "ControlState",
     "IdentityError",
     "VerificationError",
+    "aggregate_genesis",
     "create_binding_activation",
     "create_embodiment_credential",
-    "create_genesis",
+    "create_genesis_holder_share",
     "create_history_binding",
     "create_incarnation_authorization",
-    "create_recovery",
     "create_recovery_policy_change",
     "create_revocation",
     "create_root_rotation",
@@ -1240,6 +1525,7 @@ __all__ = [
     "generate_x25519_private",
     "key_descriptor",
     "key_id",
+    "prepare_genesis",
     "require_trust_mode",
     "signing_descriptor",
     "threshold_policy",
@@ -1249,6 +1535,7 @@ __all__ = [
     "verify_history_binding",
     "verify_incarnation_authorization",
     "verify_recovery",
+    "verify_recovery_from_anchor",
     "verify_successor",
     "x25519_public",
 ]

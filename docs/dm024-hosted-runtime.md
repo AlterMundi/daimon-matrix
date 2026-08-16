@@ -50,8 +50,30 @@ sorted, exact native-peer HTTP(S) target and timeout. The endpoint is fixed at
 startup rather than accepted from a sync call. `we.sync.peer-pull` reuses the
 DM-023 request frozen by `scope.we.sync-plan`, performs the encrypted peer
 round trip inside the daemon's custody boundary and atomically imports one
-bounded page. The installed `daimon-bootstrap` ceremony and operational steps
-are documented in `docs/runbooks/operator-bootstrap.md`.
+bounded page. Distributed `daimon-genesis` provisioning and the explicitly
+synthetic single-store bootstrap fixture are documented in
+`docs/runbooks/operator-bootstrap.md`.
+
+V7 also carries one `runtime_label` and a content-addressed `runtime_id` derived
+from that label, the being root, the root-authorized local origin and its
+operational signing key. The published schema requires exactly one row for each
+of the ten disjoint operator roles plus two host-bound roles: an exact
+five-method status reader and an exact four-method curator worker. The host
+roles are not added to the operator partition and never receive the broader
+`observe` surface. Every row and owner-only V3 client config repeats the runtime
+binding; startup derives it again and rejects missing, duplicated, regrouped or
+cross-runtime capability material.
+The embodiment signing key named by the active root-authorized credential also
+signs a domain-separated hash of the exact twelve-row capability set and the
+runtime identity inputs. Startup verifies that signature, so copied capability
+material cannot be made acceptable merely by relabelling public row and client
+JSON.
+
+The two host clients live at `host-clients/status/` and
+`host-clients/curator/` inside the generated runtime material. Their descriptor,
+origin, runtime identity, placement and distinct key are validated at startup.
+Cluster may copy those two directories into separate host-local roots; Matrix
+does not synthesize a missing host client or fall back to a central credential.
 
 ## Local protocol
 

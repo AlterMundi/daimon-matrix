@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import secrets
 import socket
 import stat
@@ -31,6 +32,7 @@ from .service import SERVICE_METHODS
 
 CLIENT_CONFIG_SCHEMA: Final = "dm.local.client-config/v1"
 CLIENT_CONFIG_SCHEMA_V2: Final = "dm.local.client-config/v2"
+CLIENT_CONFIG_SCHEMA_V3: Final = "dm.local.client-config/v3"
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
 Clock = Callable[[], int]
 UUIDFactory = Callable[[], uuid.UUID]
@@ -203,6 +205,8 @@ class ClientConfig:
     capability: LocalCapability
     expected_server: Mapping[str, str]
     historical_servers: tuple[Mapping[str, Any], ...] = ()
+    runtime_id: str | None = None
+    runtime_label: str | None = None
 
     @classmethod
     def load(cls, path: Path, key: bytes | bytearray) -> ClientConfig:
@@ -214,8 +218,14 @@ class ClientConfig:
             fields = {"capability", "expected_server", "schema"}
             if schema == CLIENT_CONFIG_SCHEMA_V2:
                 fields.add("historical_servers")
+            if schema == CLIENT_CONFIG_SCHEMA_V3:
+                fields.update({"runtime_id", "runtime_label"})
             value = _closed(raw, fields, "invalid_client_config")
-            if schema not in {CLIENT_CONFIG_SCHEMA, CLIENT_CONFIG_SCHEMA_V2}:
+            if schema not in {
+                CLIENT_CONFIG_SCHEMA,
+                CLIENT_CONFIG_SCHEMA_V2,
+                CLIENT_CONFIG_SCHEMA_V3,
+            }:
                 raise ClientError("unsupported_client_config")
             server = _closed(
                 value["expected_server"],
@@ -285,10 +295,26 @@ class ClientConfig:
                     {row["server"]["incarnation_id"] for row in historical}
                 ) != len(historical):
                     raise ClientError("invalid_historical_servers")
+            runtime_id: str | None = None
+            runtime_label: str | None = None
+            if schema == CLIENT_CONFIG_SCHEMA_V3:
+                runtime_id = value["runtime_id"]
+                runtime_label = value["runtime_label"]
+                if (
+                    not isinstance(runtime_id, str)
+                    or re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", runtime_id)
+                    is None
+                    or not isinstance(runtime_label, str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", runtime_label)
+                    is None
+                ):
+                    raise ClientError("invalid_client_runtime_identity")
             return cls(
                 capability,
                 copy.deepcopy(dict(server)),
                 tuple(copy.deepcopy(historical)),
+                runtime_id,
+                runtime_label,
             )
         finally:
             if isinstance(key, bytearray):
@@ -616,6 +642,7 @@ class LocalClient:
 __all__ = [
     "CLIENT_CONFIG_SCHEMA",
     "CLIENT_CONFIG_SCHEMA_V2",
+    "CLIENT_CONFIG_SCHEMA_V3",
     "ClientConfig",
     "ClientError",
     "LocalClient",

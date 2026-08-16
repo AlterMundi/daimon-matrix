@@ -304,10 +304,10 @@ def authenticate_request(
             or capability.descriptor["status"] != "active"
             or not capability.descriptor["not_before_ms"]
             <= issued
-            <= capability.descriptor["not_after_ms"]
+            < capability.descriptor["not_after_ms"]
             or not capability.descriptor["not_before_ms"]
             <= now_ms
-            <= capability.descriptor["not_after_ms"]
+            < capability.descriptor["not_after_ms"]
             or issued - now_ms > MAX_CLOCK_SKEW_MS
             or (not allow_stale and now_ms - issued > MAX_CLOCK_SKEW_MS)
             or not isinstance(request["params"], Mapping)

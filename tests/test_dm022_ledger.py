@@ -21,10 +21,10 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.identity import (
     create_binding_activation,
     create_embodiment_credential,
-    create_genesis,
     create_history_binding,
     create_incarnation_authorization,
     create_revocation,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     key_descriptor,
     signing_descriptor,
@@ -76,7 +76,7 @@ class RootLedgerFixture(unittest.TestCase):
         self.root_path.chmod(0o700)
         self.root_seeds = [seed("root-a"), seed("root-b"), seed("root-c")]
         recovery = [seed("recovery-a"), seed("recovery-b"), seed("recovery-c")]
-        self.genesis = create_genesis(
+        self.genesis = create_synthetic_genesis_in_process(
             self.root_seeds,
             2,
             recovery,

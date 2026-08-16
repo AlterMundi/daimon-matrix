@@ -17,12 +17,12 @@ from daimon_matrix.identity import (
     VerificationError,
     create_binding_activation,
     create_embodiment_credential,
-    create_genesis,
     create_history_binding,
     create_incarnation_authorization,
-    create_recovery,
     create_revocation,
     create_root_rotation,
+    create_synthetic_genesis_in_process,
+    create_synthetic_recovery_in_process,
     ed25519_public,
     key_descriptor,
     require_trust_mode,
@@ -60,7 +60,7 @@ class IdentityFixture(unittest.TestCase):
             seed("recovery-b"),
             seed("recovery-c"),
         ]
-        self.genesis = create_genesis(
+        self.genesis = create_synthetic_genesis_in_process(
             self.root,
             2,
             self.recovery,
@@ -143,7 +143,7 @@ class PluralAuthorizationTests(IdentityFixture):
 
     def test_root_recovery_and_embodiment_keys_are_purpose_separated(self) -> None:
         with self.assertRaises(VerificationError):
-            create_genesis(
+            create_synthetic_genesis_in_process(
                 self.root,
                 2,
                 [self.root[0], seed("other-rec-a"), seed("other-rec-b")],
@@ -294,7 +294,7 @@ class RotationAndRecoveryTests(IdentityFixture):
             _ = chain.state
 
         incomplete_root = [seed("incomplete-1"), seed("incomplete-2")]
-        incomplete = create_recovery(
+        incomplete = create_synthetic_recovery_in_process(
             [chain.states()[0]],
             self.recovery,
             incomplete_root,
@@ -305,7 +305,7 @@ class RotationAndRecoveryTests(IdentityFixture):
             chain.add(incomplete)
 
         recovered_root = [seed("recovered-1"), seed("recovered-2")]
-        recovery = create_recovery(
+        recovery = create_synthetic_recovery_in_process(
             chain.states(),
             self.recovery,
             recovered_root,
@@ -320,7 +320,7 @@ class RotationAndRecoveryTests(IdentityFixture):
 
     def test_loss_of_both_thresholds_cannot_recreate_the_being(self) -> None:
         replacement = [seed("lost-replacement-a"), seed("lost-replacement-b")]
-        unauthorized = create_recovery(
+        unauthorized = create_synthetic_recovery_in_process(
             [self.state],
             [],
             replacement,
@@ -330,7 +330,7 @@ class RotationAndRecoveryTests(IdentityFixture):
         with self.assertRaises(VerificationError):
             verify_recovery(unauthorized, [self.state])
 
-        successor = create_genesis(
+        successor = create_synthetic_genesis_in_process(
             replacement,
             2,
             [seed("successor-rec-a"), seed("successor-rec-b")],
@@ -377,7 +377,7 @@ class RotationAndRecoveryTests(IdentityFixture):
             legion_strict,
         )
         replacement = [seed("merged-root-a"), seed("merged-root-b")]
-        recovery = create_recovery(
+        recovery = create_synthetic_recovery_in_process(
             [legion_wide, peer_state],
             self.recovery,
             replacement,

@@ -188,6 +188,60 @@ SERVICE_METHODS: Final = (
     | RELATIONSHIP_METHODS
 )
 
+# Bootstrap/rebirth must never mint one bearer capability for the complete
+# service surface.  These profiles are deliberately disjoint: compromise of
+# one client key cannot be used as a signer oracle for another mutation
+# family.  ``observe`` is the safe default client; every mutating family is an
+# explicit separate custody slot and client configuration.
+OBSERVE_METHODS: Final = frozenset(
+    {
+        "communication.page",
+        "curator.inspect",
+        "memory.context",
+        "memory.evaluate",
+        "relationship.cursor",
+        "relationship.disclose",
+        "relationship.snapshot",
+        "relationship.status",
+        "review.inspect",
+        "review.queue",
+        "route.inspect",
+        "runtime.status",
+        "scope.me",
+        "scope.resolve",
+        "scope.tribe",
+        "scope.we",
+        "scope.we.diff",
+        "scope.we.sync-plan",
+        "source.assess",
+        "source.diff",
+        "source.incoming",
+        "source.projection",
+        "source.status",
+        "species.incoming",
+        "we.diff",
+        "we.heads",
+        "we.observe",
+        "we.preview",
+        "we.projection.get",
+        "we.sync.serve",
+        "we.sync.validate-receipt",
+    }
+)
+
+OPERATOR_CAPABILITY_PROFILES: Final = {
+    "observe": OBSERVE_METHODS,
+    "weave": (METHODS | PEER_METHODS) - OBSERVE_METHODS,
+    "communication": COMMUNICATION_METHODS - OBSERVE_METHODS,
+    "curator": CURATOR_METHODS - OBSERVE_METHODS,
+    "memory": MEMORY_METHODS - OBSERVE_METHODS,
+    "relationships": RELATIONSHIP_METHODS - OBSERVE_METHODS,
+    "review": REVIEW_METHODS - OBSERVE_METHODS,
+    "routes": ROUTE_METHODS - OBSERVE_METHODS,
+    "sources": SOURCE_METHODS - OBSERVE_METHODS,
+    "species": SPECIES_METHODS - OBSERVE_METHODS,
+}
+
 Clock = Callable[[], int]
 
 
@@ -1793,6 +1847,8 @@ __all__ = [
     "COMMUNICATION_METHODS",
     "MEMORY_METHODS",
     "METHODS",
+    "OBSERVE_METHODS",
+    "OPERATOR_CAPABILITY_PROFILES",
     "PEER_METHODS",
     "RELATIONSHIP_METHODS",
     "SCOPE_METHODS",

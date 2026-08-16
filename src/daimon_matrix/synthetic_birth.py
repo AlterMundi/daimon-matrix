@@ -40,8 +40,8 @@ from .client import CLIENT_CONFIG_SCHEMA
 from .identity import (
     ControlState,
     create_embodiment_credential,
-    create_genesis,
     create_incarnation_authorization,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
@@ -261,7 +261,7 @@ def _create_identity(
         else (generate_ed25519_seed(), generate_ed25519_seed())
     )
     actual_genesis = (
-        create_genesis(
+        create_synthetic_genesis_in_process(
             actual_roots,
             2,
             actual_recovery,
@@ -649,7 +649,7 @@ def run_synthetic_birth(
     # operational keys deliberately do not.
     newborn_roots = (generate_ed25519_seed(), generate_ed25519_seed())
     newborn_recovery = (generate_ed25519_seed(), generate_ed25519_seed())
-    newborn_genesis = create_genesis(
+    newborn_genesis = create_synthetic_genesis_in_process(
         newborn_roots,
         2,
         newborn_recovery,

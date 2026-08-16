@@ -27,8 +27,8 @@ from daimon_matrix.birth import (
 from daimon_matrix.canonical import b64url
 from daimon_matrix.identity import (
     create_embodiment_credential,
-    create_genesis,
     create_incarnation_authorization,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     key_descriptor,
     verify_genesis,
@@ -61,7 +61,7 @@ class IdentityFixture:
             seed(f"{label}:recovery:a"),
             seed(f"{label}:recovery:b"),
         ]
-        self.genesis = create_genesis(
+        self.genesis = create_synthetic_genesis_in_process(
             self.root_seeds,
             2,
             self.recovery_seeds,
@@ -350,7 +350,7 @@ class BirthContractTests(BirthFixture):
                 offer_nonce=seed("alias-offer"),
             )
 
-        parent_controlled_genesis = create_genesis(
+        parent_controlled_genesis = create_synthetic_genesis_in_process(
             self.parent.root_seeds,
             2,
             self.parent.recovery_seeds,

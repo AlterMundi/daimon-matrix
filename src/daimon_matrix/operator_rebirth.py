@@ -41,31 +41,52 @@ from .authority_epochs import (
     verify_recovery_rebirth,
 )
 from .canonical import b64url, canonical_bytes, digest, domain_bytes, unb64url
-from .client import CLIENT_CONFIG_SCHEMA
+from .client import CLIENT_CONFIG_SCHEMA_V3
 from .identity import (
     DOMAINS,
     ControlChain,
     ControlState,
+    aggregate_recovery,
     create_embodiment_credential,
     create_incarnation_authorization,
-    create_recovery,
+    create_recovery_authorization_share,
+    create_recovery_possession_share,
+    create_synthetic_recovery_in_process,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
     key_descriptor,
     key_id,
+    prepare_recovery,
     signing_descriptor,
     verify_embodiment_credential,
     verify_incarnation_authorization,
     verify_recovery,
+    verify_recovery_from_anchor,
     x25519_public,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
-from .local_api import LocalCapability, create_capability
+from .operator_capabilities import (
+    HOST_PROFILE_NAMES,
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    OperatorCapabilityError,
+    create_host_capability_set,
+    create_operator_capability_binding,
+    create_operator_capability_set,
+    host_capability_profile,
+    host_capability_slot,
+    operator_capability_lifecycle,
+    operator_capability_profile,
+    operator_runtime_id,
+    validate_host_capability_set,
+    validate_operator_capability_set,
+)
+from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
+from .operator_genesis import PENDING_CONTROL_HEAD
 from .peer_transport import PeerTransportError, http_peer_round_trip
 from .runtime import load_runtime
-from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
 
 REQUEST_SCHEMA: Final = "dm.operator.embodiment-request/v1"
@@ -78,21 +99,32 @@ ACTIVATION_ID_PREFIX: Final = "dm:embodiment-activation:v1:"
 RECOVERY_ACTIVATION_SCHEMA: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_DOMAIN: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_ID_PREFIX: Final = "dm:recovery-activation:v1:"
+DISTRIBUTED_RECOVERY_INTENT_SCHEMA: Final = "dm.operator.distributed-recovery-intent/v1"
+DISTRIBUTED_RECOVERY_INTENT_DOMAIN: Final = "dm.operator.distributed-recovery-intent/v1"
+DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX: Final = "dm:recovery-intent:v1:"
+DISTRIBUTED_RECOVERY_SHARE_SCHEMA: Final = "dm.operator.distributed-recovery-share/v1"
+DISTRIBUTED_RECOVERY_SHARE_DOMAIN: Final = "dm.operator.distributed-recovery-share/v1"
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA: Final = (
+    "dm.operator.distributed-recovery-authorization-intent/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN: Final = (
+    "dm.operator.distributed-recovery-authorization-intent/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX: Final = (
+    "dm:recovery-authorization-intent:v1:"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA: Final = (
+    "dm.operator.distributed-recovery-authorization-share/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN: Final = (
+    "dm.operator.distributed-recovery-authorization-share/v1"
+)
 TRANSPORT_SCHEME: Final = "dm-peer-v1"
 MAX_TIME: Final = 2**53 - 1
 MAX_ARTIFACT_BYTES: Final = 1024 * 1024
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 TARGET_PROFILE_SCHEMA: Final = "dm.operator.rebirth-target-profile/v1"
 PREPARATION_SCHEMA: Final = "dm.operator.rebirth-preparation/v1"
-STATUS_OBSERVER_METHODS: Final = frozenset(
-    {
-        "runtime.status",
-        "scope.me",
-        "scope.we",
-        "scope.we.diff",
-        "scope.we.sync-plan",
-    }
-)
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -175,6 +207,59 @@ def _identity_signature(seed: bytes, role: str, preimage: bytes) -> dict[str, st
         "role": role,
         "value": b64url(Ed25519PrivateKey.from_private_bytes(seed).sign(preimage)),
     }
+
+
+def _holder_attestation(
+    seed: bytes, domain: str, body: Mapping[str, Any]
+) -> dict[str, str]:
+    public = ed25519_public(seed)
+    return {
+        "alg": "Ed25519",
+        "kid": key_id("Ed25519", public),
+        "value": b64url(
+            Ed25519PrivateKey.from_private_bytes(seed).sign(domain_bytes(domain, body))
+        ),
+    }
+
+
+def _verify_holder_attestation(
+    value: Any,
+    domain: str,
+    body: Mapping[str, Any],
+    allowed_descriptors: Sequence[Mapping[str, Any]],
+    *,
+    code: str,
+) -> str:
+    attestation = _closed(value, {"alg", "kid", "value"}, code)
+    public_by_id: dict[str, bytes] = {}
+    try:
+        for descriptor in allowed_descriptors:
+            row = _closed(
+                descriptor,
+                {"algorithm", "key_id", "public"},
+                code,
+            )
+            public = unb64url(str(row["public"]), length=32)
+            kid = str(row["key_id"])
+            if (
+                row["algorithm"] != "Ed25519"
+                or kid != key_id("Ed25519", public)
+                or kid in public_by_id
+            ):
+                raise RebirthError(code)
+            public_by_id[kid] = public
+        kid = str(attestation["kid"])
+        if attestation["alg"] != "Ed25519" or kid not in public_by_id:
+            raise RebirthError(code)
+        Ed25519PublicKey.from_public_bytes(public_by_id[kid]).verify(
+            unb64url(str(attestation["value"]), length=64),
+            domain_bytes(domain, body),
+        )
+        return kid
+    except RebirthError:
+        raise
+    except (InvalidSignature, TypeError, ValueError) as exception:
+        raise RebirthError(code) from exception
 
 
 def _origin(value: Any) -> dict[str, str]:
@@ -490,12 +575,19 @@ def _exact_custody_role_seeds(
 
 
 def recovery_request_base(
-    previous: RootAuthority, recovery_artifact: Mapping[str, Any]
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    known_states: Sequence[ControlState] | None = None,
 ) -> RecoveryRequestBase:
     """Verify a recovery quorum artifact before target custody is generated."""
 
     try:
-        recovered = verify_recovery(recovery_artifact, [previous.state])
+        recovered = (
+            verify_recovery(recovery_artifact, known_states)
+            if known_states is not None
+            else verify_recovery_from_anchor(recovery_artifact, previous.state)
+        )
     except (TypeError, ValueError) as exception:
         raise RebirthError("rebirth_recovery_artifact_invalid") from exception
     expected_revocations = sorted(
@@ -508,9 +600,8 @@ def recovery_request_base(
     body = recovery_artifact.get("body")
     previous_root_ids = {row["key_id"] for row in previous.state.root_policy["keys"]}
     recovered_root_ids = {row["key_id"] for row in recovered.root_policy["keys"]}
-    if (
-        not isinstance(body, Mapping)
-        or body.get("revoked_embodiments") != expected_revocations
+    if not isinstance(body, Mapping) or not set(expected_revocations).issubset(
+        body.get("revoked_embodiments", [])
     ):
         raise RebirthError("rebirth_recovery_incomplete_revocation")
     if previous_root_ids & recovered_root_ids:
@@ -696,7 +787,7 @@ def validate_activation(
     return normalized, successor, history
 
 
-def authorize_recovery_enrollment_request(
+def authorize_synthetic_recovery_enrollment_in_process(
     request: Any,
     previous: RootAuthority,
     recovery_artifact: Mapping[str, Any],
@@ -704,7 +795,7 @@ def authorize_recovery_enrollment_request(
     replacement_root_seeds: Sequence[bytes],
     issued_at_ms: int,
 ) -> dict[str, Any]:
-    """Authorize the first fresh body directly under a recovered root."""
+    """Synthetic fixture that centralizes a replacement-root threshold."""
 
     issued = _uint(issued_at_ms, "invalid_rebirth_time")
     request_base = recovery_request_base(previous, recovery_artifact)
@@ -798,6 +889,363 @@ def authorize_recovery_enrollment_request(
         "body": body,
     }
     _canonical(activation, "invalid_rebirth_recovery_activation")
+    return activation
+
+
+def _distributed_recovery_authorization_material(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    issued = _uint(issued_at_ms, "invalid_rebirth_time")
+    request_base = recovery_request_base(previous, recovery_artifact)
+    verified = validate_enrollment_request(request, request_base, observed_at_ms=issued)
+    credential = copy.deepcopy(verified["body"]["credential"])
+    incarnation = copy.deepcopy(verified["body"]["incarnation"])
+    origin = _origin(verified["body"]["origin"])
+    manifest = BeingManifest.from_value(
+        {
+            "schema": "being-manifest/v2",
+            "being_ref": previous.manifest.being_ref,
+            "control_head": request_base.state.head,
+            "history_binding_id": previous.manifest.value["history_binding_id"],
+            "revision": previous.manifest.value["revision"] + 1,
+            "embodiments": [
+                {
+                    "body_ref": origin["body_ref"],
+                    "embodiment_credential_id": credential["artifact_id"],
+                    "embodiment_id": origin["embodiment_id"],
+                    "incarnation_authorization_id": incarnation["artifact_id"],
+                    "incarnation_id": origin["incarnation_id"],
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    transition = create_recovery_rebirth(
+        previous.manifest,
+        manifest,
+        recovery_artifact=recovery_artifact,
+        body_ref=origin["body_ref"],
+        embodiment_id=origin["embodiment_id"],
+        incarnation_id=origin["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=incarnation["artifact_id"],
+        principal_id=origin["principal_id"],
+        root_seeds=[],
+        issued_at_ms=issued,
+    )
+    if transition["signatures"]:
+        raise AssertionError("unsigned recovery transition contains signatures")
+    return {
+        "request_id": verified["request_id"],
+        "being_ref": previous.manifest.being_ref,
+        "previous_control_head": previous.state.head,
+        "previous_manifest_hash": previous.manifest.digest,
+        "recovery_artifact": copy.deepcopy(dict(recovery_artifact)),
+        "recovered_control_head": request_base.state.head,
+        "successor_manifest": manifest.value,
+        "credential": credential,
+        "incarnation": incarnation,
+        "origin": origin,
+        "transition": transition,
+        "issued_at_ms": issued,
+    }
+
+
+def create_distributed_recovery_authorization_intent(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    issued_at_ms: int,
+    expires_at_ms: int,
+    nonce: bytes,
+) -> dict[str, Any]:
+    """Freeze target enrollment and transition before root holders sign."""
+
+    material = _distributed_recovery_authorization_material(
+        request,
+        previous,
+        recovery_artifact,
+        issued_at_ms=issued_at_ms,
+    )
+    expires = _uint(expires_at_ms, "invalid_rebirth_recovery_authorization_intent_time")
+    if (
+        expires <= material["issued_at_ms"]
+        or expires - material["issued_at_ms"] > 24 * 60 * 60 * 1000
+    ):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent_time")
+    if len(nonce) != 32:
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent_nonce")
+    body = {
+        "activation_body": material,
+        "expires_at_ms": expires,
+        "nonce": b64url(nonce),
+    }
+    result = {
+        "schema": DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA,
+        "intent_id": DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX
+        + b64url(digest(DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(result, "invalid_rebirth_recovery_authorization_intent")
+    return result
+
+
+def validate_distributed_recovery_authorization_intent(
+    value: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Rebuild every public byte before a replacement-root holder signs."""
+
+    row = _closed(
+        value,
+        {"schema", "intent_id", "body"},
+        "invalid_rebirth_recovery_authorization_intent",
+    )
+    if row["schema"] != DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA:
+        raise RebirthError("unsupported_rebirth_recovery_authorization_intent")
+    body = _closed(
+        row["body"],
+        {"activation_body", "expires_at_ms", "nonce"},
+        "invalid_rebirth_recovery_authorization_intent",
+    )
+    observed = _uint(
+        observed_at_ms, "invalid_rebirth_recovery_authorization_intent_time"
+    )
+    expires = _uint(
+        body["expires_at_ms"],
+        "invalid_rebirth_recovery_authorization_intent_time",
+    )
+    try:
+        nonce = b64url(unb64url(str(body["nonce"]), length=32))
+    except (TypeError, ValueError) as exception:
+        raise RebirthError(
+            "invalid_rebirth_recovery_authorization_intent_nonce"
+        ) from exception
+    activation_body = body["activation_body"]
+    if not isinstance(activation_body, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent")
+    issued = _uint(
+        activation_body.get("issued_at_ms"),
+        "invalid_rebirth_recovery_authorization_intent_time",
+    )
+    if (
+        nonce != body["nonce"]
+        or expires <= issued
+        or expires - issued > 24 * 60 * 60 * 1000
+        or not issued <= observed < expires
+    ):
+        raise RebirthError("rebirth_recovery_authorization_intent_not_timely")
+    expected = _distributed_recovery_authorization_material(
+        request,
+        previous,
+        recovery_artifact,
+        issued_at_ms=issued,
+    )
+    if canonical_bytes(expected) != canonical_bytes(activation_body):
+        raise RebirthError("rebirth_recovery_authorization_intent_mismatch")
+    expected_id = DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX + b64url(
+        digest(DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN, body)
+    )
+    normalized = copy.deepcopy(dict(row))
+    if row["intent_id"] != expected_id or _canonical(
+        normalized, "invalid_rebirth_recovery_authorization_intent"
+    ) != _canonical(value, "invalid_rebirth_recovery_authorization_intent"):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent")
+    return normalized
+
+
+def create_distributed_recovery_authorization_share(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    replacement_root_seed: bytes,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Sign credential and transition with exactly one replacement-root key."""
+
+    verified = validate_distributed_recovery_authorization_intent(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        observed_at_ms=observed_at_ms,
+    )
+    activation_body = verified["body"]["activation_body"]
+    credential = activation_body["credential"]
+    transition = activation_body["transition"]
+    recovered = recovery_request_base(previous, recovery_artifact)
+    kid = key_id("Ed25519", ed25519_public(replacement_root_seed))
+    allowed = {row["key_id"] for row in recovered.state.root_policy["keys"]}
+    if kid not in allowed:
+        raise RebirthError("rebirth_recovered_root_holder_not_authorized")
+    credential_signature = _identity_signature(
+        replacement_root_seed,
+        "root-authorization",
+        domain_bytes(DOMAINS["embodiment-credential"], credential["body"]),
+    )
+    signed_transition = create_recovery_rebirth(
+        previous.manifest,
+        BeingManifest.from_value(activation_body["successor_manifest"]),
+        recovery_artifact=recovery_artifact,
+        body_ref=activation_body["origin"]["body_ref"],
+        embodiment_id=activation_body["origin"]["embodiment_id"],
+        incarnation_id=activation_body["origin"]["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=activation_body["incarnation"]["artifact_id"],
+        principal_id=activation_body["origin"]["principal_id"],
+        root_seeds=[replacement_root_seed],
+        issued_at_ms=activation_body["issued_at_ms"],
+    )
+    if canonical_bytes(
+        {key: value for key, value in signed_transition.items() if key != "signatures"}
+    ) != canonical_bytes(
+        {key: value for key, value in transition.items() if key != "signatures"}
+    ):
+        raise RebirthError("rebirth_recovery_authorization_intent_mismatch")
+    share_body = {
+        "intent_id": verified["intent_id"],
+        "credential_artifact_id": credential["artifact_id"],
+        "transition_content_hash": transition["content_hash"],
+        "credential_signature": credential_signature,
+        "transition_signature": signed_transition["signatures"][0],
+    }
+    return {
+        "schema": DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(
+            replacement_root_seed,
+            DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN,
+            share_body,
+        ),
+    }
+
+
+def aggregate_distributed_recovery_authorization(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    shares: Sequence[Any],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Build and verify a recovery activation without access to root seeds."""
+
+    verified = validate_distributed_recovery_authorization_intent(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        observed_at_ms=observed_at_ms,
+    )
+    body = copy.deepcopy(verified["body"]["activation_body"])
+    credential = body["credential"]
+    transition = body["transition"]
+    request_base = recovery_request_base(previous, recovery_artifact)
+    credential_signatures: list[Mapping[str, Any]] = []
+    transition_signatures: list[Mapping[str, Any]] = []
+    paired_ids: set[str] = set()
+    for value in shares:
+        share = _closed(
+            value,
+            {
+                "schema",
+                "intent_id",
+                "credential_artifact_id",
+                "transition_content_hash",
+                "credential_signature",
+                "transition_signature",
+                "attestation",
+            },
+            "invalid_rebirth_recovery_authorization_share",
+        )
+        credential_signature = share["credential_signature"]
+        transition_signature = share["transition_signature"]
+        if (
+            share["schema"] != DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA
+            or share["intent_id"] != verified["intent_id"]
+            or share["credential_artifact_id"] != credential["artifact_id"]
+            or share["transition_content_hash"] != transition["content_hash"]
+            or not isinstance(credential_signature, Mapping)
+            or not isinstance(transition_signature, Mapping)
+            or credential_signature.get("key_id") != transition_signature.get("kid")
+            or credential_signature.get("key_id") in paired_ids
+        ):
+            raise RebirthError("invalid_rebirth_recovery_authorization_share")
+        share_body = {
+            "intent_id": share["intent_id"],
+            "credential_artifact_id": share["credential_artifact_id"],
+            "transition_content_hash": share["transition_content_hash"],
+            "credential_signature": credential_signature,
+            "transition_signature": transition_signature,
+        }
+        attested_kid = _verify_holder_attestation(
+            share["attestation"],
+            DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN,
+            share_body,
+            request_base.state.root_policy["keys"],
+            code="invalid_rebirth_recovery_authorization_share",
+        )
+        if credential_signature.get("key_id") != attested_kid:
+            raise RebirthError("invalid_rebirth_recovery_authorization_share")
+        paired_ids.add(str(credential_signature["key_id"]))
+        credential_signatures.append(credential_signature)
+        transition_signatures.append(transition_signature)
+    credential["signatures"].extend(
+        copy.deepcopy(dict(signature)) for signature in credential_signatures
+    )
+    credential["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+    transition["signatures"] = sorted(
+        (copy.deepcopy(dict(signature)) for signature in transition_signatures),
+        key=lambda row: row["kid"],
+    )
+    try:
+        verify_embodiment_credential(
+            credential,
+            request_base.state,
+            at_ms=body["issued_at_ms"],
+        )
+        verify_incarnation_authorization(
+            body["incarnation"],
+            credential,
+            request_base.state,
+            at_ms=body["issued_at_ms"],
+        )
+        successor = RootAuthority(
+            BeingManifest.from_value(body["successor_manifest"]),
+            request_base.state,
+            {credential["artifact_id"]: credential},
+            {body["incarnation"]["artifact_id"]: body["incarnation"]},
+        )
+        verify_recovery_rebirth(
+            transition,
+            previous,
+            successor,
+            recovery_artifact,
+        )
+        RootHistoryAuthority(successor, [previous], [transition])
+    except (TypeError, ValueError) as exception:
+        raise RebirthError(
+            "rebirth_recovery_authorization_share_threshold_rejected"
+        ) from exception
+    activation = {
+        "schema": RECOVERY_ACTIVATION_SCHEMA,
+        "activation_id": RECOVERY_ACTIVATION_ID_PREFIX
+        + b64url(digest(RECOVERY_ACTIVATION_DOMAIN, body)),
+        "body": body,
+    }
+    validate_recovery_activation(activation, previous, request=request)
     return activation
 
 
@@ -1040,11 +1488,36 @@ def authority_from_document(value: Any) -> RootAuthority:
     return authority
 
 
+def _known_control_authorities(
+    previous: RootAuthority, documents: Sequence[Any]
+) -> tuple[RootAuthority, ...]:
+    """Verify independently supplied fork documents for a recovery ceremony."""
+
+    authorities = [previous, *(authority_from_document(value) for value in documents)]
+    by_head: dict[str, RootAuthority] = {}
+    recovery_policy = canonical_bytes(previous.state.recovery_policy)
+    for authority in authorities:
+        state = authority.state
+        if (
+            state.being_ref != previous.state.being_ref
+            or canonical_bytes(state.recovery_policy) != recovery_policy
+        ):
+            raise RebirthError("rebirth_recovery_branch_authority_mismatch")
+        existing = by_head.get(state.head)
+        if existing is not None and existing != authority:
+            raise RebirthError("rebirth_recovery_branch_authority_mismatch")
+        by_head[state.head] = authority
+    return tuple(by_head[head] for head in sorted(by_head))
+
+
 def authority_from_runtime_bundle(value: Any) -> RootAuthority:
     """Verify the active root authority and signed history in one V7 bundle."""
 
     fields = {
         "schema",
+        "operator_capability_binding",
+        "runtime_id",
+        "runtime_label",
         "control_artifacts",
         "control_head",
         "manifest",
@@ -1266,6 +1739,48 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _write_new_document(path: Path, value: Mapping[str, Any]) -> None:
+    output = Path(os.path.abspath(path))
+    parent = _owner_directory(output.parent, "rebirth_output_parent_rejected")
+    raw = canonical_bytes(value)
+    if output.exists() or output.is_symlink():
+        if canonical_bytes(_safe_document(output, "rebirth_output_exists")) == raw:
+            return
+        raise RebirthError("rebirth_output_exists")
+    staging = parent / (f".{output.name}.{hashlib.sha256(raw).hexdigest()}.staging")
+    if staging.exists() or staging.is_symlink():
+        try:
+            if (
+                canonical_bytes(
+                    _safe_document(staging, "rebirth_output_staging_rejected")
+                )
+                != raw
+            ):
+                raise RebirthError("rebirth_output_staging_rejected") from None
+        except RebirthError:
+            info = staging.lstat()
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+            ):
+                raise RebirthError("rebirth_output_staging_rejected") from None
+            staging.unlink()
+            _fsync_directory(parent)
+            _private_write(staging, value)
+    else:
+        _private_write(staging, value)
+    try:
+        os.link(staging, output, follow_symlinks=False)
+    except FileExistsError:
+        if canonical_bytes(_safe_document(output, "rebirth_output_exists")) != raw:
+            raise RebirthError("rebirth_output_exists") from None
+    finally:
+        if staging.exists() and not staging.is_symlink():
+            staging.unlink()
+    _fsync_directory(parent)
+
+
 def _password(descriptor: int) -> bytearray:
     if descriptor < 0:
         raise RebirthError("invalid_rebirth_password_descriptor")
@@ -1432,8 +1947,6 @@ def create_target_preparation(
         signing_seed = generate_ed25519_seed()
         encryption_private = generate_x25519_private()
         transport_seed = generate_ed25519_seed()
-        capability_key = secrets.token_bytes(32)
-        status_key = secrets.token_bytes(32)
         label = target_profile["label"]
         origin = {
             "body_ref": target_profile["body_ref"],
@@ -1451,25 +1964,29 @@ def create_target_preparation(
             expires_at_ms=expires_at_ms,
             nonce=secrets.token_bytes(32),
         )
-        capability = create_capability(
-            capability_key,
-            client_id=f"client:operator:{label}",
-            methods=sorted(SERVICE_METHODS),
-            not_before_ms=max(0, created_at_ms - 60_000),
-            not_after_ms=MAX_TIME,
-        )
-        status_capability = create_capability(
-            status_key,
-            client_id=f"client:status-observer:{label}",
-            methods=sorted(STATUS_OBSERVER_METHODS),
-            not_before_ms=max(0, created_at_ms - 60_000),
-            not_after_ms=MAX_TIME,
-        )
-        slots = {
+        try:
+            operator_capabilities, operator_keys, operator_slots = (
+                create_operator_capability_set(label, issued_at_ms=created_at_ms)
+            )
+            host_capabilities, host_keys, host_slots = create_host_capability_set(
+                label, issued_at_ms=created_at_ms
+            )
+            if not set(operator_keys.values()).isdisjoint(host_keys.values()):
+                raise RebirthError("rebirth_target_capability_rejected")
+            capability_lifecycle = operator_capability_lifecycle(created_at_ms)
+            runtime_id = operator_runtime_id(
+                label,
+                authority.manifest.being_ref,
+                origin,
+                signing_descriptor(signing_seed)["key_id"],
+            )
+        except OperatorCapabilityError as exception:
+            raise RebirthError("rebirth_target_capability_rejected") from exception
+        slots: dict[str, Any] = {
             "signing": f"runtime.signing.v1:{label}",
             "encryption": f"peer.encryption.v1:{label}",
-            "capability": f"runtime.capability.v1:{label}",
-            "status_capability": f"runtime.capability.v1:status:{label}",
+            "operator_capabilities": operator_slots,
+            "host_capabilities": host_slots,
             "transport": f"transport.signing.v1:{label}",
         }
         EncryptedKeystore.create(
@@ -1479,8 +1996,14 @@ def create_target_preparation(
             secrets={
                 slots["signing"]: signing_seed,
                 slots["encryption"]: encryption_private,
-                slots["capability"]: capability_key,
-                slots["status_capability"]: status_key,
+                **{
+                    operator_slots[profile]: operator_keys[profile]
+                    for profile in OPERATOR_PROFILE_NAMES
+                },
+                **{
+                    host_slots[profile]: host_keys[profile]
+                    for profile in HOST_PROFILE_NAMES
+                },
             },
         )
         EncryptedKeystore.create(
@@ -1496,12 +2019,18 @@ def create_target_preparation(
             "control_head": authority.state.head,
             "base_manifest_hash": authority.manifest.digest,
             "origin": origin,
+            "runtime_id": runtime_id,
             "profile": target_profile,
             "slots": slots,
             "capabilities": {
-                "operator": capability.descriptor,
-                "status_observer": status_capability.descriptor,
+                profile: operator_capabilities[profile].descriptor
+                for profile in OPERATOR_PROFILE_NAMES
             },
+            "host_capabilities": {
+                profile: host_capabilities[profile].descriptor
+                for profile in HOST_PROFILE_NAMES
+            },
+            "capability_lifecycle": capability_lifecycle,
             "custody": {
                 "filename": "custody.json",
                 "counter": 1,
@@ -1570,9 +2099,12 @@ def _validated_preparation(
             "profile",
             "slots",
             "capabilities",
+            "host_capabilities",
             "custody",
             "created_at_ms",
             "expires_at_ms",
+            "capability_lifecycle",
+            "runtime_id",
         },
         "invalid_rebirth_preparation",
     )
@@ -1586,6 +2118,15 @@ def _validated_preparation(
         value["profile"], authority, expected_targets=expected_targets
     )
     request_body = verified_request["body"]
+    try:
+        expected_runtime_id = operator_runtime_id(
+            profile["label"],
+            authority.manifest.being_ref,
+            origin,
+            request_body["credential"]["body"]["signing_key"]["key_id"],
+        )
+    except (KeyError, OperatorCapabilityError, TypeError) as exception:
+        raise RebirthError("rebirth_preparation_binding_mismatch") from exception
     if (
         value["request_id"] != verified_request["request_id"]
         or value["being_ref"] != authority.manifest.being_ref
@@ -1594,30 +2135,51 @@ def _validated_preparation(
         or origin != request_body["origin"]
         or origin["body_ref"] != profile["body_ref"]
         or origin["principal_id"] != profile["principal_id"]
+        or value["runtime_id"] != expected_runtime_id
         or value["created_at_ms"] != request_body["created_at_ms"]
         or value["expires_at_ms"] != request_body["expires_at_ms"]
     ):
         raise RebirthError("rebirth_preparation_binding_mismatch")
     slots = _closed(
         value["slots"],
-        {"signing", "encryption", "capability", "status_capability", "transport"},
+        {
+            "signing",
+            "encryption",
+            "operator_capabilities",
+            "host_capabilities",
+            "transport",
+        },
         "invalid_rebirth_preparation",
     )
     label = profile["label"]
     expected_slots = {
         "signing": f"runtime.signing.v1:{label}",
         "encryption": f"peer.encryption.v1:{label}",
-        "capability": f"runtime.capability.v1:{label}",
-        "status_capability": f"runtime.capability.v1:status:{label}",
+        "operator_capabilities": {
+            profile: f"runtime.capability.v1:{profile}:{label}"
+            for profile in OPERATOR_PROFILE_NAMES
+        },
+        "host_capabilities": {
+            profile: host_capability_slot(label, profile)
+            for profile in HOST_PROFILE_NAMES
+        },
         "transport": f"transport.signing.v1:{label}",
     }
     if slots != expected_slots:
         raise RebirthError("rebirth_preparation_slot_mismatch")
-    capabilities = _closed(
-        value["capabilities"],
-        {"operator", "status_observer"},
+    capabilities = value["capabilities"]
+    host_capabilities = value["host_capabilities"]
+    lifecycle = _closed(
+        value["capability_lifecycle"],
+        {"expires_at_ms", "reprovision_at_ms"},
         "invalid_rebirth_preparation",
     )
+    try:
+        expected_lifecycle = operator_capability_lifecycle(value["created_at_ms"])
+    except OperatorCapabilityError as exception:
+        raise RebirthError("rebirth_capability_lifecycle_mismatch") from exception
+    if lifecycle != expected_lifecycle:
+        raise RebirthError("rebirth_capability_lifecycle_mismatch")
     custody = _closed(
         value["custody"],
         {"filename", "counter", "transport_filename", "transport_counter"},
@@ -1648,8 +2210,8 @@ def _validated_preparation(
     if set(body_contents.secrets) != {
         slots["signing"],
         slots["encryption"],
-        slots["capability"],
-        slots["status_capability"],
+        *slots["operator_capabilities"].values(),
+        *slots["host_capabilities"].values(),
     } or set(transport_contents.secrets) != {slots["transport"]}:
         raise RebirthError("rebirth_target_custody_rejected")
     credential_body = request_body["credential"]["body"]
@@ -1678,20 +2240,32 @@ def _validated_preparation(
     ):
         raise RebirthError("rebirth_target_custody_rejected")
     try:
-        operator = LocalCapability.from_value(
-            capabilities["operator"], body_contents.secrets[slots["capability"]]
+        validate_operator_capability_set(
+            capabilities,
+            slots["operator_capabilities"],
+            body_contents.secrets,
+            label=label,
+            issued_at_ms=value["created_at_ms"],
+            observed_at_ms=observed_at_ms,
         )
-        status = LocalCapability.from_value(
-            capabilities["status_observer"],
-            body_contents.secrets[slots["status_capability"]],
+        validate_host_capability_set(
+            host_capabilities,
+            slots["host_capabilities"],
+            body_contents.secrets,
+            label=label,
+            issued_at_ms=value["created_at_ms"],
+            observed_at_ms=observed_at_ms,
         )
-    except (KeyError, TypeError, ValueError) as exception:
-        raise RebirthError("rebirth_target_custody_rejected") from exception
-    if (
-        frozenset(operator.methods) != SERVICE_METHODS
-        or frozenset(status.methods) != STATUS_OBSERVER_METHODS
-    ):
-        raise RebirthError("rebirth_target_capability_rejected")
+        all_capability_slots = [
+            *slots["operator_capabilities"].values(),
+            *slots["host_capabilities"].values(),
+        ]
+        if len({body_contents.secrets[slot] for slot in all_capability_slots}) != len(
+            all_capability_slots
+        ):
+            raise OperatorCapabilityError("duplicate_runtime_capability_key")
+    except OperatorCapabilityError as exception:
+        raise RebirthError("rebirth_target_capability_rejected") from exception
     return (
         copy.deepcopy(dict(value)),
         body_contents.secrets,
@@ -1751,12 +2325,16 @@ def _activate_target_runtime(
         staging.chmod(0o700)
         runtime_root = staging / "runtime"
         runtime_root.mkdir(mode=0o700)
-        host_client = staging / "host-client"
-        host_client.mkdir(mode=0o700)
+        operator_clients = runtime_root / "operator-clients"
+        operator_clients.mkdir(mode=0o700)
+        host_clients = runtime_root / "host-clients"
+        host_clients.mkdir(mode=0o700)
         slots = verified_preparation["slots"]
         capabilities = verified_preparation["capabilities"]
+        host_capabilities = verified_preparation["host_capabilities"]
         profile = verified_preparation["profile"]
         origin = verified_preparation["origin"]
+        runtime_id = verified_preparation["runtime_id"]
         bundle = (
             apply_recovery_activation_to_runtime_bundle(
                 base_bundle, verified_activation, authority
@@ -1769,6 +2347,8 @@ def _activate_target_runtime(
         if bundle.get("schema") != "dm.runtime.bundle/v7":
             raise RebirthError("unsupported_rebirth_runtime_bundle")
         bundle["local_origin"] = copy.deepcopy(origin)
+        bundle["runtime_id"] = runtime_id
+        bundle["runtime_label"] = profile["label"]
         bundle["ledger"] = "ledger.sqlite"
         bundle["socket"] = "matrix.sock"
         bundle["keystore"] = {
@@ -1776,16 +2356,37 @@ def _activate_target_runtime(
             "counter": 1,
             "signing_slot": slots["signing"],
         }
-        bundle["capabilities"] = [
+        capability_rows = [
             {
-                "descriptor": capabilities["operator"],
-                "secret_slot": slots["capability"],
-            },
-            {
-                "descriptor": capabilities["status_observer"],
-                "secret_slot": slots["status_capability"],
-            },
+                "descriptor": capabilities[profile_name],
+                "profile": operator_capability_profile(profile_name),
+                "runtime_id": runtime_id,
+                "secret_slot": slots["operator_capabilities"][profile_name],
+            }
+            for profile_name in OPERATOR_PROFILE_NAMES
         ]
+        capability_rows.extend(
+            {
+                "descriptor": host_capabilities[profile_name],
+                "profile": host_capability_profile(profile_name),
+                "runtime_id": runtime_id,
+                "secret_slot": slots["host_capabilities"][profile_name],
+            }
+            for profile_name in HOST_PROFILE_NAMES
+        )
+        try:
+            capability_binding = create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=profile["label"],
+                being_ref=successor.manifest.being_ref,
+                origin=origin,
+                signing_seed=body_secrets[slots["signing"]],
+                capability_rows=capability_rows,
+            )
+        except (KeyError, OperatorCapabilityError) as exception:
+            raise RebirthError("rebirth_target_capability_rejected") from exception
+        bundle["capabilities"] = capability_rows
+        bundle["operator_capability_binding"] = capability_binding
         bundle["routing"] = None
         bundle["scopes"] = {
             "body_capabilities": [],
@@ -1837,24 +2438,53 @@ def _activate_target_runtime(
         _private_write(
             runtime_root / "client.json",
             {
-                "schema": CLIENT_CONFIG_SCHEMA,
-                "capability": capabilities["operator"],
+                "schema": CLIENT_CONFIG_SCHEMA_V3,
+                "capability": capabilities[OBSERVE_PROFILE],
                 "expected_server": origin,
-            },
-        )
-        _private_write(runtime_root / "client.key", body_secrets[slots["capability"]])
-        _private_write(
-            host_client / "client.json",
-            {
-                "schema": CLIENT_CONFIG_SCHEMA,
-                "capability": capabilities["status_observer"],
-                "expected_server": origin,
+                "runtime_id": runtime_id,
+                "runtime_label": profile["label"],
             },
         )
         _private_write(
-            host_client / "capability.key",
-            body_secrets[slots["status_capability"]],
+            runtime_root / "client.key",
+            body_secrets[slots["operator_capabilities"][OBSERVE_PROFILE]],
         )
+        for profile_name in OPERATOR_PROFILE_NAMES:
+            if profile_name == OBSERVE_PROFILE:
+                continue
+            role_client = operator_clients / profile_name
+            role_client.mkdir(mode=0o700)
+            _private_write(
+                role_client / "client.json",
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
+                    "capability": capabilities[profile_name],
+                    "expected_server": origin,
+                    "runtime_id": runtime_id,
+                    "runtime_label": profile["label"],
+                },
+            )
+            _private_write(
+                role_client / "capability.key",
+                body_secrets[slots["operator_capabilities"][profile_name]],
+            )
+        for profile_name in HOST_PROFILE_NAMES:
+            host_client = host_clients / profile_name
+            host_client.mkdir(mode=0o700)
+            _private_write(
+                host_client / "client.json",
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
+                    "capability": host_capabilities[profile_name],
+                    "expected_server": origin,
+                    "runtime_id": runtime_id,
+                    "runtime_label": profile["label"],
+                },
+            )
+            _private_write(
+                host_client / "capability.key",
+                body_secrets[slots["host_capabilities"][profile_name]],
+            )
         _private_write(staging / "request.json", request)
         _private_write(staging / "activation.json", verified_activation)
         _private_write(staging / "target-profile.json", profile)
@@ -1873,10 +2503,16 @@ def _activate_target_runtime(
                 "dm.operator.rebirth-peer-profile/v1", profile
             ).hex(),
             "empty_writable_state": True,
+            "capability_lifecycle": verified_preparation["capability_lifecycle"],
         }
         _private_write(staging / "receipt.json", receipt)
         _fsync_directory(runtime_root)
-        _fsync_directory(host_client)
+        for path in operator_clients.iterdir():
+            _fsync_directory(path)
+        _fsync_directory(operator_clients)
+        for path in host_clients.iterdir():
+            _fsync_directory(path)
+        _fsync_directory(host_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)
@@ -2101,14 +2737,521 @@ def restore_recovery_ledger(
     }
 
 
-def create_recovery_custody(
+def create_distributed_recovery_intent(
+    previous: RootAuthority,
+    replacement_root_descriptors: Sequence[Mapping[str, Any]],
+    replacement_threshold: int,
+    *,
+    created_at_ms: int,
+    expires_at_ms: int,
+    nonce: bytes,
+    known_states: Sequence[ControlState] | None = None,
+    known_manifests: Sequence[BeingManifest] | None = None,
+) -> dict[str, Any]:
+    """Freeze public recovery material before any independent holder signs."""
+
+    created = _uint(created_at_ms, "invalid_rebirth_recovery_intent_time")
+    expires = _uint(expires_at_ms, "invalid_rebirth_recovery_intent_time")
+    if expires <= created or expires - created > 24 * 60 * 60 * 1000:
+        raise RebirthError("invalid_rebirth_recovery_intent_time")
+    if len(nonce) != 32:
+        raise RebirthError("invalid_rebirth_recovery_intent_nonce")
+    states = tuple(known_states or (previous.state,))
+    manifests = tuple(known_manifests or (previous.manifest,))
+    state_heads = {state.head for state in states}
+    if (
+        not states
+        or not manifests
+        or previous.state.head not in state_heads
+        or any(state.being_ref != previous.state.being_ref for state in states)
+        or previous.manifest.digest not in {manifest.digest for manifest in manifests}
+        or any(
+            manifest.being_ref != previous.state.being_ref
+            or manifest.value["control_head"] not in state_heads
+            for manifest in manifests
+        )
+    ):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    policy = {
+        "keys": sorted(
+            (copy.deepcopy(dict(row)) for row in replacement_root_descriptors),
+            key=lambda row: str(row.get("key_id", "")),
+        ),
+        "threshold": replacement_threshold,
+    }
+    revoked = sorted(
+        {
+            row["embodiment_id"]
+            for manifest in manifests
+            for row in manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+    )
+    try:
+        prepared = prepare_recovery(
+            states,
+            policy,
+            revoke_embodiments=revoked,
+        )
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_intent_policy_rejected") from exception
+    body = {
+        "being_ref": previous.state.being_ref,
+        "created_at_ms": created,
+        "expires_at_ms": expires,
+        "known_control_heads": sorted({state.head for state in states}),
+        "known_manifest_hashes": sorted({manifest.digest for manifest in manifests}),
+        "nonce": b64url(nonce),
+        "prepared_recovery": prepared,
+        "previous_manifest_hash": previous.manifest.digest,
+    }
+    result = {
+        "schema": DISTRIBUTED_RECOVERY_INTENT_SCHEMA,
+        "intent_id": DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX
+        + b64url(digest(DISTRIBUTED_RECOVERY_INTENT_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(result, "invalid_rebirth_recovery_intent")
+    return result
+
+
+def validate_distributed_recovery_intent(
+    value: Any,
+    previous: RootAuthority,
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+    known_manifests: Sequence[BeingManifest] | None = None,
+) -> dict[str, Any]:
+    """Validate the closed recovery intent independently at every holder."""
+
+    row = _closed(
+        value,
+        {"schema", "intent_id", "body"},
+        "invalid_rebirth_recovery_intent",
+    )
+    if row["schema"] != DISTRIBUTED_RECOVERY_INTENT_SCHEMA:
+        raise RebirthError("unsupported_rebirth_recovery_intent")
+    body = _closed(
+        row["body"],
+        {
+            "being_ref",
+            "created_at_ms",
+            "expires_at_ms",
+            "known_control_heads",
+            "known_manifest_hashes",
+            "nonce",
+            "prepared_recovery",
+            "previous_manifest_hash",
+        },
+        "invalid_rebirth_recovery_intent",
+    )
+    observed = _uint(observed_at_ms, "invalid_rebirth_recovery_intent_time")
+    created = _uint(body["created_at_ms"], "invalid_rebirth_recovery_intent_time")
+    expires = _uint(body["expires_at_ms"], "invalid_rebirth_recovery_intent_time")
+    if (
+        expires <= created
+        or expires - created > 24 * 60 * 60 * 1000
+        or not created <= observed < expires
+    ):
+        raise RebirthError("rebirth_recovery_intent_not_timely")
+    try:
+        nonce = b64url(unb64url(str(body["nonce"]), length=32))
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_recovery_intent_nonce") from exception
+    states = tuple(known_states or (previous.state,))
+    manifests = tuple(known_manifests or (previous.manifest,))
+    heads = sorted({state.head for state in states})
+    manifest_hashes = sorted({manifest.digest for manifest in manifests})
+    if (
+        nonce != body["nonce"]
+        or body["being_ref"] != previous.state.being_ref
+        or body["previous_manifest_hash"] != previous.manifest.digest
+        or body["known_control_heads"] != heads
+        or body["known_manifest_hashes"] != manifest_hashes
+        or previous.state.head not in heads
+        or previous.manifest.digest not in manifest_hashes
+        or any(
+            manifest.being_ref != previous.state.being_ref
+            or manifest.value["control_head"] not in heads
+            for manifest in manifests
+        )
+    ):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    prepared = body["prepared_recovery"]
+    if not isinstance(prepared, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    prepared_body = prepared.get("body")
+    if not isinstance(prepared_body, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    expected_revocations = sorted(
+        {
+            item["embodiment_id"]
+            for manifest in manifests
+            for item in manifest.value["embodiments"]
+            if item["status"] == "active"
+        }
+    )
+    try:
+        expected = prepare_recovery(
+            states,
+            prepared_body.get("replacement_root", {}),
+            revoke_embodiments=expected_revocations,
+        )
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_recovery_intent") from exception
+    if canonical_bytes(prepared) != canonical_bytes(expected):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    expected_id = DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX + b64url(
+        digest(DISTRIBUTED_RECOVERY_INTENT_DOMAIN, body)
+    )
+    normalized = copy.deepcopy(dict(row))
+    if row["intent_id"] != expected_id or _canonical(
+        normalized, "invalid_rebirth_recovery_intent"
+    ) != _canonical(value, "invalid_rebirth_recovery_intent"):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    return normalized
+
+
+def create_distributed_recovery_share(
+    intent: Any,
+    previous: RootAuthority,
+    holder_seed: bytes,
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+    known_manifests: Sequence[BeingManifest] | None = None,
+) -> dict[str, Any]:
+    """Produce one role-bound share in a process holding exactly one seed."""
+
+    states = tuple(known_states or (previous.state,))
+    verified = validate_distributed_recovery_intent(
+        intent,
+        previous,
+        observed_at_ms=observed_at_ms,
+        known_states=states,
+        known_manifests=known_manifests,
+    )
+    prepared = verified["body"]["prepared_recovery"]
+    kid = key_id("Ed25519", ed25519_public(holder_seed))
+    recovery_ids = {row["key_id"] for row in states[0].recovery_policy["keys"]}
+    replacement_ids = {
+        row["key_id"] for row in prepared["body"]["replacement_root"]["keys"]
+    }
+    try:
+        if kid in recovery_ids and kid not in replacement_ids:
+            signature = create_recovery_authorization_share(
+                prepared, states, holder_seed
+            )
+        elif kid in replacement_ids and kid not in recovery_ids:
+            signature = create_recovery_possession_share(prepared, states, holder_seed)
+        else:
+            raise RebirthError("rebirth_recovery_holder_not_authorized")
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_holder_not_authorized") from exception
+    share_body = {
+        "intent_id": verified["intent_id"],
+        "recovery_artifact_id": prepared["artifact_id"],
+        "signature": signature,
+    }
+    return {
+        "schema": DISTRIBUTED_RECOVERY_SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(
+            holder_seed,
+            DISTRIBUTED_RECOVERY_SHARE_DOMAIN,
+            share_body,
+        ),
+    }
+
+
+def aggregate_distributed_recovery(
+    intent: Any,
+    previous: RootAuthority,
+    shares: Sequence[Any],
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+    known_manifests: Sequence[BeingManifest] | None = None,
+) -> dict[str, Any]:
+    """Aggregate public shares without opening any holder keystore."""
+
+    states = tuple(known_states or (previous.state,))
+    verified = validate_distributed_recovery_intent(
+        intent,
+        previous,
+        observed_at_ms=observed_at_ms,
+        known_states=states,
+        known_manifests=known_manifests,
+    )
+    prepared = verified["body"]["prepared_recovery"]
+    signatures: list[Mapping[str, Any]] = []
+    for value in shares:
+        share = _closed(
+            value,
+            {
+                "schema",
+                "intent_id",
+                "recovery_artifact_id",
+                "signature",
+                "attestation",
+            },
+            "invalid_rebirth_recovery_share",
+        )
+        if (
+            share["schema"] != DISTRIBUTED_RECOVERY_SHARE_SCHEMA
+            or share["intent_id"] != verified["intent_id"]
+            or share["recovery_artifact_id"] != prepared["artifact_id"]
+            or not isinstance(share["signature"], Mapping)
+        ):
+            raise RebirthError("invalid_rebirth_recovery_share")
+        signature = share["signature"]
+        role = signature.get("role")
+        allowed_descriptors = (
+            states[0].recovery_policy["keys"]
+            if role == "recovery-authorization"
+            else prepared["body"]["replacement_root"]["keys"]
+            if role == "new-root-possession"
+            else []
+        )
+        share_body = {
+            "intent_id": share["intent_id"],
+            "recovery_artifact_id": share["recovery_artifact_id"],
+            "signature": signature,
+        }
+        attested_kid = _verify_holder_attestation(
+            share["attestation"],
+            DISTRIBUTED_RECOVERY_SHARE_DOMAIN,
+            share_body,
+            allowed_descriptors,
+            code="invalid_rebirth_recovery_share",
+        )
+        if signature.get("key_id") != attested_kid:
+            raise RebirthError("invalid_rebirth_recovery_share")
+        signatures.append(share["signature"])
+    try:
+        artifact = aggregate_recovery(prepared, states, signatures)
+        recovery_request_base(previous, artifact)
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_share_threshold_rejected") from exception
+    return artifact
+
+
+def create_replacement_root_holder(
+    output: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Atomically generate one isolated holder package and public descriptor."""
+
+    target = Path(os.path.abspath(output))
+    parent = _owner_directory(target.parent, "rebirth_holder_parent_rejected")
+    if target.exists() or target.is_symlink():
+        return _validated_existing_replacement_holder(target, previous, password_reader)
+    holder_seed = generate_ed25519_seed()
+    descriptor = signing_descriptor(holder_seed)
+    receipt = {
+        "schema": "dm.operator.replacement-root-holder/v1",
+        "being_ref": previous.state.being_ref,
+        "custody_control_head": previous.state.head,
+        "key": descriptor,
+    }
+    staging: Path | None = None
+    try:
+        staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
+        staging.chmod(0o700)
+        EncryptedKeystore.create(
+            staging / "holder.json",
+            password_reader,
+            control_head=previous.state.head,
+            secrets={"root.signing.v1:holder": holder_seed},
+        )
+        _private_write(staging / "descriptor.json", receipt)
+        _fsync_directory(staging)
+        os.replace(staging, target)
+        _fsync_directory(parent)
+        staging = None
+    except KeystoreError as exception:
+        raise RebirthError("rebirth_holder_create_rejected") from exception
+    finally:
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging)
+    return receipt
+
+
+def _single_holder_seed(
+    path: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+    *,
+    allowed_prefixes: tuple[str, ...],
+    code: str,
+) -> bytes:
+    target = path
+    required_control_head = previous.state.head
+    exact_slot: str | None = None
+    expected_descriptor: Mapping[str, Any] | None = None
+    if path.is_dir():
+        descriptor = _safe_document(path / "descriptor.json", code)
+        if descriptor.get("schema") == GENESIS_HOLDER_SCHEMA:
+            row = _closed(
+                descriptor,
+                {"schema", "role", "key"},
+                code,
+            )
+            role = row["role"]
+            if (
+                role not in {"root", "recovery"}
+                or not any(
+                    prefix.startswith(f"{role}.signing.v1:")
+                    for prefix in allowed_prefixes
+                )
+                or not isinstance(row["key"], Mapping)
+            ):
+                raise RebirthError(code)
+            required_control_head = PENDING_CONTROL_HEAD
+            exact_slot = f"genesis.{role}.v1:holder"
+            expected_descriptor = row["key"]
+        else:
+            row = _closed(
+                descriptor,
+                {"schema", "being_ref", "custody_control_head", "key"},
+                code,
+            )
+            if (
+                row["schema"] != "dm.operator.replacement-root-holder/v1"
+                or row["being_ref"] != previous.state.being_ref
+                or row["custody_control_head"] != previous.state.head
+                or not isinstance(row["key"], Mapping)
+            ):
+                raise RebirthError(code)
+            exact_slot = "root.signing.v1:holder"
+            expected_descriptor = row["key"]
+        target = path / "holder.json"
+    try:
+        contents = EncryptedKeystore(target).open(
+            password_reader,
+            minimum_counter=1,
+            required_control_head=required_control_head,
+        )
+    except KeystoreError as exception:
+        raise RebirthError(code) from exception
+    if len(contents.secrets) != 1:
+        raise RebirthError(code)
+    slot, holder_seed = next(iter(contents.secrets.items()))
+    if (
+        (exact_slot is not None and slot != exact_slot)
+        or (exact_slot is None and not slot.startswith(allowed_prefixes))
+        or (
+            expected_descriptor is not None
+            and signing_descriptor(holder_seed) != expected_descriptor
+        )
+    ):
+        raise RebirthError(code)
+    return holder_seed
+
+
+def _validated_existing_replacement_holder(
+    target: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Recover a replacement-holder receipt committed before process death."""
+
+    try:
+        _owner_directory(target, "rebirth_holder_conflict")
+        if {path.name for path in target.iterdir()} != {
+            ".holder.json.highwater",
+            ".holder.json.lock",
+            "descriptor.json",
+            "holder.json",
+        }:
+            raise RebirthError("rebirth_holder_conflict")
+        descriptor = _closed(
+            _safe_document(target / "descriptor.json", "rebirth_holder_conflict"),
+            {"being_ref", "custody_control_head", "key", "schema"},
+            "rebirth_holder_conflict",
+        )
+        _single_holder_seed(
+            target,
+            previous,
+            password_reader,
+            allowed_prefixes=("root.signing.v1:",),
+            code="rebirth_holder_conflict",
+        )
+        return copy.deepcopy(dict(descriptor))
+    except RebirthError:
+        raise
+    except (OSError, TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_holder_conflict") from exception
+
+
+def create_distributed_recovery_share_from_holder(
+    intent: Any,
+    previous: RootAuthority,
+    holder_path: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+    known_manifests: Sequence[BeingManifest] | None = None,
+) -> dict[str, Any]:
+    """Open exactly one holder store and emit only its public recovery share."""
+
+    holder_seed = _single_holder_seed(
+        holder_path,
+        previous,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:", "recovery.signing.v1:"),
+        code="rebirth_recovery_holder_store_rejected",
+    )
+    return create_distributed_recovery_share(
+        intent,
+        previous,
+        holder_seed,
+        observed_at_ms=observed_at_ms,
+        known_states=known_states,
+        known_manifests=known_manifests,
+    )
+
+
+def create_distributed_recovery_authorization_share_from_holder(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    holder_path: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Open one replacement-root store and emit one paired authorization share."""
+
+    holder_seed = _single_holder_seed(
+        holder_path,
+        previous,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:",),
+        code="rebirth_recovered_root_holder_store_rejected",
+    )
+    return create_distributed_recovery_authorization_share(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        holder_seed,
+        observed_at_ms=observed_at_ms,
+    )
+
+
+def create_synthetic_single_store_recovery_custody(
     output: Path,
     previous: RootAuthority,
     custody_path: Path,
     current_password_reader: PasswordReader,
     replacement_password_reader: PasswordReader,
 ) -> dict[str, Any]:
-    """Rotate a recovery quorum into fresh root custody without a body key."""
+    """Synthetic fixture: centralize a quorum for deterministic local tests."""
 
     try:
         contents = EncryptedKeystore(custody_path).open(
@@ -2148,7 +3291,7 @@ def create_recovery_custody(
             if row["status"] == "active"
         }
     )
-    recovery_artifact = create_recovery(
+    recovery_artifact = create_synthetic_recovery_in_process(
         [previous.state],
         recovery_seeds[:threshold],
         replacement_roots,
@@ -2207,7 +3350,7 @@ def create_recovery_custody(
             shutil.rmtree(staging)
 
 
-def authorize_recovery_from_root_custody(
+def authorize_synthetic_single_store_recovery(
     request: Any,
     previous: RootAuthority,
     recovery_artifact: Mapping[str, Any],
@@ -2247,7 +3390,7 @@ def authorize_recovery_from_root_custody(
     threshold = request_base.state.root_policy["threshold"]
     if len(roots) < threshold:
         raise RebirthError("rebirth_root_threshold_shortfall")
-    return authorize_recovery_enrollment_request(
+    return authorize_synthetic_recovery_enrollment_in_process(
         request,
         previous,
         recovery_artifact,
@@ -2316,13 +3459,91 @@ def parser() -> argparse.ArgumentParser:
     activate.add_argument("--output", type=Path, required=True)
     activate.add_argument("--password-fd", type=int, required=True)
     recover = commands.add_parser(
-        "recover", help="rotate a recovery quorum into fresh root custody"
+        "synthetic-single-store-recover",
+        help="test fixture: centralize recovery and replacement-root seeds",
     )
     recover.add_argument("--authority", type=Path, required=True)
     recover.add_argument("--root-custody", type=Path, required=True)
     recover.add_argument("--current-password-fd", type=int, required=True)
     recover.add_argument("--replacement-password-fd", type=int, required=True)
     recover.add_argument("--output", type=Path, required=True)
+    create_holder = commands.add_parser(
+        "create-replacement-root-holder",
+        help="atomically generate an isolated replacement-root holder package",
+    )
+    create_holder.add_argument("--authority", type=Path, required=True)
+    create_holder.add_argument("--password-fd", type=int, required=True)
+    create_holder.add_argument("--output", type=Path, required=True)
+    recovery_intent = commands.add_parser(
+        "create-recovery-intent",
+        help="freeze one recovery intent from public holder descriptors",
+    )
+    recovery_intent.add_argument("--authority", type=Path, required=True)
+    recovery_intent.add_argument(
+        "--known-authority", type=Path, action="append", default=[]
+    )
+    recovery_intent.add_argument(
+        "--holder-descriptor", type=Path, action="append", required=True
+    )
+    recovery_intent.add_argument("--threshold", type=int, required=True)
+    recovery_intent.add_argument("--ttl-seconds", type=int, default=3600)
+    recovery_intent.add_argument("--output", type=Path, required=True)
+    recovery_share = commands.add_parser(
+        "recovery-share", help="emit one share from one isolated holder store"
+    )
+    recovery_share.add_argument("--authority", type=Path, required=True)
+    recovery_share.add_argument(
+        "--known-authority", type=Path, action="append", default=[]
+    )
+    recovery_share.add_argument("--intent", type=Path, required=True)
+    recovery_share.add_argument("--holder", type=Path, required=True)
+    recovery_share.add_argument("--password-fd", type=int, required=True)
+    recovery_share.add_argument("--output", type=Path, required=True)
+    aggregate_recovery_command = commands.add_parser(
+        "aggregate-recovery",
+        help="aggregate recovery shares without opening holder stores",
+    )
+    aggregate_recovery_command.add_argument("--authority", type=Path, required=True)
+    aggregate_recovery_command.add_argument(
+        "--known-authority", type=Path, action="append", default=[]
+    )
+    aggregate_recovery_command.add_argument("--intent", type=Path, required=True)
+    aggregate_recovery_command.add_argument(
+        "--share", type=Path, action="append", required=True
+    )
+    aggregate_recovery_command.add_argument("--output", type=Path, required=True)
+    authorization_intent = commands.add_parser(
+        "create-recovery-authorization-intent",
+        help="freeze target credential and transition for root holders",
+    )
+    authorization_intent.add_argument("--authority", type=Path, required=True)
+    authorization_intent.add_argument("--recovery", type=Path, required=True)
+    authorization_intent.add_argument("--request", type=Path, required=True)
+    authorization_intent.add_argument("--ttl-seconds", type=int, default=3600)
+    authorization_intent.add_argument("--output", type=Path, required=True)
+    authorization_share = commands.add_parser(
+        "recovery-authorization-share",
+        help="emit one target authorization share from one root holder",
+    )
+    authorization_share.add_argument("--authority", type=Path, required=True)
+    authorization_share.add_argument("--recovery", type=Path, required=True)
+    authorization_share.add_argument("--request", type=Path, required=True)
+    authorization_share.add_argument("--intent", type=Path, required=True)
+    authorization_share.add_argument("--holder", type=Path, required=True)
+    authorization_share.add_argument("--password-fd", type=int, required=True)
+    authorization_share.add_argument("--output", type=Path, required=True)
+    aggregate_authorization = commands.add_parser(
+        "aggregate-recovery-authorization",
+        help="aggregate target authorization shares without holder stores",
+    )
+    aggregate_authorization.add_argument("--authority", type=Path, required=True)
+    aggregate_authorization.add_argument("--recovery", type=Path, required=True)
+    aggregate_authorization.add_argument("--request", type=Path, required=True)
+    aggregate_authorization.add_argument("--intent", type=Path, required=True)
+    aggregate_authorization.add_argument(
+        "--share", type=Path, action="append", required=True
+    )
+    aggregate_authorization.add_argument("--output", type=Path, required=True)
     prepare_recovery = commands.add_parser(
         "prepare-recovery", help="generate target custody after recovery"
     )
@@ -2333,7 +3554,8 @@ def parser() -> argparse.ArgumentParser:
     prepare_recovery.add_argument("--password-fd", type=int, required=True)
     prepare_recovery.add_argument("--ttl-seconds", type=int, default=3600)
     authorize_recovery = commands.add_parser(
-        "authorize-recovery", help="authorize a target with recovered root custody"
+        "synthetic-single-store-authorize-recovery",
+        help="test fixture: authorize from centralized recovered root custody",
     )
     authorize_recovery.add_argument("--authority", type=Path, required=True)
     authorize_recovery.add_argument("--recovery", type=Path, required=True)
@@ -2359,7 +3581,199 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = parser().parse_args(argv)
         now = time.time_ns() // 1_000_000
-        if arguments.command in {"prepare", "prepare-recovery"}:
+        if arguments.command == "create-replacement-root-holder":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_replacement_root_holder(
+                    arguments.output,
+                    authority,
+                    _password_reader(password),
+                )
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "create-recovery-intent":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            known_authorities = _known_control_authorities(
+                authority,
+                [
+                    _safe_document(path, "rebirth_known_authority_unavailable")
+                    for path in arguments.known_authority
+                ],
+            )
+            known_states = tuple(item.state for item in known_authorities)
+            known_manifests = tuple(item.manifest for item in known_authorities)
+            ttl = arguments.ttl_seconds
+            if (
+                not isinstance(ttl, int)
+                or isinstance(ttl, bool)
+                or not 60 <= ttl <= 86_400
+            ):
+                raise RebirthError("invalid_rebirth_ttl")
+            descriptors: list[Mapping[str, Any]] = []
+            for path in arguments.holder_descriptor:
+                holder = _closed(
+                    _safe_document(path, "rebirth_holder_descriptor_unavailable"),
+                    {"schema", "being_ref", "custody_control_head", "key"},
+                    "invalid_rebirth_holder_descriptor",
+                )
+                if (
+                    holder["schema"] != "dm.operator.replacement-root-holder/v1"
+                    or holder["being_ref"] != authority.state.being_ref
+                    or holder["custody_control_head"] != authority.state.head
+                    or not isinstance(holder["key"], Mapping)
+                ):
+                    raise RebirthError("invalid_rebirth_holder_descriptor")
+                descriptors.append(holder["key"])
+            receipt = create_distributed_recovery_intent(
+                authority,
+                descriptors,
+                arguments.threshold,
+                created_at_ms=now,
+                expires_at_ms=now + ttl * 1000,
+                nonce=secrets.token_bytes(32),
+                known_states=known_states,
+                known_manifests=known_manifests,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "recovery-share":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            known_authorities = _known_control_authorities(
+                authority,
+                [
+                    _safe_document(path, "rebirth_known_authority_unavailable")
+                    for path in arguments.known_authority
+                ],
+            )
+            known_states = tuple(item.state for item in known_authorities)
+            known_manifests = tuple(item.manifest for item in known_authorities)
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_distributed_recovery_share_from_holder(
+                    _safe_document(
+                        arguments.intent,
+                        "rebirth_recovery_intent_unavailable",
+                    ),
+                    authority,
+                    arguments.holder,
+                    _password_reader(password),
+                    observed_at_ms=now,
+                    known_states=known_states,
+                    known_manifests=known_manifests,
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "aggregate-recovery":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            known_authorities = _known_control_authorities(
+                authority,
+                [
+                    _safe_document(path, "rebirth_known_authority_unavailable")
+                    for path in arguments.known_authority
+                ],
+            )
+            known_states = tuple(item.state for item in known_authorities)
+            known_manifests = tuple(item.manifest for item in known_authorities)
+            receipt = aggregate_distributed_recovery(
+                _safe_document(
+                    arguments.intent,
+                    "rebirth_recovery_intent_unavailable",
+                ),
+                authority,
+                [
+                    _safe_document(path, "rebirth_recovery_share_unavailable")
+                    for path in arguments.share
+                ],
+                observed_at_ms=now,
+                known_states=known_states,
+                known_manifests=known_manifests,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "create-recovery-authorization-intent":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            ttl = arguments.ttl_seconds
+            if (
+                not isinstance(ttl, int)
+                or isinstance(ttl, bool)
+                or not 60 <= ttl <= 86_400
+            ):
+                raise RebirthError("invalid_rebirth_ttl")
+            receipt = create_distributed_recovery_authorization_intent(
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                _safe_document(
+                    arguments.recovery,
+                    "rebirth_recovery_artifact_unavailable",
+                ),
+                issued_at_ms=now,
+                expires_at_ms=now + ttl * 1000,
+                nonce=secrets.token_bytes(32),
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "recovery-authorization-share":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_distributed_recovery_authorization_share_from_holder(
+                    _safe_document(
+                        arguments.intent,
+                        "rebirth_recovery_authorization_intent_unavailable",
+                    ),
+                    _safe_document(
+                        arguments.request,
+                        "rebirth_request_unavailable",
+                    ),
+                    authority,
+                    _safe_document(
+                        arguments.recovery,
+                        "rebirth_recovery_artifact_unavailable",
+                    ),
+                    arguments.holder,
+                    _password_reader(password),
+                    observed_at_ms=now,
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "aggregate-recovery-authorization":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            receipt = aggregate_distributed_recovery_authorization(
+                _safe_document(
+                    arguments.intent,
+                    "rebirth_recovery_authorization_intent_unavailable",
+                ),
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                _safe_document(
+                    arguments.recovery,
+                    "rebirth_recovery_artifact_unavailable",
+                ),
+                [
+                    _safe_document(
+                        path,
+                        "rebirth_recovery_authorization_share_unavailable",
+                    )
+                    for path in arguments.share
+                ],
+                observed_at_ms=now,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command in {"prepare", "prepare-recovery"}:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -2400,7 +3814,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             finally:
                 password[:] = b"\x00" * len(password)
-        elif arguments.command in {"authorize", "authorize-recovery"}:
+        elif arguments.command in {
+            "authorize",
+            "synthetic-single-store-authorize-recovery",
+        }:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -2410,7 +3827,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     arguments.request, "rebirth_request_unavailable"
                 )
                 receipt = (
-                    authorize_recovery_from_root_custody(
+                    authorize_synthetic_single_store_recovery(
                         request,
                         authority,
                         _safe_document(
@@ -2421,7 +3838,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _password_reader(password),
                         issued_at_ms=now,
                     )
-                    if arguments.command == "authorize-recovery"
+                    if arguments.command == "synthetic-single-store-authorize-recovery"
                     else authorize_from_root_custody(
                         request,
                         authority,
@@ -2438,14 +3855,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _fsync_directory(output.parent)
             finally:
                 password[:] = b"\x00" * len(password)
-        elif arguments.command == "recover":
+        elif arguments.command == "synthetic-single-store-recover":
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
             current_password = _password(arguments.current_password_fd)
             replacement_password = _password(arguments.replacement_password_fd)
             try:
-                receipt = create_recovery_custody(
+                receipt = create_synthetic_single_store_recovery_custody(
                     arguments.output,
                     authority,
                     arguments.root_custody,
@@ -2512,11 +3929,10 @@ __all__ = [
     "authority_from_runtime_bundle",
     "authorize_enrollment_request",
     "authorize_from_root_custody",
-    "authorize_recovery_enrollment_request",
-    "authorize_recovery_from_root_custody",
+    "authorize_synthetic_single_store_recovery",
     "create_enrollment_request",
-    "create_recovery_custody",
     "create_recovery_target_preparation",
+    "create_synthetic_single_store_recovery_custody",
     "create_target_preparation",
     "main",
     "parser",

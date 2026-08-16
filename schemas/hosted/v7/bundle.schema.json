@@ -6,6 +6,9 @@
   "additionalProperties": false,
   "required": [
     "schema",
+    "operator_capability_binding",
+    "runtime_id",
+    "runtime_label",
     "control_artifacts",
     "control_head",
     "manifest",
@@ -30,6 +33,17 @@
   "properties": {
     "schema": {
       "const": "dm.runtime.bundle/v7"
+    },
+    "operator_capability_binding": {
+      "$ref": "#/$defs/operatorCapabilityBinding"
+    },
+    "runtime_id": {
+      "type": "string",
+      "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "runtime_label": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
     },
     "control_artifacts": {
       "type": "array",
@@ -125,22 +139,152 @@
     },
     "capabilities": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 64,
+      "minItems": 12,
+      "maxItems": 12,
+      "allOf": [
+        {
+          "contains": {"$ref": "#/$defs/communicationCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/curatorCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/memoryCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/observeCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/relationshipsCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/reviewCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/routesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/sourcesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/speciesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/weaveCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/hostCuratorCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/hostStatusCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "descriptor",
+          "profile",
+          "runtime_id",
           "secret_slot"
         ],
         "properties": {
           "descriptor": {
             "type": "object"
           },
+          "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "client_config_filename",
+              "client_directory",
+              "client_key_filename",
+              "role",
+              "schema"
+            ],
+            "properties": {
+              "client_config_filename": {
+                "const": "client.json"
+              },
+              "client_directory": {
+                "type": "string",
+                "enum": [
+                  ".",
+                  "operator-clients/communication",
+                  "operator-clients/curator",
+                  "operator-clients/memory",
+                  "operator-clients/relationships",
+                  "operator-clients/review",
+                  "operator-clients/routes",
+                  "operator-clients/sources",
+                  "operator-clients/species",
+                  "operator-clients/weave",
+                  "host-clients/curator",
+                  "host-clients/status"
+                ]
+              },
+              "client_key_filename": {
+                "type": "string",
+                "enum": [
+                  "capability.key",
+                  "client.key"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "communication",
+                  "curator",
+                  "memory",
+                  "observe",
+                  "relationships",
+                  "review",
+                  "routes",
+                  "sources",
+                  "species",
+                  "status",
+                  "weave"
+                ]
+              },
+              "schema": {
+                "enum": [
+                  "dm.operator.capability-profile/v1",
+                  "dm.host.capability-profile/v1"
+                ]
+              }
+            }
+          },
+          "runtime_id": {
+            "type": "string",
+            "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+          },
           "secret_slot": {
             "type": "string",
-            "pattern": "^runtime\\.capability\\.v1:[A-Za-z0-9._:-]{1,128}$"
+            "pattern": "^runtime\\.(?:host-)?capability\\.v1:[A-Za-z0-9._:-]{1,128}$"
           }
         }
       }
@@ -402,6 +546,198 @@
     }
   },
   "$defs": {
+    "operatorCapabilityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "body", "signature"],
+      "properties": {
+        "schema": {"const": "dm.operator.capability-binding/v1"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime_id",
+            "runtime_label",
+            "being_ref",
+            "origin",
+            "signing_key_id",
+            "capability_set_hash"
+          ],
+          "properties": {
+            "runtime_id": {
+              "type": "string",
+              "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "runtime_label": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "being_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "origin": {"$ref": "#/$defs/origin"},
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "capability_set_hash": {
+              "type": "string",
+              "pattern": "^dm:operator-capability-set:v1:[A-Za-z0-9_-]{43}$"
+            }
+          }
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "key_id", "value"],
+          "properties": {
+            "algorithm": {"const": "Ed25519"},
+            "key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{86}$"
+            }
+          }
+        }
+      }
+    },
+    "communicationCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "communication"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "curatorCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "curator"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "memoryCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "memory"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "observeCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "observe"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "relationshipsCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "relationships"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "reviewCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "review"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "routesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "routes"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "sourcesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "sources"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "speciesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "species"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "weaveCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "weave"}, "schema": {"const": "dm.operator.capability-profile/v1"}}
+        }
+      }
+    },
+    "hostCuratorCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "curator"}, "schema": {"const": "dm.host.capability-profile/v1"}}
+        }
+      }
+    },
+    "hostStatusCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role", "schema"],
+          "properties": {"role": {"const": "status"}, "schema": {"const": "dm.host.capability-profile/v1"}}
+        }
+      }
+    },
     "authorityHistoryEntry": {
       "oneOf": [
         {

@@ -1,4 +1,8 @@
-"""One-shot operator ceremony for a new plural root-bound hosted being."""
+"""Synthetic single-store bootstrap fixture for local deterministic tests.
+
+Production provisioning starts with ``daimon-genesis`` so every recovery key
+is created and used by an isolated holder process/store.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import shutil
 import stat
 import sys
@@ -20,37 +23,40 @@ from pathlib import Path
 from typing import Any, Final
 
 from .canonical import canonical_bytes
-from .client import CLIENT_CONFIG_SCHEMA, load_json_document
+from .client import CLIENT_CONFIG_SCHEMA_V3, load_json_document
 from .identity import (
     create_embodiment_credential,
-    create_genesis,
     create_incarnation_authorization,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
     key_descriptor,
+    signing_descriptor,
     verify_genesis,
     x25519_public,
 )
 from .keystore import EncryptedKeystore
-from .local_api import create_capability
+from .operator_capabilities import (
+    HOST_PROFILE_NAMES,
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    STATUS_OBSERVER_METHODS,
+    create_host_capability_set,
+    create_operator_capability_binding,
+    create_operator_capability_set,
+    host_capability_profile,
+    operator_capability_lifecycle,
+    operator_capability_profile,
+    operator_runtime_id,
+)
 from .peer_transport import PeerTransportError, http_peer_round_trip
-from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
 
 PROFILE_SCHEMA: Final = "dm.operator.bootstrap-profile/v1"
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 RECEIPT_SCHEMA: Final = "dm.operator.bootstrap-receipt/v1"
 MAX_TIME: Final = 2**53 - 1
-STATUS_OBSERVER_METHODS: Final = frozenset(
-    {
-        "runtime.status",
-        "scope.me",
-        "scope.we",
-        "scope.we.diff",
-        "scope.we.sync-plan",
-    }
-)
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -229,7 +235,7 @@ def _create(
         created_at_ms = time.time_ns() // 1_000_000
         root_seeds = [generate_ed25519_seed() for _ in range(3)]
         recovery_seeds = [generate_ed25519_seed() for _ in range(3)]
-        genesis = create_genesis(
+        genesis = create_synthetic_genesis_in_process(
             root_seeds,
             2,
             recovery_seeds,
@@ -246,8 +252,14 @@ def _create(
             signing_seed = generate_ed25519_seed()
             encryption_seed = generate_x25519_private()
             transport_seed = generate_ed25519_seed()
-            capability_key = secrets.token_bytes(32)
-            status_capability_key = secrets.token_bytes(32)
+            operator_capabilities, operator_keys, operator_slots = (
+                create_operator_capability_set(label, issued_at_ms=created_at_ms)
+            )
+            host_capabilities, host_keys, host_slots = create_host_capability_set(
+                label, issued_at_ms=created_at_ms
+            )
+            if not set(operator_keys.values()).isdisjoint(host_keys.values()):
+                raise BootstrapError("duplicate_runtime_capability_key")
             origin = {
                 "body_ref": row["body_ref"],
                 "embodiment_id": f"embodiment:{uuid.uuid4()}",
@@ -275,20 +287,6 @@ def _create(
                 incarnation_sequence=0,
                 started_at_ms=created_at_ms,
             )
-            capability = create_capability(
-                capability_key,
-                client_id=f"client:operator:{label}",
-                methods=sorted(SERVICE_METHODS),
-                not_before_ms=max(0, created_at_ms - 60_000),
-                not_after_ms=MAX_TIME,
-            )
-            status_capability = create_capability(
-                status_capability_key,
-                client_id=f"client:status-observer:{label}",
-                methods=sorted(STATUS_OBSERVER_METHODS),
-                not_before_ms=max(0, created_at_ms - 60_000),
-                not_after_ms=MAX_TIME,
-            )
             credentials[credential["artifact_id"]] = credential
             incarnations[incarnation["artifact_id"]] = incarnation
             manifest_rows.append(
@@ -307,10 +305,12 @@ def _create(
                 "signing_seed": signing_seed,
                 "encryption_seed": encryption_seed,
                 "transport_seed": transport_seed,
-                "capability": capability,
-                "capability_key": capability_key,
-                "status_capability": status_capability,
-                "status_capability_key": status_capability_key,
+                "operator_capabilities": operator_capabilities,
+                "operator_keys": operator_keys,
+                "operator_slots": operator_slots,
+                "host_capabilities": host_capabilities,
+                "host_keys": host_keys,
+                "host_slots": host_slots,
             }
         manifest_rows.sort(
             key=lambda row: (row["embodiment_id"], row["incarnation_id"])
@@ -356,14 +356,14 @@ def _create(
 
         runtimes = staging / "runtimes"
         runtimes.mkdir(mode=0o700)
-        host_clients = staging / "host-clients"
-        host_clients.mkdir(mode=0o700)
         for label, item in sorted(material.items()):
             runtime = runtimes / label
             runtime.mkdir(mode=0o700)
+            operator_clients = runtime / "operator-clients"
+            operator_clients.mkdir(mode=0o700)
+            host_clients = runtime / "host-clients"
+            host_clients.mkdir(mode=0o700)
             signing_slot = f"runtime.signing.v1:{label}"
-            capability_slot = f"runtime.capability.v1:{label}"
-            status_capability_slot = f"runtime.capability.v1:status:{label}"
             encryption_slot = f"peer.encryption.v1:{label}"
             password = runtime_passwords[label]
             EncryptedKeystore.create(
@@ -372,8 +372,14 @@ def _create(
                 control_head=state.head,
                 secrets={
                     signing_slot: item["signing_seed"],
-                    capability_slot: item["capability_key"],
-                    status_capability_slot: item["status_capability_key"],
+                    **{
+                        item["operator_slots"][profile]: item["operator_keys"][profile]
+                        for profile in OPERATOR_PROFILE_NAMES
+                    },
+                    **{
+                        item["host_slots"][profile]: item["host_keys"][profile]
+                        for profile in HOST_PROFILE_NAMES
+                    },
                     encryption_slot: item["encryption_seed"],
                 },
             )
@@ -395,8 +401,42 @@ def _create(
                     }
                 )
             targets.sort(key=lambda target: str(target["embodiment_id"]))
+            runtime_id = operator_runtime_id(
+                label,
+                state.being_ref,
+                item["origin"],
+                signing_descriptor(item["signing_seed"])["key_id"],
+            )
+            capability_rows = [
+                {
+                    "descriptor": item["operator_capabilities"][profile].descriptor,
+                    "profile": operator_capability_profile(profile),
+                    "runtime_id": runtime_id,
+                    "secret_slot": item["operator_slots"][profile],
+                }
+                for profile in OPERATOR_PROFILE_NAMES
+            ]
+            capability_rows.extend(
+                {
+                    "descriptor": item["host_capabilities"][profile].descriptor,
+                    "profile": host_capability_profile(profile),
+                    "runtime_id": runtime_id,
+                    "secret_slot": item["host_slots"][profile],
+                }
+                for profile in HOST_PROFILE_NAMES
+            )
+            capability_binding = create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=label,
+                being_ref=state.being_ref,
+                origin=item["origin"],
+                signing_seed=item["signing_seed"],
+                capability_rows=capability_rows,
+            )
             bundle = {
                 "schema": "dm.runtime.bundle/v7",
+                "runtime_id": runtime_id,
+                "runtime_label": label,
                 "control_artifacts": [genesis],
                 "control_head": state.head,
                 "manifest": manifest.value,
@@ -414,16 +454,8 @@ def _create(
                     "counter": 1,
                     "signing_slot": signing_slot,
                 },
-                "capabilities": [
-                    {
-                        "descriptor": item["capability"].descriptor,
-                        "secret_slot": capability_slot,
-                    },
-                    {
-                        "descriptor": item["status_capability"].descriptor,
-                        "secret_slot": status_capability_slot,
-                    },
-                ],
+                "capabilities": capability_rows,
+                "operator_capability_binding": capability_binding,
                 "routing": None,
                 "scopes": {
                     "body_capabilities": [],
@@ -449,26 +481,53 @@ def _create(
             _private_write(
                 runtime / "client.json",
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
-                    "capability": item["capability"].descriptor,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
+                    "capability": item["operator_capabilities"][
+                        OBSERVE_PROFILE
+                    ].descriptor,
                     "expected_server": item["origin"],
-                },
-            )
-            _private_write(runtime / "client.key", item["capability_key"])
-            status_client = host_clients / label
-            status_client.mkdir(mode=0o700)
-            _private_write(
-                status_client / "client.json",
-                {
-                    "schema": CLIENT_CONFIG_SCHEMA,
-                    "capability": item["status_capability"].descriptor,
-                    "expected_server": item["origin"],
+                    "runtime_id": runtime_id,
+                    "runtime_label": label,
                 },
             )
             _private_write(
-                status_client / "capability.key",
-                item["status_capability_key"],
+                runtime / "client.key", item["operator_keys"][OBSERVE_PROFILE]
             )
+            for profile in OPERATOR_PROFILE_NAMES:
+                if profile == OBSERVE_PROFILE:
+                    continue
+                role_client = operator_clients / profile
+                role_client.mkdir(mode=0o700)
+                _private_write(
+                    role_client / "client.json",
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
+                        "capability": item["operator_capabilities"][profile].descriptor,
+                        "expected_server": item["origin"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": label,
+                    },
+                )
+                _private_write(
+                    role_client / "capability.key",
+                    item["operator_keys"][profile],
+                )
+            for profile in HOST_PROFILE_NAMES:
+                host_client = host_clients / profile
+                host_client.mkdir(mode=0o700)
+                _private_write(
+                    host_client / "client.json",
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
+                        "capability": item["host_capabilities"][profile].descriptor,
+                        "expected_server": item["origin"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": label,
+                    },
+                )
+                _private_write(
+                    host_client / "capability.key", item["host_keys"][profile]
+                )
 
         receipt = {
             "schema": RECEIPT_SCHEMA,
@@ -477,6 +536,7 @@ def _create(
             "manifest_hash": manifest.digest,
             "created_at_ms": created_at_ms,
             "runtime_schema": "dm.runtime.bundle/v7",
+            "capability_lifecycle": operator_capability_lifecycle(created_at_ms),
             "embodiments": [
                 {
                     "label": label,
@@ -496,11 +556,16 @@ def _create(
         _private_write(staging / "receipt.json", receipt)
         _fsync_directory(offline)
         for path in runtimes.iterdir():
-            _fsync_directory(path)
-        for path in host_clients.iterdir():
+            operator_clients = path / "operator-clients"
+            for role_path in operator_clients.iterdir():
+                _fsync_directory(role_path)
+            _fsync_directory(operator_clients)
+            host_clients = path / "host-clients"
+            for role_path in host_clients.iterdir():
+                _fsync_directory(role_path)
+            _fsync_directory(host_clients)
             _fsync_directory(path)
         _fsync_directory(runtimes)
-        _fsync_directory(host_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)
@@ -516,7 +581,9 @@ def _create(
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="daimon-bootstrap", description=__doc__)
+    result = argparse.ArgumentParser(
+        prog="daimon-synthetic-bootstrap", description=__doc__
+    )
     result.add_argument("--output", type=Path, required=True)
     result.add_argument("--profile", type=Path, required=True)
     result.add_argument("--root-password-fd", type=int, required=True)

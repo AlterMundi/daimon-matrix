@@ -33,6 +33,10 @@ personal memory or writable database bytes.
     "ordinary-enrollment-and-recovery-compose-in-both-orders",
     "canonical-history-restore-after-recovery",
     "recovery-custody-roles-in-distinct-processes",
+    "ten-disjoint-operator-role-capabilities",
+    "bounded-capability-expiry-and-reprovision-window",
+    "expired-or-revoked-runtime-capability-refusal",
+    "rebirth-preserves-role-separation-with-fresh-keys",
     "required-release-conformance-scenario",
     "cluster-journaled-install-and-authenticated-start",
     "remote-disposable-three-process-native-sync"
@@ -116,6 +120,7 @@ PYTHONPATH=src python -W error::ResourceWarning -m unittest \
   tests.test_dm078_rebirth tests.test_dm078_recovery_rebirth -v
 python -m ruff format --check \
   src/daimon_matrix/authority_epochs.py \
+  src/daimon_matrix/operator_capabilities.py \
   src/daimon_matrix/operator_rebirth.py \
   src/daimon_matrix/runtime.py \
   tools/generate_dm078_vectors.py \
@@ -123,6 +128,7 @@ python -m ruff format --check \
   tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
 python -m ruff check \
   src/daimon_matrix/authority_epochs.py \
+  src/daimon_matrix/operator_capabilities.py \
   src/daimon_matrix/operator_rebirth.py \
   src/daimon_matrix/runtime.py \
   tools/generate_dm078_vectors.py \
@@ -130,6 +136,7 @@ python -m ruff check \
   tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
 MYPYPATH=src python -m mypy \
   src/daimon_matrix/authority_epochs.py \
+  src/daimon_matrix/operator_capabilities.py \
   src/daimon_matrix/operator_rebirth.py \
   src/daimon_matrix/runtime.py \
   tools/generate_dm078_vectors.py \

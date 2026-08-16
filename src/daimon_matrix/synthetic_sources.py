@@ -23,8 +23,8 @@ from .canonical import canonical_bytes
 from .identity import (
     ControlState,
     create_embodiment_credential,
-    create_genesis,
     create_incarnation_authorization,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     key_descriptor,
     signing_descriptor,
@@ -113,7 +113,7 @@ class _Identity:
 def _identity(label: str) -> _Identity:
     root_seeds = tuple(_seed(f"{label}:root:{index}") for index in range(3))
     recovery_seeds = tuple(_seed(f"{label}:recovery:{index}") for index in range(3))
-    genesis = create_genesis(
+    genesis = create_synthetic_genesis_in_process(
         root_seeds,
         2,
         recovery_seeds,

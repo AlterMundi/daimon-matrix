@@ -151,7 +151,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install mcp==2.0.0
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -m pip install --no-deps dist/daimon_matrix-0.0.0-py3-none-any.whl
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import importlib.metadata as m; import daimon_matrix; assert daimon_matrix.__version__ == "0.0.0"; assert m.requires("daimon-matrix") == ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]'
-          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.identity import create_genesis, verify_genesis; roots=[bytes([n])*32 for n in (1,2,3)]; recovery=[bytes([n])*32 for n in (4,5,6)]; artifact=create_genesis(roots,2,recovery,2,created_at_ms=1); assert verify_genesis(artifact).being_ref.startswith("dm:being:v1:")'
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.identity import aggregate_genesis, create_genesis_holder_share, prepare_genesis, threshold_policy, verify_genesis; roots=[bytes([n])*32 for n in (1,2,3)]; recovery=[bytes([n])*32 for n in (4,5,6)]; prepared=prepare_genesis(threshold_policy(roots,2),threshold_policy(recovery,2),created_at_ms=1,nonce=bytes(32)); shares=[create_genesis_holder_share(prepared,seed,role=role) for role,seeds in (("root",roots),("recovery",recovery)) for seed in seeds]; artifact=aggregate_genesis(prepared,shares); assert verify_genesis(artifact).being_ref.startswith("dm:being:v1:")'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.ledger import Ledger; from daimon_matrix.weave import BeingManifest; assert Ledger and BeingManifest'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.collective_memory import create_source_manifest, create_publisher_manifest; assert create_source_manifest()["adapter_id"] != create_publisher_manifest()["adapter_id"]'
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'from daimon_matrix.sealed import PROFILE; from cryptography.hazmat.primitives.hpke import Suite; assert PROFILE.startswith("HPKE-X25519") and Suite'
@@ -164,7 +164,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm035_publication.DM035PublicContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm036_collective_memory.DM036ContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-matrixd" --help
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-bootstrap" --help
+          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-genesis" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-rebirth" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-conformance" --help

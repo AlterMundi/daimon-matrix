@@ -24,6 +24,14 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.identity import signing_descriptor, verify_genesis
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
+from daimon_matrix.operator_capabilities import (
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    operator_capability_lifecycle,
+    operator_runtime_id,
+)
 from daimon_matrix.operator_rebirth import (
     RebirthError,
     activate_target_runtime,
@@ -37,6 +45,7 @@ from daimon_matrix.operator_rebirth import (
     validate_enrollment_request,
 )
 from daimon_matrix.runtime import load_runtime
+from daimon_matrix.service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS
 from daimon_matrix.weave import BeingManifest, EventSigner, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
 from tools.generate_dm078_vectors import generate as generate_vectors
@@ -78,8 +87,17 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         }
 
     def base_runtime_bundle(self) -> dict[str, Any]:
+        runtime_id = operator_runtime_id(
+            "legion",
+            self.state.being_ref,
+            self.origins["legion"],
+            signing_descriptor(self.signing_seeds["legion"])["key_id"],
+        )
         return {
             "schema": "dm.runtime.bundle/v7",
+            "operator_capability_binding": None,
+            "runtime_id": runtime_id,
+            "runtime_label": "legion",
             "control_artifacts": [self.genesis],
             "control_head": self.state.head,
             "manifest": self.manifest.value,
@@ -350,9 +368,23 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
             lambda: bytearray(target_password),
             required_control_head=self.state.head,
         )
-        self.assertEqual(len(body_custody.secrets), 4)
+        self.assertEqual(len(body_custody.secrets), 14)
         self.assertEqual(len(transport_custody.secrets), 1)
         self.assertFalse(any(slot.startswith("root.") for slot in body_custody.secrets))
+        self.assertEqual(set(preparation["capabilities"]), set(OPERATOR_PROFILE_NAMES))
+        self.assertEqual(
+            preparation["capability_lifecycle"],
+            operator_capability_lifecycle(NOW + 10),
+        )
+        self.assertEqual(
+            len(
+                {
+                    descriptor["key_id"]
+                    for descriptor in preparation["capabilities"].values()
+                }
+            ),
+            len(OPERATOR_PROFILE_NAMES),
+        )
 
         root_dir = parent / "offline"
         root_dir.mkdir(mode=0o700)
@@ -510,6 +542,56 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         bundle = json.loads((runtime_root / "runtime.json").read_bytes())
         self.assertEqual(bundle["manifest"]["revision"], 2)
         self.assertEqual(len(bundle["authority_history"]), 1)
+        self.assertEqual(
+            receipt["capability_lifecycle"],
+            operator_capability_lifecycle(NOW + 10),
+        )
+        capabilities = {
+            row["profile"]["role"]: row["descriptor"]
+            for row in bundle["capabilities"]
+            if row["profile"]["schema"] == "dm.operator.capability-profile/v1"
+        }
+        host_capabilities = {
+            row["profile"]["role"]: row["descriptor"]
+            for row in bundle["capabilities"]
+            if row["profile"]["schema"] == "dm.host.capability-profile/v1"
+        }
+        self.assertEqual(set(capabilities), set(OPERATOR_PROFILE_NAMES))
+        self.assertEqual(set(host_capabilities), set(HOST_PROFILE_NAMES))
+        self.assertTrue(
+            all(
+                frozenset(capabilities[profile]["methods"])
+                == OPERATOR_CAPABILITY_PROFILES[profile]
+                < SERVICE_METHODS
+                for profile in OPERATOR_PROFILE_NAMES
+            )
+        )
+        default_client = json.loads((runtime_root / "client.json").read_bytes())
+        self.assertEqual(default_client["capability"], capabilities[OBSERVE_PROFILE])
+        self.assertEqual(
+            {path.name for path in (runtime_root / "operator-clients").iterdir()},
+            set(OPERATOR_PROFILE_NAMES) - {OBSERVE_PROFILE},
+        )
+        for profile in set(OPERATOR_PROFILE_NAMES) - {OBSERVE_PROFILE}:
+            role_root = runtime_root / "operator-clients" / profile
+            role_config = json.loads((role_root / "client.json").read_bytes())
+            self.assertEqual(role_config["capability"], capabilities[profile])
+            self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(
+                (role_root / "capability.key").stat().st_mode & 0o777, 0o600
+            )
+        for profile in HOST_PROFILE_NAMES:
+            role_root = runtime_root / "host-clients" / profile
+            role_config = json.loads((role_root / "client.json").read_bytes())
+            self.assertEqual(role_config["capability"], host_capabilities[profile])
+            self.assertEqual(
+                frozenset(role_config["capability"]["methods"]),
+                HOST_CAPABILITY_PROFILES[profile],
+            )
+            self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(
+                (role_root / "capability.key").stat().st_mode & 0o777, 0o600
+            )
         self.assertEqual(
             {row["embodiment_id"] for row in bundle["peer_transport"]["targets"]},
             {

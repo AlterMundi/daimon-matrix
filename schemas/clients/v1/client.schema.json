@@ -27,6 +27,9 @@
         },
         {
           "$ref": "#/$defs/configV2"
+        },
+        {
+          "$ref": "#/$defs/configV3"
         }
       ]
     },
@@ -105,6 +108,36 @@
               }
             }
           }
+        }
+      }
+    },
+    "configV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "capability",
+        "expected_server",
+        "runtime_id",
+        "runtime_label"
+      ],
+      "properties": {
+        "schema": {
+          "const": "dm.local.client-config/v3"
+        },
+        "capability": {
+          "$ref": "../../hosted/v1/local-api.schema.json#/$defs/capability"
+        },
+        "expected_server": {
+          "$ref": "#/$defs/origin"
+        },
+        "runtime_id": {
+          "type": "string",
+          "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "runtime_label": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
         }
       }
     },

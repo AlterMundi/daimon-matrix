@@ -36,8 +36,9 @@ that must be refreshed:
 3. Read-only host inventory found no current root-bound Matrix being on either
    host. The only remnants are matching all-zero historical fixture manifests
    in trash; they are not migration authority. Matrix therefore now owns the
-   fresh plural-being `daimon-bootstrap` ceremony instead of asking Cluster to
-   invent identity.
+   fresh plural-being distributed `daimon-genesis` ceremony instead of asking
+   Cluster to invent identity. The former one-process bootstrap is now exposed
+   only as `daimon-synthetic-bootstrap` and cannot prove separated custody.
 4. V6 configured only a local peer listener, forcing an operator to inject a
    remote URL outside the runtime contract. V7 adds exact per-embodiment peer
    targets and `we.sync.peer-pull`, so the ordinary CLI can execute the frozen
@@ -252,3 +253,15 @@ cross-being consent or semantic-delivery claim. Matrix PR #112 and Cluster PR
 #77 remain unmerged pending independent review. Fresh-host private custody,
 external participant consent and the final human cutover/archive decisions
 remain separate gates.
+
+## Release-candidate capability successor
+
+The historical five-method status client above is superseded for future
+provisioning. Current bootstrap and rebirth packages mint ten disjoint,
+independently keyed operator roles plus dedicated status and curator host roles.
+The status role has only the five methods Cluster needs; it does not inherit the
+broader `observe` profile. `observe` remains the default operator client and
+contains no mutation; every mutation family requires its own owner-only client directory.
+All role descriptors expire after 30 days and advertise a seven-day
+reprovisioning window. This changes no historical dogfood evidence and has not
+been deployed to those hosts.

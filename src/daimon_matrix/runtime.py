@@ -14,6 +14,7 @@ from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, canonical_bytes, unb64url
+from .client import CLIENT_CONFIG_SCHEMA_V3
 from .cluster import FenceVerifier
 from .communication import CommunicationStore
 from .curator import CuratorCoordinator, EffectTruthObserver
@@ -27,6 +28,19 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .operator_capabilities import (
+    HOST_CAPABILITY_PROFILE_SCHEMA,
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
+    OPERATOR_PROFILE_NAMES,
+    OperatorCapabilityError,
+    host_capability_profile,
+    host_capability_slot,
+    operator_capability_profile,
+    operator_capability_slot,
+    operator_runtime_id,
+    verify_operator_capability_binding,
+)
 from .peer_transport import (
     KeystorePeerCustody,
     PeerClient,
@@ -60,7 +74,7 @@ from .routes import (
 )
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import RecipientTarget
-from .service import SERVICE_METHODS, HostedWeave
+from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
@@ -184,6 +198,32 @@ def _read_bundle(path: Path) -> Mapping[str, Any]:
         raise RuntimeError("invalid_runtime_bundle") from exception
 
 
+def _read_private_bytes(path: Path, *, expected_size: int) -> bytes:
+    """Read one owner-only regular file through a stable descriptor."""
+
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            after = os.fstat(descriptor)
+            if (
+                (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                or not stat.S_ISREG(after.st_mode)
+                or after.st_uid != os.geteuid()
+                or stat.S_IMODE(after.st_mode) & 0o077
+                or after.st_size != expected_size
+            ):
+                raise RuntimeError("runtime_file_not_owner_only")
+            raw = os.read(descriptor, expected_size + 1)
+        finally:
+            os.close(descriptor)
+    except OSError as exception:
+        raise RuntimeError("runtime_file_not_owner_only") from exception
+    if len(raw) != expected_size:
+        raise RuntimeError("invalid_runtime_client_key")
+    return raw
+
+
 def _indexed(values: Any) -> dict[str, Mapping[str, Any]]:
     if not isinstance(values, list) or not 1 <= len(values) <= 256:
         raise RuntimeError("invalid_runtime_bundle")
@@ -281,6 +321,8 @@ def load_runtime(
         fields.add("sources")
     if schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
         fields.add("relationships")
+    if schema == BUNDLE_SCHEMA_V7:
+        fields.update({"operator_capability_binding", "runtime_id", "runtime_label"})
     bundle = _closed(raw_bundle, fields)
     if schema not in {
         BUNDLE_SCHEMA,
@@ -441,6 +483,35 @@ def load_runtime(
     except (KeyError, VerificationError, WeaveProtocolError) as exception:
         raise RuntimeError("local_authorization_not_active") from exception
 
+    runtime_id: str | None = None
+    runtime_label: str | None = None
+    if schema == BUNDLE_SCHEMA_V7:
+        runtime_id = bundle["runtime_id"]
+        runtime_label = bundle["runtime_label"]
+        try:
+            expected_runtime_id = operator_runtime_id(
+                runtime_label,
+                state.being_ref,
+                local_origin,
+                credential_body["signing_key"]["key_id"],
+            )
+        except (KeyError, OperatorCapabilityError, TypeError) as exception:
+            raise RuntimeError("invalid_operator_runtime_identity") from exception
+        if runtime_id != expected_runtime_id:
+            raise RuntimeError("invalid_operator_runtime_identity")
+        try:
+            verify_operator_capability_binding(
+                bundle["operator_capability_binding"],
+                runtime_id=runtime_id,
+                runtime_label=runtime_label,
+                being_ref=state.being_ref,
+                origin=local_origin,
+                signing_key=credential_body["signing_key"],
+                capability_rows=bundle["capabilities"],
+            )
+        except (KeyError, OperatorCapabilityError, TypeError) as exception:
+            raise RuntimeError("invalid_operator_capability_binding") from exception
+
     custody = _closed(bundle["keystore"], {"counter", "filename", "signing_slot"})
     counter = custody["counter"]
     signing_slot = custody["signing_slot"]
@@ -450,6 +521,10 @@ def load_runtime(
         or counter < 1
         or not isinstance(signing_slot, str)
         or not signing_slot.startswith("runtime.signing.v1:")
+        or (
+            schema == BUNDLE_SCHEMA_V7
+            and signing_slot != f"runtime.signing.v1:{runtime_label}"
+        )
     ):
         raise RuntimeError("invalid_runtime_custody")
     keystore_path = _safe_file(root, custody["filename"], must_exist=True)
@@ -476,10 +551,24 @@ def load_runtime(
         raise RuntimeError("runtime_requires_capability")
     required_slots = {signing_slot}
     capabilities: dict[str, LocalCapability] = {}
+    operator_clients: dict[str, tuple[LocalCapability, bytes, Mapping[str, Any]]] = {}
+    host_clients: dict[str, tuple[LocalCapability, bytes, Mapping[str, Any]]] = {}
+    capabilities_observed_at_ms = clock()
     for row in capability_rows:
-        value = _closed(row, {"descriptor", "secret_slot"})
+        value = _closed(
+            row,
+            (
+                {"descriptor", "profile", "runtime_id", "secret_slot"}
+                if schema == BUNDLE_SCHEMA_V7
+                else {"descriptor", "secret_slot"}
+            ),
+        )
         slot = value["secret_slot"]
-        if not isinstance(slot, str) or not slot.startswith("runtime.capability.v1:"):
+        if schema == BUNDLE_SCHEMA_V7 and value["runtime_id"] != runtime_id:
+            raise RuntimeError("invalid_operator_runtime_identity")
+        if not isinstance(slot, str) or not slot.startswith(
+            ("runtime.capability.v1:", "runtime.host-capability.v1:")
+        ):
             raise RuntimeError("invalid_capability_slot")
         if slot in required_slots:
             raise RuntimeError("duplicate_runtime_slot")
@@ -493,7 +582,107 @@ def load_runtime(
             or capability.capability_id in capabilities
         ):
             raise RuntimeError("invalid_runtime_capability")
+        if (
+            capability.descriptor["status"] != "active"
+            or not capability.descriptor["not_before_ms"]
+            <= capabilities_observed_at_ms
+            < capability.descriptor["not_after_ms"]
+        ):
+            raise RuntimeError("runtime_capability_not_active")
+        if schema == BUNDLE_SCHEMA_V7:
+            profile_value = value["profile"]
+            if not isinstance(profile_value, Mapping):
+                raise RuntimeError("invalid_operator_capability_profile")
+            role = profile_value.get("role")
+            profile_schema = profile_value.get("schema")
+            if not isinstance(role, str):
+                raise RuntimeError("invalid_operator_capability_profile")
+            try:
+                if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
+                    expected_profile = host_capability_profile(role)
+                    expected_methods = HOST_CAPABILITY_PROFILES[role]
+                    expected_client_id = f"client:host:{runtime_label}:{role}"
+                    assert runtime_label is not None
+                    expected_slot = host_capability_slot(runtime_label, role)
+                    clients = host_clients
+                else:
+                    expected_profile = operator_capability_profile(role)
+                    expected_methods = OPERATOR_CAPABILITY_PROFILES[role]
+                    expected_client_id = f"client:operator:{runtime_label}:{role}"
+                    assert runtime_label is not None
+                    expected_slot = operator_capability_slot(runtime_label, role)
+                    clients = operator_clients
+                if capability.client_id != expected_client_id:
+                    raise OperatorCapabilityError(
+                        "invalid_operator_capability_identity"
+                    )
+            except (KeyError, OperatorCapabilityError) as exception:
+                raise RuntimeError("invalid_operator_capability_profile") from exception
+            if (
+                dict(profile_value) != expected_profile
+                or slot != expected_slot
+                or frozenset(capability.methods) != expected_methods
+                or role in clients
+            ):
+                raise RuntimeError("invalid_operator_capability_profile")
+            clients[role] = (capability, key, profile_value)
         capabilities[capability.capability_id] = capability
+
+    if schema == BUNDLE_SCHEMA_V7:
+        all_clients = {
+            **operator_clients,
+            **{f"host:{k}": v for k, v in host_clients.items()},
+        }
+        if (
+            set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
+            or set(host_clients) != set(HOST_PROFILE_NAMES)
+            or len({capability.key_id for capability, _, _ in all_clients.values()})
+            != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+        ):
+            raise RuntimeError("invalid_operator_capability_profile")
+        for role, (capability, key, profile_value) in all_clients.items():
+            directory_role = role.removeprefix("host:")
+            if profile_value["client_directory"] == ".":
+                client_root = root
+            elif profile_value["schema"] == HOST_CAPABILITY_PROFILE_SCHEMA:
+                clients_root = root / "host-clients"
+                _owner_directory(clients_root)
+                client_root = clients_root / directory_role
+                _owner_directory(client_root)
+            else:
+                clients_root = root / "operator-clients"
+                _owner_directory(clients_root)
+                client_root = clients_root / directory_role
+                _owner_directory(client_root)
+            config_path = _safe_file(
+                client_root,
+                profile_value["client_config_filename"],
+                must_exist=True,
+            )
+            key_path = _safe_file(
+                client_root,
+                profile_value["client_key_filename"],
+                must_exist=True,
+            )
+            config = _closed(
+                _read_bundle(config_path),
+                {
+                    "capability",
+                    "expected_server",
+                    "runtime_id",
+                    "runtime_label",
+                    "schema",
+                },
+            )
+            if (
+                config["schema"] != CLIENT_CONFIG_SCHEMA_V3
+                or config["capability"] != capability.descriptor
+                or config["expected_server"] != local_origin
+                or config["runtime_id"] != runtime_id
+                or config["runtime_label"] != runtime_label
+                or _read_private_bytes(key_path, expected_size=32) != key
+            ):
+                raise RuntimeError("runtime_operator_client_mismatch")
 
     route_profile: RouteProfile | None = None
     route_rows: list[tuple[RouteBinding, Mapping[str, Any], bytes]] = []
