@@ -8,7 +8,14 @@ import secrets
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
-from .canonical import b64url, canonical_bytes
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
+from .canonical import b64url, canonical_bytes, unb64url
+from .identity import key_descriptor, signing_descriptor
 from .local_api import LocalCapability, create_capability
 from .service import OPERATOR_CAPABILITY_PROFILES
 
@@ -16,11 +23,14 @@ OPERATOR_CAPABILITY_TTL_MS: Final = 30 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_REPROVISION_LEAD_MS: Final = 7 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_NOT_BEFORE_SKEW_MS: Final = 60_000
 OPERATOR_CAPABILITY_PROFILE_SCHEMA: Final = "dm.operator.capability-profile/v1"
+OPERATOR_CAPABILITY_BINDING_SCHEMA: Final = "dm.operator.capability-binding/v1"
 OPERATOR_RUNTIME_ID_SCHEMA: Final = "dm.operator.runtime-identity/v1"
 OPERATOR_PROFILE_NAMES: Final = tuple(sorted(OPERATOR_CAPABILITY_PROFILES))
 OBSERVE_PROFILE: Final = "observe"
 
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_CAPABILITY_SET_DOMAIN: Final = b"daimon/operator-capability-set/v1\x00"
+_CAPABILITY_BINDING_DOMAIN: Final = b"daimon/operator-capability-binding/v1\x00"
 
 
 class OperatorCapabilityError(ValueError):
@@ -86,6 +96,142 @@ def operator_capability_slot(label: str, profile: str) -> str:
     if _LABEL.fullmatch(label) is None or profile not in OPERATOR_CAPABILITY_PROFILES:
         raise OperatorCapabilityError("invalid_operator_capability_identity")
     return f"runtime.capability.v1:{profile}:{label}"
+
+
+def operator_capability_set_hash(capability_rows: Any) -> str:
+    if not isinstance(capability_rows, list) or len(capability_rows) != len(
+        OPERATOR_PROFILE_NAMES
+    ):
+        raise OperatorCapabilityError("invalid_operator_capability_binding")
+    try:
+        encoded = canonical_bytes(capability_rows)
+    except (TypeError, ValueError) as exception:
+        raise OperatorCapabilityError(
+            "invalid_operator_capability_binding"
+        ) from exception
+    return "dm:operator-capability-set:v1:" + b64url(
+        hashlib.sha256(_CAPABILITY_SET_DOMAIN + encoded).digest()
+    )
+
+
+def create_operator_capability_binding(
+    *,
+    runtime_id: str,
+    runtime_label: str,
+    being_ref: str,
+    origin: Mapping[str, Any],
+    signing_seed: bytes,
+    capability_rows: Any,
+) -> dict[str, Any]:
+    """Sign the exact operator material with the embodiment signing key."""
+
+    try:
+        signing_key = signing_descriptor(signing_seed)
+        expected_runtime_id = operator_runtime_id(
+            runtime_label, being_ref, origin, signing_key["key_id"]
+        )
+        capability_set_hash = operator_capability_set_hash(capability_rows)
+    except (TypeError, ValueError) as exception:
+        raise OperatorCapabilityError(
+            "invalid_operator_capability_binding"
+        ) from exception
+    if runtime_id != expected_runtime_id:
+        raise OperatorCapabilityError("invalid_operator_capability_binding")
+    body = {
+        "runtime_id": runtime_id,
+        "runtime_label": runtime_label,
+        "being_ref": being_ref,
+        "origin": {
+            field: origin[field]
+            for field in ("body_ref", "embodiment_id", "incarnation_id", "principal_id")
+        },
+        "signing_key_id": signing_key["key_id"],
+        "capability_set_hash": capability_set_hash,
+    }
+    signature = Ed25519PrivateKey.from_private_bytes(signing_seed).sign(
+        _CAPABILITY_BINDING_DOMAIN + canonical_bytes(body)
+    )
+    return {
+        "schema": OPERATOR_CAPABILITY_BINDING_SCHEMA,
+        "body": body,
+        "signature": {
+            "algorithm": "Ed25519",
+            "key_id": signing_key["key_id"],
+            "value": b64url(signature),
+        },
+    }
+
+
+def verify_operator_capability_binding(
+    value: Any,
+    *,
+    runtime_id: str,
+    runtime_label: str,
+    being_ref: str,
+    origin: Mapping[str, Any],
+    signing_key: Mapping[str, Any],
+    capability_rows: Any,
+) -> None:
+    """Reject relabelled capability material not signed by this embodiment."""
+
+    try:
+        if not isinstance(value, Mapping) or set(value) != {
+            "schema",
+            "body",
+            "signature",
+        }:
+            raise OperatorCapabilityError("invalid_operator_capability_binding")
+        if value["schema"] != OPERATOR_CAPABILITY_BINDING_SCHEMA:
+            raise OperatorCapabilityError("invalid_operator_capability_binding")
+        if not isinstance(signing_key, Mapping) or set(signing_key) != {
+            "algorithm",
+            "key_id",
+            "public",
+        }:
+            raise OperatorCapabilityError("invalid_operator_capability_binding")
+        public = unb64url(signing_key["public"], length=32)
+        if signing_key != key_descriptor("Ed25519", public):
+            raise OperatorCapabilityError("invalid_operator_capability_binding")
+        expected_runtime_id = operator_runtime_id(
+            runtime_label, being_ref, origin, signing_key["key_id"]
+        )
+        expected_body = {
+            "runtime_id": runtime_id,
+            "runtime_label": runtime_label,
+            "being_ref": being_ref,
+            "origin": {
+                field: origin[field]
+                for field in (
+                    "body_ref",
+                    "embodiment_id",
+                    "incarnation_id",
+                    "principal_id",
+                )
+            },
+            "signing_key_id": signing_key["key_id"],
+            "capability_set_hash": operator_capability_set_hash(capability_rows),
+        }
+        body = value["body"]
+        signature = value["signature"]
+        if (
+            runtime_id != expected_runtime_id
+            or body != expected_body
+            or not isinstance(signature, Mapping)
+            or set(signature) != {"algorithm", "key_id", "value"}
+            or signature["algorithm"] != "Ed25519"
+            or signature["key_id"] != signing_key["key_id"]
+        ):
+            raise OperatorCapabilityError("invalid_operator_capability_binding")
+        Ed25519PublicKey.from_public_bytes(public).verify(
+            unb64url(signature["value"], length=64),
+            _CAPABILITY_BINDING_DOMAIN + canonical_bytes(body),
+        )
+    except OperatorCapabilityError:
+        raise
+    except (InvalidSignature, KeyError, TypeError, ValueError) as exception:
+        raise OperatorCapabilityError(
+            "invalid_operator_capability_binding"
+        ) from exception
 
 
 def operator_capability_lifecycle(issued_at_ms: int) -> dict[str, int]:
@@ -194,6 +340,7 @@ def validate_operator_capability_set(
 
 __all__ = [
     "OBSERVE_PROFILE",
+    "OPERATOR_CAPABILITY_BINDING_SCHEMA",
     "OPERATOR_CAPABILITY_NOT_BEFORE_SKEW_MS",
     "OPERATOR_CAPABILITY_PROFILE_SCHEMA",
     "OPERATOR_CAPABILITY_REPROVISION_LEAD_MS",
@@ -201,10 +348,13 @@ __all__ = [
     "OPERATOR_PROFILE_NAMES",
     "OPERATOR_RUNTIME_ID_SCHEMA",
     "OperatorCapabilityError",
+    "create_operator_capability_binding",
     "create_operator_capability_set",
     "operator_capability_lifecycle",
     "operator_capability_profile",
+    "operator_capability_set_hash",
     "operator_capability_slot",
     "operator_runtime_id",
     "validate_operator_capability_set",
+    "verify_operator_capability_binding",
 ]

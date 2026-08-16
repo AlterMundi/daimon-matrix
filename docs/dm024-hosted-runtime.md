@@ -60,6 +60,11 @@ operational signing key. The published schema requires exactly one row for each
 of the ten disjoint operator roles. Every row and owner-only V3 client config
 repeats the runtime binding; startup derives it again and rejects missing,
 duplicated, regrouped or cross-runtime capability material.
+The embodiment signing key named by the active root-authorized credential also
+signs a domain-separated hash of the exact ten-row capability set and the
+runtime identity inputs. Startup verifies that signature, so copied capability
+material cannot be made acceptable merely by relabelling public row and client
+JSON.
 
 ## Local protocol
 

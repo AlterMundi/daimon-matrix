@@ -71,6 +71,7 @@ from .operator_capabilities import (
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
     OperatorCapabilityError,
+    create_operator_capability_binding,
     create_operator_capability_set,
     operator_capability_lifecycle,
     operator_capability_profile,
@@ -1509,6 +1510,7 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
 
     fields = {
         "schema",
+        "operator_capability_binding",
         "runtime_id",
         "runtime_label",
         "control_artifacts",
@@ -2303,7 +2305,7 @@ def _activate_target_runtime(
             "counter": 1,
             "signing_slot": slots["signing"],
         }
-        bundle["capabilities"] = [
+        capability_rows = [
             {
                 "descriptor": capabilities[profile_name],
                 "profile": operator_capability_profile(profile_name),
@@ -2312,6 +2314,19 @@ def _activate_target_runtime(
             }
             for profile_name in OPERATOR_PROFILE_NAMES
         ]
+        try:
+            capability_binding = create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=profile["label"],
+                being_ref=successor.manifest.being_ref,
+                origin=origin,
+                signing_seed=body_secrets[slots["signing"]],
+                capability_rows=capability_rows,
+            )
+        except (KeyError, OperatorCapabilityError) as exception:
+            raise RebirthError("rebirth_target_capability_rejected") from exception
+        bundle["capabilities"] = capability_rows
+        bundle["operator_capability_binding"] = capability_binding
         bundle["routing"] = None
         bundle["scopes"] = {
             "body_capabilities": [],

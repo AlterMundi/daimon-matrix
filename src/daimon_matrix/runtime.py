@@ -34,6 +34,7 @@ from .operator_capabilities import (
     operator_capability_profile,
     operator_capability_slot,
     operator_runtime_id,
+    verify_operator_capability_binding,
 )
 from .peer_transport import (
     KeystorePeerCustody,
@@ -316,7 +317,7 @@ def load_runtime(
     if schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
         fields.add("relationships")
     if schema == BUNDLE_SCHEMA_V7:
-        fields.update({"runtime_id", "runtime_label"})
+        fields.update({"operator_capability_binding", "runtime_id", "runtime_label"})
     bundle = _closed(raw_bundle, fields)
     if schema not in {
         BUNDLE_SCHEMA,
@@ -493,6 +494,18 @@ def load_runtime(
             raise RuntimeError("invalid_operator_runtime_identity") from exception
         if runtime_id != expected_runtime_id:
             raise RuntimeError("invalid_operator_runtime_identity")
+        try:
+            verify_operator_capability_binding(
+                bundle["operator_capability_binding"],
+                runtime_id=runtime_id,
+                runtime_label=runtime_label,
+                being_ref=state.being_ref,
+                origin=local_origin,
+                signing_key=credential_body["signing_key"],
+                capability_rows=bundle["capabilities"],
+            )
+        except (KeyError, OperatorCapabilityError, TypeError) as exception:
+            raise RuntimeError("invalid_operator_capability_binding") from exception
 
     custody = _closed(bundle["keystore"], {"counter", "filename", "signing_slot"})
     counter = custody["counter"]

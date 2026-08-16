@@ -44,6 +44,7 @@ from daimon_matrix.ledger import Ledger
 from daimon_matrix.operator_capabilities import (
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
+    create_operator_capability_binding,
     create_operator_capability_set,
     operator_capability_profile,
     operator_runtime_id,
@@ -141,6 +142,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         )
         return {
             "schema": "dm.runtime.bundle/v7",
+            "operator_capability_binding": None,
             "runtime_id": runtime_id,
             "runtime_label": "legion",
             "control_artifacts": [self.genesis],
@@ -517,6 +519,16 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             }
             for profile in OPERATOR_PROFILE_NAMES
         ]
+        reverse_bundle["operator_capability_binding"] = (
+            create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=runtime_label,
+                being_ref=recovered_again.state.being_ref,
+                origin=origin,
+                signing_seed=signing_seed,
+                capability_rows=reverse_bundle["capabilities"],
+            )
+        )
         EncryptedKeystore.create(
             runtime_root / "custody.json",
             lambda: bytearray(runtime_password),

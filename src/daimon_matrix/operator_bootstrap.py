@@ -40,6 +40,7 @@ from .keystore import EncryptedKeystore
 from .operator_capabilities import (
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
+    create_operator_capability_binding,
     create_operator_capability_set,
     operator_capability_lifecycle,
     operator_capability_profile,
@@ -388,6 +389,23 @@ def _create(
                 item["origin"],
                 signing_descriptor(item["signing_seed"])["key_id"],
             )
+            capability_rows = [
+                {
+                    "descriptor": item["operator_capabilities"][profile].descriptor,
+                    "profile": operator_capability_profile(profile),
+                    "runtime_id": runtime_id,
+                    "secret_slot": item["operator_slots"][profile],
+                }
+                for profile in OPERATOR_PROFILE_NAMES
+            ]
+            capability_binding = create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=label,
+                being_ref=state.being_ref,
+                origin=item["origin"],
+                signing_seed=item["signing_seed"],
+                capability_rows=capability_rows,
+            )
             bundle = {
                 "schema": "dm.runtime.bundle/v7",
                 "runtime_id": runtime_id,
@@ -409,15 +427,8 @@ def _create(
                     "counter": 1,
                     "signing_slot": signing_slot,
                 },
-                "capabilities": [
-                    {
-                        "descriptor": item["operator_capabilities"][profile].descriptor,
-                        "profile": operator_capability_profile(profile),
-                        "runtime_id": runtime_id,
-                        "secret_slot": item["operator_slots"][profile],
-                    }
-                    for profile in OPERATOR_PROFILE_NAMES
-                ],
+                "capabilities": capability_rows,
+                "operator_capability_binding": capability_binding,
                 "routing": None,
                 "scopes": {
                     "body_capabilities": [],

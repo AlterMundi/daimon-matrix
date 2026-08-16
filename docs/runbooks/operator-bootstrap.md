@@ -12,11 +12,16 @@ fail closed.
 It centralizes every root and recovery seed in one process and one store and is
 not an operational custody procedure.
 
-The ceremony is one shot: the output path must not exist, all files are created
-owner-only, and publication is an fsynced atomic directory rename. Passwords
-enter only through inherited file descriptors. Private keys, passwords and
-capability keys never enter argv, environment, stdout, the public runtime bundle
-or the public receipt.
+Ceremony outputs are published with fsynced atomic renames and all private files
+are owner-only. The exact exception to the new-output rule is `create-holder`:
+retrying after the final directory rename opens the existing package with the
+supplied password and returns its descriptor only when the directory has the
+complete expected file set, requested holder role, pending control head, single
+expected secret slot, and matching derived public key. A wrong password, role,
+file set, slot or key is a conflict and fails closed; it never overwrites or
+regenerates the holder. Passwords enter only through inherited file descriptors.
+Private keys, passwords and capability keys never enter argv, environment,
+stdout, the public runtime bundle or the public receipt.
 
 ## Profile
 
@@ -56,8 +61,8 @@ endpoint in repository evidence.
 
 Run each `create-holder` and `sign` invocation in its holder's independent
 process and custody boundary. The following abbreviated example shows the file
-flow; passwords enter through inherited descriptors and every output path must
-be new:
+flow; passwords enter through inherited descriptors. Outputs must be new except
+for the exact validated `create-holder` post-rename retry described above:
 
 ```bash
 daimon-genesis create-holder --role root --password-fd 3 --output root-a 3<root-a.password
@@ -69,7 +74,8 @@ daimon-genesis aggregate --intent genesis-intent.json --share root-a.share.json 
 ```
 
 The holder package and its descriptor are committed by one fsynced directory
-rename. A crash before that rename leaves no target package and retry is safe.
+rename. A crash before that rename leaves no target package and retry is safe; a
+crash immediately after it is recovered by the exact idempotent validation path.
 The aggregator opens no holder package and receives no password or private key.
 
 ## Synthetic fixture
@@ -113,9 +119,13 @@ The output contains:
 
 The bundle's `runtime_id` is derived from its label, being root, root-authorized
 origin and operational signing key. Exactly ten capability rows are required,
-one per role. Each row and each `dm.local.client-config/v3` document repeats
-that ID and label, so copying a descriptor, slot, key or client config from a
-different runtime fails closed.
+one per role. The root-authorized embodiment signing key signs a domain-separated
+hash of that exact capability row set together with the runtime ID, label, being,
+origin and signing-key ID. Startup verifies the signature against the active
+credential. Each row and each `dm.local.client-config/v3` document also repeats
+the ID and label. Consequently, copying and publicly relabelling a descriptor,
+slot, key or client config from another runtime cannot produce the required
+binding signature and fails closed.
 
 Before service start, validate the V7 schema, open each custody with its own
 password, compare the common being/control/manifest hashes and prove every

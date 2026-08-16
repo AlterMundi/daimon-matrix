@@ -93,6 +93,7 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         )
         return {
             "schema": "dm.runtime.bundle/v7",
+            "operator_capability_binding": None,
             "runtime_id": runtime_id,
             "runtime_label": "legion",
             "control_artifacts": [self.genesis],

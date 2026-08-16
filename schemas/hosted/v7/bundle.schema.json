@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema",
+    "operator_capability_binding",
     "runtime_id",
     "runtime_label",
     "control_artifacts",
@@ -32,6 +33,9 @@
   "properties": {
     "schema": {
       "const": "dm.runtime.bundle/v7"
+    },
+    "operator_capability_binding": {
+      "$ref": "#/$defs/operatorCapabilityBinding"
     },
     "runtime_id": {
       "type": "string",
@@ -526,6 +530,66 @@
     }
   },
   "$defs": {
+    "operatorCapabilityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "body", "signature"],
+      "properties": {
+        "schema": {"const": "dm.operator.capability-binding/v1"},
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime_id",
+            "runtime_label",
+            "being_ref",
+            "origin",
+            "signing_key_id",
+            "capability_set_hash"
+          ],
+          "properties": {
+            "runtime_id": {
+              "type": "string",
+              "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "runtime_label": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "being_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "origin": {"$ref": "#/$defs/origin"},
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "capability_set_hash": {
+              "type": "string",
+              "pattern": "^dm:operator-capability-set:v1:[A-Za-z0-9_-]{43}$"
+            }
+          }
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "key_id", "value"],
+          "properties": {
+            "algorithm": {"const": "Ed25519"},
+            "key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{86}$"
+            }
+          }
+        }
+      }
+    },
     "communicationCapability": {
       "type": "object",
       "required": ["profile"],
