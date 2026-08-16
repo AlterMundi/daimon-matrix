@@ -59,6 +59,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_genesis.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
@@ -113,6 +114,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/local_we.py",
         "daimon_matrix/mcp_server.py",
         "daimon_matrix/operator_bootstrap.py",
+        "daimon_matrix/operator_genesis.py",
         "daimon_matrix/operator_rebirth.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
@@ -323,6 +325,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_genesis.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
@@ -396,16 +399,17 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
     if files[f"{DIST_INFO}/entry_points.txt"] != (
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
-        b"daimon-bootstrap = daimon_matrix.operator_bootstrap:main\n"
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
+        b"daimon-genesis = daimon_matrix.operator_genesis:main\n"
         b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
         b"daimon-rebirth = daimon_matrix.operator_rebirth:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
+        b"daimon-synthetic-bootstrap = daimon_matrix.operator_bootstrap:main\n"
         b"daimon-synthetic-multihost = daimon_matrix.synthetic_multihost:main\n"
         b"daimon-synthetic-relationships = "
         b"daimon_matrix.synthetic_relationships:main\n"
@@ -468,6 +472,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/operator_bootstrap.py": (
             "src/daimon_matrix/operator_bootstrap.py"
         ),
+        "daimon_matrix/operator_genesis.py": "src/daimon_matrix/operator_genesis.py",
         "daimon_matrix/operator_rebirth.py": ("src/daimon_matrix/operator_rebirth.py"),
         "daimon_matrix/memory_policy.py": "src/daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py": (

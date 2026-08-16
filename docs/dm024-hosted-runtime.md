@@ -50,8 +50,9 @@ sorted, exact native-peer HTTP(S) target and timeout. The endpoint is fixed at
 startup rather than accepted from a sync call. `we.sync.peer-pull` reuses the
 DM-023 request frozen by `scope.we.sync-plan`, performs the encrypted peer
 round trip inside the daemon's custody boundary and atomically imports one
-bounded page. The installed `daimon-bootstrap` ceremony and operational steps
-are documented in `docs/runbooks/operator-bootstrap.md`.
+bounded page. Distributed `daimon-genesis` provisioning and the explicitly
+synthetic single-store bootstrap fixture are documented in
+`docs/runbooks/operator-bootstrap.md`.
 
 ## Local protocol
 

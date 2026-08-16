@@ -36,8 +36,9 @@ that must be refreshed:
 3. Read-only host inventory found no current root-bound Matrix being on either
    host. The only remnants are matching all-zero historical fixture manifests
    in trash; they are not migration authority. Matrix therefore now owns the
-   fresh plural-being `daimon-bootstrap` ceremony instead of asking Cluster to
-   invent identity.
+   fresh plural-being distributed `daimon-genesis` ceremony instead of asking
+   Cluster to invent identity. The former one-process bootstrap is now exposed
+   only as `daimon-synthetic-bootstrap` and cannot prove separated custody.
 4. V6 configured only a local peer listener, forcing an operator to inject a
    remote URL outside the runtime contract. V7 adds exact per-embodiment peer
    targets and `we.sync.peer-pull`, so the ordinary CLI can execute the frozen

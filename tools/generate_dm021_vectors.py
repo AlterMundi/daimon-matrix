@@ -17,13 +17,13 @@ from daimon_matrix.canonical import canonical_bytes  # noqa: E402
 from daimon_matrix.identity import (  # noqa: E402
     create_binding_activation,
     create_embodiment_credential,
-    create_genesis,
     create_history_binding,
     create_incarnation_authorization,
-    create_recovery,
     create_recovery_policy_change,
     create_revocation,
     create_root_rotation,
+    create_synthetic_genesis_in_process,
+    create_synthetic_recovery_in_process,
     ed25519_public,
     key_descriptor,
     verify_genesis,
@@ -56,7 +56,7 @@ def without_role(artifact: dict[str, Any], role: str) -> dict[str, Any]:
 def generate() -> None:
     root = [seed("root-a"), seed("root-b"), seed("root-c")]
     recovery = [seed("recovery-a"), seed("recovery-b"), seed("recovery-c")]
-    genesis = create_genesis(
+    genesis = create_synthetic_genesis_in_process(
         root,
         2,
         recovery,
@@ -127,7 +127,7 @@ def generate() -> None:
         verify_successor(branch_b, state),
     ]
     recovered_root = [seed("recovered-root-a"), seed("recovered-root-b")]
-    recovery_artifact = create_recovery(
+    recovery_artifact = create_synthetic_recovery_in_process(
         branch_states,
         recovery,
         recovered_root,

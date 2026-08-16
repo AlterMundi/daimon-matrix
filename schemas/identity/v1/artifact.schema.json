@@ -179,12 +179,24 @@
     "recovery": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["being_ref", "competing_control_heads", "control_generation", "control_sequence", "replacement_root", "revoked_embodiments"],
+      "required": ["being_ref", "competing_control_heads", "control_generation", "control_sequence", "revocation_high_water", "replacement_root", "revoked_embodiments"],
       "properties": {
         "being_ref": {"type": "string", "pattern": "^dm:being:v1:"},
         "competing_control_heads": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^dm:identity:v1:"}},
         "control_generation": {"type": "integer", "minimum": 1},
         "control_sequence": {"const": 0},
+        "revocation_high_water": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cutoff_incarnation_sequence", "revocation_generation"],
+            "properties": {
+              "cutoff_incarnation_sequence": {"type": "integer", "minimum": 0},
+              "revocation_generation": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
         "replacement_root": {"$ref": "#/$defs/threshold"},
         "revoked_embodiments": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
       }

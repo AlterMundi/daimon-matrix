@@ -18,7 +18,7 @@ import json
 import sys
 from pathlib import Path
 
-from daimon_matrix.identity import create_genesis, verify_genesis
+from daimon_matrix.identity import create_synthetic_genesis_in_process, verify_genesis
 from daimon_matrix.keystore import EncryptedKeystore
 
 payload = json.loads(sys.stdin.buffer.read())
@@ -28,7 +28,9 @@ recovery = [decode(value) for value in payload["recovery"]]
 password = decode(payload["password"])
 first = Path(payload["first"])
 second = Path(payload["second"])
-genesis = create_genesis(root, 2, recovery, 2, created_at_ms=1800000000000)
+genesis = create_synthetic_genesis_in_process(
+    root, 2, recovery, 2, created_at_ms=1800000000000
+)
 state = verify_genesis(genesis)
 store = EncryptedKeystore.create(
     first / "custody.json",

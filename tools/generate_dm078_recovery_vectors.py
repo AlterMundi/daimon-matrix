@@ -17,9 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from daimon_matrix.canonical import canonical_bytes  # noqa: E402
-from daimon_matrix.identity import create_recovery, verify_genesis  # noqa: E402
+from daimon_matrix.identity import (  # noqa: E402
+    create_synthetic_recovery_in_process,
+    verify_genesis,
+)
 from daimon_matrix.operator_rebirth import (  # noqa: E402
-    authorize_recovery_enrollment_request,
+    authorize_synthetic_recovery_enrollment_in_process,
     create_enrollment_request,
     recovery_request_base,
 )
@@ -63,7 +66,7 @@ def generate(output: Path) -> None:
         seed("dm078-recovered-root-a"),
         seed("dm078-recovered-root-b"),
     ]
-    recovery = create_recovery(
+    recovery = create_synthetic_recovery_in_process(
         [state],
         [seed("recovery-a"), seed("recovery-b")],
         replacement_roots,
@@ -83,7 +86,7 @@ def generate(output: Path) -> None:
         expires_at_ms=NOW + 60_010,
         nonce=seed("dm078-recovery-request-nonce"),
     )
-    activation = authorize_recovery_enrollment_request(
+    activation = authorize_synthetic_recovery_enrollment_in_process(
         request,
         base,
         recovery,

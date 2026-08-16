@@ -1,10 +1,16 @@
-# Root-bound plural-being bootstrap
+# Distributed genesis and synthetic bootstrap fixture
 
-`daimon-bootstrap` is the Matrix-owned operator ceremony used when no current
-root-bound being exists to migrate. It creates one fresh self-certifying root,
-an encrypted offline root/recovery custody and two or more active embodiment
-runtimes. Cluster installs the resulting runtime directories but never creates
-or interprets their identity.
+`daimon-genesis` is the production-shaped first stage for a new being. Each
+root and recovery holder runs `create-holder` separately, retains one encrypted
+seed in one owner-only package, and publishes only `descriptor.json`. An
+operator freezes those public descriptors with `create-intent`; each holder
+then runs `sign`, and the keyless `aggregate` step emits the genesis artifact.
+Threshold shortfall, duplicate shares, role substitution and key substitution
+fail closed.
+
+`daimon-synthetic-bootstrap` is retained only as a local deterministic fixture.
+It centralizes every root and recovery seed in one process and one store and is
+not an operational custody procedure.
 
 The ceremony is one shot: the output path must not exist, all files are created
 owner-only, and publication is an fsynced atomic directory rename. Passwords
@@ -46,12 +52,32 @@ embodiments use.
 The sample addresses are documentation-only. Do not publish a real private
 endpoint in repository evidence.
 
-## Ceremony
+## Distributed genesis ceremony
+
+Run each `create-holder` and `sign` invocation in its holder's independent
+process and custody boundary. The following abbreviated example shows the file
+flow; passwords enter through inherited descriptors and every output path must
+be new:
+
+```bash
+daimon-genesis create-holder --role root --password-fd 3 --output root-a 3<root-a.password
+daimon-genesis create-holder --role recovery --password-fd 3 --output recovery-a 3<recovery-a.password
+daimon-genesis create-intent --descriptor root-a/descriptor.json --descriptor root-b/descriptor.json --descriptor recovery-a/descriptor.json --descriptor recovery-b/descriptor.json --root-threshold 2 --recovery-threshold 2 --output genesis-intent.json
+daimon-genesis sign --intent genesis-intent.json --holder root-a --password-fd 3 --output root-a.share.json 3<root-a.password
+daimon-genesis sign --intent genesis-intent.json --holder recovery-a --password-fd 3 --output recovery-a.share.json 3<recovery-a.password
+daimon-genesis aggregate --intent genesis-intent.json --share root-a.share.json --share root-b.share.json --share recovery-a.share.json --share recovery-b.share.json --output genesis.json
+```
+
+The holder package and its descriptor are committed by one fsynced directory
+rename. A crash before that rename leaves no target package and retry is safe.
+The aggregator opens no holder package and receives no password or private key.
+
+## Synthetic fixture
 
 Open each password as an inherited descriptor and invoke the installed command:
 
 ```bash
-daimon-bootstrap \
+daimon-synthetic-bootstrap \
   --output /secure/staging/compaii-bootstrap \
   --profile /secure/input/profile.json \
   --root-password-fd 3 \
@@ -62,8 +88,8 @@ daimon-bootstrap \
   5</secure/input/host-b.password
 ```
 
-The process coordinating this initial ceremony necessarily handles every fresh
-key in memory. It must therefore run on the designated trusted bootstrap host.
+This fixture handles every fresh key in memory and therefore does not establish
+separated custody. Never use its evidence to claim a production quorum.
 After encrypted runtime directories are transferred through an authenticated
 channel and verified on their destination hosts, remove the transferred copy
 from staging. At rest, each host retains only its own encrypted runtime and

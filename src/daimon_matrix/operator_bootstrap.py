@@ -1,4 +1,8 @@
-"""One-shot operator ceremony for a new plural root-bound hosted being."""
+"""Synthetic single-store bootstrap fixture for local deterministic tests.
+
+Production provisioning starts with ``daimon-genesis`` so every recovery key
+is created and used by an isolated holder process/store.
+"""
 
 from __future__ import annotations
 
@@ -23,8 +27,8 @@ from .canonical import canonical_bytes
 from .client import CLIENT_CONFIG_SCHEMA, load_json_document
 from .identity import (
     create_embodiment_credential,
-    create_genesis,
     create_incarnation_authorization,
+    create_synthetic_genesis_in_process,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
@@ -229,7 +233,7 @@ def _create(
         created_at_ms = time.time_ns() // 1_000_000
         root_seeds = [generate_ed25519_seed() for _ in range(3)]
         recovery_seeds = [generate_ed25519_seed() for _ in range(3)]
-        genesis = create_genesis(
+        genesis = create_synthetic_genesis_in_process(
             root_seeds,
             2,
             recovery_seeds,
@@ -516,7 +520,9 @@ def _create(
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="daimon-bootstrap", description=__doc__)
+    result = argparse.ArgumentParser(
+        prog="daimon-synthetic-bootstrap", description=__doc__
+    )
     result.add_argument("--output", type=Path, required=True)
     result.add_argument("--profile", type=Path, required=True)
     result.add_argument("--root-password-fd", type=int, required=True)
