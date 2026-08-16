@@ -1913,13 +1913,12 @@ class SourcePublishedEvidenceTests(unittest.TestCase):
 
 
 class HostedSourceRuntimeTests(RuntimeFixture):
-    def test_v5_bundle_loads_source_runtime_and_authenticated_status(self) -> None:
-        state_root, bundle, capability = self.make_bundle(state_name="sources-v5")
+    def test_v7_bundle_loads_source_runtime_and_authenticated_status(self) -> None:
+        state_root, bundle, capability = self.make_bundle(state_name="sources-v7")
         bundle.update(
             {
                 "authority_history": [],
                 "peer_transport": None,
-                "schema": "dm.runtime.bundle/v5",
                 "sources": {
                     "cas_filename": "sources.sqlite3",
                     "known_beings": [],
@@ -1932,7 +1931,7 @@ class HostedSourceRuntimeTests(RuntimeFixture):
         schema = json.loads(
             (
                 Path(__file__).resolve().parents[1]
-                / "schemas/hosted/v5/bundle.schema.json"
+                / "schemas/hosted/v7/bundle.schema.json"
             ).read_bytes()
         )
         Draft202012Validator.check_schema(schema)

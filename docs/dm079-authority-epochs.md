@@ -40,24 +40,18 @@ root seeds online, but it also cannot mutate another embodiment's authority.
 reinterpreted under the active manifest. New events and all live `/me`, `/we`,
 transport and relationship checks use only the active authority.
 
-Hosted successor state uses closed `dm.runtime.bundle/v2`. Its
+Hosted successor state uses closed `dm.runtime.bundle/v7`. Its
 `authority_history` contains every prior root manifest and the signed successor
-leading to the next entry or the current `manifest`. V1 remains valid for a
-single unchanged epoch. Once a ledger accepts V2 history, reopening it with the
-old V1 bundle is a downgrade and fails.
+leading to the next entry or the current `manifest`. Runtime bundles V1 through
+V6 were never deployed and are rejected; there is no compatibility or downgrade
+path.
 
-Owner-local exact retries can outlive the incarnation that first completed
-them. Client config V2 keeps the current `expected_server` and an ordered,
-bounded `historical_servers` list with exact retirement milliseconds. A cached
-response from a retired incarnation is accepted only when the authenticated
-request was issued no later than that retirement; new requests accept only the
-current origin. The service independently requires the cached response origin
-to be an authority-history member of the same body, embodiment and principal.
-This preserves byte-identical journal replay without making a retired daemon a
-valid responder for new work.
+Owner-local clients use config V3 and accept only the current expected server
+and runtime identity. Responses from retired incarnations fail closed; callers
+must retry against the current incarnation.
 
 Activated provisional history and root-authority history are deliberately
-separate mechanisms. V2 refuses to combine them in this first profile; the
+separate mechanisms. V7 refuses to combine them in this first profile; the
 provisional binding must be completed before the first root-authority epoch
 succession.
 
@@ -82,7 +76,7 @@ only the active hash, sorted accepted hashes and epoch count.
 ## Cluster handoff
 
 Cluster remains responsible for quiescing the old process, registering the
-fresh physical incarnation, installing the already signed V2 bundle, retaining
+fresh physical incarnation, installing the already signed V7 bundle, retaining
 the same per-embodiment volume and starting the daemon through descriptor-only
 custody. Matrix validates the epoch before binding its socket. Cluster registry
 equality is still required, and neither manifest nor incarnation authority
@@ -91,7 +85,7 @@ evaluation time to Cluster's body reader, so a restarted process cannot race
 an independently sampled millisecond while producing `/me`.
 
 Schemas are `schemas/weave/v1/authority-epoch.schema.json` and
-`schemas/hosted/v2/bundle.schema.json`. Core, corruption, downgrade, hosted
+`schemas/hosted/v7/bundle.schema.json`. Core, corruption, downgrade, hosted
 restart and projection evidence is in `tests/test_dm079_authority_epochs.py`;
 the canonical signed positive and tampered negative fixtures are reproducibly
 generated under `vectors/weave/v1/authority-epoch/`;

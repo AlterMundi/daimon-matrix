@@ -1,10 +1,9 @@
-"""Run the installed DM-060 synthetic birth acceptance journey.
+"""Historical pre-RC DM-060 synthetic birth fixture.
 
-The executable creates only fresh synthetic identities under one validated
-owner-only temporary root.  It never reads a live profile, Matrix state,
-Cluster service, provider account, Tribe store, HMK database, or harness
-session.  Its report contains public content identifiers and bounded outcomes
-only.
+The retained generator creates only fresh synthetic identities under one
+validated owner-only temporary root. Its V3 runtime document is archived test
+data, not an installed command; the production V7-only loader rejects it before
+custody is opened.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from .birth import (
     validate_activation_receipt,
 )
 from .canonical import CanonicalError, canonical_bytes
-from .client import CLIENT_CONFIG_SCHEMA
+from .client import CLIENT_CONFIG_SCHEMA_V3
 from .identity import (
     ControlState,
     create_embodiment_credential,
@@ -406,9 +405,11 @@ def _runtime_bundle(
     _write_private(
         runtime_root / "client.json",
         {
-            "schema": CLIENT_CONFIG_SCHEMA,
+            "schema": CLIENT_CONFIG_SCHEMA_V3,
             "capability": capability.descriptor,
             "expected_server": identity.origin,
+            "runtime_id": "dm:runtime:v1:" + "A" * 43,
+            "runtime_label": "dm060-synthetic-retired",
         },
     )
     _directory(runtime_root, "requests")

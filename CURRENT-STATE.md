@@ -13,7 +13,10 @@ conformance registry currently contains 102 scenarios. Exact evidence and the
 pre-version-bump artifact hashes are recorded in
 [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 Because package metadata is part of each distribution, the RC artifacts must
-be rebuilt and receive new hashes.
+be rebuilt and receive new hashes. The V7/V3-only successor has now been
+qualified locally with 619 unittest cases (22 intentional skips) and two
+byte-identical offline builds; exact hashes are recorded in
+[`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
 ## Implemented Matrix boundary
 
@@ -63,8 +66,8 @@ supersedes their operational-state claims.
 
 ## Remaining release work
 
-- remove or fixture-isolate never-deployed runtime-bundle V1–V6 and pre-V3
-  client compatibility before treating the package surface as frozen;
+- freeze the V7-only runtime-bundle and V3-only client surface now that the
+  never-deployed compatibility paths are removed;
 - finish exact cross-repository pins and manifests;
 - rebuild `0.1.0rc1` twice and record byte-identical artifact hashes;
 - perform clean artifact installation and the complete supported-Python suite;

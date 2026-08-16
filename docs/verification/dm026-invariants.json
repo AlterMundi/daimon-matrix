@@ -5,7 +5,7 @@
   "registry_schema": "dm.conformance.registry/v1",
   "report_schema": "dm.conformance.report/v1",
   "required_scenario_count": 102,
-  "registry_sha256": "37e8b791194f0d13eaa08c99b0cb8f8b52d0afba1ec792c50a95b8cb02c2bba0",
+  "registry_sha256": "aa975f493e8989c781c472045faa57518015fbd5273af63ee9a4f2d9ba50113a",
   "invariants": {
     "closed_bidirectional_registry": true,
     "canonical_registry_digest_pinned": true,
@@ -57,8 +57,7 @@
     "docs/dm081-source-runtime.md",
     "docs/dm070-multihost-convergence.md",
     "docs/dm079-authority-epochs.md",
-    "schemas/hosted/v2/bundle.schema.json",
-    "schemas/hosted/v3/bundle.schema.json",
+    "schemas/hosted/v7/bundle.schema.json",
     "schemas/transport/v1/peer-envelope.schema.json",
     "schemas/weave/v1/authority-epoch.schema.json",
     "schemas/weave/v1/embodiment-enrollment.schema.json",

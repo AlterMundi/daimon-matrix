@@ -55,11 +55,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
                 "daimon-rebirth": "daimon_matrix.operator_rebirth:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
-                "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
                 "daimon-synthetic-bootstrap": ("daimon_matrix.operator_bootstrap:main"),
-                "daimon-synthetic-multihost": (
-                    "daimon_matrix.synthetic_multihost:main"
-                ),
                 "daimon-synthetic-relationships": (
                     "daimon_matrix.synthetic_relationships:main"
                 ),

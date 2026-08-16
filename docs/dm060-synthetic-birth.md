@@ -1,12 +1,13 @@
 # DM-060 synthetic birth acceptance
 
-Status: implemented as synthetic release evidence. No real being, body,
-Cluster deployment, Tribe account, or external provider is created.
+Status: historical pre-RC synthetic evidence. Its never-deployed V3 runtime
+fixture is retained for contract tests, but it is no longer an installed command
+or RC qualification journey. Production accepts V7 only.
 
 ## Outcome
 
-DM-060 turns the normative birth contract into one installed acceptance
-journey. It creates a fresh synthetic parent, witness, and newborn, accepts one
+DM-060 recorded an acceptance journey that creates a fresh synthetic parent,
+witness, and newborn, accepts one
 lineage, authorizes the newborn's first embodiment and incarnation, starts the
 real Daimon Matrix daemon, and proves through CLI and MCP that the newborn has
 one local embodiment and no autobiographical history.
@@ -89,39 +90,14 @@ descriptors. They do not appear in argv, environment, logs, or reports. Root
 and recovery private material remains only in the encrypted custody test files
 and in-process ceremony memory.
 
-## Running the source acceptance
+## Archived fixture boundary
 
-From the repository root:
-
-```bash
-PYTHONPATH=src python -m daimon_matrix.synthetic_birth \
-  --scenario conformance/fixtures/dm060-synthetic-birth.json \
-  --output /an/explicit/owner/path/dm060-report.json
-```
-
-The output parent must already exist. The report is written through an
-exclusive owner-only temporary file, file `fsync`, atomic replace, and parent
-directory `fsync`.
-
-## Running the installed acceptance
-
-Build and install the wheel with its exact declared dependencies, then run:
-
-```bash
-daimon-synthetic-birth \
-  --scenario conformance/fixtures/dm060-synthetic-birth.json \
-  --output /an/explicit/owner/path/dm060-report.json
-```
-
-The command prints only a summary containing schema, scenario ID, pass status,
-and SHA-256 of the complete canonical report. Failure prints one bounded stable
-error code and exits 2.
-
-The acceptance is valid only when the wheel contains
-`daimon_matrix.birth`, `daimon_matrix.synthetic_birth`, and the console entry
-point, and when its dependencies include the pinned cryptographic runtime.
-Installing the wheel without declared dependencies is not a valid acceptance
-environment.
+The checked-in scenario, report schema and contract tests remain historical
+evidence. `daimon_matrix.synthetic_birth` is clearly named fixture code and is
+not imported by the production runtime; `daimon-synthetic-birth` is no longer a
+console entry point. Executing its V3 runtime document now fails at the V7-only
+loader before custody is opened. New release evidence must use the V7 operator
+bootstrap/rebirth journeys.
 
 ## Report semantics
 
@@ -154,8 +130,8 @@ actually validated in-process.
 - crash rollback and exact retry at acceptance and activation;
 - concurrent replay producing one durable acceptance;
 - owner-only regular-file and symlink enforcement;
-- real daemon/CLI/MCP execution and bounded public report validation; and
-- source-module and console-entrypoint execution.
+- archived report validation; and
+- fail-closed rejection of the pre-RC runtime fixture.
 
 The three DM-060 conformance scenarios are `birth_contract_integrity`,
 `birth_durable_one_use`, and `birth_installed_journey` in suite DM-026.16.

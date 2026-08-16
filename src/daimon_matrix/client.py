@@ -30,8 +30,6 @@ from .local_api import (
 )
 from .service import SERVICE_METHODS
 
-CLIENT_CONFIG_SCHEMA: Final = "dm.local.client-config/v1"
-CLIENT_CONFIG_SCHEMA_V2: Final = "dm.local.client-config/v2"
 CLIENT_CONFIG_SCHEMA_V3: Final = "dm.local.client-config/v3"
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
 Clock = Callable[[], int]
@@ -204,9 +202,8 @@ def read_capability_key(descriptor: int) -> bytearray:
 class ClientConfig:
     capability: LocalCapability
     expected_server: Mapping[str, str]
-    historical_servers: tuple[Mapping[str, Any], ...] = ()
-    runtime_id: str | None = None
-    runtime_label: str | None = None
+    runtime_id: str
+    runtime_label: str
 
     @classmethod
     def load(cls, path: Path, key: bytes | bytearray) -> ClientConfig:
@@ -214,19 +211,19 @@ class ClientConfig:
             raw = load_json_document(_owner_file(Path(os.path.abspath(path))))
             if not isinstance(raw, Mapping):
                 raise ClientError("invalid_client_config")
-            schema = raw.get("schema")
-            fields = {"capability", "expected_server", "schema"}
-            if schema == CLIENT_CONFIG_SCHEMA_V2:
-                fields.add("historical_servers")
-            if schema == CLIENT_CONFIG_SCHEMA_V3:
-                fields.update({"runtime_id", "runtime_label"})
-            value = _closed(raw, fields, "invalid_client_config")
-            if schema not in {
-                CLIENT_CONFIG_SCHEMA,
-                CLIENT_CONFIG_SCHEMA_V2,
-                CLIENT_CONFIG_SCHEMA_V3,
-            }:
+            if raw.get("schema") != CLIENT_CONFIG_SCHEMA_V3:
                 raise ClientError("unsupported_client_config")
+            value = _closed(
+                raw,
+                {
+                    "capability",
+                    "expected_server",
+                    "runtime_id",
+                    "runtime_label",
+                    "schema",
+                },
+                "invalid_client_config",
+            )
             server = _closed(
                 value["expected_server"],
                 {"body_ref", "embodiment_id", "incarnation_id", "principal_id"},
@@ -241,78 +238,19 @@ class ClientConfig:
                 for item in server.values()
             ):
                 raise ClientError("invalid_expected_server")
-            historical: list[dict[str, Any]] = []
-            if schema == CLIENT_CONFIG_SCHEMA_V2:
-                rows = value["historical_servers"]
-                if not isinstance(rows, list) or len(rows) > 64:
-                    raise ClientError("invalid_historical_servers")
-                for raw_row in rows:
-                    row = _closed(
-                        raw_row,
-                        {"retired_at_ms", "server"},
-                        "invalid_historical_servers",
-                    )
-                    old = _closed(
-                        row["server"],
-                        {
-                            "body_ref",
-                            "embodiment_id",
-                            "incarnation_id",
-                            "principal_id",
-                        },
-                        "invalid_historical_servers",
-                    )
-                    retired_at_ms = row["retired_at_ms"]
-                    if (
-                        not isinstance(retired_at_ms, int)
-                        or isinstance(retired_at_ms, bool)
-                        or not 0 <= retired_at_ms <= 2**53 - 1
-                        or any(
-                            not isinstance(item, str)
-                            or not 1 <= len(item.encode("utf-8")) <= 256
-                            for item in old.values()
-                        )
-                        or any(
-                            old[field] != server[field]
-                            for field in ("body_ref", "embodiment_id", "principal_id")
-                        )
-                        or old["incarnation_id"] == server["incarnation_id"]
-                    ):
-                        raise ClientError("invalid_historical_servers")
-                    historical.append(
-                        {
-                            "retired_at_ms": retired_at_ms,
-                            "server": copy.deepcopy(dict(old)),
-                        }
-                    )
-                if historical != sorted(
-                    historical,
-                    key=lambda row: (
-                        row["retired_at_ms"],
-                        row["server"]["incarnation_id"],
-                    ),
-                ) or len(
-                    {row["server"]["incarnation_id"] for row in historical}
-                ) != len(historical):
-                    raise ClientError("invalid_historical_servers")
-            runtime_id: str | None = None
-            runtime_label: str | None = None
-            if schema == CLIENT_CONFIG_SCHEMA_V3:
-                runtime_id = value["runtime_id"]
-                runtime_label = value["runtime_label"]
-                if (
-                    not isinstance(runtime_id, str)
-                    or re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", runtime_id)
-                    is None
-                    or not isinstance(runtime_label, str)
-                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", runtime_label)
-                    is None
-                ):
-                    raise ClientError("invalid_client_runtime_identity")
+            runtime_id = value["runtime_id"]
+            runtime_label = value["runtime_label"]
+            if (
+                not isinstance(runtime_id, str)
+                or re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", runtime_id) is None
+                or not isinstance(runtime_label, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", runtime_label)
+                is None
+            ):
+                raise ClientError("invalid_client_runtime_identity")
             return cls(
                 capability,
                 copy.deepcopy(dict(server)),
-                tuple(copy.deepcopy(historical)),
                 runtime_id,
                 runtime_label,
             )
@@ -417,25 +355,13 @@ class LocalClient:
                     raise ClientError("trailing_daemon_response")
         except (TimeoutError, OSError) as exception:
             raise ClientError("daemon_unavailable") from exception
-        expected_server = self.config.expected_server
-        response_server = response.get("server")
-        if response_server != expected_server:
-            eligible = [
-                row["server"]
-                for row in self.config.historical_servers
-                if normalized["issued_at_ms"] <= row["retired_at_ms"]
-                and response_server == row["server"]
-            ]
-            if len(eligible) != 1:
-                raise ClientError("daemon_response_rejected")
-            expected_server = eligible[0]
         try:
             return verify_response(
                 response,
                 self.config.capability,
                 expected_request_id=str(normalized["request_id"]),
                 expected_request_hash=digest,
-                expected_server=expected_server,
+                expected_server=self.config.expected_server,
             )
         except (KeyError, LocalApiError) as exception:
             raise ClientError("daemon_response_rejected") from exception
@@ -640,8 +566,6 @@ class LocalClient:
 
 
 __all__ = [
-    "CLIENT_CONFIG_SCHEMA",
-    "CLIENT_CONFIG_SCHEMA_V2",
     "CLIENT_CONFIG_SCHEMA_V3",
     "ClientConfig",
     "ClientError",

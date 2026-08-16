@@ -1273,10 +1273,10 @@ class RelationshipServiceTests(unittest.TestCase):
 
 
 class RelationshipRuntimeTests(RuntimeFixture):
-    def test_v6_bundle_loads_relationship_store_and_dynamic_scope_provider(
+    def test_v7_bundle_loads_relationship_store_and_dynamic_scope_provider(
         self,
     ) -> None:
-        state_root, bundle, _ = self.make_bundle(state_name="relationships-v6")
+        state_root, bundle, _ = self.make_bundle(state_name="relationships-v7")
         bundle.update(
             {
                 "authority_history": [],
@@ -1285,7 +1285,6 @@ class RelationshipRuntimeTests(RuntimeFixture):
                     "known_being_refs": [],
                     "store_filename": "relationships.sqlite3",
                 },
-                "schema": "dm.runtime.bundle/v6",
                 "sources": {
                     "cas_filename": "sources.sqlite3",
                     "known_beings": [],
@@ -1298,7 +1297,7 @@ class RelationshipRuntimeTests(RuntimeFixture):
         schema = json.loads(
             (
                 Path(__file__).resolve().parents[1]
-                / "schemas/hosted/v6/bundle.schema.json"
+                / "schemas/hosted/v7/bundle.schema.json"
             ).read_bytes()
         )
         Draft202012Validator.check_schema(schema)

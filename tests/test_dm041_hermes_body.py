@@ -30,7 +30,7 @@ from jsonschema import (  # type: ignore[import-untyped]
 
 from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.client import (
-    CLIENT_CONFIG_SCHEMA,
+    CLIENT_CONFIG_SCHEMA_V3,
     ClientConfig,
     ClientError,
     LocalClient,
@@ -653,9 +653,11 @@ class ProviderTests(HermesBodyFixture):
         self.client_config.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origin(),
+                    "runtime_id": "dm:runtime:v1:" + "a" * 43,
+                    "runtime_label": "hermes-test",
                 }
             )
         )
@@ -1174,15 +1176,32 @@ class RealDaemonProviderTests(RuntimeFixture):
         self.origin = self.origins["legion"]
         self.client = LocalClient(
             self.runtime.socket_path,
-            ClientConfig(self.capability, self.origin),
+            ClientConfig(
+                self.capability,
+                self.origin,
+                bundle["runtime_id"],
+                bundle["runtime_label"],
+            ),
+        )
+        memory_capability = self.operator_capabilities["memory"]
+        self.memory_client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig(
+                memory_capability,
+                self.origin,
+                bundle["runtime_id"],
+                bundle["runtime_label"],
+            ),
         )
         self.client_config = self.state_root / "hermes-client.json"
         self.client_config.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origin,
+                    "runtime_id": bundle["runtime_id"],
+                    "runtime_label": bundle["runtime_label"],
                 }
             )
         )
@@ -1256,7 +1275,7 @@ class RealDaemonProviderTests(RuntimeFixture):
             {"policy": policy, "candidate": candidate}
         )
         self.assertTrue(evaluated["ok"], evaluated)
-        _, executed = self.client.memory_execute(
+        _, executed = self.memory_client.memory_execute(
             {"policy": policy, "candidate": candidate, "plan": evaluated["result"]}
         )
         self.assertTrue(executed["ok"], executed)

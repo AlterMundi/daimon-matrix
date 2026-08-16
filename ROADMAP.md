@@ -6,8 +6,8 @@ The V0 Matrix baseline is merged. The nearest milestone is a reproducible,
 cross-repository `0.1.0rc1` candidate proved entirely with clean local/CI and
 disposable end-to-end evidence. No infrastructure is presumed active.
 
-1. Remove or fixture-isolate never-deployed runtime-bundle V1–V6 and pre-V3
-   client compatibility, then freeze exact cross-repository dependency pins.
+1. Freeze exact cross-repository dependency pins on the V7-only runtime and
+   V3-only client surface.
 2. Rebuild artifacts twice, verify their closed contents, install them into
    empty environments and run Python 3.11–3.14 qualification.
 3. Complete disposable backup/export, restore, recovery/rebirth, rollback,

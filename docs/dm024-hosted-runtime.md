@@ -11,8 +11,11 @@ not interpret events, sync cursors, decisions or projections.
 ## Startup and custody
 
 The daemon receives an explicit owner-only state root, public canonical
-`dm.runtime.bundle/v1`, and an unlock password through an inherited descriptor.
-The bundle binds the verified control chain, exact V2 manifest, credentials,
+`dm.runtime.bundle/v7`, and an unlock password through an inherited descriptor.
+V7 is the only operational bundle accepted by the RC. Versions V1 through V6
+were never deployed and have been removed from the runtime and published schema
+surface; they are not migration inputs. The bundle binds the verified control
+chain, exact V2 manifest, credentials,
 incarnations, optional activated provisional history, local origin, relative
 ledger/socket filenames and capability descriptors. Unknown fields, forks,
 unsafe paths, stale/revoked local authority and mismatched signer material fail
@@ -29,23 +32,20 @@ authority, unlock custody, migrate and integrity-check the ledger, remove only a
 safe owner socket left behind under the held lock, bind `0600`, then emit the
 canonical redacted `ready` diagnostic. A second writer fails immediately.
 
-DM-079 adds `dm.runtime.bundle/v2` for an exact signed authority-epoch chain.
-V2 preserves prior manifests so existing events remain verified under the
+The V7 authority history preserves prior manifests so existing events remain verified under the
 manifest hash they signed, while the fresh incarnation becomes the only active
 local origin. The SQLite metadata advances only after every stored event
 verifies and the complete update commits atomically. An accepted ledger cannot
-be reopened with its prior V1 bundle. See `docs/dm079-authority-epochs.md`.
+be reopened with an obsolete bundle. See `docs/dm079-authority-epochs.md`.
 
-DM-055 adds nullable `peer_transport` in `dm.runtime.bundle/v3`. DM-061 adds
-nullable `species` in `dm.runtime.bundle/v4`: three collision-checked private
+V7 includes nullable `peer_transport` and `species`: three collision-checked private
 filenames for CAS, registry and runtime pointer plus exact species ID,
 enrollment release ID and content-addressed local policy. Startup validates the
 policy and recovers every fenced application against the canonical ledger
 before serving. The public bundle contains no maintainer seed, pointer bytes,
 runner handle or mutable package source.
 
-DM-081 adds source custody in V5 and DM-082 adds relationship state in V6.
-DM-083 adds `dm.runtime.bundle/v7`: every active remote embodiment has one
+V7 also includes source custody and relationship state. Every active remote embodiment has one
 sorted, exact native-peer HTTP(S) target and timeout. The endpoint is fixed at
 startup rather than accepted from a sync call. `we.sync.peer-pull` reuses the
 DM-023 request frozen by `scope.we.sync-plan`, performs the encrypted peer
@@ -123,7 +123,7 @@ general daemon surface.
 
 DM-061 adds closed `species.genesis.ingest`, `species.release.ingest`,
 `species.incoming`, `species.apply` and `species.rollback` methods only when a
-V4 species context is configured. Application events are signed by the exact
+V7 species context is configured. Application events are signed by the exact
 subject operational origin. A newly ingested late sibling automatically
 triggers the deterministic release-fork rollback when the serving lineage is
 affected; identity, enrollment and non-species history remain unchanged.
@@ -157,6 +157,8 @@ not. Telegram, Buzz or another human gateway may be added later only behind
 the disabled generic edge. No carrier becomes event, scope, adoption, receipt
 or Weave-cursor authority.
 
-Schemas are in `schemas/hosted/v1/` through `schemas/hosted/v7/`; runnable
+The sole runtime-bundle schema is `schemas/hosted/v7/bundle.schema.json`;
+`schemas/hosted/v1/local-api.schema.json` independently names the current local
+wire protocol and is not a legacy bundle. Runnable
 verification is in `tests/test_dm024_service.py`, `tests/test_dm024_runtime.py`
 and `tests/test_dm061_species.py`.

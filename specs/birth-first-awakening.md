@@ -285,11 +285,11 @@ The birth protocol performs no live Cluster creation, provider call, remote
 message, or daemon cutover. A production orchestrator must separately request
 and verify those effects.
 
-## 9. Synthetic release acceptance
+## 9. Historical synthetic acceptance
 
-`daimon-synthetic-birth` consumes a closed
+The retired `daimon-synthetic-birth` command consumed a closed
 `dm.synthetic-birth-scenario/v1` fixture. It MUST use only a fresh empty
-owner-only work root and production CSPRNG/key/custody paths. The installed
+owner-only work root and production CSPRNG/key/custody paths. Its archived
 journey:
 
 1. creates pairwise distinct synthetic parent, newborn, and witness roots;
@@ -330,12 +330,12 @@ signed history.
 ## 11. Reference implementation and evidence
 
 - Runtime protocol: `daimon_matrix.birth`.
-- Installed acceptance runner: `daimon_matrix.synthetic_birth` and
-  `daimon-synthetic-birth`.
+- Historical pre-RC fixture: `daimon_matrix.synthetic_birth`; it is not an
+  installed command and its V3 runtime document is rejected by the V7 loader.
 - Closed artifact schemas: `schemas/birth/v1/contracts.schema.json`.
 - Closed scenario/report schemas: `schemas/birth/v1/synthetic.schema.json`.
 - Public scenario: `conformance/fixtures/dm060-synthetic-birth.json`.
-- Adversarial and installed tests: `tests/test_dm060_synthetic_birth.py`.
+- Adversarial and historical fixture tests: `tests/test_dm060_synthetic_birth.py`.
 
 Schema validity alone is never authority. Consumers MUST call the runtime
 verifiers with the exact current parent/newborn/witness authority and ledger

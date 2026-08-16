@@ -24,7 +24,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from daimon_matrix.canonical import b64url, canonical_bytes
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.codex_body import (
     AGENTS_TEMPLATE,
     APP_SERVER_SCHEMA_DIGEST,
@@ -1023,7 +1023,9 @@ class PrivateRealCodexMatrixSmokeTests(RuntimeFixture):
             self.skipTest("private Codex binary is outside the pinned contract")
         super().setUp()
 
-        self.state_root, _, self.capability, self.now_ms = self.make_process_bundle()
+        self.state_root, bundle, self.capability, self.now_ms = (
+            self.make_process_bundle()
+        )
         self.runtime = load_runtime(
             self.state_root,
             "runtime.json",
@@ -1047,9 +1049,11 @@ class PrivateRealCodexMatrixSmokeTests(RuntimeFixture):
         self.config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origins["legion"],
+                    "runtime_id": bundle["runtime_id"],
+                    "runtime_label": bundle["runtime_label"],
                 }
             )
         )

@@ -1,7 +1,7 @@
 # V0 release-candidate qualification receipt
 
-Status: accepted qualification evidence for the merged Matrix code baseline;
-artifact regeneration required after the release metadata change.
+Status: accepted baseline evidence plus local V7/V3-only candidate
+qualification. Publication and cross-repository qualification remain separate.
 
 ## Subject
 
@@ -20,13 +20,30 @@ artifact regeneration required after the release metadata change.
 - Pre-version-bump sdist SHA-256:
   `ba89a1d77ac8f664fdac3be177d7778d004fb0045d65a44b62289176f4b9c879`.
 
-The test and review result applies to the merged code tree. The two artifact
-digests identify distributions built before the package version was changed
-from `0.0.0` to `0.1.0rc1`; they must not be published or cited as the hashes
-of the RC metadata successor. Reproducible RC artifacts require two fresh
-builds, byte comparison, distribution inspection, clean installation and new
-recorded hashes after the planned removal or fixture-isolation of never-deployed
-runtime-bundle V1–V6 and pre-V3 client compatibility.
+Those two digests identify the historical pre-version-bump distributions and
+must not be published as RC artifacts.
+
+## V7/V3-only candidate qualification
+
+- Version: `0.1.0rc1`.
+- Operational runtime bundle: V7 only; V1 through V6 reject before authority
+  or custody opens.
+- Operational client config: V3 only; V1/V2 and retired-server response
+  fallback reject closed.
+- Source-isolated unittest result: 619 tests run, 22 intentionally skipped and
+  zero test failures. Python 3.13 still emitted known temporary-directory
+  cleanup diagnostics at interpreter shutdown; they did not alter the result
+  and are not represented here as warning-free evidence.
+- Ruff formatting/lint and strict mypy: pass for the release workflow surface.
+- Current vector generators, offline lock validation and byte comparison: pass.
+- Wheel SHA-256: `5ed4b034c0f5d7e74f2755562d5fa9d13776d5b4b9a44de2ac3f1ce05511f7ad`.
+- Sdist SHA-256: `5e232f47d4477afb2018d97395fc1a9a8b01442f6fcb4441a7b0129dfa7a821b`.
+
+The two artifacts were built twice offline with `SOURCE_DATE_EPOCH=946684800`;
+each pair was byte-identical, passed the closed distribution allowlist and
+passed the packaged-secret scan. Their exact source commit/tree is recorded in
+the candidate handoff rather than embedded here, avoiding a self-referential
+commit identifier.
 
 ## Scope
 

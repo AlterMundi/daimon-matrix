@@ -1,6 +1,6 @@
 # DM-055 native peer transport and cutover
 
-Status: implementation complete behind runtime bundle V3; synthetic and real
+Status: implementation complete in runtime bundle V7; synthetic and real
 loopback HTTP evidence pass. No live endpoint, host, Tribe service or repository
 state has been changed.
 
@@ -30,12 +30,13 @@ surface and remain unchanged during the canary.
 - dispatch only to the existing DM-054 scope and DM-023 sync handlers; and
 - one client context that resolves targets only from the current being manifest.
 
-Runtime bundle V3 adds an optional `peer_transport` object. It names an
+Runtime bundle V7 has an optional `peer_transport` object. It names an
 owner-only exchange DB, outbox DB, purpose-specific X25519 slot and explicit
 listen address. The encrypted keystore is opened once with the one-shot runtime
 password descriptor; only the exact validated signing and encryption seeds are
 retained by the purpose-bound custody object. When absent, no peer listener or
-client context exists. V1 and V2 retain their exact prior behavior.
+client context exists. Never-deployed bundles V1 through V6 are rejected rather
+than retained as compatibility profiles.
 
 DM-083 closes the remaining operator seam with bundle V7. It adds a sorted,
 complete target map for every active remote embodiment and the authenticated
@@ -62,8 +63,7 @@ SQLite ledgers. They prove:
   origin and importing as known rather than adopted;
 - real HTTP I/O whose carrier-visible request contains neither the schema nor
   `/me` plaintext;
-- V3 load, exact key-slot binding, in-process daemon HTTP handler and backward
-  disabled compatibility;
+- V7 load, exact key-slot binding and in-process daemon HTTP handler;
 - response loss after remote completion followed by byte-identical request and
   response replay with one handler effect, including a clock advance, process
   reconstruction, legacy V1 outbox-plan recovery and fail-closed expiry;

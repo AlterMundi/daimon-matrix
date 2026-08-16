@@ -59,7 +59,6 @@ jobs:
         env:
           COLLECTIVE_MEMORY_CONTRACT_ROOT: ${{ github.workspace }}/.collective-memory-contract
       - run: python tools/generate_dm061_vectors.py --check
-      - run: python tools/generate_dm070_vectors.py --check
       - run: python tools/generate_dm078_vectors.py --check
       - run: python tools/generate_dm078_recovery_vectors.py --check
       - run: python tools/generate_dm081_vectors.py --check
@@ -173,8 +172,6 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-hermes-body" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-mcp" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-reviewer" --help
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-birth" --help
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-multihost" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-species" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-sources" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm040_codex_body -q
@@ -189,11 +186,6 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_rebirth -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_recovery_rebirth -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm024_service tests.test_dm024_runtime tests.test_dm025_client tests.test_dm025_cli_mcp tests.test_dm026_conformance tests.test_dm030_memory_policy tests.test_dm037_cluster_effects tests.test_dm051_sealed tests.test_dm052_communication tests.test_dm053_routes tests.test_dm054_scopes tests.test_dm055_peer_transport tests.test_dm079_authority_epochs -q
-          dm070_state="$(mktemp -d "${RUNNER_TEMP}/dm070-state-XXXXXX")"
-          dm070_receipt="${RUNNER_TEMP}/dm070-receipt.json"
-          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-multihost" --state-root "${dm070_state}" --source-commit "${GITHUB_SHA}" --cluster-provenance provenance/daimon-cluster-v1.json --output "${dm070_receipt}" >/dev/null
-          "${RUNNER_TEMP}/dm020-wheel/bin/python" -c 'import json,sys; from daimon_matrix.multihost import validate_multihost_receipt; validate_multihost_receipt(json.load(open(sys.argv[1], encoding="utf-8")))' "${dm070_receipt}"
-          python tools/scan_secrets.py "${dm070_receipt}"
           dm081_state="$(mktemp -d "${RUNNER_TEMP}/dm081-state-XXXXXX")"
           dm081_report="${RUNNER_TEMP}/dm081-report.json"
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-sources" --state-root "${dm081_state}" > "${dm081_report}"

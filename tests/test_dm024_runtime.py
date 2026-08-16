@@ -29,6 +29,7 @@ from daimon_matrix.daemon import (
 from daimon_matrix.identity import (
     create_embodiment_credential,
     create_incarnation_authorization,
+    signing_descriptor,
     x25519_public,
 )
 from daimon_matrix.keystore import EncryptedKeystore
@@ -40,18 +41,23 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
+from daimon_matrix.operator_capabilities import (
+    HOST_CAPABILITY_PROFILES,
+    HOST_PROFILE_NAMES,
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    create_operator_capability_binding,
+    host_capability_profile,
+    host_capability_slot,
+    operator_capability_profile,
+    operator_capability_slot,
+    operator_runtime_id,
+)
 from daimon_matrix.relationships import tribe_ref
 from daimon_matrix.runtime import RuntimeError, load_runtime
 from daimon_matrix.scopes import BODY_SNAPSHOT_SCHEMA
 from daimon_matrix.service import (
-    BODY_METHODS,
-    CURATOR_METHODS,
-    MEMORY_METHODS,
-    METHODS,
-    REVIEW_METHODS,
-    SCOPE_METHODS,
-    SOURCE_METHODS,
-    SPECIES_METHODS,
+    OPERATOR_CAPABILITY_PROFILES,
 )
 from daimon_matrix.weave import BeingManifest
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed, transport
@@ -64,47 +70,89 @@ class RuntimeFixture(RootLedgerFixture):
     def make_bundle(
         self,
         *,
+        capability_profile: str = OBSERVE_PROFILE,
         secrets: dict[str, bytes] | None = None,
         state_name: str = "hosted",
         now_ms: int = NOW,
     ) -> tuple[Path, dict[str, Any], Any]:
         state_root = self.root_path / state_name
         state_root.mkdir(mode=0o700)
-        capability = create_capability(
-            seed("dm024-capability"),
-            client_id="client:runtime-test",
-            methods=sorted(
-                BODY_METHODS
-                | CURATOR_METHODS
-                | MEMORY_METHODS
-                | METHODS
-                | REVIEW_METHODS
-                | SCOPE_METHODS
-                | SOURCE_METHODS
-                | SPECIES_METHODS
-            ),
-            not_before_ms=now_ms - 60_000,
-            not_after_ms=now_ms + 60_000,
+        runtime_label = "local"
+        runtime_id = operator_runtime_id(
+            runtime_label,
+            self.state.being_ref,
+            self.origins["legion"],
+            signing_descriptor(self.signing_seeds["legion"])["key_id"],
         )
+        operator_capabilities = {
+            profile: create_capability(
+                seed(f"dm024-operator-{profile}"),
+                client_id=f"client:operator:{runtime_label}:{profile}",
+                methods=sorted(OPERATOR_CAPABILITY_PROFILES[profile]),
+                not_before_ms=now_ms - 60_000,
+                not_after_ms=now_ms + 60_000,
+            )
+            for profile in OPERATOR_PROFILE_NAMES
+        }
+        host_capabilities = {
+            profile: create_capability(
+                seed(f"dm024-host-{profile}"),
+                client_id=f"client:host:{runtime_label}:{profile}",
+                methods=sorted(HOST_CAPABILITY_PROFILES[profile]),
+                not_before_ms=now_ms - 60_000,
+                not_after_ms=now_ms + 60_000,
+            )
+            for profile in HOST_PROFILE_NAMES
+        }
+        self.operator_capabilities = operator_capabilities
+        self.host_capabilities = host_capabilities
+        capability = operator_capabilities[capability_profile]
         signing_slot = "runtime.signing.v1:local"
-        capability_slot = "runtime.capability.v1:runtime-test"
         actual_secrets = {
             signing_slot: self.signing_seeds["legion"],
-            capability_slot: capability.key,
+            **{
+                operator_capability_slot(runtime_label, profile): value.key
+                for profile, value in operator_capabilities.items()
+            },
+            **{
+                host_capability_slot(runtime_label, profile): value.key
+                for profile, value in host_capabilities.items()
+            },
         }
         if secrets is not None:
-            actual_secrets = secrets
+            actual_secrets.update(secrets)
         EncryptedKeystore.create(
             state_root / "custody.json",
             lambda: bytearray(PASSWORD),
             control_head=self.state.head,
             secrets=actual_secrets,
         )
+        capability_rows = [
+            {
+                "descriptor": operator_capabilities[profile].descriptor,
+                "profile": operator_capability_profile(profile),
+                "runtime_id": runtime_id,
+                "secret_slot": operator_capability_slot(runtime_label, profile),
+            }
+            for profile in OPERATOR_PROFILE_NAMES
+        ]
+        capability_rows.extend(
+            {
+                "descriptor": host_capabilities[profile].descriptor,
+                "profile": host_capability_profile(profile),
+                "runtime_id": runtime_id,
+                "secret_slot": host_capability_slot(runtime_label, profile),
+            }
+            for profile in HOST_PROFILE_NAMES
+        )
         bundle = {
-            "schema": "dm.runtime.bundle/v1",
+            "schema": "dm.runtime.bundle/v7",
+            "runtime_id": runtime_id,
+            "runtime_label": runtime_label,
             "control_artifacts": [self.genesis],
             "control_head": self.state.head,
             "manifest": self.manifest.value,
+            "authority_history": [],
             "credentials": list(self.credentials.values()),
             "incarnations": list(self.incarnations.values()),
             "binding": None,
@@ -118,21 +166,71 @@ class RuntimeFixture(RootLedgerFixture):
                 "counter": 1,
                 "signing_slot": signing_slot,
             },
-            "capabilities": [
-                {
-                    "descriptor": capability.descriptor,
-                    "secret_slot": capability_slot,
-                }
-            ],
+            "capabilities": capability_rows,
+            "operator_capability_binding": create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=runtime_label,
+                being_ref=self.state.being_ref,
+                origin=self.origins["legion"],
+                signing_seed=self.signing_seeds["legion"],
+                capability_rows=capability_rows,
+            ),
             "routing": None,
             "scopes": None,
+            "peer_transport": None,
+            "species": None,
+            "sources": None,
+            "relationships": None,
         }
+        (state_root / "operator-clients").mkdir(mode=0o700)
+        (state_root / "host-clients").mkdir(mode=0o700)
+        for profile, value in operator_capabilities.items():
+            client_root = (
+                state_root
+                if profile == OBSERVE_PROFILE
+                else state_root / "operator-clients" / profile
+            )
+            client_root.mkdir(mode=0o700, exist_ok=True)
+            key_name = "client.key" if profile == OBSERVE_PROFILE else "capability.key"
+            (client_root / "client.json").write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": "dm.local.client-config/v3",
+                        "capability": value.descriptor,
+                        "expected_server": self.origins["legion"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": runtime_label,
+                    }
+                )
+            )
+            (client_root / "client.json").chmod(0o600)
+            (client_root / key_name).write_bytes(value.key)
+            (client_root / key_name).chmod(0o600)
+        for profile, value in host_capabilities.items():
+            client_root = state_root / "host-clients" / profile
+            client_root.mkdir(mode=0o700)
+            (client_root / "client.json").write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": "dm.local.client-config/v3",
+                        "capability": value.descriptor,
+                        "expected_server": self.origins["legion"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": runtime_label,
+                    }
+                )
+            )
+            (client_root / "client.json").chmod(0o600)
+            (client_root / "capability.key").write_bytes(value.key)
+            (client_root / "capability.key").chmod(0o600)
         path = state_root / "runtime.json"
         path.write_bytes(canonical_bytes(bundle))
         path.chmod(0o600)
         return state_root, bundle, capability
 
-    def make_process_bundle(self) -> tuple[Path, dict[str, Any], Any, int]:
+    def make_process_bundle(
+        self, *, capability_profile: str = OBSERVE_PROFILE
+    ) -> tuple[Path, dict[str, Any], Any, int]:
         now_ms = time.time_ns() // 1_000_000
         label = "legion"
         origin = self.origins[label]
@@ -177,12 +275,32 @@ class RuntimeFixture(RootLedgerFixture):
             }
         )
         state_root, bundle, capability = self.make_bundle(
-            state_name="process", now_ms=now_ms
+            capability_profile=capability_profile,
+            state_name="process",
+            now_ms=now_ms,
         )
         return state_root, bundle, capability, now_ms
 
 
 class RuntimeBundleTests(RuntimeFixture):
+    def test_runtime_rejects_every_pre_v7_bundle_before_authority_or_custody(
+        self,
+    ) -> None:
+        for version in range(1, 7):
+            with self.subTest(version=version):
+                state_root, bundle, _ = self.make_bundle(
+                    state_name=f"retired-v{version}"
+                )
+                bundle["schema"] = f"dm.runtime.bundle/v{version}"
+                (state_root / "runtime.json").write_bytes(canonical_bytes(bundle))
+                with self.assertRaisesRegex(RuntimeError, "unsupported_runtime_bundle"):
+                    load_runtime(
+                        state_root,
+                        "runtime.json",
+                        lambda: bytearray(PASSWORD),
+                        clock=lambda: NOW,
+                    )
+
     def test_bundle_loads_exact_authority_and_custody(self) -> None:
         state_root, bundle, capability = self.make_bundle()
         runtime = load_runtime(
@@ -214,7 +332,7 @@ class RuntimeBundleTests(RuntimeFixture):
         self.assertNotIn(capability.key, public)
 
         bundle_schema = json.loads(
-            (ROOT / "schemas/hosted/v1/bundle.schema.json").read_bytes()
+            (ROOT / "schemas/hosted/v7/bundle.schema.json").read_bytes()
         )
         local_schema = json.loads(
             (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
@@ -296,7 +414,9 @@ class RuntimeBundleTests(RuntimeFixture):
             status="revoked",
         ).descriptor
         (revoked_root / "runtime.json").write_bytes(canonical_bytes(revoked_bundle))
-        with self.assertRaisesRegex(RuntimeError, "runtime_capability_not_active"):
+        with self.assertRaisesRegex(
+            RuntimeError, "invalid_operator_capability_binding"
+        ):
             load_runtime(
                 revoked_root,
                 "runtime.json",
@@ -396,13 +516,11 @@ class RuntimeBundleTests(RuntimeFixture):
     def test_route_profile_requires_exact_private_custody_and_secret(self) -> None:
         route_secret = seed("dm053-runtime-route")
         signing_slot = "runtime.signing.v1:local"
-        capability_slot = "runtime.capability.v1:runtime-test"
         route_slot = "runtime.route.v1:local"
         state_root, bundle, _ = self.make_bundle(
             state_name="routes",
             secrets={
                 signing_slot: self.signing_seeds["legion"],
-                capability_slot: seed("dm024-capability"),
                 route_slot: route_secret,
             },
         )
@@ -722,6 +840,7 @@ class UnixDaemonTests(RuntimeFixture):
         for secret in forbidden:
             self.assertNotIn(secret, stdout)
             self.assertNotIn(secret, stderr)
+        for secret in (PASSWORD, self.signing_seeds["legion"]):
             self.assertNotIn(secret, exported)
         records = [line for line in stderr.splitlines() if line]
         self.assertEqual(len(records), 2)

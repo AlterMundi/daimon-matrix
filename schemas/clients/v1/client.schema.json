@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://daimon.network/schemas/clients/v1/client.schema.json",
-  "title": "Daimon owner-local client document family V1",
+  "title": "Daimon owner-local client documents (runtime config V3 only)",
   "oneOf": [
     {"$ref": "#/$defs/config"},
     {"$ref": "#/$defs/cliResult"},
@@ -20,29 +20,7 @@
         "principal_id": {"type": "string", "minLength": 1, "maxLength": 256}
       }
     },
-    "config": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/configV1"
-        },
-        {
-          "$ref": "#/$defs/configV2"
-        },
-        {
-          "$ref": "#/$defs/configV3"
-        }
-      ]
-    },
-    "configV1": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["schema", "capability", "expected_server"],
-      "properties": {
-        "schema": {"const": "dm.local.client-config/v1"},
-        "capability": {"$ref": "../../hosted/v1/local-api.schema.json#/$defs/capability"},
-        "expected_server": {"$ref": "#/$defs/origin"}
-      }
-    },
+    "config": {"$ref": "#/$defs/configV3"},
     "cliResult": {
       "type": "object",
       "additionalProperties": false,
@@ -64,49 +42,6 @@
             "ok": {"type": "boolean"},
             "result": {"type": ["object", "null"]},
             "error": {"type": ["object", "null"]}
-          }
-        }
-      }
-    },
-    "configV2": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema",
-        "capability",
-        "expected_server",
-        "historical_servers"
-      ],
-      "properties": {
-        "schema": {
-          "const": "dm.local.client-config/v2"
-        },
-        "capability": {
-          "$ref": "../../hosted/v1/local-api.schema.json#/$defs/capability"
-        },
-        "expected_server": {
-          "$ref": "#/$defs/origin"
-        },
-        "historical_servers": {
-          "type": "array",
-          "maxItems": 64,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "server",
-              "retired_at_ms"
-            ],
-            "properties": {
-              "server": {
-                "$ref": "#/$defs/origin"
-              },
-              "retired_at_ms": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              }
-            }
           }
         }
       }

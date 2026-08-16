@@ -36,15 +36,14 @@ or publishing the candidate.
 
 ## Resume order
 
-1. Remove or isolate the never-deployed runtime-bundle V1–V6 and pre-V3 client
-   compatibility paths; they are not part of the release contract.
-2. Regenerate and independently qualify reproducible `0.1.0rc1` artifacts.
-3. Pin the exact Matrix, Cluster and Tribe candidate commits and dependency
+1. Regenerate and independently qualify reproducible `0.1.0rc1` artifacts; the
+   operational surface is now runtime-bundle V7 and client-config V3 only.
+2. Pin the exact Matrix, Cluster and Tribe candidate commits and dependency
    hashes in their release manifests.
-4. Run clean-install and disposable end-to-end backup, restore,
+3. Run clean-install and disposable end-to-end backup, restore,
    recovery/rebirth, rollback and double-launch rejection suites.
-5. Reconcile cross-repository documentation and tracking to those exact heads.
-6. Prepare a content-addressed physical preflight, but do not execute it.
+4. Reconcile cross-repository documentation and tracking to those exact heads.
+5. Prepare a content-addressed physical preflight, but do not execute it.
 
 ## Human and external gates
 

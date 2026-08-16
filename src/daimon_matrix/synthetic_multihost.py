@@ -1,4 +1,8 @@
-"""Installed, process-isolated DM-070 multihost convergence journey."""
+"""Historical pre-RC DM-070 multihost convergence fixture.
+
+Its V3 runtime document is archived test data, not an installed command; the
+production V7-only loader rejects it before custody is opened.
+"""
 
 from __future__ import annotations
 
@@ -452,7 +456,12 @@ class _Nonce:
 def _client(runtime: _RuntimeState, origin: Mapping[str, str]) -> LocalClient:
     return LocalClient(
         runtime.root / "matrix.sock",
-        ClientConfig(runtime.capability, copy.deepcopy(dict(origin))),
+        ClientConfig(
+            runtime.capability,
+            copy.deepcopy(dict(origin)),
+            "dm:runtime:v1:" + "A" * 43,
+            runtime.label,
+        ),
         clock=lambda: NOW,
         nonce_factory=_Nonce(runtime.label),
     )

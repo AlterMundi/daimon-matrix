@@ -3,7 +3,7 @@
   "scope": "synthetic-local-state",
   "deployment": "not-applicable",
   "ledger_schema_version": 3,
-  "bundle_successor_schema": "dm.runtime.bundle/v2",
+  "bundle_successor_schema": "dm.runtime.bundle/v7",
   "authority_epoch_schema": "dm.we.authority-epoch/v1",
   "invariants": {
     "successor_is_embodiment_signed": true,
@@ -23,7 +23,7 @@
   },
   "evidence": [
     "docs/dm079-authority-epochs.md",
-    "schemas/hosted/v2/bundle.schema.json",
+    "schemas/hosted/v7/bundle.schema.json",
     "schemas/weave/v1/authority-epoch.schema.json",
     "src/daimon_matrix/authority_epochs.py",
     "src/daimon_matrix/ledger.py",

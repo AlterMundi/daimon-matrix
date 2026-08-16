@@ -12,8 +12,8 @@ Tribe Bridge is a transitional component, not a third authority.
 
 1. Qualify the merged Matrix baseline and set package/application metadata to
    `0.1.0rc1`.
-2. Remove or explicitly fixture-isolate never-deployed runtime-bundle V1–V6
-   and pre-V3 client compatibility before the package surface is frozen.
+2. Freeze the runtime-bundle V7 and client-config V3 surface; the never-deployed
+   compatibility paths have been removed from production.
 3. Land the final Cluster admission, recovery handoff and Matrix V7 package
    adaptation; pin exact commits in both directions.
 4. Keep Tribe on its native transitional path while finishing zero-SSH

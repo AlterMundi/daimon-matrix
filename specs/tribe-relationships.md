@@ -300,9 +300,9 @@ membership, grant, or existence signal. Callers MUST NOT add a more specific
 fallback error. Deployments SHOULD apply uniform size, timing, and rate limits
 at the authenticated carrier boundary.
 
-## 11. Hosted API and bundle V6
+## 11. Hosted API and bundle V7
 
-Hosted runtime bundle V6 adds an owner-local relationship-store filename and a
+Hosted runtime bundle V7 carries an owner-local relationship-store filename and a
 sorted list of known being refs. Public root/control/credential material for
 those refs is reused from the bundle’s known-authority inventory. Reuse is
 verification plumbing only: source records do not become relationship

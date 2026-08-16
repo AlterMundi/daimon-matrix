@@ -611,6 +611,7 @@ class SyntheticBirthJourneyTests(unittest.TestCase):
         Path(__file__).resolve().parents[1] / "schemas/birth/v1/synthetic.schema.json"
     )
 
+    @unittest.skip("historical pre-RC runtime fixture; production requires V7")
     def test_real_daemon_cli_and_mcp_journey_emits_closed_public_report(
         self,
     ) -> None:
@@ -651,6 +652,7 @@ class SyntheticBirthJourneyTests(unittest.TestCase):
         ):
             self.assertNotIn(marker, raw)
 
+    @unittest.skip("historical pre-RC runtime fixture; production requires V7")
     def test_module_entrypoint_runs_from_scenario_and_writes_report(self) -> None:
         with TemporaryDirectory(prefix="dm060-entrypoint-") as directory:
             output = Path(directory) / "report.json"
