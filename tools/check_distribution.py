@@ -21,7 +21,7 @@ from typing import Final
 
 NAME: Final = "daimon-matrix"
 NORMALIZED: Final = "daimon_matrix"
-VERSION: Final = "0.0.0"
+VERSION: Final = "0.1.0rc1"
 SOURCE_DATE_EPOCH: Final = 946_684_800
 SDIST_NAME: Final = f"{NORMALIZED}-{VERSION}.tar.gz"
 WHEEL_NAME: Final = f"{NORMALIZED}-{VERSION}-py3-none-any.whl"
@@ -411,9 +411,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
         b"daimon-rebirth = daimon_matrix.operator_rebirth:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
-        b"daimon-synthetic-birth = daimon_matrix.synthetic_birth:main\n"
         b"daimon-synthetic-bootstrap = daimon_matrix.operator_bootstrap:main\n"
-        b"daimon-synthetic-multihost = daimon_matrix.synthetic_multihost:main\n"
         b"daimon-synthetic-relationships = "
         b"daimon_matrix.synthetic_relationships:main\n"
         b"daimon-synthetic-sources = daimon_matrix.synthetic_sources:main\n"

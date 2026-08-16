@@ -80,8 +80,8 @@ daimon-conformance \
   --source-commit "$(git rev-parse HEAD)" \
   --seed dm026-v1 \
   --output reports/dm026.json \
-  --artifact wheel=dist/daimon_matrix-0.0.0-py3-none-any.whl \
-  --artifact sdist=dist/daimon_matrix-0.0.0.tar.gz
+  --artifact wheel=dist/daimon_matrix-0.1.0rc1-py3-none-any.whl \
+  --artifact sdist=dist/daimon_matrix-0.1.0rc1.tar.gz
 ```
 
 The command uses only fixture-owned temporary roots and public artifacts. It

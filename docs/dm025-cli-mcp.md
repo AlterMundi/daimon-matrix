@@ -9,13 +9,18 @@ adapter concerns and are not contacted by either client.
 `daimon`, `daimon-mcp` and the reusable `LocalClient` are clients of
 `daimon-matrixd`. They never open the ledger or keystore and cannot select an
 embodiment, widen a capability, sign arbitrary material, invoke Cluster, or
-route a Tribe message. Configuration names an exact owner-only Unix socket, an
-owner-only public capability descriptor and the expected server origin. The
+route a Tribe message. Configuration is closed `dm.local.client-config/v3` and
+names an exact owner-only Unix socket, an owner-only public capability
+descriptor, the expected server origin, runtime ID and runtime label. V1 and
+V2 configs were never deployed and are rejected before capability material is
+read. The
 32-byte capability key is read once from an inherited descriptor and wiped
 from the mutable input buffer.
 
 Each call sends one bounded canonical DM-024 frame and verifies the response
-HMAC, request ID/hash and server origin. For a durable retry, `daimon
+HMAC, request ID/hash, server origin and exact V3 runtime ID/label. Config fields
+that are merely well formed but do not match the serving runtime therefore fail
+closed on the authenticated response. For a durable retry, `daimon
 --request-file PATH` creates a `0600` request token without replacement and
 reuses its exact authenticated bytes. MCP write/sync tools accept an optional
 `operation_id`; supplying the same UUID reuses the same owner-only token under
@@ -24,16 +29,13 @@ after the ordinary 30-second freshness window only if the daemon already has
 its exact journal row and the capability remains active. A never-seen stale
 request is rejected.
 
-After a DM-079 incarnation succession, an already completed retry can carry
-the exact authenticated response of the retired server. Client config V2 keeps
-the current expected origin plus a sorted, bounded list of same-body,
-same-embodiment, same-principal historical origins and their retirement times.
-Only a request issued no later than that retirement may accept the named
-historical response; new work still requires the current server. Config V1
-remains the single-incarnation profile.
+After an incarnation succession, clients accept only the exact current server
+origin bound in V3. The never-deployed historical-origin response fallback was
+removed; an old daemon response fails closed and the caller must issue a fresh
+request to the current incarnation.
 
 The capability method allowlist is bounded at 128 entries. The current fixed
-service surface has 83 methods after DM-082, so one least-privilege operator
+service surface has 84 methods after DM-082, so one least-privilege operator
 capability may name the complete surface without truncation; exact-bound and
 plus-one tests keep the widened bound finite.
 
@@ -80,7 +82,7 @@ switch eras and missing/wrong modern envelopes fail before daemon dispatch.
 Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
 reserved for MCP frames.
 
-The 66 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+The 67 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
 tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed
@@ -90,5 +92,6 @@ type, SHA-256, expected-origin provenance and canonical content; no `file:` URI
 or local path is returned. Prompts, sampling, roots, elicitation,
 subscriptions, templates and server-initiated requests are absent.
 
-Schemas are in `schemas/clients/v1/`. Executable evidence is in
+The client protocol family remains in `schemas/clients/v1/`, while
+`client.schema.json` accepts only config V3. Executable evidence is in
 `tests/test_dm025_client.py` and `tests/test_dm025_cli_mcp.py`.

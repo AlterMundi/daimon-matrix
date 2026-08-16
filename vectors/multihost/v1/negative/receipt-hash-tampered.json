@@ -4,7 +4,7 @@
   "source_commit": "0000000000000000000000000000000000000000",
   "package": {
     "name": "daimon-matrix",
-    "version": "0.0.0",
+    "version": "0.1.0rc1",
     "entrypoint": "daimon-synthetic-multihost"
   },
   "authority": {
@@ -238,5 +238,5 @@
     "historical-receipt-check"
   ],
   "receipt_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-  "receipt_id": "dm:multihost-receipt:v1:tZWfwHImP5mBHX8aGkDD2Vzsup_xctpULGvKx85TdPI"
+  "receipt_id": "dm:multihost-receipt:v1:dbuhl6lSXvDyhvgdblFznURaXIa5coLVi5pPCCdFH64"
 }

@@ -695,6 +695,8 @@ class HostedScopeSurfaceTests(ScopeFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "scopes",
             communication=self.communication,
             router=self.router,
             scopes=resolver,
@@ -733,6 +735,7 @@ class HostedScopeSurfaceTests(ScopeFixture):
             expected_request_id=request["request_id"],
             expected_request_hash=request_hash(request),
             expected_server=self.origins["legion"],
+            expected_runtime=service.runtime_identity,
         )
         self.assertTrue(response["ok"])
         self.assertEqual(response["result"]["scope"], "/tribe")

@@ -35,7 +35,7 @@ class PackageMetadataTests(unittest.TestCase):
     def test_public_metadata_and_runtime_dependency_boundary(self) -> None:
         project = self.configuration["project"]
         self.assertEqual(project["name"], "daimon-matrix")
-        self.assertEqual(project["version"], "0.0.0")
+        self.assertEqual(project["version"], "0.1.0rc1")
         self.assertEqual(project["requires-python"], ">=3.11")
         self.assertEqual(
             project["dependencies"],
@@ -55,11 +55,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
                 "daimon-rebirth": "daimon_matrix.operator_rebirth:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
-                "daimon-synthetic-birth": "daimon_matrix.synthetic_birth:main",
                 "daimon-synthetic-bootstrap": ("daimon_matrix.operator_bootstrap:main"),
-                "daimon-synthetic-multihost": (
-                    "daimon_matrix.synthetic_multihost:main"
-                ),
                 "daimon-synthetic-relationships": (
                     "daimon_matrix.synthetic_relationships:main"
                 ),
@@ -87,7 +83,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "-c",
                 "import daimon_matrix; "
                 "assert daimon_matrix.__all__ == ['__version__']; "
-                "assert daimon_matrix.__version__ == '0.0.0'",
+                "assert daimon_matrix.__version__ == '0.1.0rc1'",
             ],
             cwd=ROOT,
             env=environment,
@@ -265,11 +261,11 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/synthetic_species.py",
                 "daimon_matrix/synthetic_sources.py",
                 "daimon_matrix/weave.py",
-                "daimon_matrix-0.0.0.dist-info/METADATA",
-                "daimon_matrix-0.0.0.dist-info/entry_points.txt",
-                "daimon_matrix-0.0.0.dist-info/RECORD",
-                "daimon_matrix-0.0.0.dist-info/WHEEL",
-                "daimon_matrix-0.0.0.dist-info/licenses/LICENSE",
+                "daimon_matrix-0.1.0rc1.dist-info/METADATA",
+                "daimon_matrix-0.1.0rc1.dist-info/entry_points.txt",
+                "daimon_matrix-0.1.0rc1.dist-info/RECORD",
+                "daimon_matrix-0.1.0rc1.dist-info/WHEEL",
+                "daimon_matrix-0.1.0rc1.dist-info/licenses/LICENSE",
             },
         )
 

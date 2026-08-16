@@ -20,11 +20,7 @@ from referencing import Registry, Resource
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
-from daimon_matrix.client import (
-    CLIENT_CONFIG_SCHEMA,
-    CLIENT_CONFIG_SCHEMA_V2,
-    CLIENT_CONFIG_SCHEMA_V3,
-)
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import (
     MAX_CAPABILITY_METHODS,
@@ -42,6 +38,7 @@ from daimon_matrix.service import (
     RELATIONSHIP_METHODS,
     REVIEW_METHODS,
     SCOPE_METHODS,
+    SERVICE_METHODS,
     SOURCE_METHODS,
     SPECIES_METHODS,
 )
@@ -58,7 +55,7 @@ META = {
 class InstalledSurfaceTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
-        self.state_root, _, self.capability, _ = self.make_process_bundle()
+        self.state_root, bundle, self.capability, _ = self.make_process_bundle()
         self.runtime = load_runtime(
             self.state_root,
             "runtime.json",
@@ -80,9 +77,11 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origins["legion"],
+                    "runtime_id": bundle["runtime_id"],
+                    "runtime_label": bundle["runtime_label"],
                 }
             )
         )
@@ -188,6 +187,17 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(value["schema"], "dm.cli.result/v1")
         self.assertEqual(value["response"]["result"]["integrity"], "ok")
         self.assertNotIn("auth", value["response"])
+        client_schema = json.loads(
+            (ROOT / "schemas/clients/v1/client.schema.json").read_bytes()
+        )
+        local_schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        registry = Registry().with_resources(
+            (document["$id"], Resource.from_contents(document))
+            for document in (client_schema, local_schema)
+        )
+        Draft202012Validator(client_schema, registry=registry).validate(value)
 
         payload = self.state_root / "payload.json"
         payload.write_bytes(canonical_bytes({"model_text": "$(touch /tmp/nope)"}))
@@ -432,6 +442,27 @@ class InstalledSurfaceTests(RuntimeFixture):
             ["tribe", "expel", "--payload", str(document)],
             ["tribe", "founder-transfer", "--payload", str(document)],
             ["tribe", "founder-accept", "--payload", str(document)],
+            ["species", "genesis-ingest", "--artifact", str(document)],
+            ["species", "release-ingest", "--artifact", str(document)],
+            ["species", "incoming"],
+            [
+                "species",
+                "apply",
+                "--operation-id",
+                "80000000-0000-4000-8000-000000000006",
+                "--snapshot",
+                str(document),
+            ],
+            [
+                "species",
+                "rollback",
+                "--operation-id",
+                "80000000-0000-4000-8000-000000000007",
+                "--reason",
+                "runtime-failure",
+                "--snapshot",
+                str(document),
+            ],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -490,6 +521,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 | REVIEW_METHODS
                 | SCOPE_METHODS
                 | SOURCE_METHODS
+                | SPECIES_METHODS
             ),
         )
 
@@ -750,6 +782,34 @@ class InstalledSurfaceTests(RuntimeFixture):
 
 
 class ClientSchemaTests(unittest.TestCase):
+    def test_published_surface_counts_match_runtime_constants(self) -> None:
+        report = json.loads(
+            (ROOT / "docs/verification/dm025-invariants.json").read_bytes()
+        )
+        cli_methods = (
+            CURATOR_METHODS
+            | MEMORY_METHODS
+            | METHODS
+            | PEER_METHODS
+            | RELATIONSHIP_METHODS
+            | REVIEW_METHODS
+            | SCOPE_METHODS
+            | SOURCE_METHODS
+            | SPECIES_METHODS
+        )
+        self.assertEqual(report["service_method_count"], len(SERVICE_METHODS))
+        self.assertEqual(report["cli_command_count"], len(cli_methods))
+        self.assertEqual(report["mcp_tool_count"], len(TOOL_CONTRACTS))
+
+    def test_local_request_schema_covers_exact_service_surface(self) -> None:
+        schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        rows = schema["$defs"]["request"]["allOf"][0]["oneOf"]
+        methods = [row["properties"]["method"]["const"] for row in rows]
+        self.assertEqual(len(methods), len(set(methods)))
+        self.assertEqual(set(methods), set(SERVICE_METHODS))
+
     def test_capability_method_bound_covers_full_service_surface(self) -> None:
         key = b"x" * 32
         methods = [f"method.{index:03d}" for index in range(MAX_CAPABILITY_METHODS)]
@@ -812,8 +872,8 @@ class ClientSchemaTests(unittest.TestCase):
             "incarnation_id": "incarnation:dm025-schema:1",
             "principal_id": "compaii@dm025-schema",
         }
-        config_v2 = {
-            "schema": CLIENT_CONFIG_SCHEMA_V2,
+        retired_config = {
+            "schema": "dm.local.client-config/v2",
             "capability": create_capability(
                 b"v" * 32,
                 client_id="client:dm025-schema",
@@ -827,18 +887,21 @@ class ClientSchemaTests(unittest.TestCase):
             },
             "historical_servers": [{"server": origin, "retired_at_ms": 1}],
         }
-        Draft202012Validator(client_schema, registry=registry).validate(config_v2)
         config_v3 = {
             "schema": CLIENT_CONFIG_SCHEMA_V3,
-            "capability": config_v2["capability"],
-            "expected_server": config_v2["expected_server"],
+            "capability": retired_config["capability"],
+            "expected_server": retired_config["expected_server"],
             "runtime_id": "dm:runtime:v1:" + "a" * 43,
             "runtime_label": "dm025",
         }
         Draft202012Validator(client_schema, registry=registry).validate(config_v3)
         with self.assertRaises(ValidationError):
             Draft202012Validator(client_schema, registry=registry).validate(
-                {**config_v2, "unreviewed": True}
+                retired_config
+            )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(client_schema, registry=registry).validate(
+                {**config_v3, "unreviewed": True}
             )
 
 

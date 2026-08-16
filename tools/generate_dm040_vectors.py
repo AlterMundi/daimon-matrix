@@ -170,7 +170,7 @@ def contracts_schema() -> dict[str, Any]:
                     },
                     "matrix_mcp_name": {"const": "daimon-matrix"},
                     "matrix_mcp_binary_sha256": HASH,
-                    "matrix_mcp_version": {"const": "0.0.0"},
+                    "matrix_mcp_version": {"const": "0.1.0rc1"},
                     "hook_python_sha256": HASH,
                     "matrix_tools": {"const": list(codex_body.MATRIX_TOOLS)},
                 }
@@ -388,7 +388,7 @@ def launch_receipt_vector(
             "matrix_mcp_binary_sha256": hashlib.sha256(
                 b"dm040-vector-matrix-mcp"
             ).hexdigest(),
-            "matrix_mcp_version": "0.0.0",
+            "matrix_mcp_version": "0.1.0rc1",
             "hook_python_sha256": hashlib.sha256(
                 b"dm040-vector-hook-python"
             ).hexdigest(),

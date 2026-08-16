@@ -846,19 +846,17 @@ class PeerTransportTests(PeerTransportFixture):
 
 
 class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
-    def test_v3_bundle_loads_native_peer_custody_and_dispatcher(self) -> None:
+    def test_v7_bundle_loads_native_peer_custody_and_dispatcher(self) -> None:
         peer_slot = "peer.encryption.v1:local"
         state_root, bundle, _ = self.make_bundle(
             secrets={
                 "runtime.signing.v1:local": self.signing_seeds["legion"],
-                "runtime.capability.v1:runtime-test": seed("dm024-capability"),
                 peer_slot: seed("legion-encryption"),
             },
-            state_name="peer-v3-runtime",
+            state_name="peer-v7-runtime",
         )
         bundle = {
             **bundle,
-            "schema": "dm.runtime.bundle/v3",
             "authority_history": [],
             "peer_transport": {
                 "enabled": True,
@@ -867,10 +865,17 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                 "listen_host": "127.0.0.1",
                 "listen_port": 8686,
                 "outbox_filename": "peer-outbox.sqlite",
+                "targets": [
+                    {
+                        "embodiment_id": self.origins["daimonmatrix"]["embodiment_id"],
+                        "endpoint": "http://127.0.0.1:8687/dm-peer/v1",
+                        "timeout_ms": 5_000,
+                    }
+                ],
             },
         }
         schema = json.loads(
-            (ROOT / "schemas/hosted/v3/bundle.schema.json").read_bytes()
+            (ROOT / "schemas/hosted/v7/bundle.schema.json").read_bytes()
         )
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema, format_checker=FormatChecker()).validate(bundle)
@@ -980,7 +985,7 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
             server.server_close()
             thread.join(timeout=2)
 
-    def test_v3_absence_malformed_collision_and_wrong_key_fail_closed(self) -> None:
+    def test_v7_absence_malformed_collision_and_wrong_key_fail_closed(self) -> None:
         peer_slot = "peer.encryption.v1:local"
 
         def configuration() -> dict[str, Any]:
@@ -991,12 +996,18 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                 "listen_host": "127.0.0.1",
                 "listen_port": 8686,
                 "outbox_filename": "peer-outbox.sqlite",
+                "targets": [
+                    {
+                        "embodiment_id": self.origins["daimonmatrix"]["embodiment_id"],
+                        "endpoint": "http://127.0.0.1:8687/dm-peer/v1",
+                        "timeout_ms": 5_000,
+                    }
+                ],
             }
 
-        state_root, bundle, _ = self.make_bundle(state_name="peer-v3-disabled")
+        state_root, bundle, _ = self.make_bundle(state_name="peer-v7-disabled")
         disabled = {
             **bundle,
-            "schema": "dm.runtime.bundle/v3",
             "authority_history": [],
             "peer_transport": None,
         }
@@ -1030,14 +1041,12 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                 state_root, bundle, _ = self.make_bundle(
                     secrets={
                         "runtime.signing.v1:local": self.signing_seeds["legion"],
-                        "runtime.capability.v1:runtime-test": seed("dm024-capability"),
                         peer_slot: peer_seed,
                     },
-                    state_name=f"peer-v3-{name}",
+                    state_name=f"peer-v7-{name}",
                 )
                 candidate = {
                     **bundle,
-                    "schema": "dm.runtime.bundle/v3",
                     "authority_history": [],
                     "peer_transport": peer_configuration,
                 }
@@ -1057,14 +1066,12 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
         state_root, bundle, _ = self.make_bundle(
             secrets={
                 "runtime.signing.v1:local": self.signing_seeds["legion"],
-                "runtime.capability.v1:runtime-test": seed("dm024-capability"),
                 peer_slot: seed("legion-encryption"),
             },
-            state_name="peer-v3-bounded-http",
+            state_name="peer-v7-bounded-http",
         )
         candidate = {
             **bundle,
-            "schema": "dm.runtime.bundle/v3",
             "authority_history": [],
             "peer_transport": {
                 "enabled": True,
@@ -1073,6 +1080,13 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                 "listen_host": "127.0.0.1",
                 "listen_port": 8686,
                 "outbox_filename": "peer-outbox.sqlite",
+                "targets": [
+                    {
+                        "embodiment_id": self.origins["daimonmatrix"]["embodiment_id"],
+                        "endpoint": "http://127.0.0.1:8687/dm-peer/v1",
+                        "timeout_ms": 5_000,
+                    }
+                ],
             },
         }
         path = state_root / "runtime.json"

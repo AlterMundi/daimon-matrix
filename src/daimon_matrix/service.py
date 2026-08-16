@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
@@ -327,6 +328,8 @@ class HostedWeave:
     signer: EventSigner
     capabilities: Mapping[str, LocalCapability]
     clock: Clock
+    runtime_id: str
+    runtime_label: str
     communication: CommunicationStore | None = None
     router: RouteCoordinator | None = None
     scopes: ScopeResolver | None = None
@@ -338,6 +341,12 @@ class HostedWeave:
     peer_context: PeerClientContext | None = None
 
     def __post_init__(self) -> None:
+        if (
+            re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", self.runtime_id) is None
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", self.runtime_label)
+            is None
+        ):
+            raise ServiceError("invalid_runtime_identity")
         if self.ledger.authority.manifest.trust_mode != "root-bound":
             raise ServiceError("hosted_runtime_requires_root_authority")
         if not self.capabilities:
@@ -401,9 +410,20 @@ class HostedWeave:
     def origin(self) -> dict[str, str]:
         return copy.deepcopy(self.ledger.local_origin)
 
+    @property
+    def runtime_identity(self) -> dict[str, str]:
+        return {
+            "runtime_id": self.runtime_id,
+            "runtime_label": self.runtime_label,
+        }
+
+    def _response(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return create_response(*args, runtime=self.runtime_identity, **kwargs)
+
     def handle(self, value: Any) -> dict[str, Any]:
         """Authenticate, journal, dispatch, and return one exact response."""
 
+        create_response = self._response
         if not isinstance(value, Mapping):
             raise LocalApiError("authentication_failed")
         capability_id = value.get("capability_id")
@@ -463,6 +483,7 @@ class HostedWeave:
                 expected_request_id=request_id,
                 expected_request_hash=digest,
                 expected_server=cached_server,
+                expected_runtime=self.runtime_identity,
             )
             if method == "curator.complete" and verified["ok"]:
                 curator = self.curator
@@ -696,6 +717,7 @@ class HostedWeave:
             expected_request_id=request_id,
             expected_request_hash=digest,
             expected_server=self.origin,
+            expected_runtime=self.runtime_identity,
         )
 
     def _dispatch(

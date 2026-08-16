@@ -1751,10 +1751,10 @@ class DM061SpeciesTests(unittest.TestCase):
 
 
 class HostedSpeciesRuntimeTests(RuntimeFixture):
-    def test_v4_bundle_schema_loads_species_and_serves_authenticated_preview(
+    def test_v7_bundle_schema_loads_species_and_serves_authenticated_preview(
         self,
     ) -> None:
-        state_root, bundle, capability = self.make_bundle(state_name="species-v4")
+        state_root, bundle, capability = self.make_bundle(state_name="species-v7")
         fixture = SpeciesFixture(state_root)
         policy_ref = fixture.registry.store_local_policy(
             {
@@ -1769,7 +1769,6 @@ class HostedSpeciesRuntimeTests(RuntimeFixture):
             {
                 "authority_history": [],
                 "peer_transport": None,
-                "schema": "dm.runtime.bundle/v4",
                 "species": {
                     "cas_filename": "cas.sqlite3",
                     "enrollment_release_id": (
@@ -1786,7 +1785,7 @@ class HostedSpeciesRuntimeTests(RuntimeFixture):
         schema = json.loads(
             (
                 Path(__file__).resolve().parents[1]
-                / "schemas/hosted/v4/bundle.schema.json"
+                / "schemas/hosted/v7/bundle.schema.json"
             ).read_bytes()
         )
         Draft202012Validator.check_schema(schema)

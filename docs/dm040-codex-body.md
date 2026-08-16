@@ -135,7 +135,7 @@ command tool is not admitted. Before launch the adapter also probes effective
 feature state and rejects a managed/host override. Child processes run with
 `umask 077`. After thread start/resume the adapter reads the App Server MCP
 inventory and requires exactly one `matrix` server. When App Server reports
-server metadata and tool inventory they must match `daimon-matrix` `0.0.0` and
+server metadata and tool inventory they must match `daimon-matrix` `0.1.0rc1` and
 the exact six tools; its legacy `2025-06-18` status response currently leaves
 those two optional fields empty, so the reviewed profile/launcher hashes and
 successful required-MCP handshake remain the admission evidence. Required-MCP

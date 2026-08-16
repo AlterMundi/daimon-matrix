@@ -137,7 +137,7 @@ def receipt_schema() -> dict[str, Any]:
             "package": closed(
                 {
                     "name": {"const": "daimon-matrix"},
-                    "version": {"const": "0.0.0"},
+                    "version": {"const": "0.1.0rc1"},
                     "entrypoint": {"const": "daimon-synthetic-multihost"},
                 }
             ),

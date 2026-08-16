@@ -21,7 +21,7 @@ from referencing import Registry, Resource
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import (
-    CLIENT_CONFIG_SCHEMA,
+    CLIENT_CONFIG_SCHEMA_V3,
     ClientConfig,
     ClientError,
     LocalClient,
@@ -711,7 +711,11 @@ class MemoryVectorAndSchemaTests(RootLedgerFixture):
 class MemoryInstalledRuntimeTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
-        self.state_root, _, self.capability, _ = self.make_process_bundle()
+        self.state_root, bundle, self.capability, _ = self.make_process_bundle(
+            capability_profile="memory"
+        )
+        self.runtime_id = bundle["runtime_id"]
+        self.runtime_label = bundle["runtime_label"]
         self.runtime = self._load_runtime()
         self.stop = threading.Event()
         self.fail_after_dispatch = threading.Event()
@@ -729,16 +733,33 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
         self.config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origins["legion"],
+                    "runtime_id": self.runtime_id,
+                    "runtime_label": self.runtime_label,
                 }
             )
         )
         self.config_path.chmod(0o600)
         self.client = LocalClient(
             self.runtime.socket_path,
-            ClientConfig(self.capability, self.origins["legion"]),
+            ClientConfig(
+                self.capability,
+                self.origins["legion"],
+                self.runtime_id,
+                self.runtime_label,
+            ),
+        )
+        observe_capability = self.operator_capabilities["observe"]
+        self.observe_client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig(
+                observe_capability,
+                self.origins["legion"],
+                self.runtime_id,
+                self.runtime_label,
+            ),
         )
 
     def _load_runtime(self) -> Any:
@@ -812,7 +833,7 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
         self,
     ) -> None:
         policy, candidate = self.policy_candidate()
-        _, evaluated = self.client.memory_evaluate(
+        _, evaluated = self.observe_client.memory_evaluate(
             {"policy": policy, "candidate": candidate}
         )
         plan = evaluated["result"]
@@ -839,7 +860,7 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
         ]
         self.assertEqual(len(memory_events), 1)
         self.assertEqual(response["result"]["event"], memory_events[0])
-        _, context_response = self.client.memory_context(
+        _, context_response = self.observe_client.memory_context(
             {"query": "installed synthetic memory", "limit": 64}
         )
         self.assertTrue(context_response["ok"], context_response)
@@ -874,8 +895,13 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
         ).validate(response["result"])
 
     def _run_cli(self, arguments: list[str]) -> subprocess.CompletedProcess[bytes]:
+        mutating = "execute" in arguments
+        capability = (
+            self.capability if mutating else self.operator_capabilities["observe"]
+        )
+        config_path = self.config_path if mutating else self.state_root / "client.json"
         read_descriptor, write_descriptor = os.pipe()
-        os.write(write_descriptor, self.capability.key)
+        os.write(write_descriptor, capability.key)
         os.close(write_descriptor)
         try:
             return subprocess.run(
@@ -886,7 +912,7 @@ class MemoryInstalledRuntimeTests(RuntimeFixture):
                     "--socket",
                     str(self.runtime.socket_path),
                     "--client-config",
-                    str(self.config_path),
+                    str(config_path),
                     "--capability-key-fd",
                     str(read_descriptor),
                     "--json",

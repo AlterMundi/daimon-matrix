@@ -22,7 +22,7 @@ from jsonschema import (  # type: ignore[import-untyped]
 from referencing import Registry, Resource
 
 from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.cluster import (
     FENCE_VERIFICATION_SCHEMA,
     create_effect_receipt,
@@ -593,6 +593,8 @@ class CuratorCoordinatorTests(RootLedgerFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: self.now[0],
+            "dm:runtime:v1:" + "a" * 43,
+            "curator",
             curator=coordinator,
         )
 
@@ -825,7 +827,11 @@ class CuratorCoordinatorTests(RootLedgerFixture):
 class CuratorInstalledRuntimeTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
-        self.state_root, _, self.capability, _ = self.make_process_bundle()
+        self.state_root, bundle, self.capability, _ = self.make_process_bundle(
+            capability_profile="curator"
+        )
+        self.runtime_id = bundle["runtime_id"]
+        self.runtime_label = bundle["runtime_label"]
         self.stop = threading.Event()
         self.fail_after_dispatch = threading.Event()
         self.runtime = self._load_runtime()
@@ -834,9 +840,11 @@ class CuratorInstalledRuntimeTests(RuntimeFixture):
         self.config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origins["legion"],
+                    "runtime_id": self.runtime_id,
+                    "runtime_label": self.runtime_label,
                 }
             )
         )
@@ -877,8 +885,13 @@ class CuratorInstalledRuntimeTests(RuntimeFixture):
         super().tearDown()
 
     def _run_cli(self, arguments: list[str]) -> subprocess.CompletedProcess[bytes]:
+        observing = "inspect" in arguments
+        capability = (
+            self.operator_capabilities["observe"] if observing else self.capability
+        )
+        config_path = self.state_root / "client.json" if observing else self.config_path
         read_descriptor, write_descriptor = os.pipe()
-        os.write(write_descriptor, self.capability.key)
+        os.write(write_descriptor, capability.key)
         os.close(write_descriptor)
         try:
             return subprocess.run(
@@ -889,7 +902,7 @@ class CuratorInstalledRuntimeTests(RuntimeFixture):
                     "--socket",
                     str(self.runtime.socket_path),
                     "--client-config",
-                    str(self.config_path),
+                    str(config_path),
                     "--capability-key-fd",
                     str(read_descriptor),
                     "--json",

@@ -11,8 +11,6 @@ import uuid
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import (
-    CLIENT_CONFIG_SCHEMA,
-    CLIENT_CONFIG_SCHEMA_V2,
     CLIENT_CONFIG_SCHEMA_V3,
     ClientConfig,
     ClientError,
@@ -31,7 +29,7 @@ from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 class ClientFixture(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
-        self.state_root, _, self.capability = self.make_bundle()
+        self.state_root, bundle, self.capability = self.make_bundle()
         self.runtime = load_runtime(
             self.state_root,
             "runtime.json",
@@ -56,9 +54,11 @@ class ClientFixture(RuntimeFixture):
             time.sleep(0.01)
         self.config_path = self.state_root / "client.json"
         self.config_value = {
-            "schema": CLIENT_CONFIG_SCHEMA,
+            "schema": CLIENT_CONFIG_SCHEMA_V3,
             "capability": self.capability.descriptor,
             "expected_server": self.origins["legion"],
+            "runtime_id": bundle["runtime_id"],
+            "runtime_label": bundle["runtime_label"],
         }
         self.config_path.write_bytes(canonical_bytes(self.config_value))
         self.config_path.chmod(0o600)
@@ -97,6 +97,15 @@ class LocalClientTests(ClientFixture):
         config = ClientConfig.load(self.config_path, bytearray(self.capability.key))
         self.assertEqual(config.runtime_id, "dm:runtime:v1:" + "a" * 43)
         self.assertEqual(config.runtime_label, "legion")
+        mismatched = LocalClient(
+            self.runtime.socket_path,
+            config,
+            clock=lambda: NOW,
+            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000099"),
+            nonce_factory=lambda size: b"r" * size,
+        )
+        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
+            mismatched.runtime_status()
 
         invalid = json.loads(self.config_path.read_bytes())
         invalid["runtime_id"] = "dm:runtime:v1:short"
@@ -187,47 +196,28 @@ class LocalClientTests(ClientFixture):
         with self.assertRaisesRegex(ClientError, "daemon_socket_untrusted"):
             self.client().runtime_status()
 
-    def test_v2_accepts_only_pre_retirement_exact_responses_from_history(
-        self,
-    ) -> None:
+    def test_pre_v3_config_is_rejected_without_response_fallback(self) -> None:
         old = self.origins["legion"]
         current = {**old, "incarnation_id": "incarnation:client-successor"}
         self.config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA_V2,
+                    "schema": "dm.local.client-config/v2",
                     "capability": self.capability.descriptor,
                     "expected_server": current,
                     "historical_servers": [{"server": old, "retired_at_ms": NOW}],
                 }
             )
         )
-        config = ClientConfig.load(self.config_path, bytearray(self.capability.key))
-        client = LocalClient(
-            self.runtime.socket_path,
-            config,
-            clock=lambda: NOW,
-            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000011"),
-            nonce_factory=lambda size: b"h" * size,
-        )
-        request = client.prepare("runtime.status", {})
-        response = client.send(request)
-        self.assertEqual(response["server"], old)
-
-        late = LocalClient(
-            self.runtime.socket_path,
-            config,
-            clock=lambda: NOW + 1,
-            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000012"),
-            nonce_factory=lambda size: b"i" * size,
-        )
-        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
-            late.runtime_status()
-
-        invalid = json.loads(self.config_path.read_bytes())
-        invalid["historical_servers"][0]["server"]["principal_id"] = "compaii@other"
-        self.config_path.write_bytes(canonical_bytes(invalid))
-        with self.assertRaisesRegex(ClientError, "invalid_historical_servers"):
+        with self.assertRaisesRegex(ClientError, "unsupported_client_config"):
+            ClientConfig.load(self.config_path, bytearray(self.capability.key))
+        retired_v1 = {
+            "schema": "dm.local.client-config/v1",
+            "capability": self.capability.descriptor,
+            "expected_server": old,
+        }
+        self.config_path.write_bytes(canonical_bytes(retired_v1))
+        with self.assertRaisesRegex(ClientError, "unsupported_client_config"):
             ClientConfig.load(self.config_path, bytearray(self.capability.key))
 
     def test_public_surface_has_no_arbitrary_method_call(self) -> None:

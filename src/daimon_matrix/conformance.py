@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "37e8b791194f0d13eaa08c99b0cb8f8b52d0afba1ec792c50a95b8cb02c2bba0"
+    "aa975f493e8989c781c472045faa57518015fbd5273af63ee9a4f2d9ba50113a"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -37,7 +37,7 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "authority_epoch_succession",
         "birth_contract_integrity",
         "birth_durable_one_use",
-        "birth_installed_journey",
+        "birth_legacy_runtime_rejected",
         "canonical_artifacts",
         "causal_quarantine_promotion",
         "cli_closed_retry_surface",
@@ -83,7 +83,7 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "memory_review_precedence",
         "memory_stale_exact_once",
         "multihost_cluster_boundary",
-        "multihost_process_convergence",
+        "multihost_legacy_runtime_rejected",
         "multihost_receipt_fail_closed",
         "peer_encrypted_protocol",
         "peer_response_loss",

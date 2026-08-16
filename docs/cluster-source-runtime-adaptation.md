@@ -4,7 +4,7 @@ DM-081 adds no source semantics or authority to `daimon-cluster`. Cluster hosts
 the installed Matrix process and its owner-local files; Matrix alone verifies
 source identity, signatures, evidence, disclosure, quarantine and promotion.
 
-For runtime bundle V5, the host adapter must:
+For runtime bundle V7, the host adapter must:
 
 - preserve one private Matrix state volume per embodiment;
 - include the local ledger, source CAS, intake lock/journal and each configured
@@ -31,6 +31,6 @@ external source disclosure remains disabled even when peer transport, `/we`,
 Tribe or Cluster reachability succeeds.
 
 The future Cluster acceptance should install the exact released Matrix wheel,
-start two independently hosted beings, preserve V5 state across restart and
+start two independently hosted beings, preserve V7 state across restart and
 backup/restore, and compare the resulting Matrix report/receipts. It must not
 reimplement the protocol in Cluster.

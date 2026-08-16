@@ -78,21 +78,8 @@ from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
-from .weave import (
-    BeingManifest,
-    BoundHistoryAuthority,
-    EventSigner,
-    ProvisionalAuthority,
-    RootAuthority,
-    WeaveProtocolError,
-)
+from .weave import BeingManifest, EventSigner, RootAuthority, WeaveProtocolError
 
-BUNDLE_SCHEMA: Final = "dm.runtime.bundle/v1"
-BUNDLE_SCHEMA_V2: Final = "dm.runtime.bundle/v2"
-BUNDLE_SCHEMA_V3: Final = "dm.runtime.bundle/v3"
-BUNDLE_SCHEMA_V4: Final = "dm.runtime.bundle/v4"
-BUNDLE_SCHEMA_V5: Final = "dm.runtime.bundle/v5"
-BUNDLE_SCHEMA_V6: Final = "dm.runtime.bundle/v6"
 BUNDLE_SCHEMA_V7: Final = "dm.runtime.bundle/v7"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -240,20 +227,6 @@ def _indexed(values: Any) -> dict[str, Mapping[str, Any]]:
     return result
 
 
-def _event_index(values: Any) -> dict[str, Mapping[str, Any]]:
-    if not isinstance(values, list) or len(values) > 65_536:
-        raise RuntimeError("invalid_historical_events")
-    result: dict[str, Mapping[str, Any]] = {}
-    for value in values:
-        if not isinstance(value, Mapping) or not isinstance(value.get("event_id"), str):
-            raise RuntimeError("invalid_historical_event")
-        event_id = value["event_id"]
-        if event_id in result:
-            raise RuntimeError("duplicate_historical_event")
-        result[event_id] = copy.deepcopy(dict(value))
-    return result
-
-
 def load_runtime(
     state_root: Path,
     bundle_name: str,
@@ -275,7 +248,10 @@ def load_runtime(
     if not isinstance(raw_bundle, Mapping):
         raise RuntimeError("invalid_runtime_bundle")
     schema = raw_bundle.get("schema")
+    if schema != BUNDLE_SCHEMA_V7:
+        raise RuntimeError("unsupported_runtime_bundle")
     fields = {
+        "authority_history",
         "binding",
         "binding_activation",
         "capabilities",
@@ -287,53 +263,20 @@ def load_runtime(
         "ledger",
         "local_origin",
         "manifest",
+        "operator_capability_binding",
+        "peer_transport",
         "provisional_history",
+        "relationships",
         "routing",
+        "runtime_id",
+        "runtime_label",
         "scopes",
         "schema",
         "socket",
+        "sources",
+        "species",
     }
-    if schema in {
-        BUNDLE_SCHEMA_V2,
-        BUNDLE_SCHEMA_V3,
-        BUNDLE_SCHEMA_V4,
-        BUNDLE_SCHEMA_V5,
-        BUNDLE_SCHEMA_V6,
-        BUNDLE_SCHEMA_V7,
-    }:
-        fields.add("authority_history")
-    if schema in {
-        BUNDLE_SCHEMA_V3,
-        BUNDLE_SCHEMA_V4,
-        BUNDLE_SCHEMA_V5,
-        BUNDLE_SCHEMA_V6,
-        BUNDLE_SCHEMA_V7,
-    }:
-        fields.add("peer_transport")
-    if schema in {
-        BUNDLE_SCHEMA_V4,
-        BUNDLE_SCHEMA_V5,
-        BUNDLE_SCHEMA_V6,
-        BUNDLE_SCHEMA_V7,
-    }:
-        fields.add("species")
-    if schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
-        fields.add("sources")
-    if schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
-        fields.add("relationships")
-    if schema == BUNDLE_SCHEMA_V7:
-        fields.update({"operator_capability_binding", "runtime_id", "runtime_label"})
     bundle = _closed(raw_bundle, fields)
-    if schema not in {
-        BUNDLE_SCHEMA,
-        BUNDLE_SCHEMA_V2,
-        BUNDLE_SCHEMA_V3,
-        BUNDLE_SCHEMA_V4,
-        BUNDLE_SCHEMA_V5,
-        BUNDLE_SCHEMA_V6,
-        BUNDLE_SCHEMA_V7,
-    }:
-        raise RuntimeError("unsupported_runtime_bundle")
     controls = bundle["control_artifacts"]
     if not isinstance(controls, list) or not 1 <= len(controls) <= 1024:
         raise RuntimeError("invalid_control_chain")
@@ -361,106 +304,68 @@ def load_runtime(
         credentials = _indexed(bundle["credentials"])
         incarnations = _indexed(bundle["incarnations"])
         active = RootAuthority(manifest, state, credentials, incarnations)
-        authority: RootAuthority | RootHistoryAuthority | BoundHistoryAuthority = active
-        if schema in {
-            BUNDLE_SCHEMA_V2,
-            BUNDLE_SCHEMA_V3,
-            BUNDLE_SCHEMA_V4,
-            BUNDLE_SCHEMA_V5,
-            BUNDLE_SCHEMA_V6,
-            BUNDLE_SCHEMA_V7,
-        }:
-            authority_history = bundle["authority_history"]
-            if (
-                not isinstance(authority_history, list)
-                or len(authority_history) > 256
-                or (schema == BUNDLE_SCHEMA_V2 and not authority_history)
-            ):
-                raise RuntimeError("invalid_authority_history")
-            epochs: list[Mapping[str, Any]] = []
-            for entry in authority_history:
-                if isinstance(entry, Mapping) and set(entry) == {
-                    "manifest",
-                    "successor",
-                }:
-                    epochs.append(entry)
-                else:
-                    if schema != BUNDLE_SCHEMA_V7:
-                        raise RuntimeError("invalid_authority_history")
-                    epochs.append(
-                        _closed(
-                            entry,
-                            {
-                                "manifest",
-                                "control_artifacts",
-                                "control_head",
-                                "credentials",
-                                "incarnations",
-                                "successor",
-                            },
-                        )
-                    )
-            historical_reversed: list[RootAuthority] = []
-            next_authority = active
-            for epoch in reversed(epochs):
-                if set(epoch) == {"manifest", "successor"}:
-                    historical_authority = RootAuthority(
-                        BeingManifest.from_value(epoch["manifest"]),
-                        next_authority.state,
-                        next_authority.credentials,
-                        next_authority.incarnations,
-                    )
-                else:
-                    historical_controls = epoch["control_artifacts"]
-                    if (
-                        not isinstance(historical_controls, list)
-                        or not 1 <= len(historical_controls) <= 1024
-                    ):
-                        raise RuntimeError("invalid_authority_history")
-                    historical_chain = ControlChain(historical_controls[0])
-                    for artifact in historical_controls[1:]:
-                        historical_chain.add(artifact)
-                    historical_state = historical_chain.state
-                    if epoch["control_head"] != historical_state.head:
-                        raise RuntimeError("invalid_authority_history")
-                    historical_authority = RootAuthority(
-                        BeingManifest.from_value(epoch["manifest"]),
-                        historical_state,
-                        _indexed(epoch["credentials"]),
-                        _indexed(epoch["incarnations"]),
-                    )
-                historical_reversed.append(historical_authority)
-                next_authority = historical_authority
-            if authority_history:
-                historical_authorities = list(reversed(historical_reversed))
-                successors = [epoch["successor"] for epoch in epochs]
-                authority = RootHistoryAuthority(
-                    active, historical_authorities, successors
-                )
-        if history is not None:
-            if schema in {
-                BUNDLE_SCHEMA_V2,
-                BUNDLE_SCHEMA_V3,
-                BUNDLE_SCHEMA_V4,
-                BUNDLE_SCHEMA_V5,
-                BUNDLE_SCHEMA_V6,
-                BUNDLE_SCHEMA_V7,
+        authority: RootAuthority | RootHistoryAuthority = active
+        authority_history = bundle["authority_history"]
+        if not isinstance(authority_history, list) or len(authority_history) > 256:
+            raise RuntimeError("invalid_authority_history")
+        epochs: list[Mapping[str, Any]] = []
+        for entry in authority_history:
+            if isinstance(entry, Mapping) and set(entry) == {
+                "manifest",
+                "successor",
             }:
-                raise RuntimeError("incompatible_authority_histories")
-            history_value = _closed(history, {"events", "manifest", "public_keys"})
-            public_keys = history_value["public_keys"]
-            if not isinstance(public_keys, Mapping):
-                raise RuntimeError("invalid_historical_keys")
-            historical = ProvisionalAuthority(
-                BeingManifest.from_value(history_value["manifest"]),
-                public_keys,
-            )
-            authority = BoundHistoryAuthority(
-                active,
-                historical,
-                binding,
-                _event_index(history_value["events"]),
-            )
+                epochs.append(entry)
+            else:
+                epochs.append(
+                    _closed(
+                        entry,
+                        {
+                            "manifest",
+                            "control_artifacts",
+                            "control_head",
+                            "credentials",
+                            "incarnations",
+                            "successor",
+                        },
+                    )
+                )
+        historical_reversed: list[RootAuthority] = []
+        next_authority = active
+        for epoch in reversed(epochs):
+            if set(epoch) == {"manifest", "successor"}:
+                historical_authority = RootAuthority(
+                    BeingManifest.from_value(epoch["manifest"]),
+                    next_authority.state,
+                    next_authority.credentials,
+                    next_authority.incarnations,
+                )
+            else:
+                historical_controls = epoch["control_artifacts"]
+                if (
+                    not isinstance(historical_controls, list)
+                    or not 1 <= len(historical_controls) <= 1024
+                ):
+                    raise RuntimeError("invalid_authority_history")
+                historical_chain = ControlChain(historical_controls[0])
+                for artifact in historical_controls[1:]:
+                    historical_chain.add(artifact)
+                historical_state = historical_chain.state
+                if epoch["control_head"] != historical_state.head:
+                    raise RuntimeError("invalid_authority_history")
+                historical_authority = RootAuthority(
+                    BeingManifest.from_value(epoch["manifest"]),
+                    historical_state,
+                    _indexed(epoch["credentials"]),
+                    _indexed(epoch["incarnations"]),
+                )
+            historical_reversed.append(historical_authority)
+            next_authority = historical_authority
+        if authority_history:
+            historical_authorities = list(reversed(historical_reversed))
+            successors = [epoch["successor"] for epoch in epochs]
+            authority = RootHistoryAuthority(active, historical_authorities, successors)
+        if history is not None:
+            raise RuntimeError("incompatible_authority_histories")
     except (
         AttributeError,
         VerificationError,
@@ -483,34 +388,31 @@ def load_runtime(
     except (KeyError, VerificationError, WeaveProtocolError) as exception:
         raise RuntimeError("local_authorization_not_active") from exception
 
-    runtime_id: str | None = None
-    runtime_label: str | None = None
-    if schema == BUNDLE_SCHEMA_V7:
-        runtime_id = bundle["runtime_id"]
-        runtime_label = bundle["runtime_label"]
-        try:
-            expected_runtime_id = operator_runtime_id(
-                runtime_label,
-                state.being_ref,
-                local_origin,
-                credential_body["signing_key"]["key_id"],
-            )
-        except (KeyError, OperatorCapabilityError, TypeError) as exception:
-            raise RuntimeError("invalid_operator_runtime_identity") from exception
-        if runtime_id != expected_runtime_id:
-            raise RuntimeError("invalid_operator_runtime_identity")
-        try:
-            verify_operator_capability_binding(
-                bundle["operator_capability_binding"],
-                runtime_id=runtime_id,
-                runtime_label=runtime_label,
-                being_ref=state.being_ref,
-                origin=local_origin,
-                signing_key=credential_body["signing_key"],
-                capability_rows=bundle["capabilities"],
-            )
-        except (KeyError, OperatorCapabilityError, TypeError) as exception:
-            raise RuntimeError("invalid_operator_capability_binding") from exception
+    runtime_id = bundle["runtime_id"]
+    runtime_label = bundle["runtime_label"]
+    try:
+        expected_runtime_id = operator_runtime_id(
+            runtime_label,
+            state.being_ref,
+            local_origin,
+            credential_body["signing_key"]["key_id"],
+        )
+    except (KeyError, OperatorCapabilityError, TypeError) as exception:
+        raise RuntimeError("invalid_operator_runtime_identity") from exception
+    if runtime_id != expected_runtime_id:
+        raise RuntimeError("invalid_operator_runtime_identity")
+    try:
+        verify_operator_capability_binding(
+            bundle["operator_capability_binding"],
+            runtime_id=runtime_id,
+            runtime_label=runtime_label,
+            being_ref=state.being_ref,
+            origin=local_origin,
+            signing_key=credential_body["signing_key"],
+            capability_rows=bundle["capabilities"],
+        )
+    except (KeyError, OperatorCapabilityError, TypeError) as exception:
+        raise RuntimeError("invalid_operator_capability_binding") from exception
 
     custody = _closed(bundle["keystore"], {"counter", "filename", "signing_slot"})
     counter = custody["counter"]
@@ -520,11 +422,7 @@ def load_runtime(
         or isinstance(counter, bool)
         or counter < 1
         or not isinstance(signing_slot, str)
-        or not signing_slot.startswith("runtime.signing.v1:")
-        or (
-            schema == BUNDLE_SCHEMA_V7
-            and signing_slot != f"runtime.signing.v1:{runtime_label}"
-        )
+        or signing_slot != f"runtime.signing.v1:{runtime_label}"
     ):
         raise RuntimeError("invalid_runtime_custody")
     keystore_path = _safe_file(root, custody["filename"], must_exist=True)
@@ -557,14 +455,10 @@ def load_runtime(
     for row in capability_rows:
         value = _closed(
             row,
-            (
-                {"descriptor", "profile", "runtime_id", "secret_slot"}
-                if schema == BUNDLE_SCHEMA_V7
-                else {"descriptor", "secret_slot"}
-            ),
+            {"descriptor", "profile", "runtime_id", "secret_slot"},
         )
         slot = value["secret_slot"]
-        if schema == BUNDLE_SCHEMA_V7 and value["runtime_id"] != runtime_id:
+        if value["runtime_id"] != runtime_id:
             raise RuntimeError("invalid_operator_runtime_identity")
         if not isinstance(slot, str) or not slot.startswith(
             ("runtime.capability.v1:", "runtime.host-capability.v1:")
@@ -589,100 +483,94 @@ def load_runtime(
             < capability.descriptor["not_after_ms"]
         ):
             raise RuntimeError("runtime_capability_not_active")
-        if schema == BUNDLE_SCHEMA_V7:
-            profile_value = value["profile"]
-            if not isinstance(profile_value, Mapping):
-                raise RuntimeError("invalid_operator_capability_profile")
-            role = profile_value.get("role")
-            profile_schema = profile_value.get("schema")
-            if not isinstance(role, str):
-                raise RuntimeError("invalid_operator_capability_profile")
-            try:
-                if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
-                    expected_profile = host_capability_profile(role)
-                    expected_methods = HOST_CAPABILITY_PROFILES[role]
-                    expected_client_id = f"client:host:{runtime_label}:{role}"
-                    assert runtime_label is not None
-                    expected_slot = host_capability_slot(runtime_label, role)
-                    clients = host_clients
-                else:
-                    expected_profile = operator_capability_profile(role)
-                    expected_methods = OPERATOR_CAPABILITY_PROFILES[role]
-                    expected_client_id = f"client:operator:{runtime_label}:{role}"
-                    assert runtime_label is not None
-                    expected_slot = operator_capability_slot(runtime_label, role)
-                    clients = operator_clients
-                if capability.client_id != expected_client_id:
-                    raise OperatorCapabilityError(
-                        "invalid_operator_capability_identity"
-                    )
-            except (KeyError, OperatorCapabilityError) as exception:
-                raise RuntimeError("invalid_operator_capability_profile") from exception
-            if (
-                dict(profile_value) != expected_profile
-                or slot != expected_slot
-                or frozenset(capability.methods) != expected_methods
-                or role in clients
-            ):
-                raise RuntimeError("invalid_operator_capability_profile")
-            clients[role] = (capability, key, profile_value)
-        capabilities[capability.capability_id] = capability
-
-    if schema == BUNDLE_SCHEMA_V7:
-        all_clients = {
-            **operator_clients,
-            **{f"host:{k}": v for k, v in host_clients.items()},
-        }
+        profile_value = value["profile"]
+        if not isinstance(profile_value, Mapping):
+            raise RuntimeError("invalid_operator_capability_profile")
+        role = profile_value.get("role")
+        profile_schema = profile_value.get("schema")
+        if not isinstance(role, str):
+            raise RuntimeError("invalid_operator_capability_profile")
+        try:
+            if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
+                expected_profile = host_capability_profile(role)
+                expected_methods = HOST_CAPABILITY_PROFILES[role]
+                expected_client_id = f"client:host:{runtime_label}:{role}"
+                expected_slot = host_capability_slot(runtime_label, role)
+                clients = host_clients
+            else:
+                expected_profile = operator_capability_profile(role)
+                expected_methods = OPERATOR_CAPABILITY_PROFILES[role]
+                expected_client_id = f"client:operator:{runtime_label}:{role}"
+                expected_slot = operator_capability_slot(runtime_label, role)
+                clients = operator_clients
+            if capability.client_id != expected_client_id:
+                raise OperatorCapabilityError("invalid_operator_capability_identity")
+        except (KeyError, OperatorCapabilityError) as exception:
+            raise RuntimeError("invalid_operator_capability_profile") from exception
         if (
-            set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
-            or set(host_clients) != set(HOST_PROFILE_NAMES)
-            or len({capability.key_id for capability, _, _ in all_clients.values()})
-            != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+            dict(profile_value) != expected_profile
+            or slot != expected_slot
+            or frozenset(capability.methods) != expected_methods
+            or role in clients
         ):
             raise RuntimeError("invalid_operator_capability_profile")
-        for role, (capability, key, profile_value) in all_clients.items():
-            directory_role = role.removeprefix("host:")
-            if profile_value["client_directory"] == ".":
-                client_root = root
-            elif profile_value["schema"] == HOST_CAPABILITY_PROFILE_SCHEMA:
-                clients_root = root / "host-clients"
-                _owner_directory(clients_root)
-                client_root = clients_root / directory_role
-                _owner_directory(client_root)
-            else:
-                clients_root = root / "operator-clients"
-                _owner_directory(clients_root)
-                client_root = clients_root / directory_role
-                _owner_directory(client_root)
-            config_path = _safe_file(
-                client_root,
-                profile_value["client_config_filename"],
-                must_exist=True,
-            )
-            key_path = _safe_file(
-                client_root,
-                profile_value["client_key_filename"],
-                must_exist=True,
-            )
-            config = _closed(
-                _read_bundle(config_path),
-                {
-                    "capability",
-                    "expected_server",
-                    "runtime_id",
-                    "runtime_label",
-                    "schema",
-                },
-            )
-            if (
-                config["schema"] != CLIENT_CONFIG_SCHEMA_V3
-                or config["capability"] != capability.descriptor
-                or config["expected_server"] != local_origin
-                or config["runtime_id"] != runtime_id
-                or config["runtime_label"] != runtime_label
-                or _read_private_bytes(key_path, expected_size=32) != key
-            ):
-                raise RuntimeError("runtime_operator_client_mismatch")
+        clients[role] = (capability, key, profile_value)
+        capabilities[capability.capability_id] = capability
+
+    all_clients = {
+        **operator_clients,
+        **{f"host:{k}": v for k, v in host_clients.items()},
+    }
+    if (
+        set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
+        or set(host_clients) != set(HOST_PROFILE_NAMES)
+        or len({capability.key_id for capability, _, _ in all_clients.values()})
+        != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+    ):
+        raise RuntimeError("invalid_operator_capability_profile")
+    for role, (capability, key, profile_value) in all_clients.items():
+        directory_role = role.removeprefix("host:")
+        if profile_value["client_directory"] == ".":
+            client_root = root
+        elif profile_value["schema"] == HOST_CAPABILITY_PROFILE_SCHEMA:
+            clients_root = root / "host-clients"
+            _owner_directory(clients_root)
+            client_root = clients_root / directory_role
+            _owner_directory(client_root)
+        else:
+            clients_root = root / "operator-clients"
+            _owner_directory(clients_root)
+            client_root = clients_root / directory_role
+            _owner_directory(client_root)
+        config_path = _safe_file(
+            client_root,
+            profile_value["client_config_filename"],
+            must_exist=True,
+        )
+        key_path = _safe_file(
+            client_root,
+            profile_value["client_key_filename"],
+            must_exist=True,
+        )
+        config = _closed(
+            _read_bundle(config_path),
+            {
+                "capability",
+                "expected_server",
+                "runtime_id",
+                "runtime_label",
+                "schema",
+            },
+        )
+        if (
+            config["schema"] != CLIENT_CONFIG_SCHEMA_V3
+            or config["capability"] != capability.descriptor
+            or config["expected_server"] != local_origin
+            or config["runtime_id"] != runtime_id
+            or config["runtime_label"] != runtime_label
+            or _read_private_bytes(key_path, expected_size=32) != key
+        ):
+            raise RuntimeError("runtime_operator_client_mismatch")
 
     route_profile: RouteProfile | None = None
     route_rows: list[tuple[RouteBinding, Mapping[str, Any], bytes]] = []
@@ -773,17 +661,7 @@ def load_runtime(
         }:
             raise RuntimeError("runtime_route_provider_missing")
     peer_configuration: Mapping[str, Any] | None = None
-    if (
-        schema
-        in {
-            BUNDLE_SCHEMA_V3,
-            BUNDLE_SCHEMA_V4,
-            BUNDLE_SCHEMA_V5,
-            BUNDLE_SCHEMA_V6,
-            BUNDLE_SCHEMA_V7,
-        }
-        and bundle["peer_transport"] is not None
-    ):
+    if bundle["peer_transport"] is not None:
         peer_fields = {
             "enabled",
             "encryption_slot",
@@ -791,9 +669,8 @@ def load_runtime(
             "listen_host",
             "listen_port",
             "outbox_filename",
+            "targets",
         }
-        if schema == BUNDLE_SCHEMA_V7:
-            peer_fields.add("targets")
         peer_configuration = _closed(bundle["peer_transport"], peer_fields)
         peer_slot = peer_configuration["encryption_slot"]
         listen_host = peer_configuration["listen_host"]
@@ -828,7 +705,7 @@ def load_runtime(
         filenames.update(path.name for path in peer_files)
         required_slots.add(peer_slot)
     peer_endpoints: dict[str, tuple[str, float]] = {}
-    if peer_configuration is not None and schema == BUNDLE_SCHEMA_V7:
+    if peer_configuration is not None:
         raw_targets = peer_configuration["targets"]
         if not isinstance(raw_targets, list) or len(raw_targets) > 255:
             raise RuntimeError("invalid_peer_target_configuration")
@@ -915,16 +792,7 @@ def load_runtime(
             except RelationshipError as exception:
                 raise RuntimeError("runtime_tribe_snapshot_rejected") from exception
     species_context: SpeciesServiceContext | None = None
-    if (
-        schema
-        in {
-            BUNDLE_SCHEMA_V4,
-            BUNDLE_SCHEMA_V5,
-            BUNDLE_SCHEMA_V6,
-            BUNDLE_SCHEMA_V7,
-        }
-        and bundle["species"] is not None
-    ):
+    if bundle["species"] is not None:
         species_value = _closed(
             bundle["species"],
             {
@@ -960,10 +828,7 @@ def load_runtime(
             raise RuntimeError("runtime_species_configuration_rejected") from exception
     relationship_store_path: Path | None = None
     relationship_known_refs: tuple[str, ...] = ()
-    if (
-        schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}
-        and bundle["relationships"] is not None
-    ):
+    if bundle["relationships"] is not None:
         relationship_value = _closed(
             bundle["relationships"], {"known_being_refs", "store_filename"}
         )
@@ -987,10 +852,7 @@ def load_runtime(
         relationship_known_refs = tuple(raw_refs)
     source_cas_path: Path | None = None
     known_source_configurations: list[tuple[str, Path, Any, Mapping[str, str]]] = []
-    if (
-        schema in {BUNDLE_SCHEMA_V5, BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}
-        and bundle["sources"] is not None
-    ):
+    if bundle["sources"] is not None:
         source_value = _closed(bundle["sources"], {"cas_filename", "known_beings"})
         source_cas_path = _safe_file(
             root, source_value["cas_filename"], must_exist=False
@@ -1049,8 +911,6 @@ def load_runtime(
                     }:
                         known_epochs.append(raw_epoch)
                     else:
-                        if schema != BUNDLE_SCHEMA_V7:
-                            raise RuntimeError("runtime_source_configuration_rejected")
                         known_epochs.append(
                             _closed(
                                 raw_epoch,
@@ -1408,6 +1268,8 @@ def load_runtime(
         signer,
         capabilities,
         clock,
+        runtime_id,
+        runtime_label,
         communication=communication,
         router=router,
         scopes=scopes,
@@ -1440,12 +1302,6 @@ def load_runtime(
 
 
 __all__ = [
-    "BUNDLE_SCHEMA",
-    "BUNDLE_SCHEMA_V2",
-    "BUNDLE_SCHEMA_V3",
-    "BUNDLE_SCHEMA_V4",
-    "BUNDLE_SCHEMA_V5",
-    "BUNDLE_SCHEMA_V6",
     "BUNDLE_SCHEMA_V7",
     "HostedRuntime",
     "RuntimeError",

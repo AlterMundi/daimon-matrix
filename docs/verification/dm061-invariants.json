@@ -36,7 +36,7 @@
     "provenance/wasi-runner-v0.json",
     "requirements-species.txt",
     "schemas/species/v0/contracts.schema.json",
-    "schemas/hosted/v4/bundle.schema.json",
+    "schemas/hosted/v7/bundle.schema.json",
     "schemas/species/v0/scenario-registry.schema.json",
     "schemas/species/v0/synthetic.schema.json",
     "specs/species-evolution.md",

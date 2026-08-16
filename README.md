@@ -1,169 +1,74 @@
 # daimon-matrix
 
-`daimon-matrix` specifies persistent beings that may have zero, one, or many
+`daimon-matrix` implements persistent beings that may have zero, one or many
 simultaneously active embodiments.
 
-The foundation uses situated scopes:
+The situated scopes are:
 
-- `/me` — this embodiment, here and now;
-- `/we` — every embodiment of the same being;
-- `/tribe` — principals joined under an explicit resource-sharing tribe;
-- `/species` and `/source` — capability lineage and attributed ancestry.
+- `/me`: this embodiment, here and now;
+- `/we`: embodiments of the same being;
+- `/tribe`: principals joined through signed relationship and grant history;
+- `/species` and `/source`: capability lineage and attributed ancestry.
 
-Plurality is normal. Different embodiments may experience, answer, prefer,
-and configure themselves differently without becoming different beings or a
-split-brain failure.
+Plurality is normal. A global admission mechanism prevents reuse of one
+embodiment credential in two bodies; it must not collapse every embodiment of
+the being into a singleton.
 
-## Current architecture
+## Release-candidate status
 
-The V0.1 MVP includes the `daimon-matrix` runtime. It owns being-root
-continuity, canonical state, `/me` and `/we` resolution, synchronization,
-memory policy, and secure communications. Daimon Cluster manages bodies,
-incarnations, storage, lifecycle, and concrete resource fences. DM-050–DM-055
-independently absorb the reusable Tribe behavior; DM-055 now supplies the
-native encrypted Matrix peer wire, while Tribe Bridge remains only for the
-bounded ordinary-message canary before retirement.
+The integrated V0 Matrix baseline is merged at commit
+`75b34804f8d013d348129946c0cd541a4448e71d`, tree
+`38f3edb002ac52aac2d51fbf533cb58c38b813c5`. The package is being qualified as
+`0.1.0rc1`. The conformance registry contains 102 closed scenarios and public
+CI covers Python 3.11 through 3.14.
 
-Legacy administrator-manifest and Cluster Weave canary bytes remain provisional
-history only. DM-021 attaches them to a Matrix root through an exact
-root-authorized binding; Tribe keys are never Matrix root keys. The production
-Cluster host path runs the pinned installed Matrix package and no longer ships
-the provisional executable `weave/` implementation.
+This status does not claim that any host, service or production deployment is
+currently running. Historical operational reports document bounded past
+experiments only. Start with [RESUME.md](RESUME.md) and
+[CURRENT-STATE.md](CURRENT-STATE.md) for the authoritative checkpoint.
 
-This project is unrelated to the external Matrix.org communications protocol.
-Matrix.org clients, homeservers and federation are intentionally outside the
-MVP. To avoid ambiguity, documentation uses `daimon-matrix`, `Matrix.org`, and
-“daimonmatrix host” for the software, external protocol, and VPS.
+## Component boundary
 
-For a cold start after the current pause, read [RESUME.md](RESUME.md) first.
-Then continue with [ONTOLOGY.md](ONTOLOGY.md), the
-[operational stack contract](specs/operational-stack-contract.md), and the
-[being-root contract](specs/identity-root-v1.md). Delivery order and acceptance
-are in [PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
+`daimon-matrix` owns being-root continuity, canonical signed state, scopes,
+relationships and grants, memory policy, synchronization, and communication
+semantics. `daimon-cluster` owns body/incarnation lifecycle, storage and
+resource-scoped admission/fencing. Neither side may infer the other's
+authority.
 
-## Status
+Tribe Bridge remains transitional. Its transport acknowledgement cannot
+replace authenticated Matrix intake or a signed semantic receipt. No legacy
+dual-write is part of the release-candidate design, and retirement remains an
+explicit human gate. See [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md).
 
-The repository contains specifications, schemas, conformance material, and a
-typed Python package implementing canonical identity artifacts, plural
-embodiment/incarnation authorization, control recovery, history binding, and
-encrypted custody. The package also owns the root-authorized independent Weave
-ledger, replay-safe sync, deterministic local projections, and the installed
-`daimon-matrixd` owner-local runtime API. The installed `daimon` CLI and
-modern-only `daimon-mcp` stdio adapter now consume that exact authenticated
-boundary; neither has direct state or signing authority. The package now also
-contains carrier-neutral recipient encryption and the same-ledger logical
-message, per-recipient receipt, claim and cursor layer. It also contains
-explicit-profile local IPC, authenticated HTTP and opaque hub providers with
-durable carrier inboxes; all are disabled until configured and no live carrier
-is deployed. DM-054 now provides exact `/me`, `/we`, `/we.diff`, per-origin
-`/we.sync` plans, verified `/tribe` snapshots, and signed replay-safe partial
-fan-out independent of any live carrier. DM-055 adds the optional bundle-V3
-root-bound HPKE/Ed25519 peer transport and direct scope/sync HTTP carrier with
-durable replay. DM-083 adds the installed plural-being bootstrap, closed V7
-peer targets and an authenticated configured peer-pull operation. DM-070 proves
-deterministic convergence between two isolated installed processes through
-partition and restart; a fresh live two-host
-cutover remains human-authorized. Cluster remains its
-lifecycle/state-volume host; frozen fixtures preserve the old canary as a
-migration oracle rather than a second protocol. Tribe Bridge is not a Matrix
-peer wire. The installed `daimon-conformance` gate binds the local
-implementation and reproducible artifacts to a closed 97-scenario report; its
-route, birth and multihost evidence is synthetic/isolated and does not yet
-certify a fresh live remote delivery or rebirth. The merged Cluster adapter pins Matrix,
-supervises one daemon per embodiment, preserves quiesced relocatable state and
-provides exact body/effect evidence. DM-030 supplies the deterministic memory
-policy, auditable decisions, fork-safe lanes and transactional exactly-once
-executor through daemon/CLI/MCP.
-DM-031 adds resource-scoped curator items, generation CAS claims, explicit
-human-review proposals and effect-truth-aware resource-fenced completion. It
-does not create a being-wide Librarian lease; different resources remain
-independent and Cluster retains all shared-resource authority. DM-032 adds a
-replaceable evidence-only curator-worker contract and fixed non-thinking
-DeepSeek V4 Pro adapter: closed registration/profile/task/proposal artifacts,
-durable retry/defer recovery and an installed owner-local one-shot process. Its
-output always remains an inert proposal for DM-033 review; no live provider is
-claimed ready without a protected synthetic smoke receipt. DM-033 adds the
-purpose-limited human-review narrow waist: separate reviewer custody and
-Ed25519 authorization, exact review requests, threshold accept/edit/reject/defer
-decisions, authorization-before-disclosure queues, safe inert terminal output,
-subject-side revalidation and idempotent execution receipts. MCP cannot decide
-or execute, and all checked-in review evidence remains synthetic.
-DM-034 adds the pinned HMK personal-memory projection boundary: exact
-assert/correct/retract mapping, current effect-truth verification, owner-local
-crash recovery, verified recall and deterministic namespace-only rebuild. HMK
-is a disposable retrieval view; native/Wiki records keep their own authority,
-and checked-in integration evidence uses only isolated synthetic SQLite state.
-DM-035 adds reviewed outbound publication to the LLM Wiki and protected
-`compaii-state` projection through one deterministic target-scoped queue. It
-pins the external transaction and HMK commits, scans the final reviewed bytes,
-requires fresh effect truth, and recovers every provider/Matrix commit window
-without duplicate publication. No live Wiki or state deployment is performed
-by the card.
-DM-040 adds Codex as an isolated first-class body/incarnation surface. It pins
-the native Codex 0.146.0 executable and generated App Server contract, renders
-an owner-only no-memory profile with required least-privilege Matrix MCP,
-verifies instruction/hook/MCP drift, and journals start/resume/park handles
-before effects so response loss cannot create blind duplicate threads. Codex
-remains a body rather than `/me`; real CompAII credentials and deployment are
-not touched by this synthetic card.
-DM-041 adds Hermes Agent 0.19.0 through its supported external memory-provider
-and current-user-message composition surfaces. It creates a fresh owner-only,
-nonambient profile; pins the audited source callbacks and interpreter interval;
-disables native/HMK memory; reads only a bounded provenance-safe current Matrix
-projection; and permits only an explicit idempotent observation proposal.
-Launch becomes active only after authenticated provider readiness, while park
-requires Matrix handoff and relinquished-presence evidence. Public CI exercises
-real plugin discovery and prompt composition at the exact Hermes commit without
-running a model or touching a live CompAII profile.
-DM-042 composes both public adapter state machines under one root-bound being.
-Two independent SQLite ledgers exchange signed DM-023 history in both
-directions, replay exactly after restart and converge while Codex locally
-adopts a shared target and Hermes locally rejects it. The published
-`dm.local-we.validation/v1` receipt is deterministic and path-free; the card is
-a synthetic single-host gate, not a Matrix.org, multihost Cluster or CompAII
-rebirth claim.
-DM-036 adds independent inbound and outbound `collective-memory` adapters over
-the exact public exchange-v1 contract. Immutable generations enter only an
-append-only source log plus `source.imported` quarantine evidence, with offline
-catch-up and ledger/source-log rebuild. Publication requires exact current
-Matrix source refs, recomputable checkpoints, subject consent, independent
-human review, deterministic final-byte secret scanning and fresh upstream
-effect truth. The directions have content-addressed DM-018 identities and no
-shared credential, store, queue, receipt or authority; the real-I/O lane uses
-only isolated synthetic corpus roots.
-DM-060 adds the root-authorized birth V1 ceremony and installed
-`daimon-synthetic-birth` acceptance. A parent can offer attributed context but
-cannot precommit or retain the newborn root; the newborn independently accepts,
-creates its first embodiment only after durable acceptance, and activates only
-with sequence-zero incarnation, witness evidence and an empty canonical
-ledger/projection cutoff. The synthetic journey exercises real daemon, CLI and
-MCP processes and explicitly creates no real being, Cluster deployment,
-membership or inherited autobiography. Rebirth of an existing being remains a
-separate later multi-host journey.
-DM-061 adds content-addressed species genesis/releases, predecessor-selected
-local WASI compatibility verification, paged `/species.incoming`, crash-safe
-compatible application/rollback and deliberate signed branching to a new
-species. Existing carriers cannot adopt an incompatible child in V0; a fresh
-newborn may enroll it. Its generated conformance map binds all 124 normative
-DM-014 Section 14 rows to named executable evidence, and all public evidence is
-synthetic and explicitly not Agent 0 or a real speciation.
-DM-081 adds the complete owner-local DM-015 source runtime: five signed event
-kinds, exact-byte CAS, foreign-being ledgers bound to their own root
-authorities, observer-relative cursors, disclosure-gated paginated diff,
-side-effect-free incoming preview, crash-resumable quarantine pull, local
-assessment and separately reviewed `external-reference` promotion. Its
-installed deterministic journey uses two distinct synthetic beings and proves
-retraction/reassertion, tombstone, attribution and byte retention without
-contacting a live source, Matrix.org, personal memory or Cluster.
-DM-082 adds the producer side of bilateral relationships, founded Tribes and
-directional resource grants. Signed cards, consent, predecessor-linked
-membership, two-party founder succession, strict delegation and terminal
-cascades reduce into the verified snapshot already consumed by DM-054. Hosted
-bundle V6 and fixed daemon/CLI/MCP methods use owner-local exact-byte storage;
-the installed three-being journey is deterministic and performs no external
-contact. DM-071 owns the later consented external canary.
-DM-071 consent/root discovery and the live DM-055 two-host cutover remain.
-There is no supported single-awake-identity or distinct-identities-as-`/we`
-model.
+This project is unrelated to the external Matrix.org protocol.
+
+## Runtime and evidence
+
+The typed Python package includes threshold-separated identity/recovery
+ceremonies, plural embodiment and incarnation authorization, encrypted
+custody, append-only ledgers, replay-safe sync, deterministic projections, an
+authenticated owner-local daemon, CLI/MCP clients, relationships and grants,
+recipient-encrypted communication, source/publication contracts, and isolated
+acceptance journeys.
+
+Synthetic fixtures are deliberately named as synthetic. They provide
+repeatable software evidence, not claims of physical custody, global host
+fencing, participant consent or live deployment.
+
+## Development
+
+Install pinned development dependencies and run the standard gates:
+
+```bash
+python -m pip install -r requirements-dev.txt -r requirements-vectors.txt
+python -m pytest -q
+python -m ruff check src tools tests
+MYPYPATH=src python -m mypy src
+python tools/reproducible_build.py --output dist
+```
+
+The reproducible build and clean-wheel workflow are documented in
+[docs/packaging.md](docs/packaging.md). Delivery order is in
+[PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

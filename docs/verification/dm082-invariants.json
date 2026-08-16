@@ -31,7 +31,7 @@
   "published_evidence": [
     "conformance/fixtures/dm082-synthetic-relationships.json",
     "conformance/relationship-v1-scenarios.json",
-    "schemas/hosted/v6/bundle.schema.json",
+    "schemas/hosted/v7/bundle.schema.json",
     "schemas/relationships/v1/contracts.schema.json",
     "schemas/relationships/v1/synthetic.schema.json",
     "vectors/relationships/v1/index.json"

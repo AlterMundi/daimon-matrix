@@ -1411,7 +1411,7 @@ def create_launch_receipt(
             "app_server_typescript_digest": APP_SERVER_TYPESCRIPT_DIGEST,
             "matrix_mcp_name": "daimon-matrix",
             "matrix_mcp_binary_sha256": manifest["matrix_mcp_binary_sha256"],
-            "matrix_mcp_version": "0.0.0",
+            "matrix_mcp_version": "0.1.0rc1",
             "hook_python_sha256": manifest["hook_python_sha256"],
             "matrix_tools": list(MATRIX_TOOLS),
         },
@@ -1497,7 +1497,7 @@ def validate_launch_receipt(value: Any) -> dict[str, Any]:
         or compatibility["app_server_schema_digest"] != APP_SERVER_SCHEMA_DIGEST
         or compatibility["app_server_typescript_digest"] != APP_SERVER_TYPESCRIPT_DIGEST
         or compatibility["matrix_mcp_name"] != "daimon-matrix"
-        or compatibility["matrix_mcp_version"] != "0.0.0"
+        or compatibility["matrix_mcp_version"] != "0.1.0rc1"
         or compatibility["matrix_tools"] != list(MATRIX_TOOLS)
     ):
         raise CodexBodyError("launch_compatibility_mismatch")
@@ -1922,7 +1922,7 @@ def _verify_matrix_mcp(value: Mapping[str, Any]) -> None:
     if info is not None and (
         not isinstance(info, Mapping)
         or info.get("name") != "daimon-matrix"
-        or info.get("version") != "0.0.0"
+        or info.get("version") != "0.1.0rc1"
     ):
         raise CodexBodyError("matrix_mcp_version_mismatch")
     tools = server["tools"]

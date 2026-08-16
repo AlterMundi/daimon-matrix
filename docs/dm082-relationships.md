@@ -18,7 +18,7 @@ snapshot emitted here and retains no signing or membership authority.
 
 ## Runtime contract
 
-Hosted bundle `dm.runtime.bundle/v6` adds a closed `relationships` object with
+Hosted bundle `dm.runtime.bundle/v7` carries a closed `relationships` object with
 an owner-local SQLite filename and an explicit list of known being references.
 The corresponding exact root authorities are loaded from the shared known-being
 inventory. Inventory presence permits signature verification only; it creates no

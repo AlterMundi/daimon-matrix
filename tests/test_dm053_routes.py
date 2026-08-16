@@ -1337,6 +1337,8 @@ class HostedRouteBoundaryTests(RouteFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "routes",
             communication=self.store,
             router=router,
         )
@@ -1355,6 +1357,7 @@ class HostedRouteBoundaryTests(RouteFixture):
             expected_request_id=inspect_request["request_id"],
             expected_request_hash=request_hash(inspect_request),
             expected_server=self.origins["legion"],
+            expected_runtime=service.runtime_identity,
         )
         self.assertTrue(inspected["ok"])
         root_info = self.root_path.lstat()
@@ -1395,6 +1398,8 @@ class HostedRouteBoundaryTests(RouteFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "routes",
             communication=self.store,
         )
         refused_request = create_request(

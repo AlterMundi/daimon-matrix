@@ -958,6 +958,8 @@ class PublicBoundaryAndSchemaTests(LogicalCommunicationFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: NOW,
+            "dm:runtime:v1:" + "a" * 43,
+            "communication",
         )
         request = create_request(
             capability,
@@ -983,6 +985,7 @@ class PublicBoundaryAndSchemaTests(LogicalCommunicationFixture):
             expected_request_id=request["request_id"],
             expected_request_hash=request_hash(request),
             expected_server=service.origin,
+            expected_runtime=service.runtime_identity,
         )
         self.assertEqual(verified["result"]["message_id"], message["event_id"])
         self.assertEqual(verified["result"]["legs"][0]["state"], "accepted")

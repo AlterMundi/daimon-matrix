@@ -127,7 +127,7 @@ self-certifying being.
 
 ## Public surfaces
 
-Runtime bundle V4 may configure one private species CAS, registry, application
+Runtime bundle V7 may configure one private species CAS, registry, application
 pointer, immutable enrollment release, species identifier and local policy.
 The authenticated daemon, CLI and MCP expose only:
 

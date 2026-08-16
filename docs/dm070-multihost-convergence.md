@@ -1,7 +1,8 @@
 # DM-070 multihost convergence
 
-Status: implemented as a deterministic installed-process acceptance journey.
-No live host, service, identity, provider or resource was changed.
+Status: historical pre-RC deterministic evidence. Its never-deployed V3 runtime
+fixture and content-addressed receipts remain archived, but it is no longer an
+installed command or RC qualification journey. Production accepts V7 only.
 
 “Matrix” in this document means `daimon-matrix`. Matrix.org is absent.
 
@@ -27,7 +28,7 @@ The proof also keeps the Matrix/Cluster boundary exact:
 
 ## Executable journey
 
-`daimon-synthetic-multihost` creates one deterministic synthetic root and a
+The archived `daimon-synthetic-multihost` fixture created one deterministic synthetic root and a
 current `being-manifest/v2` with exactly two active embodiments named `legion`
 and `daimonmatrix`. These are labels in a loopback fixture; the journey does not
 contact either real host.
@@ -35,7 +36,7 @@ contact either real host.
 The harness creates distinct credentials, incarnation authorizations, signing,
 X25519 and transport keys, capability keys, encrypted keystores, state roots,
 SQLite files, AF_UNIX sockets, peer exchanges and peer outboxes. It then starts
-two separate installed Python processes. Each process loads the production V3
+two separate installed Python processes. Each process loaded the then-current V3
 runtime, acquires the normal single-writer state lock, starts the normal local
 daemon and exposes the normal bounded DM-055 loopback HTTP handler. The only
 test-specific behavior is a fixed synthetic clock supplied while loading the
@@ -161,28 +162,13 @@ DM-070 to existing lower-level evidence for:
 Arrival time, label, hash order, path length and process presence never choose
 an event or embodiment winner.
 
-## Running the gate
+## Archived gate
 
-From a source checkout with the exact dependencies installed:
-
-```sh
-python tools/generate_dm070_vectors.py --check
-python -m unittest tests.test_dm070_multihost -v
-```
-
-The installed release lane runs:
-
-```sh
-daimon-synthetic-multihost \
-  --state-root "$EMPTY_OWNER_ONLY_ROOT" \
-  --source-commit "$EXACT_GIT_COMMIT" \
-  --cluster-provenance provenance/daimon-cluster-v1.json \
-  --output "$NEW_RECEIPT_PATH"
-```
-
-The state root must be absent or empty and owner-controlled. The output path
-must not already exist. Exact generated artifacts are checked with
-`tools/generate_dm070_vectors.py --check`.
+The checked-in receipts, schema and semantic negative tests remain historical
+evidence. The V3 process generator is not an RC gate and
+`daimon-synthetic-multihost` is no longer a console entry point. Executing the
+fixture reaches the V7-only loader and fails before custody is opened. Current
+multi-host qualification must build V7 material through the operator tooling.
 
 ## Rollback and limits
 

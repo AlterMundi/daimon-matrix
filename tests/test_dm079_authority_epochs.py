@@ -20,9 +20,17 @@ from daimon_matrix.authority_epochs import (
     verify_authority_epoch,
 )
 from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.identity import create_incarnation_authorization, verify_genesis
+from daimon_matrix.identity import (
+    create_incarnation_authorization,
+    signing_descriptor,
+    verify_genesis,
+)
 from daimon_matrix.ledger import Ledger, LedgerStateError
-from daimon_matrix.local_api import create_request
+from daimon_matrix.local_api import LocalApiError, create_request
+from daimon_matrix.operator_capabilities import (
+    create_operator_capability_binding,
+    operator_runtime_id,
+)
 from daimon_matrix.projections import ProjectionEngine
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.weave import BeingManifest, RootAuthority, WeaveProtocolError
@@ -433,7 +441,7 @@ class AuthorityEpochTests(AuthorityEpochFixture):
 
 
 class HostedAuthorityEpochTests(RuntimeFixture):
-    def test_v2_bundle_reopens_existing_runtime_under_exact_successor(self) -> None:
+    def test_v7_bundle_reopens_existing_runtime_under_exact_successor(self) -> None:
         state_root, old_bundle, capability, now_ms = self.make_process_bundle()
         old_runtime = load_runtime(
             state_root,
@@ -505,9 +513,18 @@ class HostedAuthorityEpochTests(RuntimeFixture):
             **old_origin,
             "incarnation_id": new_authorization["body"]["incarnation_id"],
         }
+        runtime_id = operator_runtime_id(
+            old_bundle["runtime_label"],
+            self.state.being_ref,
+            new_origin,
+            signing_descriptor(self.signing_seeds["legion"])["key_id"],
+        )
+        capability_rows = copy.deepcopy(old_bundle["capabilities"])
+        for row in capability_rows:
+            row["runtime_id"] = runtime_id
         new_bundle = {
             **old_bundle,
-            "schema": "dm.runtime.bundle/v2",
+            "runtime_id": runtime_id,
             "authority_history": [
                 {
                     "manifest": self.manifest.value,
@@ -517,10 +534,36 @@ class HostedAuthorityEpochTests(RuntimeFixture):
             "manifest": successor_manifest.value,
             "incarnations": [*old_bundle["incarnations"], new_authorization],
             "local_origin": new_origin,
+            "capabilities": capability_rows,
+            "operator_capability_binding": create_operator_capability_binding(
+                runtime_id=runtime_id,
+                runtime_label=old_bundle["runtime_label"],
+                being_ref=self.state.being_ref,
+                origin=new_origin,
+                signing_seed=self.signing_seeds["legion"],
+                capability_rows=capability_rows,
+            ),
         }
+        for row in capability_rows:
+            profile = row["profile"]
+            directory = profile["client_directory"]
+            client_root = state_root if directory == "." else state_root / directory
+            config_path = client_root / profile["client_config_filename"]
+            config_path.write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": "dm.local.client-config/v3",
+                        "capability": row["descriptor"],
+                        "expected_server": new_origin,
+                        "runtime_id": runtime_id,
+                        "runtime_label": old_bundle["runtime_label"],
+                    }
+                )
+            )
+            config_path.chmod(0o600)
         root = Path(__file__).resolve().parents[1]
         for schema_path, value in (
-            (root / "schemas/hosted/v2/bundle.schema.json", new_bundle),
+            (root / "schemas/hosted/v7/bundle.schema.json", new_bundle),
             (root / "schemas/weave/v1/authority-epoch.schema.json", transition),
         ):
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -538,8 +581,9 @@ class HostedAuthorityEpochTests(RuntimeFixture):
         self.assertEqual(
             restarted.service.ledger.event(old_event["event_id"]), old_event
         )
-        replayed = restarted.service.handle(retry_request)
-        self.assertEqual(canonical_bytes(replayed), canonical_bytes(old_response))
+        with self.assertRaisesRegex(LocalApiError, "invalid_local_response"):
+            restarted.service.handle(retry_request)
+        self.assertNotEqual(old_response["runtime"], restarted.service.runtime_identity)
         self.assertEqual(len(restarted.service.ledger.events()), 2)
         request = create_request(
             capability,
@@ -579,7 +623,7 @@ class HostedAuthorityEpochTests(RuntimeFixture):
 
         bundle_path.write_bytes(canonical_bytes(old_bundle))
         bundle_path.chmod(0o600)
-        with self.assertRaisesRegex(LedgerStateError, "ledger_metadata_mismatch"):
+        with self.assertRaises(ValueError):
             load_runtime(
                 state_root,
                 "runtime.json",

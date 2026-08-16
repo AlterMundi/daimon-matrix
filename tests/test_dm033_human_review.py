@@ -31,7 +31,7 @@ import daimon_matrix
 from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.cli import _ensure_safe_output, _write_result
 from daimon_matrix.client import (
-    CLIENT_CONFIG_SCHEMA,
+    CLIENT_CONFIG_SCHEMA_V3,
     ClientConfig,
     ClientError,
     LocalClient,
@@ -1359,6 +1359,8 @@ class HumanReviewTests(RootLedgerFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: NOW,
+            "dm:runtime:v1:" + "a" * 43,
+            "review",
         )
 
         def invoke(
@@ -1781,7 +1783,11 @@ class HumanReviewInstalledTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
         self.now = time.time_ns() // 1_000_000
-        self.state_root, _, self.capability, _ = self.make_process_bundle()
+        self.state_root, bundle, self.capability, _ = self.make_process_bundle(
+            capability_profile="review"
+        )
+        self.runtime_id = bundle["runtime_id"]
+        self.runtime_label = bundle["runtime_label"]
         self.runtime = self._load_runtime()
         self.stop = threading.Event()
         self.drop_response = threading.Event()
@@ -1797,16 +1803,33 @@ class HumanReviewInstalledTests(RuntimeFixture):
         config_path.write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": self.capability.descriptor,
                     "expected_server": self.origins["legion"],
+                    "runtime_id": self.runtime_id,
+                    "runtime_label": self.runtime_label,
                 }
             )
         )
         config_path.chmod(0o600)
         self.client = LocalClient(
             self.runtime.socket_path,
-            ClientConfig(self.capability, self.origins["legion"]),
+            ClientConfig(
+                self.capability,
+                self.origins["legion"],
+                self.runtime_id,
+                self.runtime_label,
+            ),
+        )
+        observe_capability = self.operator_capabilities["observe"]
+        self.observe_client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig(
+                observe_capability,
+                self.origins["legion"],
+                self.runtime_id,
+                self.runtime_label,
+            ),
         )
         self.request_dir = self.state_root / "mcp-review-requests"
         self.request_dir.mkdir(mode=0o700)
@@ -1814,8 +1837,17 @@ class HumanReviewInstalledTests(RuntimeFixture):
     def _mcp_call(
         self, identifier: str, name: str, arguments: dict[str, Any]
     ) -> dict[str, Any]:
+        observing = name in {"review_inspect", "review_queue"}
+        capability = (
+            self.operator_capabilities["observe"] if observing else self.capability
+        )
+        config_path = (
+            self.state_root / "client.json"
+            if observing
+            else self.state_root / "review-client.json"
+        )
         read_descriptor, write_descriptor = os.pipe()
-        os.write(write_descriptor, self.capability.key)
+        os.write(write_descriptor, capability.key)
         os.close(write_descriptor)
         environment = os.environ.copy()
         package_parent = Path(daimon_matrix.__file__).resolve().parent.parent
@@ -1828,7 +1860,7 @@ class HumanReviewInstalledTests(RuntimeFixture):
                 "--socket",
                 str(self.runtime.socket_path),
                 "--client-config",
-                str(self.state_root / "review-client.json"),
+                str(config_path),
                 "--capability-key-fd",
                 str(read_descriptor),
                 "--request-dir",
@@ -1959,7 +1991,7 @@ class HumanReviewInstalledTests(RuntimeFixture):
             },
             body_evidence=None,
         )
-        _, evaluation = self.client.memory_evaluate(
+        _, evaluation = self.observe_client.memory_evaluate(
             {"policy": policy, "candidate": candidate},
             request_id="33000000-0000-4000-8000-000000000301",
         )
@@ -2100,7 +2132,7 @@ class HumanReviewInstalledTests(RuntimeFixture):
             },
             body_evidence=None,
         )
-        _, evaluation = self.client.memory_evaluate(
+        _, evaluation = self.observe_client.memory_evaluate(
             {"policy": policy, "candidate": candidate},
             request_id="33000000-0000-4000-8000-000000000501",
         )

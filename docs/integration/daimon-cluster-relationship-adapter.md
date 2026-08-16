@@ -13,9 +13,9 @@ operation it actually observes.
 
 ## Required Cluster adaptation
 
-1. Pin an exact Matrix commit that supports `dm.runtime.bundle/v6` and reject a
+1. Pin an exact Matrix commit that supports `dm.runtime.bundle/v7` and reject a
    mismatched installed package before start.
-2. Accept V6 bundles and preserve the closed `relationships` configuration
+2. Accept V7 bundles and preserve the closed `relationships` configuration
    without translating known beings into Cluster registry rows.
 3. Provision the relationship database under the embodiment's owner-only
    portable state root. Never mount one writable database into two processes.
@@ -39,7 +39,7 @@ operation it actually observes.
 The Cluster repository must add an installed-process test that:
 
 - installs the exact pinned Matrix wheel;
-- loads a V6 bundle with relationship storage;
+- loads a V7 bundle with relationship storage;
 - runs the deterministic Matrix relationship journey or equivalent daemon calls;
 - stops and snapshots the embodiment through real Cluster lifecycle adapters;
 - restores it under a newly authorized incarnation;

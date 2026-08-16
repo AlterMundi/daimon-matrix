@@ -1130,7 +1130,7 @@ class DaimonMcp:
     def server(self) -> Server[Any]:
         return Server(
             "daimon-matrix",
-            version="0.0.0",
+            version="0.1.0rc1",
             description="Closed owner-local Daimon Matrix adapter",
             on_list_tools=self.list_tools,
             on_call_tool=self.call_tool,

@@ -28,7 +28,7 @@
     "conformance/fixtures/dm055-native-peer.json",
     "docs/dm055-native-peer-cutover.md",
     "reviews/DM-055.md",
-    "schemas/hosted/v3/bundle.schema.json",
+    "schemas/hosted/v7/bundle.schema.json",
     "schemas/transport/v1/peer-envelope.schema.json",
     "specs/peer-transport-v1.md",
     "src/daimon_matrix/daemon.py",

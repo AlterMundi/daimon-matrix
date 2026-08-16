@@ -2,67 +2,40 @@
 
 ## Active critical path
 
-The complete minimum protocol and the real same-being two-host path have now
-been exercised. DM-083 is operationally accepted, and its final host-qualified
-runtime successor is exact Matrix `915c56c` hosted by Cluster `94d80ba`.
-Historical retry, successor convergence, rollback, checked recovery,
-least-authority host status and a cold full-host reboot all passed. The release
-branches remain unmerged pending independent review. [`RESUME.md`](RESUME.md)
-is the cold-start handoff and Project 9 is the authoritative live board.
+The V0 Matrix baseline is merged. The nearest milestone is a reproducible,
+cross-repository `0.1.0rc1` candidate proved entirely with clean local/CI and
+disposable end-to-end evidence. No infrastructure is presumed active.
 
-Resume in dependency order:
+1. Freeze exact cross-repository dependency pins on the V7-only runtime and
+   V3-only client surface.
+2. Rebuild artifacts twice, verify their closed contents, install them into
+   empty environments and run Python 3.11–3.14 qualification.
+3. Complete disposable backup/export, restore, recovery/rebirth, rollback,
+   crash/restart, revocation and concurrent-launch rejection journeys.
+4. Consolidate provenance, limitations, operator instructions and exact
+   hashes, then obtain independent review of the final heads.
+5. Prepare—but do not execute—a content-addressed physical trial plan.
+6. Publish/cut over only after the corresponding human authorization.
+7. Retire Tribe only after native replacement evidence and its separate owner
+   gate.
 
-1. complete the consented cross-being native logical-message canary;
-2. complete the fresh-host
-   rebirth/recovery gates;
-3. complete remaining collective-memory/additional-harness and adversarial
-   security gates required by the board;
-4. freeze and publish the V0.1.0 release; and
-5. retire/archive the transitional Tribe Bridge only through its explicit
-   human-authorized migration cards.
+## Release invariants
 
-No live-host step is implied by a local conformance result or by this roadmap.
+- A being may have multiple legitimate simultaneous embodiments.
+- One embodiment credential cannot be admitted concurrently in two bodies.
+- Being root, `embodiment_id` and incarnation are distinct.
+- Root, recovery and runtime signing custody remain purpose-separated.
+- No new embodiment copies another embodiment's private keys, custody or
+  writable databases.
+- Canonical transfer is descriptor-stable, hash-exact, retry-safe and
+  rollback-capable.
+- Cluster fences resources; Matrix authorizes identity and semantic state.
+- Tribe ACKs do not create Matrix intake or semantic receipts.
+- Local tests are not represented as proof about physical hosts or real
+  custodians.
 
-## V0.1 MVP
+## Human gates
 
-- Canonical ontology and cross-runtime contracts.
-- Being-root genesis, offline custody, recovery, rotation, revocation, and
-  provisional-history binding.
-- Plural embodiment credentials and per-start incarnation authorization.
-- Installed Matrix ledger, daemon, CLI/MCP, deterministic projections, and
-  crash/rebuild invariants.
-- `dm.we.v1` schemas, vectors, and conformance runner.
-- Cluster embodiment/incarnation registry and resource-scoped fences.
-- Weave ledger, preview/pull, difference navigation, local decisions, and
-  projection receipts.
-- Live `/we` fan-out with origin-marked partial results.
-- Bilateral relationships, founded-Tribe membership, directional grants and
-  verified DM-054 snapshots from signed history (DM-082), plus native typed
-  recipient-encrypted logical and peer transport, independently implemented in
-  Matrix from the pinned Tribe behavior inventory.
-- HMK and external-identity adapters.
-- Codex/Hermes embodiment adapters.
-- Root-bound source claims, attributed publications, receiver-local assessment,
-  paginated quarantine pull and external-reference-only promotion (DM-081).
-- Dashboard, runbooks, provisional two-host evidence, and root-authorized
-  rebirth/recovery evidence on a fresh host (DM-078).
-
-## Component boundary
-
-- `daimon-matrix` owns identity continuity, canonical state, scopes, memory
-  policy, synchronization, communication semantics/runtime, and source
-  claim/publication/quarantine policy.
-- `daimon-cluster` owns body/container lifecycle, storage, deployment evidence,
-  and resource-scoped exclusion.
-- Cluster hosts Matrix V7 relationship state under the exact adaptation
-  contract but never derives social or grant authority from lifecycle truth.
-- Tribe Bridge is a transitional source/runtime and is archived after
-  DM-050–DM-055 replacement gates and the release handoff.
-- DM-050 preserves a hash-pinned behavioral/provenance inventory only; source
-  copying is prohibited unless a successor records explicit compatible
-  authorization. DM-051–DM-053 implement the replacement independently.
-- Matrix.org is not used by the MVP.
-
-The provisional Cluster/Tribe canary is retained as prior evidence, not as a
-reason to defer the Matrix runtime. Runtime authentication must not restore
-single-body exclusion or turn `/we` into a set of different beings.
+Real custody distribution, physical target selection, physical execution,
+cross-being consent and custody, publication/cutover, and Tribe retirement are
+outside autonomous qualification. Each needs explicit, scoped authorization.
