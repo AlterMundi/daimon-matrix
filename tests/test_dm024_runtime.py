@@ -243,6 +243,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
             )
+
         path.chmod(0o600)
         changed = copy.deepcopy(bundle)
         changed["unknown"] = True
@@ -268,6 +269,36 @@ class RuntimeBundleTests(RuntimeFixture):
         with self.assertRaisesRegex(RuntimeError, "unexpected_runtime_secret_slot"):
             load_runtime(
                 state_root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: NOW,
+            )
+
+    def test_runtime_rejects_expired_and_revoked_capabilities(self) -> None:
+        expired_root, _expired_bundle, _ = self.make_bundle(state_name="expired")
+        with self.assertRaisesRegex(RuntimeError, "runtime_capability_not_active"):
+            load_runtime(
+                expired_root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: NOW + 60_000,
+            )
+
+        revoked_root, revoked_bundle, capability = self.make_bundle(
+            state_name="revoked"
+        )
+        revoked_bundle["capabilities"][0]["descriptor"] = create_capability(
+            capability.key,
+            client_id=capability.client_id,
+            methods=capability.methods,
+            not_before_ms=NOW - 60_000,
+            not_after_ms=NOW + 60_000,
+            status="revoked",
+        ).descriptor
+        (revoked_root / "runtime.json").write_bytes(canonical_bytes(revoked_bundle))
+        with self.assertRaisesRegex(RuntimeError, "runtime_capability_not_active"):
+            load_runtime(
+                revoked_root,
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,

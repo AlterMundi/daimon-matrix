@@ -476,6 +476,7 @@ def load_runtime(
         raise RuntimeError("runtime_requires_capability")
     required_slots = {signing_slot}
     capabilities: dict[str, LocalCapability] = {}
+    capabilities_observed_at_ms = clock()
     for row in capability_rows:
         value = _closed(row, {"descriptor", "secret_slot"})
         slot = value["secret_slot"]
@@ -493,6 +494,13 @@ def load_runtime(
             or capability.capability_id in capabilities
         ):
             raise RuntimeError("invalid_runtime_capability")
+        if (
+            capability.descriptor["status"] != "active"
+            or not capability.descriptor["not_before_ms"]
+            <= capabilities_observed_at_ms
+            < capability.descriptor["not_after_ms"]
+        ):
+            raise RuntimeError("runtime_capability_not_active")
         capabilities[capability.capability_id] = capability
 
     route_profile: RouteProfile | None = None

@@ -67,12 +67,18 @@ from .identity import (
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
-from .local_api import LocalCapability, create_capability
+from .operator_capabilities import (
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    OperatorCapabilityError,
+    create_operator_capability_set,
+    operator_capability_lifecycle,
+    validate_operator_capability_set,
+)
 from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
 from .operator_genesis import PENDING_CONTROL_HEAD
 from .peer_transport import PeerTransportError, http_peer_round_trip
 from .runtime import load_runtime
-from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
 
 REQUEST_SCHEMA: Final = "dm.operator.embodiment-request/v1"
@@ -111,15 +117,6 @@ MAX_ARTIFACT_BYTES: Final = 1024 * 1024
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 TARGET_PROFILE_SCHEMA: Final = "dm.operator.rebirth-target-profile/v1"
 PREPARATION_SCHEMA: Final = "dm.operator.rebirth-preparation/v1"
-STATUS_OBSERVER_METHODS: Final = frozenset(
-    {
-        "runtime.status",
-        "scope.me",
-        "scope.we",
-        "scope.we.diff",
-        "scope.we.sync-plan",
-    }
-)
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -1939,8 +1936,6 @@ def create_target_preparation(
         signing_seed = generate_ed25519_seed()
         encryption_private = generate_x25519_private()
         transport_seed = generate_ed25519_seed()
-        capability_key = secrets.token_bytes(32)
-        status_key = secrets.token_bytes(32)
         label = target_profile["label"]
         origin = {
             "body_ref": target_profile["body_ref"],
@@ -1958,25 +1953,17 @@ def create_target_preparation(
             expires_at_ms=expires_at_ms,
             nonce=secrets.token_bytes(32),
         )
-        capability = create_capability(
-            capability_key,
-            client_id=f"client:operator:{label}",
-            methods=sorted(SERVICE_METHODS),
-            not_before_ms=max(0, created_at_ms - 60_000),
-            not_after_ms=MAX_TIME,
-        )
-        status_capability = create_capability(
-            status_key,
-            client_id=f"client:status-observer:{label}",
-            methods=sorted(STATUS_OBSERVER_METHODS),
-            not_before_ms=max(0, created_at_ms - 60_000),
-            not_after_ms=MAX_TIME,
-        )
-        slots = {
+        try:
+            operator_capabilities, operator_keys, operator_slots = (
+                create_operator_capability_set(label, issued_at_ms=created_at_ms)
+            )
+            capability_lifecycle = operator_capability_lifecycle(created_at_ms)
+        except OperatorCapabilityError as exception:
+            raise RebirthError("rebirth_target_capability_rejected") from exception
+        slots: dict[str, Any] = {
             "signing": f"runtime.signing.v1:{label}",
             "encryption": f"peer.encryption.v1:{label}",
-            "capability": f"runtime.capability.v1:{label}",
-            "status_capability": f"runtime.capability.v1:status:{label}",
+            "operator_capabilities": operator_slots,
             "transport": f"transport.signing.v1:{label}",
         }
         EncryptedKeystore.create(
@@ -1986,8 +1973,10 @@ def create_target_preparation(
             secrets={
                 slots["signing"]: signing_seed,
                 slots["encryption"]: encryption_private,
-                slots["capability"]: capability_key,
-                slots["status_capability"]: status_key,
+                **{
+                    operator_slots[profile]: operator_keys[profile]
+                    for profile in OPERATOR_PROFILE_NAMES
+                },
             },
         )
         EncryptedKeystore.create(
@@ -2006,9 +1995,10 @@ def create_target_preparation(
             "profile": target_profile,
             "slots": slots,
             "capabilities": {
-                "operator": capability.descriptor,
-                "status_observer": status_capability.descriptor,
+                profile: operator_capabilities[profile].descriptor
+                for profile in OPERATOR_PROFILE_NAMES
             },
+            "capability_lifecycle": capability_lifecycle,
             "custody": {
                 "filename": "custody.json",
                 "counter": 1,
@@ -2080,6 +2070,7 @@ def _validated_preparation(
             "custody",
             "created_at_ms",
             "expires_at_ms",
+            "capability_lifecycle",
         },
         "invalid_rebirth_preparation",
     )
@@ -2107,24 +2098,33 @@ def _validated_preparation(
         raise RebirthError("rebirth_preparation_binding_mismatch")
     slots = _closed(
         value["slots"],
-        {"signing", "encryption", "capability", "status_capability", "transport"},
+        {"signing", "encryption", "operator_capabilities", "transport"},
         "invalid_rebirth_preparation",
     )
     label = profile["label"]
     expected_slots = {
         "signing": f"runtime.signing.v1:{label}",
         "encryption": f"peer.encryption.v1:{label}",
-        "capability": f"runtime.capability.v1:{label}",
-        "status_capability": f"runtime.capability.v1:status:{label}",
+        "operator_capabilities": {
+            profile: f"runtime.capability.v1:{profile}:{label}"
+            for profile in OPERATOR_PROFILE_NAMES
+        },
         "transport": f"transport.signing.v1:{label}",
     }
     if slots != expected_slots:
         raise RebirthError("rebirth_preparation_slot_mismatch")
-    capabilities = _closed(
-        value["capabilities"],
-        {"operator", "status_observer"},
+    capabilities = value["capabilities"]
+    lifecycle = _closed(
+        value["capability_lifecycle"],
+        {"expires_at_ms", "reprovision_at_ms"},
         "invalid_rebirth_preparation",
     )
+    try:
+        expected_lifecycle = operator_capability_lifecycle(value["created_at_ms"])
+    except OperatorCapabilityError as exception:
+        raise RebirthError("rebirth_capability_lifecycle_mismatch") from exception
+    if lifecycle != expected_lifecycle:
+        raise RebirthError("rebirth_capability_lifecycle_mismatch")
     custody = _closed(
         value["custody"],
         {"filename", "counter", "transport_filename", "transport_counter"},
@@ -2155,8 +2155,7 @@ def _validated_preparation(
     if set(body_contents.secrets) != {
         slots["signing"],
         slots["encryption"],
-        slots["capability"],
-        slots["status_capability"],
+        *slots["operator_capabilities"].values(),
     } or set(transport_contents.secrets) != {slots["transport"]}:
         raise RebirthError("rebirth_target_custody_rejected")
     credential_body = request_body["credential"]["body"]
@@ -2185,20 +2184,16 @@ def _validated_preparation(
     ):
         raise RebirthError("rebirth_target_custody_rejected")
     try:
-        operator = LocalCapability.from_value(
-            capabilities["operator"], body_contents.secrets[slots["capability"]]
+        validate_operator_capability_set(
+            capabilities,
+            slots["operator_capabilities"],
+            body_contents.secrets,
+            label=label,
+            issued_at_ms=value["created_at_ms"],
+            observed_at_ms=observed_at_ms,
         )
-        status = LocalCapability.from_value(
-            capabilities["status_observer"],
-            body_contents.secrets[slots["status_capability"]],
-        )
-    except (KeyError, TypeError, ValueError) as exception:
-        raise RebirthError("rebirth_target_custody_rejected") from exception
-    if (
-        frozenset(operator.methods) != SERVICE_METHODS
-        or frozenset(status.methods) != STATUS_OBSERVER_METHODS
-    ):
-        raise RebirthError("rebirth_target_capability_rejected")
+    except OperatorCapabilityError as exception:
+        raise RebirthError("rebirth_target_capability_rejected") from exception
     return (
         copy.deepcopy(dict(value)),
         body_contents.secrets,
@@ -2258,8 +2253,8 @@ def _activate_target_runtime(
         staging.chmod(0o700)
         runtime_root = staging / "runtime"
         runtime_root.mkdir(mode=0o700)
-        host_client = staging / "host-client"
-        host_client.mkdir(mode=0o700)
+        operator_clients = staging / "operator-clients"
+        operator_clients.mkdir(mode=0o700)
         slots = verified_preparation["slots"]
         capabilities = verified_preparation["capabilities"]
         profile = verified_preparation["profile"]
@@ -2285,13 +2280,10 @@ def _activate_target_runtime(
         }
         bundle["capabilities"] = [
             {
-                "descriptor": capabilities["operator"],
-                "secret_slot": slots["capability"],
-            },
-            {
-                "descriptor": capabilities["status_observer"],
-                "secret_slot": slots["status_capability"],
-            },
+                "descriptor": capabilities[profile_name],
+                "secret_slot": slots["operator_capabilities"][profile_name],
+            }
+            for profile_name in OPERATOR_PROFILE_NAMES
         ]
         bundle["routing"] = None
         bundle["scopes"] = {
@@ -2345,23 +2337,31 @@ def _activate_target_runtime(
             runtime_root / "client.json",
             {
                 "schema": CLIENT_CONFIG_SCHEMA,
-                "capability": capabilities["operator"],
-                "expected_server": origin,
-            },
-        )
-        _private_write(runtime_root / "client.key", body_secrets[slots["capability"]])
-        _private_write(
-            host_client / "client.json",
-            {
-                "schema": CLIENT_CONFIG_SCHEMA,
-                "capability": capabilities["status_observer"],
+                "capability": capabilities[OBSERVE_PROFILE],
                 "expected_server": origin,
             },
         )
         _private_write(
-            host_client / "capability.key",
-            body_secrets[slots["status_capability"]],
+            runtime_root / "client.key",
+            body_secrets[slots["operator_capabilities"][OBSERVE_PROFILE]],
         )
+        for profile_name in OPERATOR_PROFILE_NAMES:
+            if profile_name == OBSERVE_PROFILE:
+                continue
+            role_client = operator_clients / profile_name
+            role_client.mkdir(mode=0o700)
+            _private_write(
+                role_client / "client.json",
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "capability": capabilities[profile_name],
+                    "expected_server": origin,
+                },
+            )
+            _private_write(
+                role_client / "capability.key",
+                body_secrets[slots["operator_capabilities"][profile_name]],
+            )
         _private_write(staging / "request.json", request)
         _private_write(staging / "activation.json", verified_activation)
         _private_write(staging / "target-profile.json", profile)
@@ -2380,10 +2380,13 @@ def _activate_target_runtime(
                 "dm.operator.rebirth-peer-profile/v1", profile
             ).hex(),
             "empty_writable_state": True,
+            "capability_lifecycle": verified_preparation["capability_lifecycle"],
         }
         _private_write(staging / "receipt.json", receipt)
         _fsync_directory(runtime_root)
-        _fsync_directory(host_client)
+        for path in operator_clients.iterdir():
+            _fsync_directory(path)
+        _fsync_directory(operator_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)

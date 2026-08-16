@@ -59,6 +59,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_genesis.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
@@ -114,6 +115,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/local_we.py",
         "daimon_matrix/mcp_server.py",
         "daimon_matrix/operator_bootstrap.py",
+        "daimon_matrix/operator_capabilities.py",
         "daimon_matrix/operator_genesis.py",
         "daimon_matrix/operator_rebirth.py",
         "daimon_matrix/memory_policy.py",
@@ -325,6 +327,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/local_we.py",
         "src/daimon_matrix/mcp_server.py",
         "src/daimon_matrix/operator_bootstrap.py",
+        "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_genesis.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
@@ -471,6 +474,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         "daimon_matrix/mcp_server.py": "src/daimon_matrix/mcp_server.py",
         "daimon_matrix/operator_bootstrap.py": (
             "src/daimon_matrix/operator_bootstrap.py"
+        ),
+        "daimon_matrix/operator_capabilities.py": (
+            "src/daimon_matrix/operator_capabilities.py"
         ),
         "daimon_matrix/operator_genesis.py": "src/daimon_matrix/operator_genesis.py",
         "daimon_matrix/operator_rebirth.py": ("src/daimon_matrix/operator_rebirth.py"),

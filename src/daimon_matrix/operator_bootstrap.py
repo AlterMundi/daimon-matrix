@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import secrets
 import shutil
 import stat
 import sys
@@ -37,24 +36,19 @@ from .identity import (
     x25519_public,
 )
 from .keystore import EncryptedKeystore
-from .local_api import create_capability
+from .operator_capabilities import (
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    create_operator_capability_set,
+    operator_capability_lifecycle,
+)
 from .peer_transport import PeerTransportError, http_peer_round_trip
-from .service import SERVICE_METHODS
 from .weave import BeingManifest, RootAuthority
 
 PROFILE_SCHEMA: Final = "dm.operator.bootstrap-profile/v1"
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 RECEIPT_SCHEMA: Final = "dm.operator.bootstrap-receipt/v1"
 MAX_TIME: Final = 2**53 - 1
-STATUS_OBSERVER_METHODS: Final = frozenset(
-    {
-        "runtime.status",
-        "scope.me",
-        "scope.we",
-        "scope.we.diff",
-        "scope.we.sync-plan",
-    }
-)
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -250,8 +244,9 @@ def _create(
             signing_seed = generate_ed25519_seed()
             encryption_seed = generate_x25519_private()
             transport_seed = generate_ed25519_seed()
-            capability_key = secrets.token_bytes(32)
-            status_capability_key = secrets.token_bytes(32)
+            operator_capabilities, operator_keys, operator_slots = (
+                create_operator_capability_set(label, issued_at_ms=created_at_ms)
+            )
             origin = {
                 "body_ref": row["body_ref"],
                 "embodiment_id": f"embodiment:{uuid.uuid4()}",
@@ -279,20 +274,6 @@ def _create(
                 incarnation_sequence=0,
                 started_at_ms=created_at_ms,
             )
-            capability = create_capability(
-                capability_key,
-                client_id=f"client:operator:{label}",
-                methods=sorted(SERVICE_METHODS),
-                not_before_ms=max(0, created_at_ms - 60_000),
-                not_after_ms=MAX_TIME,
-            )
-            status_capability = create_capability(
-                status_capability_key,
-                client_id=f"client:status-observer:{label}",
-                methods=sorted(STATUS_OBSERVER_METHODS),
-                not_before_ms=max(0, created_at_ms - 60_000),
-                not_after_ms=MAX_TIME,
-            )
             credentials[credential["artifact_id"]] = credential
             incarnations[incarnation["artifact_id"]] = incarnation
             manifest_rows.append(
@@ -311,10 +292,9 @@ def _create(
                 "signing_seed": signing_seed,
                 "encryption_seed": encryption_seed,
                 "transport_seed": transport_seed,
-                "capability": capability,
-                "capability_key": capability_key,
-                "status_capability": status_capability,
-                "status_capability_key": status_capability_key,
+                "operator_capabilities": operator_capabilities,
+                "operator_keys": operator_keys,
+                "operator_slots": operator_slots,
             }
         manifest_rows.sort(
             key=lambda row: (row["embodiment_id"], row["incarnation_id"])
@@ -360,14 +340,12 @@ def _create(
 
         runtimes = staging / "runtimes"
         runtimes.mkdir(mode=0o700)
-        host_clients = staging / "host-clients"
-        host_clients.mkdir(mode=0o700)
+        operator_clients = staging / "operator-clients"
+        operator_clients.mkdir(mode=0o700)
         for label, item in sorted(material.items()):
             runtime = runtimes / label
             runtime.mkdir(mode=0o700)
             signing_slot = f"runtime.signing.v1:{label}"
-            capability_slot = f"runtime.capability.v1:{label}"
-            status_capability_slot = f"runtime.capability.v1:status:{label}"
             encryption_slot = f"peer.encryption.v1:{label}"
             password = runtime_passwords[label]
             EncryptedKeystore.create(
@@ -376,8 +354,10 @@ def _create(
                 control_head=state.head,
                 secrets={
                     signing_slot: item["signing_seed"],
-                    capability_slot: item["capability_key"],
-                    status_capability_slot: item["status_capability_key"],
+                    **{
+                        item["operator_slots"][profile]: item["operator_keys"][profile]
+                        for profile in OPERATOR_PROFILE_NAMES
+                    },
                     encryption_slot: item["encryption_seed"],
                 },
             )
@@ -420,13 +400,10 @@ def _create(
                 },
                 "capabilities": [
                     {
-                        "descriptor": item["capability"].descriptor,
-                        "secret_slot": capability_slot,
-                    },
-                    {
-                        "descriptor": item["status_capability"].descriptor,
-                        "secret_slot": status_capability_slot,
-                    },
+                        "descriptor": item["operator_capabilities"][profile].descriptor,
+                        "secret_slot": item["operator_slots"][profile],
+                    }
+                    for profile in OPERATOR_PROFILE_NAMES
                 ],
                 "routing": None,
                 "scopes": {
@@ -454,25 +431,34 @@ def _create(
                 runtime / "client.json",
                 {
                     "schema": CLIENT_CONFIG_SCHEMA,
-                    "capability": item["capability"].descriptor,
-                    "expected_server": item["origin"],
-                },
-            )
-            _private_write(runtime / "client.key", item["capability_key"])
-            status_client = host_clients / label
-            status_client.mkdir(mode=0o700)
-            _private_write(
-                status_client / "client.json",
-                {
-                    "schema": CLIENT_CONFIG_SCHEMA,
-                    "capability": item["status_capability"].descriptor,
+                    "capability": item["operator_capabilities"][
+                        OBSERVE_PROFILE
+                    ].descriptor,
                     "expected_server": item["origin"],
                 },
             )
             _private_write(
-                status_client / "capability.key",
-                item["status_capability_key"],
+                runtime / "client.key", item["operator_keys"][OBSERVE_PROFILE]
             )
+            embodiment_clients = operator_clients / label
+            embodiment_clients.mkdir(mode=0o700)
+            for profile in OPERATOR_PROFILE_NAMES:
+                if profile == OBSERVE_PROFILE:
+                    continue
+                role_client = embodiment_clients / profile
+                role_client.mkdir(mode=0o700)
+                _private_write(
+                    role_client / "client.json",
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA,
+                        "capability": item["operator_capabilities"][profile].descriptor,
+                        "expected_server": item["origin"],
+                    },
+                )
+                _private_write(
+                    role_client / "capability.key",
+                    item["operator_keys"][profile],
+                )
 
         receipt = {
             "schema": RECEIPT_SCHEMA,
@@ -481,6 +467,7 @@ def _create(
             "manifest_hash": manifest.digest,
             "created_at_ms": created_at_ms,
             "runtime_schema": "dm.runtime.bundle/v7",
+            "capability_lifecycle": operator_capability_lifecycle(created_at_ms),
             "embodiments": [
                 {
                     "label": label,
@@ -501,10 +488,12 @@ def _create(
         _fsync_directory(offline)
         for path in runtimes.iterdir():
             _fsync_directory(path)
-        for path in host_clients.iterdir():
-            _fsync_directory(path)
+        for embodiment_path in operator_clients.iterdir():
+            for role_path in embodiment_path.iterdir():
+                _fsync_directory(role_path)
+            _fsync_directory(embodiment_path)
         _fsync_directory(runtimes)
-        _fsync_directory(host_clients)
+        _fsync_directory(operator_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)
@@ -563,7 +552,6 @@ __all__ = [
     "AUTHORITY_SCHEMA",
     "PROFILE_SCHEMA",
     "RECEIPT_SCHEMA",
-    "STATUS_OBSERVER_METHODS",
     "BootstrapError",
     "main",
     "parser",

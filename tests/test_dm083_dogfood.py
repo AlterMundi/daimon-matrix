@@ -22,12 +22,17 @@ from daimon_matrix.daemon import _bind_private_socket, create_peer_http_server
 from daimon_matrix.local_api import LocalApiError, LocalCapability, create_request
 from daimon_matrix.operator_bootstrap import (
     PROFILE_SCHEMA,
-    STATUS_OBSERVER_METHODS,
     BootstrapError,
     _create,
 )
+from daimon_matrix.operator_capabilities import (
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    operator_capability_lifecycle,
+)
 from daimon_matrix.runtime import RuntimeError as MatrixRuntimeError
 from daimon_matrix.runtime import load_runtime
+from daimon_matrix.service import OPERATOR_CAPABILITY_PROFILES
 
 
 class DM083SocketPublicationTests(unittest.TestCase):
@@ -158,6 +163,10 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(receipt["runtime_schema"], "dm.runtime.bundle/v7")
+            self.assertEqual(
+                receipt["capability_lifecycle"],
+                operator_capability_lifecycle(receipt["created_at_ms"]),
+            )
             schema = json.loads(
                 (
                     Path(__file__).resolve().parents[1]
@@ -176,11 +185,20 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                 Draft202012Validator(schema).validate(bundle)
                 self.assertNotIn(password, (state_root / "runtime.json").read_bytes())
                 bundle_capabilities = bundle["capabilities"]
-                self.assertEqual(len(bundle_capabilities), 2)
-                status_root = output / "host-clients" / label
-                self.assertEqual(status_root.stat().st_mode & 0o777, 0o700)
-                status_key_path = status_root / "capability.key"
-                status_config_path = status_root / "client.json"
+                self.assertEqual(len(bundle_capabilities), len(OPERATOR_PROFILE_NAMES))
+                self.assertEqual(
+                    {
+                        row["descriptor"]["client_id"].rsplit(":", 1)[-1]
+                        for row in bundle_capabilities
+                    },
+                    set(OPERATOR_PROFILE_NAMES),
+                )
+                self.assertEqual(
+                    len({row["descriptor"]["key_id"] for row in bundle_capabilities}),
+                    len(OPERATOR_PROFILE_NAMES),
+                )
+                status_key_path = state_root / "client.key"
+                status_config_path = state_root / "client.json"
                 self.assertEqual(status_key_path.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(status_config_path.stat().st_mode & 0o777, 0o600)
                 status_key = status_key_path.read_bytes()
@@ -189,14 +207,32 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     status_config["capability"], status_key
                 )
                 self.assertEqual(
-                    frozenset(status_capability.methods), STATUS_OBSERVER_METHODS
+                    frozenset(status_capability.methods),
+                    OPERATOR_CAPABILITY_PROFILES[OBSERVE_PROFILE],
                 )
                 self.assertEqual(
                     status_config["expected_server"], bundle["local_origin"]
                 )
-                self.assertNotEqual(
-                    status_key, (state_root / "client.key").read_bytes()
+                self.assertEqual(
+                    len(list((output / "operator-clients" / label).iterdir())),
+                    len(OPERATOR_PROFILE_NAMES) - 1,
                 )
+                for role in OPERATOR_PROFILE_NAMES:
+                    if role == OBSERVE_PROFILE:
+                        continue
+                    role_root = output / "operator-clients" / label / role
+                    self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual(
+                        (role_root / "client.json").stat().st_mode & 0o777,
+                        0o600,
+                    )
+                    self.assertEqual(
+                        (role_root / "capability.key").stat().st_mode & 0o777,
+                        0o600,
+                    )
+                    self.assertNotEqual(
+                        status_key, (role_root / "capability.key").read_bytes()
+                    )
                 loaded[label] = load_runtime(
                     state_root,
                     "runtime.json",
@@ -228,11 +264,11 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
             remote = loaded["daimonmatrix"]
             legion = loaded["legion"]
             status_config = json.loads(
-                (output / "host-clients/legion/client.json").read_bytes()
+                (output / "runtimes/legion/client.json").read_bytes()
             )
             status_capability = LocalCapability.from_value(
                 status_config["capability"],
-                (output / "host-clients/legion/capability.key").read_bytes(),
+                (output / "runtimes/legion/client.key").read_bytes(),
             )
             status_response = legion.service.handle(
                 create_request(
@@ -263,14 +299,16 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                key = (output / "runtimes/legion/client.key").read_bytes()
-                config = json.loads(
+                observe_key = (output / "runtimes/legion/client.key").read_bytes()
+                observe_config = json.loads(
                     (output / "runtimes/legion/client.json").read_bytes()
                 )
-                capability = LocalCapability.from_value(config["capability"], key)
+                observe_capability = LocalCapability.from_value(
+                    observe_config["capability"], observe_key
+                )
                 now = time.time_ns() // 1_000_000
                 scope_request = create_request(
-                    capability,
+                    observe_capability,
                     request_id=str(uuid.uuid4()),
                     issued_at_ms=now,
                     method="scope.we",
@@ -287,7 +325,16 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                 self.assertEqual(availability[remote_id], "available")
 
                 pull_request = create_request(
-                    capability,
+                    LocalCapability.from_value(
+                        json.loads(
+                            (
+                                output / "operator-clients/legion/weave/client.json"
+                            ).read_bytes()
+                        )["capability"],
+                        (
+                            output / "operator-clients/legion/weave/capability.key"
+                        ).read_bytes(),
+                    ),
                     request_id=str(uuid.uuid4()),
                     issued_at_ms=time.time_ns() // 1_000_000,
                     method="we.sync.peer-pull",

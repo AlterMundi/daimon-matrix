@@ -104,20 +104,34 @@ The output contains:
   capability secrets;
 - `runtimes/<label>/transport-custody.json`: the separately generated transport
   principal key retained for future adapters; and
-- `runtimes/<label>/client.json` plus `client.key`: host-local CLI material.
-- `host-clients/<label>/client.json` plus `capability.key`: a distinct
-  least-authority status observer with exactly `runtime.status`, `scope.me`,
-  `scope.we`, `scope.we.diff`, and `scope.we.sync-plan`. Install this directory
-  into the host controller's owner-only, non-portable client root; never give
-  the controller the operator client key.
+- `runtimes/<label>/client.json` plus `client.key`: the safe default `observe`
+  client. It cannot invoke any mutation;
+- `operator-clients/<label>/<role>/client.json` plus `capability.key`: one
+  owner-only client directory for each mutating role (`weave`, `communication`,
+  `curator`, `memory`, `relationships`, `review`, `routes`, `sources`, and
+  `species`). Every role has a distinct random key and encrypted-custody slot.
 
 Before service start, validate the V7 schema, open each custody with its own
 password, compare the common being/control/manifest hashes and prove every
 embodiment, incarnation, credential, root, ledger and socket is distinct.
-The status-observer key must differ from the operator key and remain outside
-portable snapshots. A relocated or restored runtime receives a freshly
-provisioned host-local copy only after the expected server origin matches the
-current root-authorized embodiment/incarnation.
+The ten profiles are disjoint and together cover the service surface; no
+capability is an all-method signer oracle. A caller must select the narrow role
+for the operation it is about to perform. A relocated or restored runtime is
+reprovisioned as a fresh embodiment and never inherits these client keys from
+another embodiment.
+
+## Expiry and reprovisioning
+
+Every generated role capability expires 30 days after preparation. The public
+receipt records both `reprovision_at_ms` (seven days before expiry) and
+`expires_at_ms`. Schedule a fresh `daimon-rebirth prepare`/`authorize`/`activate`
+ceremony no later than `reprovision_at_ms`, validate and start that new
+root-authorized embodiment, then park or revoke the predecessor through the
+normal signed authority transition. This creates new keys and role descriptors;
+there is deliberately no multi-file in-place key rotation. At hard expiry, or
+if any descriptor is marked revoked, runtime loading and request authentication
+fail closed. Rerunning `daimon-synthetic-bootstrap` is only a disposable-fixture
+rebuild and is not an operational rotation procedure.
 
 ## Configured peer pull
 
@@ -126,13 +140,13 @@ client no longer supplies a URL per call:
 
 ```bash
 daimon --socket "$state_root/matrix.sock" \
-  --client-config "$state_root/client.json" \
+  --client-config "$operator_clients/weave/client.json" \
   --capability-key-fd 3 \
   sync peer-pull \
   --sync-request-id "$target_request_id" \
   --target-embodiment-id "$remote_embodiment_id" \
   --limit 100 \
-  3<"$state_root/client.key"
+  3<"$operator_clients/weave/capability.key"
 ```
 
 Use the target request ID and limit returned by `scope sync-plan`. Matrix

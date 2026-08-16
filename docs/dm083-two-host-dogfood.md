@@ -253,3 +253,13 @@ cross-being consent or semantic-delivery claim. Matrix PR #112 and Cluster PR
 #77 remain unmerged pending independent review. Fresh-host private custody,
 external participant consent and the final human cutover/archive decisions
 remain separate gates.
+
+## Release-candidate capability successor
+
+The historical five-method status client above is superseded for future
+provisioning. Current bootstrap and rebirth packages mint ten disjoint,
+independently keyed operator roles. `observe` is the default and contains no
+mutation; every mutation family requires its own owner-only client directory.
+All role descriptors expire after 30 days and advertise a seven-day
+reprovisioning window. This changes no historical dogfood evidence and has not
+been deployed to those hosts.

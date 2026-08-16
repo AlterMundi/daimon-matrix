@@ -68,17 +68,28 @@ python -m daimon_matrix.operator_rebirth activate \
 ```
 
 Preparation is a one-shot, fsynced owner-only directory. It contains encrypted
-body custody, separately encrypted transitional transport custody, public
-operator/status capability descriptors, the target peer profile and the public
-request. Root activation is an owner-only public artifact. The target-only
-`activate` process reopens and revalidates its custody against the root-signed
-activation, emits a loadable V7 runtime with empty writable stores, and retains
-only hashes in its public receipt. Cluster still owns authenticated transfer,
-journaled installation, target start and peer update. Cluster H7/H8 now
+body custody, separately encrypted transitional transport custody, ten public
+least-authority operator descriptors, the target peer profile and the public
+request. Every operator role has an independent random key and custody slot;
+the default client is the non-mutating `observe` role and no descriptor spans
+the full service surface. Root activation is an owner-only public artifact. The
+target-only `activate` process reopens and revalidates its custody against the
+root-signed activation, emits a loadable V7 runtime with empty writable stores,
+and retains only hashes in its public receipt. Cluster still owns authenticated
+transfer, journaled installation, target start and peer update. Cluster H7/H8 now
 implement and remotely rehearse that boundary: installation is crash-resumable
 and activation-idempotent, then a foreground supervisor admits only the signed
 initial incarnation, supplies the password by inherited descriptor and
 authenticates status, `/me` and `/we` before reporting `running-ready`.
+
+Operator capabilities have a fixed 30-day lifetime. Preparation and activation
+receipts bind a reprovision instant seven days before hard expiry. Before that
+instant, repeat the split-custody rebirth ceremony to create a fresh
+root-authorized embodiment with a completely new role-key set, cut over, and
+park or revoke the predecessor. Rebirth never regroups the roles and never
+copies capability keys. Expired or revoked descriptors are rejected at runtime
+load as well as at request authentication; in-place rotation of a live bundle,
+custody and plaintext client directories is intentionally unsupported.
 
 ## Only permitted manifest delta
 
