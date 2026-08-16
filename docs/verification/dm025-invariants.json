@@ -5,7 +5,7 @@
   "mcp_protocols": ["2025-06-18", "2026-07-28"],
   "mcp_sdk": "mcp==2.0.0",
   "service_method_count": 84,
-  "cli_command_count": 65,
+  "cli_command_count": 70,
   "mcp_tool_count": 67,
   "mcp_resource_count": 8,
   "invariants": {

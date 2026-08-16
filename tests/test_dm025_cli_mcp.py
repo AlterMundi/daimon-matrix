@@ -442,6 +442,27 @@ class InstalledSurfaceTests(RuntimeFixture):
             ["tribe", "expel", "--payload", str(document)],
             ["tribe", "founder-transfer", "--payload", str(document)],
             ["tribe", "founder-accept", "--payload", str(document)],
+            ["species", "genesis-ingest", "--artifact", str(document)],
+            ["species", "release-ingest", "--artifact", str(document)],
+            ["species", "incoming"],
+            [
+                "species",
+                "apply",
+                "--operation-id",
+                "80000000-0000-4000-8000-000000000006",
+                "--snapshot",
+                str(document),
+            ],
+            [
+                "species",
+                "rollback",
+                "--operation-id",
+                "80000000-0000-4000-8000-000000000007",
+                "--reason",
+                "runtime-failure",
+                "--snapshot",
+                str(document),
+            ],
             ["we", "heads"],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
@@ -500,6 +521,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 | REVIEW_METHODS
                 | SCOPE_METHODS
                 | SOURCE_METHODS
+                | SPECIES_METHODS
             ),
         )
 
@@ -760,6 +782,25 @@ class InstalledSurfaceTests(RuntimeFixture):
 
 
 class ClientSchemaTests(unittest.TestCase):
+    def test_published_surface_counts_match_runtime_constants(self) -> None:
+        report = json.loads(
+            (ROOT / "docs/verification/dm025-invariants.json").read_bytes()
+        )
+        cli_methods = (
+            CURATOR_METHODS
+            | MEMORY_METHODS
+            | METHODS
+            | PEER_METHODS
+            | RELATIONSHIP_METHODS
+            | REVIEW_METHODS
+            | SCOPE_METHODS
+            | SOURCE_METHODS
+            | SPECIES_METHODS
+        )
+        self.assertEqual(report["service_method_count"], len(SERVICE_METHODS))
+        self.assertEqual(report["cli_command_count"], len(cli_methods))
+        self.assertEqual(report["mcp_tool_count"], len(TOOL_CONTRACTS))
+
     def test_local_request_schema_covers_exact_service_surface(self) -> None:
         schema = json.loads(
             (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
