@@ -46,14 +46,18 @@ from .identity import (
     DOMAINS,
     ControlChain,
     ControlState,
+    aggregate_recovery,
     create_embodiment_credential,
     create_incarnation_authorization,
     create_recovery,
+    create_recovery_authorization_share,
+    create_recovery_possession_share,
     ed25519_public,
     generate_ed25519_seed,
     generate_x25519_private,
     key_descriptor,
     key_id,
+    prepare_recovery,
     signing_descriptor,
     verify_embodiment_credential,
     verify_incarnation_authorization,
@@ -78,6 +82,26 @@ ACTIVATION_ID_PREFIX: Final = "dm:embodiment-activation:v1:"
 RECOVERY_ACTIVATION_SCHEMA: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_DOMAIN: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_ID_PREFIX: Final = "dm:recovery-activation:v1:"
+DISTRIBUTED_RECOVERY_INTENT_SCHEMA: Final = "dm.operator.distributed-recovery-intent/v1"
+DISTRIBUTED_RECOVERY_INTENT_DOMAIN: Final = "dm.operator.distributed-recovery-intent/v1"
+DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX: Final = "dm:recovery-intent:v1:"
+DISTRIBUTED_RECOVERY_SHARE_SCHEMA: Final = "dm.operator.distributed-recovery-share/v1"
+DISTRIBUTED_RECOVERY_SHARE_DOMAIN: Final = "dm.operator.distributed-recovery-share/v1"
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA: Final = (
+    "dm.operator.distributed-recovery-authorization-intent/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN: Final = (
+    "dm.operator.distributed-recovery-authorization-intent/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX: Final = (
+    "dm:recovery-authorization-intent:v1:"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA: Final = (
+    "dm.operator.distributed-recovery-authorization-share/v1"
+)
+DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN: Final = (
+    "dm.operator.distributed-recovery-authorization-share/v1"
+)
 TRANSPORT_SCHEME: Final = "dm-peer-v1"
 MAX_TIME: Final = 2**53 - 1
 MAX_ARTIFACT_BYTES: Final = 1024 * 1024
@@ -175,6 +199,59 @@ def _identity_signature(seed: bytes, role: str, preimage: bytes) -> dict[str, st
         "role": role,
         "value": b64url(Ed25519PrivateKey.from_private_bytes(seed).sign(preimage)),
     }
+
+
+def _holder_attestation(
+    seed: bytes, domain: str, body: Mapping[str, Any]
+) -> dict[str, str]:
+    public = ed25519_public(seed)
+    return {
+        "alg": "Ed25519",
+        "kid": key_id("Ed25519", public),
+        "value": b64url(
+            Ed25519PrivateKey.from_private_bytes(seed).sign(domain_bytes(domain, body))
+        ),
+    }
+
+
+def _verify_holder_attestation(
+    value: Any,
+    domain: str,
+    body: Mapping[str, Any],
+    allowed_descriptors: Sequence[Mapping[str, Any]],
+    *,
+    code: str,
+) -> str:
+    attestation = _closed(value, {"alg", "kid", "value"}, code)
+    public_by_id: dict[str, bytes] = {}
+    try:
+        for descriptor in allowed_descriptors:
+            row = _closed(
+                descriptor,
+                {"algorithm", "key_id", "public"},
+                code,
+            )
+            public = unb64url(str(row["public"]), length=32)
+            kid = str(row["key_id"])
+            if (
+                row["algorithm"] != "Ed25519"
+                or kid != key_id("Ed25519", public)
+                or kid in public_by_id
+            ):
+                raise RebirthError(code)
+            public_by_id[kid] = public
+        kid = str(attestation["kid"])
+        if attestation["alg"] != "Ed25519" or kid not in public_by_id:
+            raise RebirthError(code)
+        Ed25519PublicKey.from_public_bytes(public_by_id[kid]).verify(
+            unb64url(str(attestation["value"]), length=64),
+            domain_bytes(domain, body),
+        )
+        return kid
+    except RebirthError:
+        raise
+    except (InvalidSignature, TypeError, ValueError) as exception:
+        raise RebirthError(code) from exception
 
 
 def _origin(value: Any) -> dict[str, str]:
@@ -801,6 +878,363 @@ def authorize_recovery_enrollment_request(
     return activation
 
 
+def _distributed_recovery_authorization_material(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    issued = _uint(issued_at_ms, "invalid_rebirth_time")
+    request_base = recovery_request_base(previous, recovery_artifact)
+    verified = validate_enrollment_request(request, request_base, observed_at_ms=issued)
+    credential = copy.deepcopy(verified["body"]["credential"])
+    incarnation = copy.deepcopy(verified["body"]["incarnation"])
+    origin = _origin(verified["body"]["origin"])
+    manifest = BeingManifest.from_value(
+        {
+            "schema": "being-manifest/v2",
+            "being_ref": previous.manifest.being_ref,
+            "control_head": request_base.state.head,
+            "history_binding_id": previous.manifest.value["history_binding_id"],
+            "revision": previous.manifest.value["revision"] + 1,
+            "embodiments": [
+                {
+                    "body_ref": origin["body_ref"],
+                    "embodiment_credential_id": credential["artifact_id"],
+                    "embodiment_id": origin["embodiment_id"],
+                    "incarnation_authorization_id": incarnation["artifact_id"],
+                    "incarnation_id": origin["incarnation_id"],
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    transition = create_recovery_rebirth(
+        previous.manifest,
+        manifest,
+        recovery_artifact=recovery_artifact,
+        body_ref=origin["body_ref"],
+        embodiment_id=origin["embodiment_id"],
+        incarnation_id=origin["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=incarnation["artifact_id"],
+        principal_id=origin["principal_id"],
+        root_seeds=[],
+        issued_at_ms=issued,
+    )
+    if transition["signatures"]:
+        raise AssertionError("unsigned recovery transition contains signatures")
+    return {
+        "request_id": verified["request_id"],
+        "being_ref": previous.manifest.being_ref,
+        "previous_control_head": previous.state.head,
+        "previous_manifest_hash": previous.manifest.digest,
+        "recovery_artifact": copy.deepcopy(dict(recovery_artifact)),
+        "recovered_control_head": request_base.state.head,
+        "successor_manifest": manifest.value,
+        "credential": credential,
+        "incarnation": incarnation,
+        "origin": origin,
+        "transition": transition,
+        "issued_at_ms": issued,
+    }
+
+
+def create_distributed_recovery_authorization_intent(
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    issued_at_ms: int,
+    expires_at_ms: int,
+    nonce: bytes,
+) -> dict[str, Any]:
+    """Freeze target enrollment and transition before root holders sign."""
+
+    material = _distributed_recovery_authorization_material(
+        request,
+        previous,
+        recovery_artifact,
+        issued_at_ms=issued_at_ms,
+    )
+    expires = _uint(expires_at_ms, "invalid_rebirth_recovery_authorization_intent_time")
+    if (
+        expires <= material["issued_at_ms"]
+        or expires - material["issued_at_ms"] > 24 * 60 * 60 * 1000
+    ):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent_time")
+    if len(nonce) != 32:
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent_nonce")
+    body = {
+        "activation_body": material,
+        "expires_at_ms": expires,
+        "nonce": b64url(nonce),
+    }
+    result = {
+        "schema": DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA,
+        "intent_id": DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX
+        + b64url(digest(DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(result, "invalid_rebirth_recovery_authorization_intent")
+    return result
+
+
+def validate_distributed_recovery_authorization_intent(
+    value: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Rebuild every public byte before a replacement-root holder signs."""
+
+    row = _closed(
+        value,
+        {"schema", "intent_id", "body"},
+        "invalid_rebirth_recovery_authorization_intent",
+    )
+    if row["schema"] != DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_SCHEMA:
+        raise RebirthError("unsupported_rebirth_recovery_authorization_intent")
+    body = _closed(
+        row["body"],
+        {"activation_body", "expires_at_ms", "nonce"},
+        "invalid_rebirth_recovery_authorization_intent",
+    )
+    observed = _uint(
+        observed_at_ms, "invalid_rebirth_recovery_authorization_intent_time"
+    )
+    expires = _uint(
+        body["expires_at_ms"],
+        "invalid_rebirth_recovery_authorization_intent_time",
+    )
+    try:
+        nonce = b64url(unb64url(str(body["nonce"]), length=32))
+    except (TypeError, ValueError) as exception:
+        raise RebirthError(
+            "invalid_rebirth_recovery_authorization_intent_nonce"
+        ) from exception
+    activation_body = body["activation_body"]
+    if not isinstance(activation_body, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent")
+    issued = _uint(
+        activation_body.get("issued_at_ms"),
+        "invalid_rebirth_recovery_authorization_intent_time",
+    )
+    if (
+        nonce != body["nonce"]
+        or expires <= issued
+        or expires - issued > 24 * 60 * 60 * 1000
+        or not issued <= observed < expires
+    ):
+        raise RebirthError("rebirth_recovery_authorization_intent_not_timely")
+    expected = _distributed_recovery_authorization_material(
+        request,
+        previous,
+        recovery_artifact,
+        issued_at_ms=issued,
+    )
+    if canonical_bytes(expected) != canonical_bytes(activation_body):
+        raise RebirthError("rebirth_recovery_authorization_intent_mismatch")
+    expected_id = DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_ID_PREFIX + b64url(
+        digest(DISTRIBUTED_RECOVERY_AUTHORIZATION_INTENT_DOMAIN, body)
+    )
+    normalized = copy.deepcopy(dict(row))
+    if row["intent_id"] != expected_id or _canonical(
+        normalized, "invalid_rebirth_recovery_authorization_intent"
+    ) != _canonical(value, "invalid_rebirth_recovery_authorization_intent"):
+        raise RebirthError("invalid_rebirth_recovery_authorization_intent")
+    return normalized
+
+
+def create_distributed_recovery_authorization_share(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    replacement_root_seed: bytes,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Sign credential and transition with exactly one replacement-root key."""
+
+    verified = validate_distributed_recovery_authorization_intent(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        observed_at_ms=observed_at_ms,
+    )
+    activation_body = verified["body"]["activation_body"]
+    credential = activation_body["credential"]
+    transition = activation_body["transition"]
+    recovered = recovery_request_base(previous, recovery_artifact)
+    kid = key_id("Ed25519", ed25519_public(replacement_root_seed))
+    allowed = {row["key_id"] for row in recovered.state.root_policy["keys"]}
+    if kid not in allowed:
+        raise RebirthError("rebirth_recovered_root_holder_not_authorized")
+    credential_signature = _identity_signature(
+        replacement_root_seed,
+        "root-authorization",
+        domain_bytes(DOMAINS["embodiment-credential"], credential["body"]),
+    )
+    signed_transition = create_recovery_rebirth(
+        previous.manifest,
+        BeingManifest.from_value(activation_body["successor_manifest"]),
+        recovery_artifact=recovery_artifact,
+        body_ref=activation_body["origin"]["body_ref"],
+        embodiment_id=activation_body["origin"]["embodiment_id"],
+        incarnation_id=activation_body["origin"]["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=activation_body["incarnation"]["artifact_id"],
+        principal_id=activation_body["origin"]["principal_id"],
+        root_seeds=[replacement_root_seed],
+        issued_at_ms=activation_body["issued_at_ms"],
+    )
+    if canonical_bytes(
+        {key: value for key, value in signed_transition.items() if key != "signatures"}
+    ) != canonical_bytes(
+        {key: value for key, value in transition.items() if key != "signatures"}
+    ):
+        raise RebirthError("rebirth_recovery_authorization_intent_mismatch")
+    share_body = {
+        "intent_id": verified["intent_id"],
+        "credential_artifact_id": credential["artifact_id"],
+        "transition_content_hash": transition["content_hash"],
+        "credential_signature": credential_signature,
+        "transition_signature": signed_transition["signatures"][0],
+    }
+    return {
+        "schema": DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(
+            replacement_root_seed,
+            DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN,
+            share_body,
+        ),
+    }
+
+
+def aggregate_distributed_recovery_authorization(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    shares: Sequence[Any],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Build and verify a recovery activation without access to root seeds."""
+
+    verified = validate_distributed_recovery_authorization_intent(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        observed_at_ms=observed_at_ms,
+    )
+    body = copy.deepcopy(verified["body"]["activation_body"])
+    credential = body["credential"]
+    transition = body["transition"]
+    request_base = recovery_request_base(previous, recovery_artifact)
+    credential_signatures: list[Mapping[str, Any]] = []
+    transition_signatures: list[Mapping[str, Any]] = []
+    paired_ids: set[str] = set()
+    for value in shares:
+        share = _closed(
+            value,
+            {
+                "schema",
+                "intent_id",
+                "credential_artifact_id",
+                "transition_content_hash",
+                "credential_signature",
+                "transition_signature",
+                "attestation",
+            },
+            "invalid_rebirth_recovery_authorization_share",
+        )
+        credential_signature = share["credential_signature"]
+        transition_signature = share["transition_signature"]
+        if (
+            share["schema"] != DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_SCHEMA
+            or share["intent_id"] != verified["intent_id"]
+            or share["credential_artifact_id"] != credential["artifact_id"]
+            or share["transition_content_hash"] != transition["content_hash"]
+            or not isinstance(credential_signature, Mapping)
+            or not isinstance(transition_signature, Mapping)
+            or credential_signature.get("key_id") != transition_signature.get("kid")
+            or credential_signature.get("key_id") in paired_ids
+        ):
+            raise RebirthError("invalid_rebirth_recovery_authorization_share")
+        share_body = {
+            "intent_id": share["intent_id"],
+            "credential_artifact_id": share["credential_artifact_id"],
+            "transition_content_hash": share["transition_content_hash"],
+            "credential_signature": credential_signature,
+            "transition_signature": transition_signature,
+        }
+        attested_kid = _verify_holder_attestation(
+            share["attestation"],
+            DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN,
+            share_body,
+            request_base.state.root_policy["keys"],
+            code="invalid_rebirth_recovery_authorization_share",
+        )
+        if credential_signature.get("key_id") != attested_kid:
+            raise RebirthError("invalid_rebirth_recovery_authorization_share")
+        paired_ids.add(str(credential_signature["key_id"]))
+        credential_signatures.append(credential_signature)
+        transition_signatures.append(transition_signature)
+    credential["signatures"].extend(
+        copy.deepcopy(dict(signature)) for signature in credential_signatures
+    )
+    credential["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+    transition["signatures"] = sorted(
+        (copy.deepcopy(dict(signature)) for signature in transition_signatures),
+        key=lambda row: row["kid"],
+    )
+    try:
+        verify_embodiment_credential(
+            credential,
+            request_base.state,
+            at_ms=body["issued_at_ms"],
+        )
+        verify_incarnation_authorization(
+            body["incarnation"],
+            credential,
+            request_base.state,
+            at_ms=body["issued_at_ms"],
+        )
+        successor = RootAuthority(
+            BeingManifest.from_value(body["successor_manifest"]),
+            request_base.state,
+            {credential["artifact_id"]: credential},
+            {body["incarnation"]["artifact_id"]: body["incarnation"]},
+        )
+        verify_recovery_rebirth(
+            transition,
+            previous,
+            successor,
+            recovery_artifact,
+        )
+        RootHistoryAuthority(successor, [previous], [transition])
+    except (TypeError, ValueError) as exception:
+        raise RebirthError(
+            "rebirth_recovery_authorization_share_threshold_rejected"
+        ) from exception
+    activation = {
+        "schema": RECOVERY_ACTIVATION_SCHEMA,
+        "activation_id": RECOVERY_ACTIVATION_ID_PREFIX
+        + b64url(digest(RECOVERY_ACTIVATION_DOMAIN, body)),
+        "body": body,
+    }
+    validate_recovery_activation(activation, previous, request=request)
+    return activation
+
+
 def validate_recovery_activation(
     value: Any,
     previous: RootAuthority,
@@ -1264,6 +1698,48 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _write_new_document(path: Path, value: Mapping[str, Any]) -> None:
+    output = Path(os.path.abspath(path))
+    parent = _owner_directory(output.parent, "rebirth_output_parent_rejected")
+    raw = canonical_bytes(value)
+    if output.exists() or output.is_symlink():
+        if canonical_bytes(_safe_document(output, "rebirth_output_exists")) == raw:
+            return
+        raise RebirthError("rebirth_output_exists")
+    staging = parent / (f".{output.name}.{hashlib.sha256(raw).hexdigest()}.staging")
+    if staging.exists() or staging.is_symlink():
+        try:
+            if (
+                canonical_bytes(
+                    _safe_document(staging, "rebirth_output_staging_rejected")
+                )
+                != raw
+            ):
+                raise RebirthError("rebirth_output_staging_rejected") from None
+        except RebirthError:
+            info = staging.lstat()
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+            ):
+                raise RebirthError("rebirth_output_staging_rejected") from None
+            staging.unlink()
+            _fsync_directory(parent)
+            _private_write(staging, value)
+    else:
+        _private_write(staging, value)
+    try:
+        os.link(staging, output, follow_symlinks=False)
+    except FileExistsError:
+        if canonical_bytes(_safe_document(output, "rebirth_output_exists")) != raw:
+            raise RebirthError("rebirth_output_exists") from None
+    finally:
+        if staging.exists() and not staging.is_symlink():
+            staging.unlink()
+    _fsync_directory(parent)
 
 
 def _password(descriptor: int) -> bytearray:
@@ -2101,14 +2577,395 @@ def restore_recovery_ledger(
     }
 
 
-def create_recovery_custody(
+def create_distributed_recovery_intent(
+    previous: RootAuthority,
+    replacement_root_descriptors: Sequence[Mapping[str, Any]],
+    replacement_threshold: int,
+    *,
+    created_at_ms: int,
+    expires_at_ms: int,
+    nonce: bytes,
+    known_states: Sequence[ControlState] | None = None,
+) -> dict[str, Any]:
+    """Freeze public recovery material before any independent holder signs."""
+
+    created = _uint(created_at_ms, "invalid_rebirth_recovery_intent_time")
+    expires = _uint(expires_at_ms, "invalid_rebirth_recovery_intent_time")
+    if expires <= created or expires - created > 24 * 60 * 60 * 1000:
+        raise RebirthError("invalid_rebirth_recovery_intent_time")
+    if len(nonce) != 32:
+        raise RebirthError("invalid_rebirth_recovery_intent_nonce")
+    states = tuple(known_states or (previous.state,))
+    if (
+        not states
+        or previous.state.head not in {state.head for state in states}
+        or any(state.being_ref != previous.state.being_ref for state in states)
+    ):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    policy = {
+        "keys": sorted(
+            (copy.deepcopy(dict(row)) for row in replacement_root_descriptors),
+            key=lambda row: str(row.get("key_id", "")),
+        ),
+        "threshold": replacement_threshold,
+    }
+    revoked = sorted(
+        {
+            row["embodiment_id"]
+            for row in previous.manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+    )
+    try:
+        prepared = prepare_recovery(
+            states,
+            policy,
+            revoke_embodiments=revoked,
+        )
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_intent_policy_rejected") from exception
+    body = {
+        "being_ref": previous.state.being_ref,
+        "created_at_ms": created,
+        "expires_at_ms": expires,
+        "known_control_heads": sorted({state.head for state in states}),
+        "nonce": b64url(nonce),
+        "prepared_recovery": prepared,
+        "previous_manifest_hash": previous.manifest.digest,
+    }
+    result = {
+        "schema": DISTRIBUTED_RECOVERY_INTENT_SCHEMA,
+        "intent_id": DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX
+        + b64url(digest(DISTRIBUTED_RECOVERY_INTENT_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(result, "invalid_rebirth_recovery_intent")
+    return result
+
+
+def validate_distributed_recovery_intent(
+    value: Any,
+    previous: RootAuthority,
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+) -> dict[str, Any]:
+    """Validate the closed recovery intent independently at every holder."""
+
+    row = _closed(
+        value,
+        {"schema", "intent_id", "body"},
+        "invalid_rebirth_recovery_intent",
+    )
+    if row["schema"] != DISTRIBUTED_RECOVERY_INTENT_SCHEMA:
+        raise RebirthError("unsupported_rebirth_recovery_intent")
+    body = _closed(
+        row["body"],
+        {
+            "being_ref",
+            "created_at_ms",
+            "expires_at_ms",
+            "known_control_heads",
+            "nonce",
+            "prepared_recovery",
+            "previous_manifest_hash",
+        },
+        "invalid_rebirth_recovery_intent",
+    )
+    observed = _uint(observed_at_ms, "invalid_rebirth_recovery_intent_time")
+    created = _uint(body["created_at_ms"], "invalid_rebirth_recovery_intent_time")
+    expires = _uint(body["expires_at_ms"], "invalid_rebirth_recovery_intent_time")
+    if (
+        expires <= created
+        or expires - created > 24 * 60 * 60 * 1000
+        or not created <= observed < expires
+    ):
+        raise RebirthError("rebirth_recovery_intent_not_timely")
+    try:
+        nonce = b64url(unb64url(str(body["nonce"]), length=32))
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_recovery_intent_nonce") from exception
+    states = tuple(known_states or (previous.state,))
+    heads = sorted({state.head for state in states})
+    if (
+        nonce != body["nonce"]
+        or body["being_ref"] != previous.state.being_ref
+        or body["previous_manifest_hash"] != previous.manifest.digest
+        or body["known_control_heads"] != heads
+        or previous.state.head not in heads
+    ):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    prepared = body["prepared_recovery"]
+    if not isinstance(prepared, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    prepared_body = prepared.get("body")
+    if not isinstance(prepared_body, Mapping):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    expected_revocations = sorted(
+        {
+            item["embodiment_id"]
+            for item in previous.manifest.value["embodiments"]
+            if item["status"] == "active"
+        }
+    )
+    try:
+        expected = prepare_recovery(
+            states,
+            prepared_body.get("replacement_root", {}),
+            revoke_embodiments=expected_revocations,
+        )
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_recovery_intent") from exception
+    if canonical_bytes(prepared) != canonical_bytes(expected):
+        raise RebirthError("rebirth_recovery_intent_authority_mismatch")
+    expected_id = DISTRIBUTED_RECOVERY_INTENT_ID_PREFIX + b64url(
+        digest(DISTRIBUTED_RECOVERY_INTENT_DOMAIN, body)
+    )
+    normalized = copy.deepcopy(dict(row))
+    if row["intent_id"] != expected_id or _canonical(
+        normalized, "invalid_rebirth_recovery_intent"
+    ) != _canonical(value, "invalid_rebirth_recovery_intent"):
+        raise RebirthError("invalid_rebirth_recovery_intent")
+    return normalized
+
+
+def create_distributed_recovery_share(
+    intent: Any,
+    previous: RootAuthority,
+    holder_seed: bytes,
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+) -> dict[str, Any]:
+    """Produce one role-bound share in a process holding exactly one seed."""
+
+    states = tuple(known_states or (previous.state,))
+    verified = validate_distributed_recovery_intent(
+        intent,
+        previous,
+        observed_at_ms=observed_at_ms,
+        known_states=states,
+    )
+    prepared = verified["body"]["prepared_recovery"]
+    kid = key_id("Ed25519", ed25519_public(holder_seed))
+    recovery_ids = {row["key_id"] for row in states[0].recovery_policy["keys"]}
+    replacement_ids = {
+        row["key_id"] for row in prepared["body"]["replacement_root"]["keys"]
+    }
+    try:
+        if kid in recovery_ids and kid not in replacement_ids:
+            signature = create_recovery_authorization_share(
+                prepared, states, holder_seed
+            )
+        elif kid in replacement_ids and kid not in recovery_ids:
+            signature = create_recovery_possession_share(prepared, states, holder_seed)
+        else:
+            raise RebirthError("rebirth_recovery_holder_not_authorized")
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_holder_not_authorized") from exception
+    share_body = {
+        "intent_id": verified["intent_id"],
+        "recovery_artifact_id": prepared["artifact_id"],
+        "signature": signature,
+    }
+    return {
+        "schema": DISTRIBUTED_RECOVERY_SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(
+            holder_seed,
+            DISTRIBUTED_RECOVERY_SHARE_DOMAIN,
+            share_body,
+        ),
+    }
+
+
+def aggregate_distributed_recovery(
+    intent: Any,
+    previous: RootAuthority,
+    shares: Sequence[Any],
+    *,
+    observed_at_ms: int,
+    known_states: Sequence[ControlState] | None = None,
+) -> dict[str, Any]:
+    """Aggregate public shares without opening any holder keystore."""
+
+    states = tuple(known_states or (previous.state,))
+    verified = validate_distributed_recovery_intent(
+        intent,
+        previous,
+        observed_at_ms=observed_at_ms,
+        known_states=states,
+    )
+    prepared = verified["body"]["prepared_recovery"]
+    signatures: list[Mapping[str, Any]] = []
+    for value in shares:
+        share = _closed(
+            value,
+            {
+                "schema",
+                "intent_id",
+                "recovery_artifact_id",
+                "signature",
+                "attestation",
+            },
+            "invalid_rebirth_recovery_share",
+        )
+        if (
+            share["schema"] != DISTRIBUTED_RECOVERY_SHARE_SCHEMA
+            or share["intent_id"] != verified["intent_id"]
+            or share["recovery_artifact_id"] != prepared["artifact_id"]
+            or not isinstance(share["signature"], Mapping)
+        ):
+            raise RebirthError("invalid_rebirth_recovery_share")
+        signature = share["signature"]
+        role = signature.get("role")
+        allowed_descriptors = (
+            states[0].recovery_policy["keys"]
+            if role == "recovery-authorization"
+            else prepared["body"]["replacement_root"]["keys"]
+            if role == "new-root-possession"
+            else []
+        )
+        share_body = {
+            "intent_id": share["intent_id"],
+            "recovery_artifact_id": share["recovery_artifact_id"],
+            "signature": signature,
+        }
+        attested_kid = _verify_holder_attestation(
+            share["attestation"],
+            DISTRIBUTED_RECOVERY_SHARE_DOMAIN,
+            share_body,
+            allowed_descriptors,
+            code="invalid_rebirth_recovery_share",
+        )
+        if signature.get("key_id") != attested_kid:
+            raise RebirthError("invalid_rebirth_recovery_share")
+        signatures.append(share["signature"])
+    try:
+        artifact = aggregate_recovery(prepared, states, signatures)
+        recovery_request_base(previous, artifact)
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_recovery_share_threshold_rejected") from exception
+    return artifact
+
+
+def create_replacement_root_holder(
+    output: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Generate one replacement root in one owner-only holder store."""
+
+    target = Path(os.path.abspath(output))
+    _owner_directory(target.parent, "rebirth_holder_parent_rejected")
+    if target.exists() or target.is_symlink():
+        raise RebirthError("rebirth_holder_exists")
+    holder_seed = generate_ed25519_seed()
+    descriptor = signing_descriptor(holder_seed)
+    try:
+        EncryptedKeystore.create(
+            target,
+            password_reader,
+            control_head=previous.state.head,
+            secrets={"root.signing.v1:holder": holder_seed},
+        )
+    except KeystoreError as exception:
+        raise RebirthError("rebirth_holder_create_rejected") from exception
+    _fsync_directory(target.parent)
+    return {
+        "schema": "dm.operator.replacement-root-holder/v1",
+        "being_ref": previous.state.being_ref,
+        "custody_control_head": previous.state.head,
+        "key": descriptor,
+    }
+
+
+def _single_holder_seed(
+    path: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+    *,
+    allowed_prefixes: tuple[str, ...],
+    code: str,
+) -> bytes:
+    try:
+        contents = EncryptedKeystore(path).open(
+            password_reader,
+            minimum_counter=1,
+            required_control_head=previous.state.head,
+        )
+    except KeystoreError as exception:
+        raise RebirthError(code) from exception
+    if len(contents.secrets) != 1:
+        raise RebirthError(code)
+    slot, holder_seed = next(iter(contents.secrets.items()))
+    if not slot.startswith(allowed_prefixes):
+        raise RebirthError(code)
+    return holder_seed
+
+
+def create_distributed_recovery_share_from_holder(
+    intent: Any,
+    previous: RootAuthority,
+    holder_path: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Open exactly one holder store and emit only its public recovery share."""
+
+    holder_seed = _single_holder_seed(
+        holder_path,
+        previous,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:", "recovery.signing.v1:"),
+        code="rebirth_recovery_holder_store_rejected",
+    )
+    return create_distributed_recovery_share(
+        intent,
+        previous,
+        holder_seed,
+        observed_at_ms=observed_at_ms,
+    )
+
+
+def create_distributed_recovery_authorization_share_from_holder(
+    intent: Any,
+    request: Any,
+    previous: RootAuthority,
+    recovery_artifact: Mapping[str, Any],
+    holder_path: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Open one replacement-root store and emit one paired authorization share."""
+
+    holder_seed = _single_holder_seed(
+        holder_path,
+        previous,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:",),
+        code="rebirth_recovered_root_holder_store_rejected",
+    )
+    return create_distributed_recovery_authorization_share(
+        intent,
+        request,
+        previous,
+        recovery_artifact,
+        holder_seed,
+        observed_at_ms=observed_at_ms,
+    )
+
+
+def create_synthetic_single_store_recovery_custody(
     output: Path,
     previous: RootAuthority,
     custody_path: Path,
     current_password_reader: PasswordReader,
     replacement_password_reader: PasswordReader,
 ) -> dict[str, Any]:
-    """Rotate a recovery quorum into fresh root custody without a body key."""
+    """Synthetic fixture: centralize a quorum for deterministic local tests."""
 
     try:
         contents = EncryptedKeystore(custody_path).open(
@@ -2207,7 +3064,7 @@ def create_recovery_custody(
             shutil.rmtree(staging)
 
 
-def authorize_recovery_from_root_custody(
+def authorize_synthetic_single_store_recovery(
     request: Any,
     previous: RootAuthority,
     recovery_artifact: Mapping[str, Any],
@@ -2316,13 +3173,83 @@ def parser() -> argparse.ArgumentParser:
     activate.add_argument("--output", type=Path, required=True)
     activate.add_argument("--password-fd", type=int, required=True)
     recover = commands.add_parser(
-        "recover", help="rotate a recovery quorum into fresh root custody"
+        "synthetic-single-store-recover",
+        help="test fixture: centralize recovery and replacement-root seeds",
     )
     recover.add_argument("--authority", type=Path, required=True)
     recover.add_argument("--root-custody", type=Path, required=True)
     recover.add_argument("--current-password-fd", type=int, required=True)
     recover.add_argument("--replacement-password-fd", type=int, required=True)
     recover.add_argument("--output", type=Path, required=True)
+    create_holder = commands.add_parser(
+        "create-replacement-root-holder",
+        help="generate one isolated replacement-root holder store",
+    )
+    create_holder.add_argument("--authority", type=Path, required=True)
+    create_holder.add_argument("--holder", type=Path, required=True)
+    create_holder.add_argument("--password-fd", type=int, required=True)
+    create_holder.add_argument("--output", type=Path, required=True)
+    recovery_intent = commands.add_parser(
+        "create-recovery-intent",
+        help="freeze one recovery intent from public holder descriptors",
+    )
+    recovery_intent.add_argument("--authority", type=Path, required=True)
+    recovery_intent.add_argument(
+        "--holder-descriptor", type=Path, action="append", required=True
+    )
+    recovery_intent.add_argument("--threshold", type=int, required=True)
+    recovery_intent.add_argument("--ttl-seconds", type=int, default=3600)
+    recovery_intent.add_argument("--output", type=Path, required=True)
+    recovery_share = commands.add_parser(
+        "recovery-share", help="emit one share from one isolated holder store"
+    )
+    recovery_share.add_argument("--authority", type=Path, required=True)
+    recovery_share.add_argument("--intent", type=Path, required=True)
+    recovery_share.add_argument("--holder", type=Path, required=True)
+    recovery_share.add_argument("--password-fd", type=int, required=True)
+    recovery_share.add_argument("--output", type=Path, required=True)
+    aggregate_recovery_command = commands.add_parser(
+        "aggregate-recovery",
+        help="aggregate recovery shares without opening holder stores",
+    )
+    aggregate_recovery_command.add_argument("--authority", type=Path, required=True)
+    aggregate_recovery_command.add_argument("--intent", type=Path, required=True)
+    aggregate_recovery_command.add_argument(
+        "--share", type=Path, action="append", required=True
+    )
+    aggregate_recovery_command.add_argument("--output", type=Path, required=True)
+    authorization_intent = commands.add_parser(
+        "create-recovery-authorization-intent",
+        help="freeze target credential and transition for root holders",
+    )
+    authorization_intent.add_argument("--authority", type=Path, required=True)
+    authorization_intent.add_argument("--recovery", type=Path, required=True)
+    authorization_intent.add_argument("--request", type=Path, required=True)
+    authorization_intent.add_argument("--ttl-seconds", type=int, default=3600)
+    authorization_intent.add_argument("--output", type=Path, required=True)
+    authorization_share = commands.add_parser(
+        "recovery-authorization-share",
+        help="emit one target authorization share from one root holder",
+    )
+    authorization_share.add_argument("--authority", type=Path, required=True)
+    authorization_share.add_argument("--recovery", type=Path, required=True)
+    authorization_share.add_argument("--request", type=Path, required=True)
+    authorization_share.add_argument("--intent", type=Path, required=True)
+    authorization_share.add_argument("--holder", type=Path, required=True)
+    authorization_share.add_argument("--password-fd", type=int, required=True)
+    authorization_share.add_argument("--output", type=Path, required=True)
+    aggregate_authorization = commands.add_parser(
+        "aggregate-recovery-authorization",
+        help="aggregate target authorization shares without holder stores",
+    )
+    aggregate_authorization.add_argument("--authority", type=Path, required=True)
+    aggregate_authorization.add_argument("--recovery", type=Path, required=True)
+    aggregate_authorization.add_argument("--request", type=Path, required=True)
+    aggregate_authorization.add_argument("--intent", type=Path, required=True)
+    aggregate_authorization.add_argument(
+        "--share", type=Path, action="append", required=True
+    )
+    aggregate_authorization.add_argument("--output", type=Path, required=True)
     prepare_recovery = commands.add_parser(
         "prepare-recovery", help="generate target custody after recovery"
     )
@@ -2333,7 +3260,8 @@ def parser() -> argparse.ArgumentParser:
     prepare_recovery.add_argument("--password-fd", type=int, required=True)
     prepare_recovery.add_argument("--ttl-seconds", type=int, default=3600)
     authorize_recovery = commands.add_parser(
-        "authorize-recovery", help="authorize a target with recovered root custody"
+        "synthetic-single-store-authorize-recovery",
+        help="test fixture: authorize from centralized recovered root custody",
     )
     authorize_recovery.add_argument("--authority", type=Path, required=True)
     authorize_recovery.add_argument("--recovery", type=Path, required=True)
@@ -2359,7 +3287,167 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = parser().parse_args(argv)
         now = time.time_ns() // 1_000_000
-        if arguments.command in {"prepare", "prepare-recovery"}:
+        if arguments.command == "create-replacement-root-holder":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_replacement_root_holder(
+                    arguments.holder,
+                    authority,
+                    _password_reader(password),
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "create-recovery-intent":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            ttl = arguments.ttl_seconds
+            if (
+                not isinstance(ttl, int)
+                or isinstance(ttl, bool)
+                or not 60 <= ttl <= 86_400
+            ):
+                raise RebirthError("invalid_rebirth_ttl")
+            descriptors: list[Mapping[str, Any]] = []
+            for path in arguments.holder_descriptor:
+                holder = _closed(
+                    _safe_document(path, "rebirth_holder_descriptor_unavailable"),
+                    {"schema", "being_ref", "custody_control_head", "key"},
+                    "invalid_rebirth_holder_descriptor",
+                )
+                if (
+                    holder["schema"] != "dm.operator.replacement-root-holder/v1"
+                    or holder["being_ref"] != authority.state.being_ref
+                    or holder["custody_control_head"] != authority.state.head
+                    or not isinstance(holder["key"], Mapping)
+                ):
+                    raise RebirthError("invalid_rebirth_holder_descriptor")
+                descriptors.append(holder["key"])
+            receipt = create_distributed_recovery_intent(
+                authority,
+                descriptors,
+                arguments.threshold,
+                created_at_ms=now,
+                expires_at_ms=now + ttl * 1000,
+                nonce=secrets.token_bytes(32),
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "recovery-share":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_distributed_recovery_share_from_holder(
+                    _safe_document(
+                        arguments.intent,
+                        "rebirth_recovery_intent_unavailable",
+                    ),
+                    authority,
+                    arguments.holder,
+                    _password_reader(password),
+                    observed_at_ms=now,
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "aggregate-recovery":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            receipt = aggregate_distributed_recovery(
+                _safe_document(
+                    arguments.intent,
+                    "rebirth_recovery_intent_unavailable",
+                ),
+                authority,
+                [
+                    _safe_document(path, "rebirth_recovery_share_unavailable")
+                    for path in arguments.share
+                ],
+                observed_at_ms=now,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "create-recovery-authorization-intent":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            ttl = arguments.ttl_seconds
+            if (
+                not isinstance(ttl, int)
+                or isinstance(ttl, bool)
+                or not 60 <= ttl <= 86_400
+            ):
+                raise RebirthError("invalid_rebirth_ttl")
+            receipt = create_distributed_recovery_authorization_intent(
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                _safe_document(
+                    arguments.recovery,
+                    "rebirth_recovery_artifact_unavailable",
+                ),
+                issued_at_ms=now,
+                expires_at_ms=now + ttl * 1000,
+                nonce=secrets.token_bytes(32),
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "recovery-authorization-share":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_distributed_recovery_authorization_share_from_holder(
+                    _safe_document(
+                        arguments.intent,
+                        "rebirth_recovery_authorization_intent_unavailable",
+                    ),
+                    _safe_document(
+                        arguments.request,
+                        "rebirth_request_unavailable",
+                    ),
+                    authority,
+                    _safe_document(
+                        arguments.recovery,
+                        "rebirth_recovery_artifact_unavailable",
+                    ),
+                    arguments.holder,
+                    _password_reader(password),
+                    observed_at_ms=now,
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "aggregate-recovery-authorization":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            receipt = aggregate_distributed_recovery_authorization(
+                _safe_document(
+                    arguments.intent,
+                    "rebirth_recovery_authorization_intent_unavailable",
+                ),
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                _safe_document(
+                    arguments.recovery,
+                    "rebirth_recovery_artifact_unavailable",
+                ),
+                [
+                    _safe_document(
+                        path,
+                        "rebirth_recovery_authorization_share_unavailable",
+                    )
+                    for path in arguments.share
+                ],
+                observed_at_ms=now,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command in {"prepare", "prepare-recovery"}:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -2400,7 +3488,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             finally:
                 password[:] = b"\x00" * len(password)
-        elif arguments.command in {"authorize", "authorize-recovery"}:
+        elif arguments.command in {
+            "authorize",
+            "synthetic-single-store-authorize-recovery",
+        }:
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -2410,7 +3501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     arguments.request, "rebirth_request_unavailable"
                 )
                 receipt = (
-                    authorize_recovery_from_root_custody(
+                    authorize_synthetic_single_store_recovery(
                         request,
                         authority,
                         _safe_document(
@@ -2421,7 +3512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _password_reader(password),
                         issued_at_ms=now,
                     )
-                    if arguments.command == "authorize-recovery"
+                    if arguments.command == "synthetic-single-store-authorize-recovery"
                     else authorize_from_root_custody(
                         request,
                         authority,
@@ -2438,14 +3529,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _fsync_directory(output.parent)
             finally:
                 password[:] = b"\x00" * len(password)
-        elif arguments.command == "recover":
+        elif arguments.command == "synthetic-single-store-recover":
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
             current_password = _password(arguments.current_password_fd)
             replacement_password = _password(arguments.replacement_password_fd)
             try:
-                receipt = create_recovery_custody(
+                receipt = create_synthetic_single_store_recovery_custody(
                     arguments.output,
                     authority,
                     arguments.root_custody,
@@ -2513,10 +3604,10 @@ __all__ = [
     "authorize_enrollment_request",
     "authorize_from_root_custody",
     "authorize_recovery_enrollment_request",
-    "authorize_recovery_from_root_custody",
+    "authorize_synthetic_single_store_recovery",
     "create_enrollment_request",
-    "create_recovery_custody",
     "create_recovery_target_preparation",
+    "create_synthetic_single_store_recovery_custody",
     "create_target_preparation",
     "main",
     "parser",

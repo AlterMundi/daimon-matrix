@@ -539,13 +539,39 @@ def create_recovery(
 ) -> Artifact:
     """Recover a unique head while naming every currently known branch head."""
 
+    prepared = prepare_recovery(
+        states,
+        threshold_policy(replacement_root_seeds, replacement_threshold),
+        revoke_embodiments=revoke_embodiments,
+    )
+    body = prepared["body"]
+    signatures = [
+        create_recovery_authorization_share(prepared, states, seed)
+        for seed in current_recovery_seeds
+    ]
+    signatures.extend(
+        create_recovery_possession_share(prepared, states, seed)
+        for seed in replacement_root_seeds
+    )
+    return _artifact("recovery", body, signatures)
+
+
+def prepare_recovery(
+    states: Sequence[ControlState],
+    replacement_root_policy: Mapping[str, Any],
+    *,
+    revoke_embodiments: Sequence[str],
+) -> Artifact:
+    """Freeze an unsigned recovery artifact for independent threshold holders."""
+
     if not states:
         raise IdentityError("recovery needs at least one known control head")
     being_refs = {state.being_ref for state in states}
     recovery_policies = {canonical_bytes(state.recovery_policy) for state in states}
     if len(being_refs) != 1 or len(recovery_policies) != 1:
         raise IdentityError("recovery heads do not share being/recovery authority")
-    replacement_policy = threshold_policy(replacement_root_seeds, replacement_threshold)
+    replacement_policy = copy.deepcopy(dict(replacement_root_policy))
+    _validate_threshold_policy(replacement_policy)
     _require_separate_policies(replacement_policy, states[0].recovery_policy)
     body = {
         "being_ref": states[0].being_ref,
@@ -555,13 +581,82 @@ def create_recovery(
         "replacement_root": replacement_policy,
         "revoked_embodiments": sorted(set(revoke_embodiments)),
     }
-    return _sign_control(
-        "recovery",
-        body,
-        _seed_map(current_recovery_seeds),
-        "recovery-authorization",
-        _seed_map(replacement_root_seeds),
+    return _artifact("recovery", body, [])
+
+
+def _require_policy_seed(seed: bytes, policy: Mapping[str, Any], *, role: str) -> None:
+    kid = signing_descriptor(seed)["key_id"]
+    if kid not in _public_map(policy):
+        raise IdentityError(f"seed is not authorized for {role}")
+
+
+def _prepared_recovery(
+    artifact: Mapping[str, Any], states: Sequence[ControlState]
+) -> Artifact:
+    body, _ = _verify_wrapper(artifact, "recovery")
+    if artifact["signatures"]:
+        raise IdentityError("prepared recovery already contains signatures")
+    expected = prepare_recovery(
+        states,
+        body.get("replacement_root", {}),
+        revoke_embodiments=body.get("revoked_embodiments", []),
     )
+    if canonical_bytes(expected) != canonical_bytes(artifact):
+        raise IdentityError("prepared recovery does not match known heads")
+    return expected
+
+
+def create_recovery_authorization_share(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    recovery_seed: bytes,
+) -> dict[str, str]:
+    """Sign one recovery authorization without exposing any other holder key."""
+
+    expected = _prepared_recovery(prepared, states)
+    _require_policy_seed(
+        recovery_seed, states[0].recovery_policy, role="recovery-authorization"
+    )
+    return _signature(
+        recovery_seed,
+        "recovery-authorization",
+        domain_bytes(DOMAINS["recovery"], expected["body"]),
+    )
+
+
+def create_recovery_possession_share(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    replacement_root_seed: bytes,
+) -> dict[str, str]:
+    """Prove possession of one replacement root without sharing its seed."""
+
+    expected = _prepared_recovery(prepared, states)
+    policy = expected["body"]["replacement_root"]
+    _require_policy_seed(replacement_root_seed, policy, role="new-root-possession")
+    raw_hash = digest(DOMAINS["recovery"], expected["body"])
+    return _signature(
+        replacement_root_seed,
+        "new-root-possession",
+        DOMAINS["recovery"].encode("ascii") + b"/possession\x00" + raw_hash,
+    )
+
+
+def aggregate_recovery(
+    prepared: Mapping[str, Any],
+    states: Sequence[ControlState],
+    shares: Sequence[Mapping[str, Any]],
+) -> Artifact:
+    """Keyless aggregation of independently produced recovery shares."""
+
+    expected = _prepared_recovery(prepared, states)
+    artifact = _artifact(
+        "recovery",
+        expected["body"],
+        [copy.deepcopy(dict(share)) for share in shares],
+    )
+    verify_recovery(artifact, states)
+    return artifact
 
 
 def _verify_position(body: Mapping[str, Any], state: ControlState) -> None:

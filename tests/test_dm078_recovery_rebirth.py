@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -38,13 +39,19 @@ from daimon_matrix.local_api import create_capability
 from daimon_matrix.operator_rebirth import (
     RebirthError,
     activate_recovery_target_runtime,
+    aggregate_distributed_recovery,
+    aggregate_distributed_recovery_authorization,
     authority_from_runtime_bundle,
     authorize_enrollment_request,
     authorize_recovery_enrollment_request,
-    authorize_recovery_from_root_custody,
+    authorize_synthetic_single_store_recovery,
+    create_distributed_recovery_authorization_intent,
+    create_distributed_recovery_authorization_share,
+    create_distributed_recovery_intent,
+    create_distributed_recovery_share,
     create_enrollment_request,
-    create_recovery_custody,
     create_recovery_target_preparation,
+    create_synthetic_single_store_recovery_custody,
     recovery_request_base,
     restore_recovery_ledger,
     validate_activation,
@@ -114,6 +121,43 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
                 "store_filename": "relationships.sqlite3",
             },
         }
+
+    def _invoke_rebirth_cli(
+        self,
+        arguments: list[str],
+        passwords: dict[str, bytes] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        descriptors: dict[str, int] = {}
+        readers: list[int] = []
+        for marker, password in (passwords or {}).items():
+            reader, writer = os.pipe()
+            os.write(writer, password)
+            os.close(writer)
+            descriptors[marker] = reader
+            readers.append(reader)
+        try:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "daimon_matrix.operator_rebirth",
+                    *[
+                        str(descriptors[value]) if value in descriptors else value
+                        for value in arguments
+                    ],
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env={
+                    **os.environ,
+                    "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+                },
+                pass_fds=tuple(descriptors.values()),
+                capture_output=True,
+                check=False,
+            )
+        finally:
+            for descriptor in readers:
+                os.close(descriptor)
 
     def _successor(
         self,
@@ -839,7 +883,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
                 },
             },
         )
-        receipt = create_recovery_custody(
+        receipt = create_synthetic_single_store_recovery_custody(
             ceremony / "successor",
             self.authority,
             old_store,
@@ -876,7 +920,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             },
         )
         with self.assertRaisesRegex(RebirthError, "custody_rejected"):
-            create_recovery_custody(
+            create_synthetic_single_store_recovery_custody(
                 ceremony / "wrong-successor",
                 self.authority,
                 wrong_store,
@@ -894,7 +938,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             },
         )
         with self.assertRaisesRegex(RebirthError, "custody_rejected"):
-            create_recovery_custody(
+            create_synthetic_single_store_recovery_custody(
                 ceremony / "extra-successor",
                 self.authority,
                 extra_store,
@@ -916,7 +960,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             expires_at_ms=NOW + 60_010,
             nonce=seed("custody-target-nonce"),
         )
-        activation = authorize_recovery_from_root_custody(
+        activation = authorize_synthetic_single_store_recovery(
             request,
             self.authority,
             recovery,
@@ -936,7 +980,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             },
         )
         with self.assertRaisesRegex(RebirthError, "custody_rejected"):
-            authorize_recovery_from_root_custody(
+            authorize_synthetic_single_store_recovery(
                 request,
                 self.authority,
                 recovery,
@@ -950,7 +994,466 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         assert old_password.decode() not in public
         assert new_password.decode() not in public
 
-    def test_recovery_cli_runs_each_custody_role_in_a_distinct_process(self) -> None:
+    def test_distributed_recovery_aggregates_disjoint_holder_shares(self) -> None:
+        recovery_seeds = [
+            seed("recovery-a"),
+            seed("recovery-b"),
+            seed("recovery-c"),
+        ]
+        replacement_roots = [
+            seed("distributed-root-a"),
+            seed("distributed-root-b"),
+            seed("distributed-root-c"),
+        ]
+        intent = create_distributed_recovery_intent(
+            self.authority,
+            [signing_descriptor(value) for value in replacement_roots],
+            2,
+            created_at_ms=NOW,
+            expires_at_ms=NOW + 60_000,
+            nonce=seed("distributed-recovery-intent"),
+        )
+        shares = [
+            create_distributed_recovery_share(
+                intent,
+                self.authority,
+                value,
+                observed_at_ms=NOW + 1,
+            )
+            for value in (
+                recovery_seeds[0],
+                replacement_roots[0],
+                recovery_seeds[1],
+                replacement_roots[1],
+            )
+        ]
+        recovery = aggregate_distributed_recovery(
+            intent,
+            self.authority,
+            shares,
+            observed_at_ms=NOW + 2,
+        )
+        recovered = recovery_request_base(self.authority, recovery)
+        self.assertEqual(recovered.state.head, recovery["artifact_id"])
+        self.assertEqual(
+            {row["key_id"] for row in recovered.state.root_policy["keys"]},
+            {signing_descriptor(value)["key_id"] for value in replacement_roots},
+        )
+        public_exchange = canonical_bytes(
+            {"intent": intent, "shares": shares, "recovery": recovery}
+        )
+        for private_seed in recovery_seeds + replacement_roots:
+            self.assertNotIn(private_seed, public_exchange)
+
+    def test_distributed_recovery_rejects_replay_substitution_and_shortfall(
+        self,
+    ) -> None:
+        recovery_seeds = [
+            seed("recovery-a"),
+            seed("recovery-b"),
+            seed("recovery-c"),
+        ]
+        replacement_roots = [
+            seed("distributed-hostile-root-a"),
+            seed("distributed-hostile-root-b"),
+            seed("distributed-hostile-root-c"),
+        ]
+        intent = create_distributed_recovery_intent(
+            self.authority,
+            [signing_descriptor(value) for value in replacement_roots],
+            2,
+            created_at_ms=NOW,
+            expires_at_ms=NOW + 60_000,
+            nonce=seed("distributed-hostile-intent"),
+        )
+        recovery_share = create_distributed_recovery_share(
+            intent,
+            self.authority,
+            recovery_seeds[0],
+            observed_at_ms=NOW + 1,
+        )
+        root_share = create_distributed_recovery_share(
+            intent,
+            self.authority,
+            replacement_roots[0],
+            observed_at_ms=NOW + 1,
+        )
+        with self.assertRaisesRegex(RebirthError, "threshold_rejected"):
+            aggregate_distributed_recovery(
+                intent,
+                self.authority,
+                [recovery_share, root_share],
+                observed_at_ms=NOW + 2,
+            )
+        with self.assertRaisesRegex(RebirthError, "threshold_rejected"):
+            aggregate_distributed_recovery(
+                intent,
+                self.authority,
+                [recovery_share, recovery_share, root_share, root_share],
+                observed_at_ms=NOW + 2,
+            )
+        substituted = copy.deepcopy(root_share)
+        substituted["intent_id"] = "dm:recovery-intent:v1:substituted"
+        with self.assertRaisesRegex(RebirthError, "invalid_rebirth_recovery_share"):
+            aggregate_distributed_recovery(
+                intent,
+                self.authority,
+                [recovery_share, substituted],
+                observed_at_ms=NOW + 2,
+            )
+        second_intent = create_distributed_recovery_intent(
+            self.authority,
+            [signing_descriptor(value) for value in replacement_roots],
+            2,
+            created_at_ms=NOW,
+            expires_at_ms=NOW + 60_000,
+            nonce=seed("distributed-hostile-second-intent"),
+        )
+        transplanted = copy.deepcopy(recovery_share)
+        transplanted["intent_id"] = second_intent["intent_id"]
+        with self.assertRaisesRegex(RebirthError, "invalid_rebirth_recovery_share"):
+            aggregate_distributed_recovery(
+                second_intent,
+                self.authority,
+                [transplanted],
+                observed_at_ms=NOW + 2,
+            )
+        with self.assertRaisesRegex(RebirthError, "holder_not_authorized"):
+            create_distributed_recovery_share(
+                intent,
+                self.authority,
+                seed("hostile-holder"),
+                observed_at_ms=NOW + 1,
+            )
+        with self.assertRaisesRegex(RebirthError, "not_timely"):
+            create_distributed_recovery_share(
+                intent,
+                self.authority,
+                recovery_seeds[0],
+                observed_at_ms=NOW + 60_000,
+            )
+
+    def test_distributed_root_holders_authorize_target_without_seed_aggregation(
+        self,
+    ) -> None:
+        recovery_seeds = [
+            seed("recovery-a"),
+            seed("recovery-b"),
+            seed("recovery-c"),
+        ]
+        replacement_roots = [
+            seed("distributed-authorization-root-a"),
+            seed("distributed-authorization-root-b"),
+            seed("distributed-authorization-root-c"),
+        ]
+        recovery_intent = create_distributed_recovery_intent(
+            self.authority,
+            [signing_descriptor(value) for value in replacement_roots],
+            2,
+            created_at_ms=NOW,
+            expires_at_ms=NOW + 60_000,
+            nonce=seed("distributed-authorization-recovery-intent"),
+        )
+        recovery_shares = [
+            create_distributed_recovery_share(
+                recovery_intent,
+                self.authority,
+                value,
+                observed_at_ms=NOW + 1,
+            )
+            for value in (
+                recovery_seeds[0],
+                recovery_seeds[1],
+                replacement_roots[0],
+                replacement_roots[1],
+            )
+        ]
+        recovery = aggregate_distributed_recovery(
+            recovery_intent,
+            self.authority,
+            recovery_shares,
+            observed_at_ms=NOW + 2,
+        )
+        request = create_enrollment_request(
+            recovery_request_base(self.authority, recovery),
+            signing_seed=seed("distributed-target-signing"),
+            encryption_private=seed("distributed-target-encryption"),
+            transport_seed=seed("distributed-target-transport"),
+            body_ref="cluster:distributed-target:compaii",
+            embodiment_id="embodiment:distributed-target",
+            incarnation_id="incarnation:distributed-target:0",
+            principal_id="compaii@distributed-target",
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+            nonce=seed("distributed-target-request"),
+        )
+        authorization_intent = create_distributed_recovery_authorization_intent(
+            request,
+            self.authority,
+            recovery,
+            issued_at_ms=NOW + 20,
+            expires_at_ms=NOW + 60_020,
+            nonce=seed("distributed-authorization-intent"),
+        )
+        authorization_shares = [
+            create_distributed_recovery_authorization_share(
+                authorization_intent,
+                request,
+                self.authority,
+                recovery,
+                value,
+                observed_at_ms=NOW + 21,
+            )
+            for value in replacement_roots[:2]
+        ]
+        activation = aggregate_distributed_recovery_authorization(
+            authorization_intent,
+            request,
+            self.authority,
+            recovery,
+            authorization_shares,
+            observed_at_ms=NOW + 22,
+        )
+        validate_recovery_activation(activation, self.authority, request=request)
+        public_exchange = canonical_bytes(
+            {
+                "recovery_intent": recovery_intent,
+                "recovery_shares": recovery_shares,
+                "recovery": recovery,
+                "authorization_intent": authorization_intent,
+                "authorization_shares": authorization_shares,
+                "activation": activation,
+            }
+        )
+        for private_seed in recovery_seeds + replacement_roots:
+            self.assertNotIn(private_seed, public_exchange)
+        with self.assertRaisesRegex(RebirthError, "threshold_rejected"):
+            aggregate_distributed_recovery_authorization(
+                authorization_intent,
+                request,
+                self.authority,
+                recovery,
+                authorization_shares[:1],
+                observed_at_ms=NOW + 22,
+            )
+
+    def test_distributed_custody_cli_isolates_every_holder_and_keyless_aggregator(
+        self,
+    ) -> None:
+        root = self.root_path / "distributed-custody-cli"
+        root.mkdir(mode=0o700)
+        authority_path = root / "authority.json"
+        authority_path.write_bytes(canonical_bytes(self._authority_document()))
+        authority_path.chmod(0o600)
+        recovery_passwords = [
+            f"distributed-recovery-holder-{index}".encode() for index in range(3)
+        ]
+        recovery_holders: list[Path] = []
+        recovery_seeds = [
+            seed("recovery-a"),
+            seed("recovery-b"),
+            seed("recovery-c"),
+        ]
+        for index, (password, recovery_seed) in enumerate(
+            zip(recovery_passwords, recovery_seeds, strict=True)
+        ):
+            path = root / f"recovery-holder-{index}.json"
+            EncryptedKeystore.create(
+                path,
+                lambda value=password: bytearray(value),
+                control_head=self.state.head,
+                secrets={"recovery.signing.v1:holder": recovery_seed},
+            )
+            recovery_holders.append(path)
+
+        root_passwords = [
+            f"distributed-root-holder-{index}".encode() for index in range(3)
+        ]
+        root_holders: list[Path] = []
+        descriptors: list[Path] = []
+        for index, password in enumerate(root_passwords):
+            holder = root / f"root-holder-{index}.json"
+            descriptor = root / f"root-holder-{index}-descriptor.json"
+            result = self._invoke_rebirth_cli(
+                [
+                    "create-replacement-root-holder",
+                    "--authority",
+                    str(authority_path),
+                    "--holder",
+                    str(holder),
+                    "--password-fd",
+                    "{password}",
+                    "--output",
+                    str(descriptor),
+                ],
+                {"{password}": password},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            root_holders.append(holder)
+            descriptors.append(descriptor)
+
+        intent_path = root / "recovery-intent.json"
+        arguments = [
+            "create-recovery-intent",
+            "--authority",
+            str(authority_path),
+            "--threshold",
+            "2",
+            "--output",
+            str(intent_path),
+        ]
+        for descriptor in descriptors:
+            arguments.extend(["--holder-descriptor", str(descriptor)])
+        result = self._invoke_rebirth_cli(arguments)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+        recovery_share_paths: list[Path] = []
+        for role, holders, passwords in (
+            ("recovery", recovery_holders[:2], recovery_passwords[:2]),
+            ("root", root_holders[:2], root_passwords[:2]),
+        ):
+            for index, (holder, password) in enumerate(
+                zip(holders, passwords, strict=True)
+            ):
+                share_path = root / f"{role}-share-{index}.json"
+                result = self._invoke_rebirth_cli(
+                    [
+                        "recovery-share",
+                        "--authority",
+                        str(authority_path),
+                        "--intent",
+                        str(intent_path),
+                        "--holder",
+                        str(holder),
+                        "--password-fd",
+                        "{password}",
+                        "--output",
+                        str(share_path),
+                    ],
+                    {"{password}": password},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                recovery_share_paths.append(share_path)
+
+        recovery_path = root / "recovery.json"
+        arguments = [
+            "aggregate-recovery",
+            "--authority",
+            str(authority_path),
+            "--intent",
+            str(intent_path),
+            "--output",
+            str(recovery_path),
+        ]
+        for share_path in recovery_share_paths:
+            arguments.extend(["--share", str(share_path)])
+        result = self._invoke_rebirth_cli(arguments)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        retry = self._invoke_rebirth_cli(arguments)
+        self.assertEqual(retry.returncode, 0, retry.stderr.decode())
+        recovery = json.loads(recovery_path.read_bytes())
+        request_base = recovery_request_base(self.authority, recovery)
+        wall_ms = time.time_ns() // 1_000_000
+        request = create_enrollment_request(
+            request_base,
+            signing_seed=seed("distributed-cli-target-signing"),
+            encryption_private=seed("distributed-cli-target-encryption"),
+            transport_seed=seed("distributed-cli-target-transport"),
+            body_ref="cluster:distributed-cli-target:compaii",
+            embodiment_id="embodiment:distributed-cli-target",
+            incarnation_id="incarnation:distributed-cli-target:0",
+            principal_id="compaii@distributed-cli-target",
+            created_at_ms=wall_ms - 1_000,
+            expires_at_ms=wall_ms + 600_000,
+            nonce=seed("distributed-cli-target-request"),
+        )
+        request_path = root / "request.json"
+        request_path.write_bytes(canonical_bytes(request))
+        request_path.chmod(0o600)
+        authorization_intent_path = root / "authorization-intent.json"
+        result = self._invoke_rebirth_cli(
+            [
+                "create-recovery-authorization-intent",
+                "--authority",
+                str(authority_path),
+                "--recovery",
+                str(recovery_path),
+                "--request",
+                str(request_path),
+                "--output",
+                str(authorization_intent_path),
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+        authorization_share_paths: list[Path] = []
+        for index, (holder, password) in enumerate(
+            zip(root_holders[:2], root_passwords[:2], strict=True)
+        ):
+            share_path = root / f"authorization-share-{index}.json"
+            result = self._invoke_rebirth_cli(
+                [
+                    "recovery-authorization-share",
+                    "--authority",
+                    str(authority_path),
+                    "--recovery",
+                    str(recovery_path),
+                    "--request",
+                    str(request_path),
+                    "--intent",
+                    str(authorization_intent_path),
+                    "--holder",
+                    str(holder),
+                    "--password-fd",
+                    "{password}",
+                    "--output",
+                    str(share_path),
+                ],
+                {"{password}": password},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            authorization_share_paths.append(share_path)
+
+        activation_path = root / "activation.json"
+        arguments = [
+            "aggregate-recovery-authorization",
+            "--authority",
+            str(authority_path),
+            "--recovery",
+            str(recovery_path),
+            "--request",
+            str(request_path),
+            "--intent",
+            str(authorization_intent_path),
+            "--output",
+            str(activation_path),
+        ]
+        for share_path in authorization_share_paths:
+            arguments.extend(["--share", str(share_path)])
+        result = self._invoke_rebirth_cli(arguments)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        retry = self._invoke_rebirth_cli(arguments)
+        self.assertEqual(retry.returncode, 0, retry.stderr.decode())
+        activation = json.loads(activation_path.read_bytes())
+        validate_recovery_activation(activation, self.authority, request=request)
+
+        public_paths = [
+            *descriptors,
+            intent_path,
+            *recovery_share_paths,
+            recovery_path,
+            request_path,
+            authorization_intent_path,
+            *authorization_share_paths,
+            activation_path,
+        ]
+        public_exchange = b"".join(path.read_bytes() for path in public_paths)
+        for private_seed in recovery_seeds:
+            self.assertNotIn(private_seed, public_exchange)
+        for holder in (*recovery_holders, *root_holders):
+            self.assertNotIn(str(holder).encode(), result.stdout)
+
+    def test_synthetic_recovery_cli_runs_each_stage_in_a_distinct_process(self) -> None:
         root = self.root_path / "recovery-cli"
         root.mkdir(mode=0o700)
         authority_path = root / "authority.json"
@@ -1031,7 +1534,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
 
         recovered = invoke(
             [
-                "recover",
+                "synthetic-single-store-recover",
                 "--authority",
                 str(authority_path),
                 "--root-custody",
@@ -1068,7 +1571,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         activation_path = root / "activation.json"
         authorized = invoke(
             [
-                "authorize-recovery",
+                "synthetic-single-store-authorize-recovery",
                 "--authority",
                 str(authority_path),
                 "--recovery",
