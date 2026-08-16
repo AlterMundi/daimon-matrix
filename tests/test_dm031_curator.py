@@ -593,6 +593,8 @@ class CuratorCoordinatorTests(RootLedgerFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: self.now[0],
+            "dm:runtime:v1:" + "a" * 43,
+            "curator",
             curator=coordinator,
         )
 

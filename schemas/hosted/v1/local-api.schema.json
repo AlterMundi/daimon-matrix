@@ -320,12 +320,13 @@
     },
     "response": {
       "type": "object", "additionalProperties": false,
-      "required": ["schema", "request_id", "request_hash", "server", "completed_at_ms", "ok", "result", "error", "auth"],
+      "required": ["schema", "request_id", "request_hash", "server", "runtime", "completed_at_ms", "ok", "result", "error", "auth"],
       "properties": {
         "schema": {"const": "dm.local.response/v1"},
         "request_id": {"type": "string", "format": "uuid"},
         "request_hash": {"$ref": "#/$defs/hash"},
         "server": {"$ref": "#/$defs/origin"},
+        "runtime": {"$ref": "#/$defs/runtimeIdentity"},
         "completed_at_ms": {"$ref": "#/$defs/uint"},
         "ok": {"type": "boolean"},
         "result": {"anyOf": [{"type": "null"}, {"type": "object"}]},
@@ -345,6 +346,14 @@
         "embodiment_id": {"type": "string"},
         "incarnation_id": {"type": "string"},
         "principal_id": {"type": "string"}
+      }
+    },
+    "runtimeIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtime_id", "runtime_label"],
+      "properties": {
+        "runtime_id": {"type": "string", "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"},
+        "runtime_label": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
       }
     },
     "error": {

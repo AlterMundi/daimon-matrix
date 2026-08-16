@@ -362,6 +362,10 @@ class LocalClient:
                 expected_request_id=str(normalized["request_id"]),
                 expected_request_hash=digest,
                 expected_server=self.config.expected_server,
+                expected_runtime={
+                    "runtime_id": self.config.runtime_id,
+                    "runtime_label": self.config.runtime_label,
+                },
             )
         except (KeyError, LocalApiError) as exception:
             raise ClientError("daemon_response_rejected") from exception

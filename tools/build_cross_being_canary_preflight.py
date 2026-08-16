@@ -346,7 +346,9 @@ def validate_plan(value: Any) -> dict[str, Any]:
     return dict(plan)
 
 
-def _open_real_parent(path: Path, reason: str) -> tuple[int, str]:
+def _open_real_parent(
+    path: Path, reason: str, *, require_owner_only: bool = False
+) -> tuple[int, str]:
     parent = path.parent
     name = path.name
     if not name or name in {".", ".."}:
@@ -367,7 +369,10 @@ def _open_real_parent(path: Path, reason: str) -> tuple[int, str]:
     except OSError as exception:
         raise PreflightError(reason) from exception
     opened = os.fstat(descriptor)
-    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+    if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or (
+        require_owner_only
+        and (opened.st_uid != os.geteuid() or stat.S_IMODE(opened.st_mode) != 0o700)
+    ):
         os.close(descriptor)
         raise PreflightError(reason)
     return descriptor, name
@@ -433,15 +438,18 @@ def _read_owner_only_canonical(path: Path) -> tuple[dict[str, Any], bytes]:
 
 def _write_new_owner_only(path: Path, raw: bytes) -> None:
     parent_descriptor, name = _open_real_parent(
-        path, "output_parent_must_be_real_directory"
+        path,
+        "output_parent_must_be_real_directory",
+        require_owner_only=True,
     )
     no_follow = getattr(os, "O_NOFOLLOW", None)
     if not isinstance(no_follow, int):
         os.close(parent_descriptor)
         raise PreflightError("platform_lacks_no_symlink_io")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | no_follow
     descriptor: int | None = None
     created = False
+    opened: os.stat_result | None = None
     try:
         try:
             descriptor = os.open(name, flags, 0o600, dir_fd=parent_descriptor)
@@ -450,6 +458,14 @@ def _write_new_owner_only(path: Path, raw: bytes) -> None:
             raise PreflightError("output_must_not_exist") from exception
         try:
             os.fchmod(descriptor, 0o600)
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or stat.S_IMODE(opened.st_mode) != 0o600
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
+            ):
+                raise PreflightError("output_file_untrusted")
             view = memoryview(raw)
             while view:
                 written = os.write(descriptor, view)
@@ -457,17 +473,46 @@ def _write_new_owner_only(path: Path, raw: bytes) -> None:
                     raise PreflightError("output_write_failed")
                 view = view[written:]
             os.fsync(descriptor)
+            after = os.fstat(descriptor)
+            named = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+            stable_fields = ("st_dev", "st_ino", "st_size", "st_nlink")
+            if (
+                any(
+                    getattr(after, field) != getattr(named, field)
+                    for field in stable_fields
+                )
+                or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+                or after.st_size != len(raw)
+                or after.st_nlink != 1
+                or stat.S_IMODE(after.st_mode) != 0o600
+                or after.st_uid != os.geteuid()
+            ):
+                raise PreflightError("output_changed_during_write")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            if os.read(descriptor, len(raw) + 1) != raw:
+                raise PreflightError("output_changed_during_write")
+            os.fsync(parent_descriptor)
+            final_named = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+            if any(
+                getattr(after, field) != getattr(final_named, field)
+                for field in stable_fields
+            ):
+                raise PreflightError("output_changed_during_write")
         finally:
-            closing_descriptor = descriptor
-            descriptor = None
-            os.close(closing_descriptor)
-        os.fsync(parent_descriptor)
+            if descriptor is not None:
+                os.close(descriptor)
+                descriptor = None
     except BaseException:
         if descriptor is not None:
             os.close(descriptor)
         if created:
             with contextlib.suppress(OSError):
-                os.unlink(name, dir_fd=parent_descriptor)
+                current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+                if opened is not None and (current.st_dev, current.st_ino) == (
+                    opened.st_dev,
+                    opened.st_ino,
+                ):
+                    os.unlink(name, dir_fd=parent_descriptor)
         raise
     finally:
         os.close(parent_descriptor)

@@ -27,6 +27,8 @@ MAX_CAPABILITY_METHODS: Final = 128
 
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9._@:-]{1,128}$")
 _METHOD = re.compile(r"^[a-z][a-z0-9.-]{0,127}$")
+_RUNTIME_ID = re.compile(r"^dm:runtime:v1:[A-Za-z0-9_-]{43}$")
+_RUNTIME_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class LocalApiError(ValueError):
@@ -69,6 +71,20 @@ def _hash(value: Any, error: str) -> str:
     ):
         raise LocalApiError(error)
     return value
+
+
+def _runtime_identity(value: Any, error: str) -> Mapping[str, str]:
+    identity = _closed(value, {"runtime_id", "runtime_label"}, error)
+    runtime_id = identity["runtime_id"]
+    runtime_label = identity["runtime_label"]
+    if (
+        not isinstance(runtime_id, str)
+        or _RUNTIME_ID.fullmatch(runtime_id) is None
+        or not isinstance(runtime_label, str)
+        or _RUNTIME_LABEL.fullmatch(runtime_label) is None
+    ):
+        raise LocalApiError(error)
+    return cast(Mapping[str, str], identity)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -348,6 +364,7 @@ def create_response(
     request_id: str,
     request_digest: str,
     server: Mapping[str, str],
+    runtime: Mapping[str, str],
     completed_at_ms: int,
     result: Mapping[str, Any] | None = None,
     error: Mapping[str, Any] | None = None,
@@ -359,6 +376,7 @@ def create_response(
         "request_id": request_id,
         "request_hash": request_digest,
         "server": copy.deepcopy(dict(server)),
+        "runtime": copy.deepcopy(dict(runtime)),
         "completed_at_ms": completed_at_ms,
         "ok": error is None,
         "result": None if result is None else copy.deepcopy(dict(result)),
@@ -380,6 +398,7 @@ def create_response(
         expected_request_id=request_id,
         expected_request_hash=request_digest,
         expected_server=server,
+        expected_runtime=runtime,
     )
     return response
 
@@ -391,6 +410,7 @@ def verify_response(
     expected_request_id: str,
     expected_request_hash: str,
     expected_server: Mapping[str, str],
+    expected_runtime: Mapping[str, str],
 ) -> dict[str, Any]:
     response = _closed(
         value,
@@ -402,6 +422,7 @@ def verify_response(
             "request_hash",
             "request_id",
             "result",
+            "runtime",
             "schema",
             "server",
         },
@@ -412,10 +433,15 @@ def verify_response(
     _uuid(response["request_id"], "invalid_local_response")
     _hash(response["request_hash"], "invalid_local_response")
     _uint(response["completed_at_ms"], "invalid_local_response")
+    runtime = _runtime_identity(response["runtime"], "invalid_local_response")
+    expected_runtime = _runtime_identity(
+        expected_runtime, "invalid_expected_runtime_identity"
+    )
     if (
         response["request_id"] != expected_request_id
         or response["request_hash"] != expected_request_hash
         or response["server"] != expected_server
+        or runtime != expected_runtime
         or not isinstance(response["ok"], bool)
         or not isinstance(response["server"], Mapping)
         or (response["result"] is None) == (response["error"] is None)

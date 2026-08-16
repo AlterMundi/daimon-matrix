@@ -1179,6 +1179,8 @@ class RelationshipServiceTests(unittest.TestCase):
                 founder.signer,
                 {capability.capability_id: capability},
                 lambda: NOW,
+                "dm:runtime:v1:" + "a" * 43,
+                "relationships",
                 relationships=RelationshipServiceContext(
                     journey.store, journey.card_verifier
                 ),

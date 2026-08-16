@@ -1268,6 +1268,8 @@ def load_runtime(
         signer,
         capabilities,
         clock,
+        runtime_id,
+        runtime_label,
         communication=communication,
         router=router,
         scopes=scopes,

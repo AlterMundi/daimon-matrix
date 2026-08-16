@@ -324,6 +324,10 @@ class RuntimeBundleTests(RuntimeFixture):
             expected_request_id=request["request_id"],
             expected_request_hash=request_hash(request),
             expected_server=self.origins["legion"],
+            expected_runtime={
+                "runtime_id": bundle["runtime_id"],
+                "runtime_label": bundle["runtime_label"],
+            },
         )
         self.assertEqual(response["result"]["integrity"], "ok")
         public = canonical_bytes(bundle)
@@ -769,7 +773,7 @@ class UnixDaemonTests(RuntimeFixture):
         self.assertEqual(runtime.socket_path.read_bytes(), b"not a socket")
 
     def test_separate_process_unlocks_only_via_descriptor_without_leak(self) -> None:
-        state_root, _, capability, now_ms = self.make_process_bundle()
+        state_root, bundle, capability, now_ms = self.make_process_bundle()
         password_read, password_write = os.pipe()
         ready_read, ready_write = os.pipe()
         environment = os.environ.copy()
@@ -828,6 +832,10 @@ class UnixDaemonTests(RuntimeFixture):
                 expected_request_id=request["request_id"],
                 expected_request_hash=request_hash(request),
                 expected_server=self.origins["legion"],
+                expected_runtime={
+                    "runtime_id": bundle["runtime_id"],
+                    "runtime_label": bundle["runtime_label"],
+                },
             )
         finally:
             os.close(ready_read)

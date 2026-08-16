@@ -1575,6 +1575,8 @@ class SourceRegistryTests(RootLedgerFixture):
             self.signers["daimonmatrix"],
             {capability.capability_id: capability},
             lambda: NOW,
+            "dm:runtime:v1:" + "b" * 43,
+            "sources",
             sources=SourceServiceContext(self.registry_b),
         )
         request = create_request(

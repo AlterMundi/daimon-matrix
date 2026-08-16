@@ -48,10 +48,20 @@ class HostedServiceTests(RootLedgerFixture):
         )
         capabilities = {self.capability.capability_id: self.capability}
         self.service_a = HostedWeave(
-            self.ledger_a, self.signers["legion"], capabilities, lambda: NOW
+            self.ledger_a,
+            self.signers["legion"],
+            capabilities,
+            lambda: NOW,
+            "dm:runtime:v1:" + "a" * 43,
+            "service-a",
         )
         self.service_b = HostedWeave(
-            self.ledger_b, self.signers["daimonmatrix"], capabilities, lambda: NOW
+            self.ledger_b,
+            self.signers["daimonmatrix"],
+            capabilities,
+            lambda: NOW,
+            "dm:runtime:v1:" + "b" * 43,
+            "service-b",
         )
 
     def request(
@@ -86,6 +96,7 @@ class HostedServiceTests(RootLedgerFixture):
             expected_request_id=request["request_id"],
             expected_request_hash=request_hash(request),
             expected_server=service.origin,
+            expected_runtime=service.runtime_identity,
         )
         return request, response
 
@@ -362,6 +373,8 @@ class HostedServiceTests(RootLedgerFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: now[0],
+            "dm:runtime:v1:" + "a" * 43,
+            "service-a",
         )
         request = create_request(
             capability,

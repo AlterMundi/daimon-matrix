@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from daimon_matrix.canonical import canonical_bytes
 from tools.build_cross_being_canary_preflight import (
@@ -409,6 +410,42 @@ class CrossBeingCanaryFilesystemTests(unittest.TestCase):
         with self.assertRaisesRegex(PreflightError, "must_not_exist"):
             freeze_plan(self.input, self.output)
         self.assertEqual(target.read_text(encoding="utf-8"), "sentinel")
+
+    def test_output_parent_must_be_owner_only(self) -> None:
+        self.write_plan()
+        self.root.chmod(0o755)
+        with self.assertRaisesRegex(PreflightError, "output_parent_must_be_real"):
+            freeze_plan(self.input, self.output)
+        self.assertFalse(self.output.exists())
+
+    def test_output_name_swap_during_sync_fails_without_deleting_replacement(
+        self,
+    ) -> None:
+        self.write_plan()
+        displaced = self.root / "displaced"
+        replacement = b'{"execution_authorized":true}\n'
+        real_fsync = os.fsync
+        calls = 0
+
+        def swapping_fsync(descriptor: int) -> None:
+            nonlocal calls
+            real_fsync(descriptor)
+            calls += 1
+            if calls == 1:
+                self.output.rename(displaced)
+                self.output.write_bytes(replacement)
+                self.output.chmod(0o600)
+
+        with (
+            mock.patch(
+                "tools.build_cross_being_canary_preflight.os.fsync",
+                side_effect=swapping_fsync,
+            ),
+            self.assertRaisesRegex(PreflightError, "output_changed_during_write"),
+        ):
+            freeze_plan(self.input, self.output)
+        self.assertEqual(self.output.read_bytes(), replacement)
+        self.assertTrue(displaced.exists())
 
     def test_cli_reports_success_and_does_not_overwrite(self) -> None:
         self.write_plan()

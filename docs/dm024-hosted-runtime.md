@@ -83,7 +83,10 @@ credentials must name the daemon UID. Each connection carries exactly one
 document is 2 MiB and the read/write deadline is five seconds.
 
 Requests and responses are HMAC-SHA-256 authenticated with distinct domain
-separators. Capabilities bind a client, exact method set and validity interval.
+separators. Every response also carries the exact V7 runtime ID and label inside
+that authenticated envelope; a V3 client rejects a correctly signed response
+from a differently bound runtime. Capabilities bind a client, exact method set
+and validity interval.
 Authentication, expiry, peer UID and method scope are checked before params or
 runtime membership are disclosed. Unauthenticated framing/auth failures close
 without a response. Authenticated failures use stable bounded codes.

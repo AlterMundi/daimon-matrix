@@ -18,7 +18,9 @@ read. The
 from the mutable input buffer.
 
 Each call sends one bounded canonical DM-024 frame and verifies the response
-HMAC, request ID/hash and server origin. For a durable retry, `daimon
+HMAC, request ID/hash, server origin and exact V3 runtime ID/label. Config fields
+that are merely well formed but do not match the serving runtime therefore fail
+closed on the authenticated response. For a durable retry, `daimon
 --request-file PATH` creates a `0600` request token without replacement and
 reuses its exact authenticated bytes. MCP write/sync tools accept an optional
 `operation_id`; supplying the same UUID reuses the same owner-only token under

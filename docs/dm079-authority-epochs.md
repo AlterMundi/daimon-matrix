@@ -47,8 +47,10 @@ V6 were never deployed and are rejected; there is no compatibility or downgrade
 path.
 
 Owner-local clients use config V3 and accept only the current expected server
-and runtime identity. Responses from retired incarnations fail closed; callers
-must retry against the current incarnation.
+and runtime identity. Both are repeated inside every authenticated response;
+well-formed but substituted config identity fields therefore cannot be dead
+metadata. Responses from retired incarnations fail closed; callers must retry
+against the current incarnation.
 
 Activated provisional history and root-authority history are deliberately
 separate mechanisms. V7 refuses to combine them in this first profile; the

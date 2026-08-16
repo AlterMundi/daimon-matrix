@@ -97,6 +97,15 @@ class LocalClientTests(ClientFixture):
         config = ClientConfig.load(self.config_path, bytearray(self.capability.key))
         self.assertEqual(config.runtime_id, "dm:runtime:v1:" + "a" * 43)
         self.assertEqual(config.runtime_label, "legion")
+        mismatched = LocalClient(
+            self.runtime.socket_path,
+            config,
+            clock=lambda: NOW,
+            uuid_factory=lambda: uuid.UUID("40000000-0000-4000-8000-000000000099"),
+            nonce_factory=lambda size: b"r" * size,
+        )
+        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
+            mismatched.runtime_status()
 
         invalid = json.loads(self.config_path.read_bytes())
         invalid["runtime_id"] = "dm:runtime:v1:short"

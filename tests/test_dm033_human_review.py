@@ -1359,6 +1359,8 @@ class HumanReviewTests(RootLedgerFixture):
             self.signers["legion"],
             {capability.capability_id: capability},
             lambda: NOW,
+            "dm:runtime:v1:" + "a" * 43,
+            "review",
         )
 
         def invoke(
