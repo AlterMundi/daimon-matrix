@@ -73,6 +73,7 @@ from .operator_capabilities import (
     OperatorCapabilityError,
     create_operator_capability_set,
     operator_capability_lifecycle,
+    operator_capability_profile,
     validate_operator_capability_set,
 )
 from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
@@ -2253,7 +2254,7 @@ def _activate_target_runtime(
         staging.chmod(0o700)
         runtime_root = staging / "runtime"
         runtime_root.mkdir(mode=0o700)
-        operator_clients = staging / "operator-clients"
+        operator_clients = runtime_root / "operator-clients"
         operator_clients.mkdir(mode=0o700)
         slots = verified_preparation["slots"]
         capabilities = verified_preparation["capabilities"]
@@ -2281,6 +2282,7 @@ def _activate_target_runtime(
         bundle["capabilities"] = [
             {
                 "descriptor": capabilities[profile_name],
+                "profile": operator_capability_profile(profile_name),
                 "secret_slot": slots["operator_capabilities"][profile_name],
             }
             for profile_name in OPERATOR_PROFILE_NAMES
@@ -2921,7 +2923,7 @@ def create_replacement_root_holder(
     target = Path(os.path.abspath(output))
     parent = _owner_directory(target.parent, "rebirth_holder_parent_rejected")
     if target.exists() or target.is_symlink():
-        raise RebirthError("rebirth_holder_exists")
+        return _validated_existing_replacement_holder(target, previous, password_reader)
     holder_seed = generate_ed25519_seed()
     descriptor = signing_descriptor(holder_seed)
     receipt = {
@@ -2999,6 +3001,7 @@ def _single_holder_seed(
                 or not isinstance(row["key"], Mapping)
             ):
                 raise RebirthError(code)
+            exact_slot = "root.signing.v1:holder"
             expected_descriptor = row["key"]
         target = path / "holder.json"
     try:
@@ -3022,6 +3025,41 @@ def _single_holder_seed(
     ):
         raise RebirthError(code)
     return holder_seed
+
+
+def _validated_existing_replacement_holder(
+    target: Path,
+    previous: RootAuthority,
+    password_reader: PasswordReader,
+) -> dict[str, Any]:
+    """Recover a replacement-holder receipt committed before process death."""
+
+    try:
+        _owner_directory(target, "rebirth_holder_conflict")
+        if {path.name for path in target.iterdir()} != {
+            ".holder.json.highwater",
+            ".holder.json.lock",
+            "descriptor.json",
+            "holder.json",
+        }:
+            raise RebirthError("rebirth_holder_conflict")
+        descriptor = _closed(
+            _safe_document(target / "descriptor.json", "rebirth_holder_conflict"),
+            {"being_ref", "custody_control_head", "key", "schema"},
+            "rebirth_holder_conflict",
+        )
+        _single_holder_seed(
+            target,
+            previous,
+            password_reader,
+            allowed_prefixes=("root.signing.v1:",),
+            code="rebirth_holder_conflict",
+        )
+        return copy.deepcopy(dict(descriptor))
+    except RebirthError:
+        raise
+    except (OSError, TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_holder_conflict") from exception
 
 
 def create_distributed_recovery_share_from_holder(

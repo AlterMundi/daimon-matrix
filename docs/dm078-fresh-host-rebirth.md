@@ -121,14 +121,44 @@ against the old control chain. The artifact must revoke the complete set of old
 active embodiment IDs and install a fresh root threshold. No operational body
 is active in that intermediate control state.
 
-Four descriptor-only commands keep the custody roles separate:
+The public distributed ceremony keeps every custody role separate. Repeat the
+holder/share commands once per required participant; the abbreviated paths
+below show one recovery holder and one replacement-root holder:
 
 ```bash
-daimon-rebirth recover \
+daimon-rebirth create-replacement-root-holder \
   --authority /public/old-authority.json \
-  --root-custody /offline/old-root-custody.json \
-  --current-password-fd 3 --replacement-password-fd 4 \
-  --output /offline/recovery 3</offline/old-password 4</offline/new-password
+  --password-fd 3 \
+  --output /holders/new-root-a 3</holders/new-root-a.password
+
+daimon-rebirth create-recovery-intent \
+  --authority /public/old-authority.json \
+  --holder-descriptor /holders/recovery-a/descriptor.json \
+  --holder-descriptor /holders/new-root-a/descriptor.json \
+  --threshold 2 \
+  --output /public/recovery-intent.json
+
+daimon-rebirth recovery-share \
+  --authority /public/old-authority.json \
+  --intent /public/recovery-intent.json \
+  --holder /holders/recovery-a \
+  --password-fd 3 \
+  --output /public/recovery-a.share.json 3</holders/recovery-a.password
+
+daimon-rebirth recovery-share \
+  --authority /public/old-authority.json \
+  --intent /public/recovery-intent.json \
+  --holder /holders/new-root-a \
+  --password-fd 3 \
+  --output /public/new-root-a.possession-share.json \
+  3</holders/new-root-a.password
+
+daimon-rebirth aggregate-recovery \
+  --authority /public/old-authority.json \
+  --intent /public/recovery-intent.json \
+  --share /public/recovery-a.share.json \
+  --share /public/new-root-a.possession-share.json \
+  --output /public/recovery-artifact.json
 
 daimon-rebirth prepare-recovery \
   --authority /public/old-authority.json \
@@ -137,13 +167,29 @@ daimon-rebirth prepare-recovery \
   --output /target/recovery-preparation \
   --password-fd 3 3</target/password
 
-daimon-rebirth authorize-recovery \
+daimon-rebirth create-recovery-authorization-intent \
   --authority /public/old-authority.json \
   --recovery /public/recovery-artifact.json \
   --request /public/recovery-enrollment-request.json \
-  --recovered-root-custody /offline/recovery/recovered-root-custody.json \
-  --root-password-fd 3 --output /public/recovery-activation.json \
-  3</offline/new-password
+  --output /public/recovery-authorization-intent.json
+
+daimon-rebirth recovery-authorization-share \
+  --authority /public/old-authority.json \
+  --recovery /public/recovery-artifact.json \
+  --request /public/recovery-enrollment-request.json \
+  --intent /public/recovery-authorization-intent.json \
+  --holder /holders/new-root-a \
+  --password-fd 3 \
+  --output /public/new-root-a.authorization-share.json \
+  3</holders/new-root-a.password
+
+daimon-rebirth aggregate-recovery-authorization \
+  --authority /public/old-authority.json \
+  --recovery /public/recovery-artifact.json \
+  --request /public/recovery-enrollment-request.json \
+  --intent /public/recovery-authorization-intent.json \
+  --share /public/new-root-a.authorization-share.json \
+  --output /public/recovery-activation.json
 
 daimon-rebirth activate-recovery \
   --base-runtime /public/old-runtime.json \
@@ -154,13 +200,14 @@ daimon-rebirth activate-recovery \
   --password-fd 3 3</target/password
 ```
 
-`recover` consumes offline custody containing the old root and recovery roles.
-Its replacement custody retains the recovery seeds and fresh replacement root
-seeds, but drops every old root seed. Target preparation happens only after the
-public recovery artifact verifies. The activation binds the recovery artifact,
-old and new control heads, old and successor manifests, the full revocation
-set, and the fresh body's credential, incarnation and peer principal. It is
-signed by the new root threshold.
+Each old recovery holder and each new root holder opens only its own package.
+The intent and both aggregators are keyless; no process or store owns a quorum
+of seeds. Target preparation happens only after the public recovery artifact
+verifies. The activation binds the recovery artifact, old and new control
+heads, old and successor manifests, the full revocation set, and the fresh
+body's credential, incarnation and peer principal. It is signed by independent
+shares from the new root threshold. The `synthetic-single-store-*` commands are
+fixtures only and are deliberately absent from this operational procedure.
 
 The recovered V7 bundle has only the fresh embodiment active and therefore may
 have an empty peer target list. Its `authority_history` carries a self-contained

@@ -13,6 +13,7 @@ from .service import OPERATOR_CAPABILITY_PROFILES
 OPERATOR_CAPABILITY_TTL_MS: Final = 30 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_REPROVISION_LEAD_MS: Final = 7 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_NOT_BEFORE_SKEW_MS: Final = 60_000
+OPERATOR_CAPABILITY_PROFILE_SCHEMA: Final = "dm.operator.capability-profile/v1"
 OPERATOR_PROFILE_NAMES: Final = tuple(sorted(OPERATOR_CAPABILITY_PROFILES))
 OBSERVE_PROFILE: Final = "observe"
 
@@ -21,6 +22,21 @@ _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 class OperatorCapabilityError(ValueError):
     """An operator capability set is incomplete, regrouped, or stale."""
+
+
+def operator_capability_profile(profile: str) -> dict[str, str]:
+    """Return the exact runtime/client placement metadata for one role."""
+
+    if profile not in OPERATOR_CAPABILITY_PROFILES:
+        raise OperatorCapabilityError("invalid_operator_capability_identity")
+    observe = profile == OBSERVE_PROFILE
+    return {
+        "schema": OPERATOR_CAPABILITY_PROFILE_SCHEMA,
+        "role": profile,
+        "client_directory": "." if observe else f"operator-clients/{profile}",
+        "client_config_filename": "client.json",
+        "client_key_filename": "client.key" if observe else "capability.key",
+    }
 
 
 def operator_capability_slot(label: str, profile: str) -> str:
@@ -138,12 +154,14 @@ def validate_operator_capability_set(
 __all__ = [
     "OBSERVE_PROFILE",
     "OPERATOR_CAPABILITY_NOT_BEFORE_SKEW_MS",
+    "OPERATOR_CAPABILITY_PROFILE_SCHEMA",
     "OPERATOR_CAPABILITY_REPROVISION_LEAD_MS",
     "OPERATOR_CAPABILITY_TTL_MS",
     "OPERATOR_PROFILE_NAMES",
     "OperatorCapabilityError",
     "create_operator_capability_set",
     "operator_capability_lifecycle",
+    "operator_capability_profile",
     "operator_capability_slot",
     "validate_operator_capability_set",
 ]

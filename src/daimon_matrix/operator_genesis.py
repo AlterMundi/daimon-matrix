@@ -141,6 +141,48 @@ def _reader(password: bytearray) -> Callable[[], bytearray]:
     return lambda: bytearray(password)
 
 
+def _validated_existing_holder(
+    target: Path,
+    role: Literal["root", "recovery"],
+    password_reader: Callable[[], bytes | bytearray],
+) -> dict[str, Any]:
+    """Recover the receipt after a process died following the final rename."""
+
+    try:
+        _owner_directory(target, "genesis_holder_conflict")
+        if {path.name for path in target.iterdir()} != {
+            ".holder.json.highwater",
+            ".holder.json.lock",
+            "descriptor.json",
+            "holder.json",
+        }:
+            raise GenesisError("genesis_holder_conflict")
+        descriptor = _document(target / "descriptor.json", "genesis_holder_conflict")
+        if (
+            not isinstance(descriptor, Mapping)
+            or set(descriptor) != {"key", "role", "schema"}
+            or descriptor["schema"] != HOLDER_SCHEMA
+            or descriptor["role"] != role
+            or not isinstance(descriptor["key"], Mapping)
+        ):
+            raise GenesisError("genesis_holder_conflict")
+        contents = EncryptedKeystore(target / "holder.json").open(
+            password_reader,
+            minimum_counter=1,
+            required_control_head=PENDING_CONTROL_HEAD,
+        )
+        expected_slot = f"genesis.{role}.v1:holder"
+        if set(contents.secrets) != {expected_slot}:
+            raise GenesisError("genesis_holder_conflict")
+        if signing_descriptor(contents.secrets[expected_slot]) != descriptor["key"]:
+            raise GenesisError("genesis_holder_conflict")
+        return copy.deepcopy(dict(descriptor))
+    except GenesisError:
+        raise
+    except (KeystoreError, OSError, TypeError, ValueError) as exception:
+        raise GenesisError("genesis_holder_conflict") from exception
+
+
 def create_holder_package(
     output: Path,
     role: Literal["root", "recovery"],
@@ -153,7 +195,7 @@ def create_holder_package(
     target = Path(os.path.abspath(output))
     parent = _owner_directory(target.parent, "genesis_holder_parent_rejected")
     if target.exists() or target.is_symlink():
-        raise GenesisError("genesis_holder_exists")
+        return _validated_existing_holder(target, role, password_reader)
     seed = generate_ed25519_seed()
     descriptor = {
         "schema": HOLDER_SCHEMA,

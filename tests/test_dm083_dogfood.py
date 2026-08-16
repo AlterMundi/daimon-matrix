@@ -19,7 +19,12 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.daemon import _bind_private_socket, create_peer_http_server
-from daimon_matrix.local_api import LocalApiError, LocalCapability, create_request
+from daimon_matrix.local_api import (
+    LocalApiError,
+    LocalCapability,
+    create_capability,
+    create_request,
+)
 from daimon_matrix.operator_bootstrap import (
     PROFILE_SCHEMA,
     BootstrapError,
@@ -32,7 +37,7 @@ from daimon_matrix.operator_capabilities import (
 )
 from daimon_matrix.runtime import RuntimeError as MatrixRuntimeError
 from daimon_matrix.runtime import load_runtime
-from daimon_matrix.service import OPERATOR_CAPABILITY_PROFILES
+from daimon_matrix.service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS
 
 
 class DM083SocketPublicationTests(unittest.TestCase):
@@ -214,13 +219,13 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     status_config["expected_server"], bundle["local_origin"]
                 )
                 self.assertEqual(
-                    len(list((output / "operator-clients" / label).iterdir())),
+                    len(list((state_root / "operator-clients").iterdir())),
                     len(OPERATOR_PROFILE_NAMES) - 1,
                 )
                 for role in OPERATOR_PROFILE_NAMES:
                     if role == OBSERVE_PROFILE:
                         continue
-                    role_root = output / "operator-clients" / label / role
+                    role_root = state_root / "operator-clients" / role
                     self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)
                     self.assertEqual(
                         (role_root / "client.json").stat().st_mode & 0o777,
@@ -243,6 +248,33 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
             invalid_bundle = copy.deepcopy(
                 json.loads((output / "runtimes/legion/runtime.json").read_bytes())
             )
+            regrouped = copy.deepcopy(invalid_bundle)
+            observe_row = next(
+                row
+                for row in regrouped["capabilities"]
+                if row["profile"]["role"] == OBSERVE_PROFILE
+            )
+            observe_descriptor = observe_row["descriptor"]
+            observe_row["descriptor"] = create_capability(
+                (output / "runtimes/legion/client.key").read_bytes(),
+                client_id=observe_descriptor["client_id"],
+                methods=sorted(SERVICE_METHODS),
+                not_before_ms=observe_descriptor["not_before_ms"],
+                not_after_ms=observe_descriptor["not_after_ms"],
+            ).descriptor
+            regrouped_path = output / "runtimes/legion/runtime-regrouped.json"
+            regrouped_path.write_bytes(canonical_bytes(regrouped))
+            regrouped_path.chmod(0o600)
+            with self.assertRaisesRegex(
+                MatrixRuntimeError, "invalid_operator_capability_profile"
+            ):
+                load_runtime(
+                    output / "runtimes/legion",
+                    regrouped_path.name,
+                    _runtime_password_reader(password_legion),
+                    clock=lambda: time.time_ns() // 1_000_000,
+                )
+
             target = invalid_bundle["peer_transport"]["targets"][0]
             invalid_bundle["peer_transport"]["targets"] = [
                 {**target, "embodiment_id": "z-unsorted"},
@@ -328,11 +360,13 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     LocalCapability.from_value(
                         json.loads(
                             (
-                                output / "operator-clients/legion/weave/client.json"
+                                output
+                                / "runtimes/legion/operator-clients/weave/client.json"
                             ).read_bytes()
                         )["capability"],
                         (
-                            output / "operator-clients/legion/weave/capability.key"
+                            output
+                            / "runtimes/legion/operator-clients/weave/capability.key"
                         ).read_bytes(),
                     ),
                     request_id=str(uuid.uuid4()),

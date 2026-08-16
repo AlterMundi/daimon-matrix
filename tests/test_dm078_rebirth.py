@@ -550,11 +550,11 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         default_client = json.loads((runtime_root / "client.json").read_bytes())
         self.assertEqual(default_client["capability"], capabilities[OBSERVE_PROFILE])
         self.assertEqual(
-            {path.name for path in (root / "package/operator-clients").iterdir()},
+            {path.name for path in (runtime_root / "operator-clients").iterdir()},
             set(OPERATOR_PROFILE_NAMES) - {OBSERVE_PROFILE},
         )
         for profile in set(OPERATOR_PROFILE_NAMES) - {OBSERVE_PROFILE}:
-            role_root = root / "package/operator-clients" / profile
+            role_root = runtime_root / "operator-clients" / profile
             role_config = json.loads((role_root / "client.json").read_bytes())
             self.assertEqual(role_config["capability"], capabilities[profile])
             self.assertEqual(role_root.stat().st_mode & 0o777, 0o700)

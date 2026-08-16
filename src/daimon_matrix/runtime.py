@@ -14,6 +14,7 @@ from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, canonical_bytes, unb64url
+from .client import CLIENT_CONFIG_SCHEMA
 from .cluster import FenceVerifier
 from .communication import CommunicationStore
 from .curator import CuratorCoordinator, EffectTruthObserver
@@ -27,6 +28,12 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .operator_capabilities import (
+    OPERATOR_PROFILE_NAMES,
+    OperatorCapabilityError,
+    operator_capability_profile,
+    operator_capability_slot,
+)
 from .peer_transport import (
     KeystorePeerCustody,
     PeerClient,
@@ -60,7 +67,7 @@ from .routes import (
 )
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import RecipientTarget
-from .service import SERVICE_METHODS, HostedWeave
+from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
@@ -182,6 +189,32 @@ def _read_bundle(path: Path) -> Mapping[str, Any]:
         return value
     except (CanonicalError, UnicodeDecodeError, json.JSONDecodeError) as exception:
         raise RuntimeError("invalid_runtime_bundle") from exception
+
+
+def _read_private_bytes(path: Path, *, expected_size: int) -> bytes:
+    """Read one owner-only regular file through a stable descriptor."""
+
+    try:
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            after = os.fstat(descriptor)
+            if (
+                (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                or not stat.S_ISREG(after.st_mode)
+                or after.st_uid != os.geteuid()
+                or stat.S_IMODE(after.st_mode) & 0o077
+                or after.st_size != expected_size
+            ):
+                raise RuntimeError("runtime_file_not_owner_only")
+            raw = os.read(descriptor, expected_size + 1)
+        finally:
+            os.close(descriptor)
+    except OSError as exception:
+        raise RuntimeError("runtime_file_not_owner_only") from exception
+    if len(raw) != expected_size:
+        raise RuntimeError("invalid_runtime_client_key")
+    return raw
 
 
 def _indexed(values: Any) -> dict[str, Mapping[str, Any]]:
@@ -476,9 +509,17 @@ def load_runtime(
         raise RuntimeError("runtime_requires_capability")
     required_slots = {signing_slot}
     capabilities: dict[str, LocalCapability] = {}
+    operator_clients: dict[str, tuple[LocalCapability, bytes, Mapping[str, Any]]] = {}
     capabilities_observed_at_ms = clock()
     for row in capability_rows:
-        value = _closed(row, {"descriptor", "secret_slot"})
+        value = _closed(
+            row,
+            (
+                {"descriptor", "profile", "secret_slot"}
+                if schema == BUNDLE_SCHEMA_V7
+                else {"descriptor", "secret_slot"}
+            ),
+        )
         slot = value["secret_slot"]
         if not isinstance(slot, str) or not slot.startswith("runtime.capability.v1:"):
             raise RuntimeError("invalid_capability_slot")
@@ -501,7 +542,72 @@ def load_runtime(
             < capability.descriptor["not_after_ms"]
         ):
             raise RuntimeError("runtime_capability_not_active")
+        if schema == BUNDLE_SCHEMA_V7:
+            profile_value = value["profile"]
+            if not isinstance(profile_value, Mapping):
+                raise RuntimeError("invalid_operator_capability_profile")
+            role = profile_value.get("role")
+            if not isinstance(role, str) or role not in OPERATOR_CAPABILITY_PROFILES:
+                raise RuntimeError("invalid_operator_capability_profile")
+            try:
+                expected_profile = operator_capability_profile(role)
+                prefix = "client:operator:"
+                suffix = f":{role}"
+                if not capability.client_id.startswith(
+                    prefix
+                ) or not capability.client_id.endswith(suffix):
+                    raise OperatorCapabilityError(
+                        "invalid_operator_capability_identity"
+                    )
+                label = capability.client_id[len(prefix) : -len(suffix)]
+                expected_slot = operator_capability_slot(label, role)
+            except OperatorCapabilityError as exception:
+                raise RuntimeError("invalid_operator_capability_profile") from exception
+            if (
+                dict(profile_value) != expected_profile
+                or slot != expected_slot
+                or frozenset(capability.methods) != OPERATOR_CAPABILITY_PROFILES[role]
+                or role in operator_clients
+            ):
+                raise RuntimeError("invalid_operator_capability_profile")
+            operator_clients[role] = (capability, key, profile_value)
         capabilities[capability.capability_id] = capability
+
+    if schema == BUNDLE_SCHEMA_V7:
+        if set(operator_clients) != set(OPERATOR_PROFILE_NAMES) or len(
+            {capability.key_id for capability, _, _ in operator_clients.values()}
+        ) != len(OPERATOR_PROFILE_NAMES):
+            raise RuntimeError("invalid_operator_capability_profile")
+        for role in OPERATOR_PROFILE_NAMES:
+            capability, key, profile_value = operator_clients[role]
+            if profile_value["client_directory"] == ".":
+                client_root = root
+            else:
+                clients_root = root / "operator-clients"
+                _owner_directory(clients_root)
+                client_root = clients_root / role
+                _owner_directory(client_root)
+            config_path = _safe_file(
+                client_root,
+                profile_value["client_config_filename"],
+                must_exist=True,
+            )
+            key_path = _safe_file(
+                client_root,
+                profile_value["client_key_filename"],
+                must_exist=True,
+            )
+            config = _closed(
+                _read_bundle(config_path),
+                {"capability", "expected_server", "schema"},
+            )
+            if (
+                config["schema"] != CLIENT_CONFIG_SCHEMA
+                or config["capability"] != capability.descriptor
+                or config["expected_server"] != local_origin
+                or _read_private_bytes(key_path, expected_size=32) != key
+            ):
+                raise RuntimeError("runtime_operator_client_mismatch")
 
     route_profile: RouteProfile | None = None
     route_rows: list[tuple[RouteBinding, Mapping[str, Any], bytes]] = []

@@ -132,11 +132,68 @@
         "additionalProperties": false,
         "required": [
           "descriptor",
+          "profile",
           "secret_slot"
         ],
         "properties": {
           "descriptor": {
             "type": "object"
+          },
+          "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "client_config_filename",
+              "client_directory",
+              "client_key_filename",
+              "role",
+              "schema"
+            ],
+            "properties": {
+              "client_config_filename": {
+                "const": "client.json"
+              },
+              "client_directory": {
+                "type": "string",
+                "enum": [
+                  ".",
+                  "operator-clients/communication",
+                  "operator-clients/curator",
+                  "operator-clients/memory",
+                  "operator-clients/relationships",
+                  "operator-clients/review",
+                  "operator-clients/routes",
+                  "operator-clients/sources",
+                  "operator-clients/species",
+                  "operator-clients/weave"
+                ]
+              },
+              "client_key_filename": {
+                "type": "string",
+                "enum": [
+                  "capability.key",
+                  "client.key"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "communication",
+                  "curator",
+                  "memory",
+                  "observe",
+                  "relationships",
+                  "review",
+                  "routes",
+                  "sources",
+                  "species",
+                  "weave"
+                ]
+              },
+              "schema": {
+                "const": "dm.operator.capability-profile/v1"
+              }
+            }
           },
           "secret_slot": {
             "type": "string",

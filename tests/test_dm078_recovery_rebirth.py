@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,6 +25,7 @@ from daimon_matrix.authority_epochs import (
     verify_recovery_rebirth,
 )
 from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
 from daimon_matrix.identity import (
     create_embodiment_credential,
     create_incarnation_authorization,
@@ -38,7 +41,12 @@ from daimon_matrix.identity import (
 )
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
-from daimon_matrix.local_api import create_capability
+from daimon_matrix.operator_capabilities import (
+    OBSERVE_PROFILE,
+    OPERATOR_PROFILE_NAMES,
+    create_operator_capability_set,
+    operator_capability_profile,
+)
 from daimon_matrix.operator_genesis import PENDING_CONTROL_HEAD
 from daimon_matrix.operator_rebirth import (
     RebirthError,
@@ -63,6 +71,9 @@ from daimon_matrix.operator_rebirth import (
     validate_enrollment_request,
     validate_recovery_activation,
 )
+from daimon_matrix.operator_rebirth import (
+    parser as rebirth_parser,
+)
 from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.weave import BeingManifest, EventSigner, RootAuthority
@@ -75,6 +86,41 @@ def _test_password_reader(value: bytes) -> Callable[[], bytearray]:
 
 
 class TestRecoveryRebirthAuthority(RootLedgerFixture):
+    def test_documented_rebirth_commands_are_current_public_surface(self) -> None:
+        documentation = (
+            Path(__file__).resolve().parents[1] / "docs/dm078-fresh-host-rebirth.md"
+        ).read_text(encoding="utf-8")
+        documented = set(
+            re.findall(
+                r"^(?:daimon-rebirth|python -m daimon_matrix\.operator_rebirth) "
+                r"([a-z-]+)\s*\\?$",
+                documentation,
+                flags=re.MULTILINE,
+            )
+        )
+        expected = {
+            "activate",
+            "activate-recovery",
+            "aggregate-recovery",
+            "aggregate-recovery-authorization",
+            "authorize",
+            "create-recovery-authorization-intent",
+            "create-recovery-intent",
+            "create-replacement-root-holder",
+            "prepare",
+            "prepare-recovery",
+            "recovery-authorization-share",
+            "recovery-share",
+        }
+        assert documented == expected
+        assert not any(command.startswith("synthetic-") for command in documented)
+        subparsers = next(
+            action
+            for action in rebirth_parser()._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        assert documented <= set(subparsers.choices)
+
     def _authority_document(self) -> dict[str, Any]:
         return {
             "schema": "dm.operator.authority/v1",
@@ -435,18 +481,16 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         runtime_root = self.root_path / "ordinary-then-recovery-runtime"
         runtime_root.mkdir(mode=0o700)
         runtime_password = b"ordinary-then-recovery-password"
-        capability = create_capability(
-            seed("ordinary-then-recovery-capability"),
-            client_id="client:ordinary-then-recovery",
-            methods=["runtime.status"],
-            not_before_ms=NOW,
-            not_after_ms=NOW + 100_000,
+        operator_capabilities, operator_keys, operator_slots = (
+            create_operator_capability_set("ordinary-then-recovery", issued_at_ms=NOW)
         )
         reverse_bundle["capabilities"] = [
             {
-                "descriptor": capability.descriptor,
-                "secret_slot": "runtime.capability.v1:ordinary-then-recovery",
+                "descriptor": operator_capabilities[profile].descriptor,
+                "profile": operator_capability_profile(profile),
+                "secret_slot": operator_slots[profile],
             }
+            for profile in OPERATOR_PROFILE_NAMES
         ]
         EncryptedKeystore.create(
             runtime_root / "custody.json",
@@ -455,9 +499,43 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             secrets={
                 "runtime.signing.v1:legion": signing_seed,
                 "peer.encryption.v1:legion": seed("recovered-target-encryption"),
-                "runtime.capability.v1:ordinary-then-recovery": capability.key,
+                **{
+                    operator_slots[profile]: operator_keys[profile]
+                    for profile in OPERATOR_PROFILE_NAMES
+                },
             },
         )
+        (runtime_root / "client.json").write_bytes(
+            canonical_bytes(
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "capability": operator_capabilities[OBSERVE_PROFILE].descriptor,
+                    "expected_server": origin,
+                }
+            )
+        )
+        (runtime_root / "client.json").chmod(0o600)
+        (runtime_root / "client.key").write_bytes(operator_keys[OBSERVE_PROFILE])
+        (runtime_root / "client.key").chmod(0o600)
+        operator_clients = runtime_root / "operator-clients"
+        operator_clients.mkdir(mode=0o700)
+        for profile in OPERATOR_PROFILE_NAMES:
+            if profile == OBSERVE_PROFILE:
+                continue
+            role_root = operator_clients / profile
+            role_root.mkdir(mode=0o700)
+            (role_root / "client.json").write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA,
+                        "capability": operator_capabilities[profile].descriptor,
+                        "expected_server": origin,
+                    }
+                )
+            )
+            (role_root / "client.json").chmod(0o600)
+            (role_root / "capability.key").write_bytes(operator_keys[profile])
+            (role_root / "capability.key").chmod(0o600)
         runtime_path = runtime_root / "runtime.json"
         runtime_path.write_bytes(canonical_bytes(reverse_bundle))
         runtime_path.chmod(0o600)

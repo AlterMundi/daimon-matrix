@@ -138,13 +138,22 @@ class HostedServiceTests(RootLedgerFixture):
         expired_request = create_request(
             expired,
             request_id=rpc_id(3),
-            issued_at_ms=NOW - 1,
+            issued_at_ms=NOW - 2,
             method="runtime.status",
             params={},
             nonce=b"e" * 16,
         )
         with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
             self.service_a.handle(expired_request)
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            create_request(
+                expired,
+                request_id=rpc_id(4),
+                issued_at_ms=NOW - 1,
+                method="runtime.status",
+                params={},
+                nonce=b"x" * 16,
+            )
 
     def test_observe_and_decide_are_durably_idempotent(self) -> None:
         observe_request, observe_response = self.invoke(

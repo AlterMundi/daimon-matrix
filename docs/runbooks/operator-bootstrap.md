@@ -106,7 +106,7 @@ The output contains:
   principal key retained for future adapters; and
 - `runtimes/<label>/client.json` plus `client.key`: the safe default `observe`
   client. It cannot invoke any mutation;
-- `operator-clients/<label>/<role>/client.json` plus `capability.key`: one
+- `runtimes/<label>/operator-clients/<role>/client.json` plus `capability.key`: one
   owner-only client directory for each mutating role (`weave`, `communication`,
   `curator`, `memory`, `relationships`, `review`, `routes`, `sources`, and
   `species`). Every role has a distinct random key and encrypted-custody slot.

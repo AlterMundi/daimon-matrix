@@ -41,6 +41,7 @@ from .operator_capabilities import (
     OPERATOR_PROFILE_NAMES,
     create_operator_capability_set,
     operator_capability_lifecycle,
+    operator_capability_profile,
 )
 from .peer_transport import PeerTransportError, http_peer_round_trip
 from .weave import BeingManifest, RootAuthority
@@ -340,11 +341,11 @@ def _create(
 
         runtimes = staging / "runtimes"
         runtimes.mkdir(mode=0o700)
-        operator_clients = staging / "operator-clients"
-        operator_clients.mkdir(mode=0o700)
         for label, item in sorted(material.items()):
             runtime = runtimes / label
             runtime.mkdir(mode=0o700)
+            operator_clients = runtime / "operator-clients"
+            operator_clients.mkdir(mode=0o700)
             signing_slot = f"runtime.signing.v1:{label}"
             encryption_slot = f"peer.encryption.v1:{label}"
             password = runtime_passwords[label]
@@ -401,6 +402,7 @@ def _create(
                 "capabilities": [
                     {
                         "descriptor": item["operator_capabilities"][profile].descriptor,
+                        "profile": operator_capability_profile(profile),
                         "secret_slot": item["operator_slots"][profile],
                     }
                     for profile in OPERATOR_PROFILE_NAMES
@@ -440,12 +442,10 @@ def _create(
             _private_write(
                 runtime / "client.key", item["operator_keys"][OBSERVE_PROFILE]
             )
-            embodiment_clients = operator_clients / label
-            embodiment_clients.mkdir(mode=0o700)
             for profile in OPERATOR_PROFILE_NAMES:
                 if profile == OBSERVE_PROFILE:
                     continue
-                role_client = embodiment_clients / profile
+                role_client = operator_clients / profile
                 role_client.mkdir(mode=0o700)
                 _private_write(
                     role_client / "client.json",
@@ -487,13 +487,12 @@ def _create(
         _private_write(staging / "receipt.json", receipt)
         _fsync_directory(offline)
         for path in runtimes.iterdir():
-            _fsync_directory(path)
-        for embodiment_path in operator_clients.iterdir():
-            for role_path in embodiment_path.iterdir():
+            operator_clients = path / "operator-clients"
+            for role_path in operator_clients.iterdir():
                 _fsync_directory(role_path)
-            _fsync_directory(embodiment_path)
+            _fsync_directory(operator_clients)
+            _fsync_directory(path)
         _fsync_directory(runtimes)
-        _fsync_directory(operator_clients)
         _fsync_directory(staging)
         os.replace(staging, target)
         _fsync_directory(parent)
