@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .canonical import canonical_bytes
-from .client import CLIENT_CONFIG_SCHEMA, load_json_document
+from .client import CLIENT_CONFIG_SCHEMA_V3, load_json_document
 from .identity import (
     create_embodiment_credential,
     create_incarnation_authorization,
@@ -32,6 +32,7 @@ from .identity import (
     generate_ed25519_seed,
     generate_x25519_private,
     key_descriptor,
+    signing_descriptor,
     verify_genesis,
     x25519_public,
 )
@@ -42,6 +43,7 @@ from .operator_capabilities import (
     create_operator_capability_set,
     operator_capability_lifecycle,
     operator_capability_profile,
+    operator_runtime_id,
 )
 from .peer_transport import PeerTransportError, http_peer_round_trip
 from .weave import BeingManifest, RootAuthority
@@ -380,8 +382,16 @@ def _create(
                     }
                 )
             targets.sort(key=lambda target: str(target["embodiment_id"]))
+            runtime_id = operator_runtime_id(
+                label,
+                state.being_ref,
+                item["origin"],
+                signing_descriptor(item["signing_seed"])["key_id"],
+            )
             bundle = {
                 "schema": "dm.runtime.bundle/v7",
+                "runtime_id": runtime_id,
+                "runtime_label": label,
                 "control_artifacts": [genesis],
                 "control_head": state.head,
                 "manifest": manifest.value,
@@ -403,6 +413,7 @@ def _create(
                     {
                         "descriptor": item["operator_capabilities"][profile].descriptor,
                         "profile": operator_capability_profile(profile),
+                        "runtime_id": runtime_id,
                         "secret_slot": item["operator_slots"][profile],
                     }
                     for profile in OPERATOR_PROFILE_NAMES
@@ -432,11 +443,13 @@ def _create(
             _private_write(
                 runtime / "client.json",
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": item["operator_capabilities"][
                         OBSERVE_PROFILE
                     ].descriptor,
                     "expected_server": item["origin"],
+                    "runtime_id": runtime_id,
+                    "runtime_label": label,
                 },
             )
             _private_write(
@@ -450,9 +463,11 @@ def _create(
                 _private_write(
                     role_client / "client.json",
                     {
-                        "schema": CLIENT_CONFIG_SCHEMA,
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
                         "capability": item["operator_capabilities"][profile].descriptor,
                         "expected_server": item["origin"],
+                        "runtime_id": runtime_id,
+                        "runtime_label": label,
                     },
                 )
                 _private_write(

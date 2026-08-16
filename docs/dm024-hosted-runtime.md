@@ -54,6 +54,13 @@ bounded page. Distributed `daimon-genesis` provisioning and the explicitly
 synthetic single-store bootstrap fixture are documented in
 `docs/runbooks/operator-bootstrap.md`.
 
+V7 also carries one `runtime_label` and a content-addressed `runtime_id` derived
+from that label, the being root, the root-authorized local origin and its
+operational signing key. The published schema requires exactly one row for each
+of the ten disjoint operator roles. Every row and owner-only V3 client config
+repeats the runtime binding; startup derives it again and rejects missing,
+duplicated, regrouped or cross-runtime capability material.
+
 ## Local protocol
 
 The only release listener is an owner-local AF_UNIX stream socket. Linux peer

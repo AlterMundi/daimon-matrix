@@ -28,6 +28,7 @@ from daimon_matrix.operator_capabilities import (
     OBSERVE_PROFILE,
     OPERATOR_PROFILE_NAMES,
     operator_capability_lifecycle,
+    operator_runtime_id,
 )
 from daimon_matrix.operator_rebirth import (
     RebirthError,
@@ -84,8 +85,16 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         }
 
     def base_runtime_bundle(self) -> dict[str, Any]:
+        runtime_id = operator_runtime_id(
+            "legion",
+            self.state.being_ref,
+            self.origins["legion"],
+            signing_descriptor(self.signing_seeds["legion"])["key_id"],
+        )
         return {
             "schema": "dm.runtime.bundle/v7",
+            "runtime_id": runtime_id,
+            "runtime_label": "legion",
             "control_artifacts": [self.genesis],
             "control_head": self.state.head,
             "manifest": self.manifest.value,

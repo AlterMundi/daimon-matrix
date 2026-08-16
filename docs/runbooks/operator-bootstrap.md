@@ -111,6 +111,12 @@ The output contains:
   `curator`, `memory`, `relationships`, `review`, `routes`, `sources`, and
   `species`). Every role has a distinct random key and encrypted-custody slot.
 
+The bundle's `runtime_id` is derived from its label, being root, root-authorized
+origin and operational signing key. Exactly ten capability rows are required,
+one per role. Each row and each `dm.local.client-config/v3` document repeats
+that ID and label, so copying a descriptor, slot, key or client config from a
+different runtime fails closed.
+
 Before service start, validate the V7 schema, open each custody with its own
 password, compare the common being/control/manifest hashes and prove every
 embodiment, incarnation, credential, root, ledger and socket is distinct.

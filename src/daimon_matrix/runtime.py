@@ -14,7 +14,7 @@ from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, canonical_bytes, unb64url
-from .client import CLIENT_CONFIG_SCHEMA
+from .client import CLIENT_CONFIG_SCHEMA_V3
 from .cluster import FenceVerifier
 from .communication import CommunicationStore
 from .curator import CuratorCoordinator, EffectTruthObserver
@@ -33,6 +33,7 @@ from .operator_capabilities import (
     OperatorCapabilityError,
     operator_capability_profile,
     operator_capability_slot,
+    operator_runtime_id,
 )
 from .peer_transport import (
     KeystorePeerCustody,
@@ -314,6 +315,8 @@ def load_runtime(
         fields.add("sources")
     if schema in {BUNDLE_SCHEMA_V6, BUNDLE_SCHEMA_V7}:
         fields.add("relationships")
+    if schema == BUNDLE_SCHEMA_V7:
+        fields.update({"runtime_id", "runtime_label"})
     bundle = _closed(raw_bundle, fields)
     if schema not in {
         BUNDLE_SCHEMA,
@@ -474,6 +477,23 @@ def load_runtime(
     except (KeyError, VerificationError, WeaveProtocolError) as exception:
         raise RuntimeError("local_authorization_not_active") from exception
 
+    runtime_id: str | None = None
+    runtime_label: str | None = None
+    if schema == BUNDLE_SCHEMA_V7:
+        runtime_id = bundle["runtime_id"]
+        runtime_label = bundle["runtime_label"]
+        try:
+            expected_runtime_id = operator_runtime_id(
+                runtime_label,
+                state.being_ref,
+                local_origin,
+                credential_body["signing_key"]["key_id"],
+            )
+        except (KeyError, OperatorCapabilityError, TypeError) as exception:
+            raise RuntimeError("invalid_operator_runtime_identity") from exception
+        if runtime_id != expected_runtime_id:
+            raise RuntimeError("invalid_operator_runtime_identity")
+
     custody = _closed(bundle["keystore"], {"counter", "filename", "signing_slot"})
     counter = custody["counter"]
     signing_slot = custody["signing_slot"]
@@ -483,6 +503,10 @@ def load_runtime(
         or counter < 1
         or not isinstance(signing_slot, str)
         or not signing_slot.startswith("runtime.signing.v1:")
+        or (
+            schema == BUNDLE_SCHEMA_V7
+            and signing_slot != f"runtime.signing.v1:{runtime_label}"
+        )
     ):
         raise RuntimeError("invalid_runtime_custody")
     keystore_path = _safe_file(root, custody["filename"], must_exist=True)
@@ -515,12 +539,14 @@ def load_runtime(
         value = _closed(
             row,
             (
-                {"descriptor", "profile", "secret_slot"}
+                {"descriptor", "profile", "runtime_id", "secret_slot"}
                 if schema == BUNDLE_SCHEMA_V7
                 else {"descriptor", "secret_slot"}
             ),
         )
         slot = value["secret_slot"]
+        if schema == BUNDLE_SCHEMA_V7 and value["runtime_id"] != runtime_id:
+            raise RuntimeError("invalid_operator_runtime_identity")
         if not isinstance(slot, str) or not slot.startswith("runtime.capability.v1:"):
             raise RuntimeError("invalid_capability_slot")
         if slot in required_slots:
@@ -551,16 +577,12 @@ def load_runtime(
                 raise RuntimeError("invalid_operator_capability_profile")
             try:
                 expected_profile = operator_capability_profile(role)
-                prefix = "client:operator:"
-                suffix = f":{role}"
-                if not capability.client_id.startswith(
-                    prefix
-                ) or not capability.client_id.endswith(suffix):
+                if capability.client_id != f"client:operator:{runtime_label}:{role}":
                     raise OperatorCapabilityError(
                         "invalid_operator_capability_identity"
                     )
-                label = capability.client_id[len(prefix) : -len(suffix)]
-                expected_slot = operator_capability_slot(label, role)
+                assert runtime_label is not None
+                expected_slot = operator_capability_slot(runtime_label, role)
             except OperatorCapabilityError as exception:
                 raise RuntimeError("invalid_operator_capability_profile") from exception
             if (
@@ -599,12 +621,20 @@ def load_runtime(
             )
             config = _closed(
                 _read_bundle(config_path),
-                {"capability", "expected_server", "schema"},
+                {
+                    "capability",
+                    "expected_server",
+                    "runtime_id",
+                    "runtime_label",
+                    "schema",
+                },
             )
             if (
-                config["schema"] != CLIENT_CONFIG_SCHEMA
+                config["schema"] != CLIENT_CONFIG_SCHEMA_V3
                 or config["capability"] != capability.descriptor
                 or config["expected_server"] != local_origin
+                or config["runtime_id"] != runtime_id
+                or config["runtime_label"] != runtime_label
                 or _read_private_bytes(key_path, expected_size=32) != key
             ):
                 raise RuntimeError("runtime_operator_client_mismatch")

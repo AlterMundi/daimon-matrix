@@ -41,7 +41,7 @@ from .authority_epochs import (
     verify_recovery_rebirth,
 )
 from .canonical import b64url, canonical_bytes, digest, domain_bytes, unb64url
-from .client import CLIENT_CONFIG_SCHEMA
+from .client import CLIENT_CONFIG_SCHEMA_V3
 from .identity import (
     DOMAINS,
     ControlChain,
@@ -74,6 +74,7 @@ from .operator_capabilities import (
     create_operator_capability_set,
     operator_capability_lifecycle,
     operator_capability_profile,
+    operator_runtime_id,
     validate_operator_capability_set,
 )
 from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
@@ -1508,6 +1509,8 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
 
     fields = {
         "schema",
+        "runtime_id",
+        "runtime_label",
         "control_artifacts",
         "control_head",
         "manifest",
@@ -1959,6 +1962,12 @@ def create_target_preparation(
                 create_operator_capability_set(label, issued_at_ms=created_at_ms)
             )
             capability_lifecycle = operator_capability_lifecycle(created_at_ms)
+            runtime_id = operator_runtime_id(
+                label,
+                authority.manifest.being_ref,
+                origin,
+                signing_descriptor(signing_seed)["key_id"],
+            )
         except OperatorCapabilityError as exception:
             raise RebirthError("rebirth_target_capability_rejected") from exception
         slots: dict[str, Any] = {
@@ -1993,6 +2002,7 @@ def create_target_preparation(
             "control_head": authority.state.head,
             "base_manifest_hash": authority.manifest.digest,
             "origin": origin,
+            "runtime_id": runtime_id,
             "profile": target_profile,
             "slots": slots,
             "capabilities": {
@@ -2072,6 +2082,7 @@ def _validated_preparation(
             "created_at_ms",
             "expires_at_ms",
             "capability_lifecycle",
+            "runtime_id",
         },
         "invalid_rebirth_preparation",
     )
@@ -2085,6 +2096,15 @@ def _validated_preparation(
         value["profile"], authority, expected_targets=expected_targets
     )
     request_body = verified_request["body"]
+    try:
+        expected_runtime_id = operator_runtime_id(
+            profile["label"],
+            authority.manifest.being_ref,
+            origin,
+            request_body["credential"]["body"]["signing_key"]["key_id"],
+        )
+    except (KeyError, OperatorCapabilityError, TypeError) as exception:
+        raise RebirthError("rebirth_preparation_binding_mismatch") from exception
     if (
         value["request_id"] != verified_request["request_id"]
         or value["being_ref"] != authority.manifest.being_ref
@@ -2093,6 +2113,7 @@ def _validated_preparation(
         or origin != request_body["origin"]
         or origin["body_ref"] != profile["body_ref"]
         or origin["principal_id"] != profile["principal_id"]
+        or value["runtime_id"] != expected_runtime_id
         or value["created_at_ms"] != request_body["created_at_ms"]
         or value["expires_at_ms"] != request_body["expires_at_ms"]
     ):
@@ -2260,6 +2281,7 @@ def _activate_target_runtime(
         capabilities = verified_preparation["capabilities"]
         profile = verified_preparation["profile"]
         origin = verified_preparation["origin"]
+        runtime_id = verified_preparation["runtime_id"]
         bundle = (
             apply_recovery_activation_to_runtime_bundle(
                 base_bundle, verified_activation, authority
@@ -2272,6 +2294,8 @@ def _activate_target_runtime(
         if bundle.get("schema") != "dm.runtime.bundle/v7":
             raise RebirthError("unsupported_rebirth_runtime_bundle")
         bundle["local_origin"] = copy.deepcopy(origin)
+        bundle["runtime_id"] = runtime_id
+        bundle["runtime_label"] = profile["label"]
         bundle["ledger"] = "ledger.sqlite"
         bundle["socket"] = "matrix.sock"
         bundle["keystore"] = {
@@ -2283,6 +2307,7 @@ def _activate_target_runtime(
             {
                 "descriptor": capabilities[profile_name],
                 "profile": operator_capability_profile(profile_name),
+                "runtime_id": runtime_id,
                 "secret_slot": slots["operator_capabilities"][profile_name],
             }
             for profile_name in OPERATOR_PROFILE_NAMES
@@ -2338,9 +2363,11 @@ def _activate_target_runtime(
         _private_write(
             runtime_root / "client.json",
             {
-                "schema": CLIENT_CONFIG_SCHEMA,
+                "schema": CLIENT_CONFIG_SCHEMA_V3,
                 "capability": capabilities[OBSERVE_PROFILE],
                 "expected_server": origin,
+                "runtime_id": runtime_id,
+                "runtime_label": profile["label"],
             },
         )
         _private_write(
@@ -2355,9 +2382,11 @@ def _activate_target_runtime(
             _private_write(
                 role_client / "client.json",
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": capabilities[profile_name],
                     "expected_server": origin,
+                    "runtime_id": runtime_id,
+                    "runtime_label": profile["label"],
                 },
             )
             _private_write(

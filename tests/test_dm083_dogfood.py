@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import socket
 import sys
 import tempfile
@@ -15,10 +16,14 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
+    ValidationError,
+)
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.daemon import _bind_private_socket, create_peer_http_server
+from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.local_api import (
     LocalApiError,
     LocalCapability,
@@ -181,13 +186,27 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
             Draft202012Validator.check_schema(schema)
 
             loaded = {}
+            bundles = {}
+            validator = Draft202012Validator(schema)
             for label, password in (
                 ("daimonmatrix", password_remote),
                 ("legion", password_legion),
             ):
                 state_root = output / "runtimes" / label
                 bundle = json.loads((state_root / "runtime.json").read_bytes())
-                Draft202012Validator(schema).validate(bundle)
+                validator.validate(bundle)
+                bundles[label] = bundle
+                if label == "daimonmatrix":
+                    missing_role = copy.deepcopy(bundle)
+                    missing_role["capabilities"].pop()
+                    with self.assertRaises(ValidationError):
+                        validator.validate(missing_role)
+                    duplicate_role = copy.deepcopy(bundle)
+                    duplicate_role["capabilities"][-1] = copy.deepcopy(
+                        duplicate_role["capabilities"][0]
+                    )
+                    with self.assertRaises(ValidationError):
+                        validator.validate(duplicate_role)
                 self.assertNotIn(password, (state_root / "runtime.json").read_bytes())
                 bundle_capabilities = bundle["capabilities"]
                 self.assertEqual(len(bundle_capabilities), len(OPERATOR_PROFILE_NAMES))
@@ -201,6 +220,10 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                 self.assertEqual(
                     len({row["descriptor"]["key_id"] for row in bundle_capabilities}),
                     len(OPERATOR_PROFILE_NAMES),
+                )
+                self.assertEqual(
+                    {row["runtime_id"] for row in bundle_capabilities},
+                    {bundle["runtime_id"]},
                 )
                 status_key_path = state_root / "client.key"
                 status_config_path = state_root / "client.json"
@@ -244,6 +267,107 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     _runtime_password_reader(password),
                     clock=lambda: time.time_ns() // 1_000_000,
                 )
+
+            with tempfile.TemporaryDirectory(prefix="dm083-mixed-runtime-") as mixed:
+                mixed_root = Path(mixed) / "runtime"
+                legion_root = output / "runtimes/legion"
+                beta_root = output / "runtimes/daimonmatrix"
+                shutil.copytree(legion_root, mixed_root)
+                mixed_bundle = copy.deepcopy(bundles["legion"])
+                role = "weave"
+                alpha_row = next(
+                    row
+                    for row in mixed_bundle["capabilities"]
+                    if row["profile"]["role"] == role
+                )
+                beta_row = next(
+                    row
+                    for row in bundles["daimonmatrix"]["capabilities"]
+                    if row["profile"]["role"] == role
+                )
+                mixed_bundle["capabilities"][
+                    mixed_bundle["capabilities"].index(alpha_row)
+                ] = copy.deepcopy(beta_row)
+                shutil.copyfile(
+                    beta_root / "operator-clients" / role / "client.json",
+                    mixed_root / "operator-clients" / role / "client.json",
+                )
+                shutil.copyfile(
+                    beta_root / "operator-clients" / role / "capability.key",
+                    mixed_root / "operator-clients" / role / "capability.key",
+                )
+                alpha_contents = EncryptedKeystore(legion_root / "custody.json").open(
+                    _runtime_password_reader(password_legion)
+                )
+                beta_contents = EncryptedKeystore(beta_root / "custody.json").open(
+                    _runtime_password_reader(password_remote)
+                )
+                mixed_secrets = dict(alpha_contents.secrets)
+                del mixed_secrets[alpha_row["secret_slot"]]
+                mixed_secrets[beta_row["secret_slot"]] = beta_contents.secrets[
+                    beta_row["secret_slot"]
+                ]
+                EncryptedKeystore.create(
+                    mixed_root / "mixed-custody.json",
+                    _runtime_password_reader(password_legion),
+                    control_head=mixed_bundle["control_head"],
+                    secrets=mixed_secrets,
+                )
+                mixed_bundle["keystore"]["filename"] = "mixed-custody.json"
+                mixed_path = mixed_root / "mixed-runtime.json"
+                mixed_path.write_bytes(canonical_bytes(mixed_bundle))
+                mixed_path.chmod(0o600)
+                with self.assertRaisesRegex(
+                    MatrixRuntimeError, "invalid_operator_runtime_identity"
+                ):
+                    load_runtime(
+                        mixed_root,
+                        mixed_path.name,
+                        _runtime_password_reader(password_legion),
+                        clock=lambda: time.time_ns() // 1_000_000,
+                    )
+
+                mixed_bundle["capabilities"][
+                    mixed_bundle["capabilities"].index(beta_row)
+                ]["runtime_id"] = mixed_bundle["runtime_id"]
+                mixed_path.write_bytes(canonical_bytes(mixed_bundle))
+                with self.assertRaisesRegex(
+                    MatrixRuntimeError, "invalid_operator_capability_profile"
+                ):
+                    load_runtime(
+                        mixed_root,
+                        mixed_path.name,
+                        _runtime_password_reader(password_legion),
+                        clock=lambda: time.time_ns() // 1_000_000,
+                    )
+
+            with tempfile.TemporaryDirectory(prefix="dm083-mixed-client-") as mixed:
+                mixed_root = Path(mixed) / "runtime"
+                shutil.copytree(output / "runtimes/legion", mixed_root)
+                role = "weave"
+                shutil.copyfile(
+                    output
+                    / "runtimes/daimonmatrix/operator-clients"
+                    / role
+                    / "client.json",
+                    mixed_root / "operator-clients" / role / "client.json",
+                )
+                shutil.copyfile(
+                    output
+                    / "runtimes/daimonmatrix/operator-clients"
+                    / role
+                    / "capability.key",
+                    mixed_root / "operator-clients" / role / "capability.key",
+                )
+                with self.assertRaisesRegex(
+                    MatrixRuntimeError, "runtime_operator_client_mismatch"
+                ):
+                    load_runtime(
+                        mixed_root,
+                        "runtime.json",
+                        _runtime_password_reader(password_legion),
+                        clock=lambda: time.time_ns() // 1_000_000,
+                    )
 
             invalid_bundle = copy.deepcopy(
                 json.loads((output / "runtimes/legion/runtime.json").read_bytes())

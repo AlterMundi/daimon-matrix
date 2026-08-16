@@ -20,7 +20,11 @@ from referencing import Registry, Resource
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA, CLIENT_CONFIG_SCHEMA_V2
+from daimon_matrix.client import (
+    CLIENT_CONFIG_SCHEMA,
+    CLIENT_CONFIG_SCHEMA_V2,
+    CLIENT_CONFIG_SCHEMA_V3,
+)
 from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import (
     MAX_CAPABILITY_METHODS,
@@ -824,6 +828,14 @@ class ClientSchemaTests(unittest.TestCase):
             "historical_servers": [{"server": origin, "retired_at_ms": 1}],
         }
         Draft202012Validator(client_schema, registry=registry).validate(config_v2)
+        config_v3 = {
+            "schema": CLIENT_CONFIG_SCHEMA_V3,
+            "capability": config_v2["capability"],
+            "expected_server": config_v2["expected_server"],
+            "runtime_id": "dm:runtime:v1:" + "a" * 43,
+            "runtime_label": "dm025",
+        }
+        Draft202012Validator(client_schema, registry=registry).validate(config_v3)
         with self.assertRaises(ValidationError):
             Draft202012Validator(client_schema, registry=registry).validate(
                 {**config_v2, "unreviewed": True}

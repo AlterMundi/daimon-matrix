@@ -25,7 +25,7 @@ from daimon_matrix.authority_epochs import (
     verify_recovery_rebirth,
 )
 from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.identity import (
     create_embodiment_credential,
     create_incarnation_authorization,
@@ -46,6 +46,7 @@ from daimon_matrix.operator_capabilities import (
     OPERATOR_PROFILE_NAMES,
     create_operator_capability_set,
     operator_capability_profile,
+    operator_runtime_id,
 )
 from daimon_matrix.operator_genesis import PENDING_CONTROL_HEAD
 from daimon_matrix.operator_rebirth import (
@@ -132,8 +133,16 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         }
 
     def _base_runtime_bundle(self) -> dict[str, Any]:
+        runtime_id = operator_runtime_id(
+            "legion",
+            self.state.being_ref,
+            self.origins["legion"],
+            signing_descriptor(self.signing_seeds["legion"])["key_id"],
+        )
         return {
             "schema": "dm.runtime.bundle/v7",
+            "runtime_id": runtime_id,
+            "runtime_label": "legion",
             "control_artifacts": [self.genesis],
             "control_head": self.state.head,
             "manifest": self.manifest.value,
@@ -484,10 +493,26 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         operator_capabilities, operator_keys, operator_slots = (
             create_operator_capability_set("ordinary-then-recovery", issued_at_ms=NOW)
         )
+        runtime_label = "ordinary-then-recovery"
+        runtime_id = operator_runtime_id(
+            runtime_label,
+            recovered_again.state.being_ref,
+            origin,
+            signing_descriptor(signing_seed)["key_id"],
+        )
+        reverse_bundle["runtime_id"] = runtime_id
+        reverse_bundle["runtime_label"] = runtime_label
+        reverse_bundle["keystore"]["signing_slot"] = (
+            "runtime.signing.v1:ordinary-then-recovery"
+        )
+        reverse_bundle["peer_transport"]["encryption_slot"] = (
+            "peer.encryption.v1:ordinary-then-recovery"
+        )
         reverse_bundle["capabilities"] = [
             {
                 "descriptor": operator_capabilities[profile].descriptor,
                 "profile": operator_capability_profile(profile),
+                "runtime_id": runtime_id,
                 "secret_slot": operator_slots[profile],
             }
             for profile in OPERATOR_PROFILE_NAMES
@@ -497,8 +522,10 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             lambda: bytearray(runtime_password),
             control_head=second_recovery["artifact_id"],
             secrets={
-                "runtime.signing.v1:legion": signing_seed,
-                "peer.encryption.v1:legion": seed("recovered-target-encryption"),
+                "runtime.signing.v1:ordinary-then-recovery": signing_seed,
+                "peer.encryption.v1:ordinary-then-recovery": seed(
+                    "recovered-target-encryption"
+                ),
                 **{
                     operator_slots[profile]: operator_keys[profile]
                     for profile in OPERATOR_PROFILE_NAMES
@@ -508,9 +535,11 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         (runtime_root / "client.json").write_bytes(
             canonical_bytes(
                 {
-                    "schema": CLIENT_CONFIG_SCHEMA,
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": operator_capabilities[OBSERVE_PROFILE].descriptor,
                     "expected_server": origin,
+                    "runtime_id": runtime_id,
+                    "runtime_label": runtime_label,
                 }
             )
         )
@@ -527,9 +556,11 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             (role_root / "client.json").write_bytes(
                 canonical_bytes(
                     {
-                        "schema": CLIENT_CONFIG_SCHEMA,
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
                         "capability": operator_capabilities[profile].descriptor,
                         "expected_server": origin,
+                        "runtime_id": runtime_id,
+                        "runtime_label": runtime_label,
                     }
                 )
             )

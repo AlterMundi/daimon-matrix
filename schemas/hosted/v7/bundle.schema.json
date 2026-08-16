@@ -6,6 +6,8 @@
   "additionalProperties": false,
   "required": [
     "schema",
+    "runtime_id",
+    "runtime_label",
     "control_artifacts",
     "control_head",
     "manifest",
@@ -30,6 +32,14 @@
   "properties": {
     "schema": {
       "const": "dm.runtime.bundle/v7"
+    },
+    "runtime_id": {
+      "type": "string",
+      "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "runtime_label": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
     },
     "control_artifacts": {
       "type": "array",
@@ -125,14 +135,67 @@
     },
     "capabilities": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 64,
+      "minItems": 10,
+      "maxItems": 10,
+      "allOf": [
+        {
+          "contains": {"$ref": "#/$defs/communicationCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/curatorCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/memoryCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/observeCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/relationshipsCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/reviewCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/routesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/sourcesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/speciesCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"$ref": "#/$defs/weaveCapability"},
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "descriptor",
           "profile",
+          "runtime_id",
           "secret_slot"
         ],
         "properties": {
@@ -194,6 +257,10 @@
                 "const": "dm.operator.capability-profile/v1"
               }
             }
+          },
+          "runtime_id": {
+            "type": "string",
+            "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
           },
           "secret_slot": {
             "type": "string",
@@ -459,6 +526,116 @@
     }
   },
   "$defs": {
+    "communicationCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "communication"}}
+        }
+      }
+    },
+    "curatorCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "curator"}}
+        }
+      }
+    },
+    "memoryCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "memory"}}
+        }
+      }
+    },
+    "observeCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "observe"}}
+        }
+      }
+    },
+    "relationshipsCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "relationships"}}
+        }
+      }
+    },
+    "reviewCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "review"}}
+        }
+      }
+    },
+    "routesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "routes"}}
+        }
+      }
+    },
+    "sourcesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "sources"}}
+        }
+      }
+    },
+    "speciesCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "species"}}
+        }
+      }
+    },
+    "weaveCapability": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": ["role"],
+          "properties": {"role": {"const": "weave"}}
+        }
+      }
+    },
     "authorityHistoryEntry": {
       "oneOf": [
         {

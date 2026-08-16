@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
+from .canonical import b64url, canonical_bytes
 from .local_api import LocalCapability, create_capability
 from .service import OPERATOR_CAPABILITY_PROFILES
 
@@ -14,6 +16,7 @@ OPERATOR_CAPABILITY_TTL_MS: Final = 30 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_REPROVISION_LEAD_MS: Final = 7 * 24 * 60 * 60 * 1_000
 OPERATOR_CAPABILITY_NOT_BEFORE_SKEW_MS: Final = 60_000
 OPERATOR_CAPABILITY_PROFILE_SCHEMA: Final = "dm.operator.capability-profile/v1"
+OPERATOR_RUNTIME_ID_SCHEMA: Final = "dm.operator.runtime-identity/v1"
 OPERATOR_PROFILE_NAMES: Final = tuple(sorted(OPERATOR_CAPABILITY_PROFILES))
 OBSERVE_PROFILE: Final = "observe"
 
@@ -37,6 +40,44 @@ def operator_capability_profile(profile: str) -> dict[str, str]:
         "client_config_filename": "client.json",
         "client_key_filename": "client.key" if observe else "capability.key",
     }
+
+
+def operator_runtime_id(
+    label: str,
+    being_ref: str,
+    origin: Mapping[str, Any],
+    signing_key_id: str,
+) -> str:
+    """Derive one content-addressed runtime identity from root-authorized facts."""
+
+    origin_fields = {"body_ref", "embodiment_id", "incarnation_id", "principal_id"}
+    if (
+        _LABEL.fullmatch(label) is None
+        or not isinstance(being_ref, str)
+        or not 1 <= len(being_ref.encode("utf-8")) <= 256
+        or not isinstance(signing_key_id, str)
+        or not signing_key_id.startswith("dm:key:v1:")
+        or not isinstance(origin, Mapping)
+        or set(origin) != origin_fields
+        or any(
+            not isinstance(origin[field], str)
+            or not 1 <= len(origin[field].encode("utf-8")) <= 256
+            for field in origin_fields
+        )
+    ):
+        raise OperatorCapabilityError("invalid_operator_runtime_identity")
+    body = {
+        "schema": OPERATOR_RUNTIME_ID_SCHEMA,
+        "runtime_label": label,
+        "being_ref": being_ref,
+        "origin": {field: origin[field] for field in sorted(origin_fields)},
+        "signing_key_id": signing_key_id,
+    }
+    return "dm:runtime:v1:" + b64url(
+        hashlib.sha256(
+            b"daimon/operator-runtime-identity/v1\x00" + canonical_bytes(body)
+        ).digest()
+    )
 
 
 def operator_capability_slot(label: str, profile: str) -> str:
@@ -158,10 +199,12 @@ __all__ = [
     "OPERATOR_CAPABILITY_REPROVISION_LEAD_MS",
     "OPERATOR_CAPABILITY_TTL_MS",
     "OPERATOR_PROFILE_NAMES",
+    "OPERATOR_RUNTIME_ID_SCHEMA",
     "OperatorCapabilityError",
     "create_operator_capability_set",
     "operator_capability_lifecycle",
     "operator_capability_profile",
     "operator_capability_slot",
+    "operator_runtime_id",
     "validate_operator_capability_set",
 ]

@@ -13,6 +13,7 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import (
     CLIENT_CONFIG_SCHEMA,
     CLIENT_CONFIG_SCHEMA_V2,
+    CLIENT_CONFIG_SCHEMA_V3,
     ClientConfig,
     ClientError,
     LocalClient,
@@ -81,6 +82,28 @@ class ClientFixture(RuntimeFixture):
 
 
 class LocalClientTests(ClientFixture):
+    def test_v3_binds_operator_client_to_one_runtime_identity(self) -> None:
+        self.config_path.write_bytes(
+            canonical_bytes(
+                {
+                    "schema": CLIENT_CONFIG_SCHEMA_V3,
+                    "capability": self.capability.descriptor,
+                    "expected_server": self.origins["legion"],
+                    "runtime_id": "dm:runtime:v1:" + "a" * 43,
+                    "runtime_label": "legion",
+                }
+            )
+        )
+        config = ClientConfig.load(self.config_path, bytearray(self.capability.key))
+        self.assertEqual(config.runtime_id, "dm:runtime:v1:" + "a" * 43)
+        self.assertEqual(config.runtime_label, "legion")
+
+        invalid = json.loads(self.config_path.read_bytes())
+        invalid["runtime_id"] = "dm:runtime:v1:short"
+        self.config_path.write_bytes(canonical_bytes(invalid))
+        with self.assertRaisesRegex(ClientError, "invalid_client_runtime_identity"):
+            ClientConfig.load(self.config_path, bytearray(self.capability.key))
+
     def test_typed_client_verifies_response_and_retries_exact_bytes(self) -> None:
         client = self.client()
         request = client.prepare(
