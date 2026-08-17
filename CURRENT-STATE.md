@@ -2,20 +2,18 @@
 
 ## Release-candidate checkpoint — 2026-08-16
 
-The integrated Matrix V0 baseline is merged at commit
-`75b34804f8d013d348129946c0cd541a4448e71d`, tree
-`38f3edb002ac52aac2d51fbf533cb58c38b813c5`. The package is being prepared as
+The qualified Matrix V0 functional boundary is merged at commit
+`09414d6edd9586f539be8272c4979d0b36c86b87`, tree
+`d7146e291ae3f8313dc0b3d3c3a0b5e5f94d33ad` (PR #121). The package version is
 `0.1.0rc1`. No current deployment or live-host state is asserted.
 
-The merged code passed 600 tests with 37 intentional skips and 1,414
-parameterized subtests, plus the Python 3.11–3.14 CI matrix. The closed
-conformance registry currently contains 102 scenarios. Exact evidence and the
-pre-version-bump artifact hashes are recorded in
-[`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
-Because package metadata is part of each distribution, the RC artifacts must
-be rebuilt and receive new hashes. The V7/V3-only successor has now been
-qualified locally with 619 unittest cases (22 intentional skips) and two
-byte-identical offline builds; exact hashes are recorded in
+The exact boundary passed 640 tests with 22 declared skips plus the Python
+3.11–3.14 CI matrix. The closed conformance registry contains 102 scenarios.
+Two offline builds were byte-identical: wheel SHA-256
+`5896ae31813b7b9e1224ada14b7f9da9745790404c5a1eee9043079572f20089`
+and sdist SHA-256
+`f0ba76eb6650647a8b808f8648d04ef6d35806fcafd2f271d140c4fa5f9e96a1`.
+Exact evidence is recorded in
 [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
 ## Implemented Matrix boundary
@@ -66,13 +64,10 @@ supersedes their operational-state claims.
 
 ## Remaining release work
 
-- freeze the V7-only runtime-bundle and V3-only client surface now that the
-  never-deployed compatibility paths are removed;
-- finish exact cross-repository pins and manifests;
-- rebuild `0.1.0rc1` twice and record byte-identical artifact hashes;
-- perform clean artifact installation and the complete supported-Python suite;
-- pass disposable end-to-end backup/export, restore, recovery/rebirth,
-  disaster rebuild, rollback and concurrent-launch tests;
-- obtain independent review of each final content-addressed candidate;
+- merge the independently qualified Tribe PR #65 after its required fresh
+  GitHub approval;
+- reconcile final Matrix/Cluster/Tribe documentation and downstream pins;
+- regenerate the final three-repository manifest and repeat artifact-only
+  installation against the resulting exact default-branch heads;
 - leave publication and every physical or participant-facing action behind its
   explicit human gate.
