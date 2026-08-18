@@ -29,6 +29,16 @@ and sdist SHA-256
 The final integrated manifest must be regenerated after every documentation or
 pin successor because the repository heads and source archives change.
 
+The Matrix closeout successor replaces the now-unreachable Hermes merge pin
+with public PR head `5c8870c1625761956a56fd2b225720dbe9083e45`. It has the same
+audited tree `ac7dec02ca029e895963402788bd1cdc3afb36f8` and contract bytes;
+its unprefixed git-archive SHA-256 is
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+The repinned package built twice byte-identically as wheel
+`11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`
+and sdist
+`b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
+
 ## Current architecture
 
 - `daimon-matrix` owns being-root continuity, canonical signed history,
@@ -44,9 +54,9 @@ pin successor because the repository heads and source archives change.
 
 ## Resume order
 
-1. Merge this Matrix documentation successor and repin Cluster's exact Matrix
-   dependency to the resulting commit without changing the reviewed functional
-   boundary.
+1. Merge this Matrix boundary successor and repin Cluster's exact Matrix
+   dependency to the resulting commit without changing the reviewed identity,
+   custody or runtime behavior.
 2. Reconcile Cluster and Tribe metadata to those protected merges, keeping
    executable dependency pins distinct from documentation-only repository heads.
 3. Regenerate the content-addressed integrated manifest and repeat clean

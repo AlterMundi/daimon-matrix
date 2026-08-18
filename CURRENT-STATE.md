@@ -17,6 +17,17 @@ and sdist SHA-256
 Exact evidence is recorded in
 [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
+The prepared Matrix closeout successor also repairs the Hermes CI source pin.
+The former merge commit is no longer advertised by the Hermes remote; public
+PR head `5c8870c1625761956a56fd2b225720dbe9083e45` has the identical audited tree
+`ac7dec02ca029e895963402788bd1cdc3afb36f8` and identical contract bytes. Its
+unprefixed git-archive SHA-256 is
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+Two isolated builds after this repin were byte-identical: wheel SHA-256
+`11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`
+and sdist SHA-256
+`b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
+
 ## Implemented Matrix boundary
 
 The package provides:
@@ -72,8 +83,8 @@ supersedes their operational-state claims.
 
 ## Remaining release work
 
-- merge the prepared Matrix documentation successor and repin Cluster to that
-  exact Matrix commit;
+- merge the prepared Matrix boundary successor and repin Cluster to that exact
+  Matrix commit;
 - reconcile final Cluster/Tribe metadata without treating documentation-only
   commits as new functional authority;
 - regenerate the final three-repository manifest and repeat artifact-only

@@ -39,6 +39,26 @@ each pair was byte-identical, passed the closed distribution allowlist and
 passed the packaged-secret scan. Any later documentation/pin successor changes
 the repository source archive and must produce a new integrated manifest.
 
+## Prepared Hermes reachability successor
+
+The Hermes 0.19.0 compatibility bytes remain tree
+`ac7dec02ca029e895963402788bd1cdc3afb36f8`, but the former merge commit is no
+longer advertised by the source remote. The closeout successor therefore pins
+reachable public PR head `5c8870c1625761956a56fd2b225720dbe9083e45`, whose
+tree and every audited contract digest are identical. The replacement
+unprefixed git archive is SHA-256
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+
+The repinned source produced two byte-identical isolated builds with
+`SOURCE_DATE_EPOCH=946684800`:
+
+- Wheel SHA-256: `11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`.
+- Sdist SHA-256: `b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
+
+These hashes supersede the functional-merge package hashes for the prepared
+Matrix successor. The final integrated manifest must still bind the actual
+merged default-branch commit and exact copied artifacts.
+
 ## Cross-repository checkpoint
 
 - Cluster merge: `820e3792a227b1848681a3421b113e8822c8d08a`, tree
