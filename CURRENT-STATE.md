@@ -1,14 +1,15 @@
 # Current state
 
-## Release-candidate checkpoint — 2026-08-16
+## Release-candidate checkpoint — 2026-08-18
 
 The qualified Matrix V0 functional boundary is merged at commit
 `09414d6edd9586f539be8272c4979d0b36c86b87`, tree
 `d7146e291ae3f8313dc0b3d3c3a0b5e5f94d33ad` (PR #121). The package version is
 `0.1.0rc1`. No current deployment or live-host state is asserted.
 
-The exact boundary passed 640 tests with 22 declared skips plus the Python
-3.11–3.14 CI matrix. The closed conformance registry contains 102 scenarios.
+The exact boundary ran 640 tests, including 22 declared skips, with zero
+failures, plus the Python 3.11–3.14 CI matrix. The closed conformance registry
+contains 102 scenarios.
 Two offline builds were byte-identical: wheel SHA-256
 `5896ae31813b7b9e1224ada14b7f9da9745790404c5a1eee9043079572f20089`
 and sdist SHA-256
@@ -52,6 +53,13 @@ native encrypted peer and semantic-receipt path, but Tribe removal still needs
 explicit migration evidence and repository-owner authorization. No legacy
 dual-write or ambiguous compatibility path is part of the RC plan.
 
+Its final software successor is merged at
+`294e1194db6cd60d9349a2d43938475bbd1c8c20`, tree
+`bcba9989a38519df87ecbb6c87a33a2f9740b85d` (PR #65), after exact-head
+independent approval and 148 tests with zero failures on Python 3.10–3.13.
+This is software evidence, not evidence of live provisioning, key rotation,
+service changes or cutover.
+
 The external Matrix.org protocol is unrelated and is not a dependency.
 
 ## Evidence classification
@@ -64,9 +72,10 @@ supersedes their operational-state claims.
 
 ## Remaining release work
 
-- merge the independently qualified Tribe PR #65 after its required fresh
-  GitHub approval;
-- reconcile final Matrix/Cluster/Tribe documentation and downstream pins;
+- merge the prepared Matrix documentation successor and repin Cluster to that
+  exact Matrix commit;
+- reconcile final Cluster/Tribe metadata without treating documentation-only
+  commits as new functional authority;
 - regenerate the final three-repository manifest and repeat artifact-only
   installation against the resulting exact default-branch heads;
 - leave publication and every physical or participant-facing action behind its

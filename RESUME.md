@@ -4,7 +4,7 @@ Status: the integrated V0 Matrix baseline is merged and release-candidate
 qualification is active. No current deployment, host state, service state or
 operator access is assumed by this checkpoint.
 
-Last reconciled: 2026-08-16.
+Last reconciled: 2026-08-18.
 
 ## Exact qualified boundaries
 
@@ -13,12 +13,12 @@ Last reconciled: 2026-08-16.
 - Cluster functional merge: `820e3792a227b1848681a3421b113e8822c8d08a`,
   tree `4f62eb4f6eff1dfafbd477339a86fa7d5e70a5d8`, PR #93. It pins the
   exact Matrix functional merge.
-- Tribe reviewed candidate: `42d637245864fcd431198a570d19d7a6dd042924`,
-  tree `5145f6446f3ec3013347509477a262f98825ebfa`, PR #65. All checks and
-  independent adversarial review pass; protected merge still requires one
-  fresh independent GitHub approval.
-- Matrix qualification: 640 passed, 22 declared skips; CI is green on Python
-  3.11 through 3.14. See
+- Tribe protected merge: `294e1194db6cd60d9349a2d43938475bbd1c8c20`,
+  tree `bcba9989a38519df87ecbb6c87a33a2f9740b85d`, PR #65. Its reviewed
+  head ran 148 tests with zero failures on Python 3.10 through 3.13; its
+  post-merge `main` workflow is green.
+- Matrix qualification: 640 tests run, including 22 declared skips, with zero
+  failures; CI is green on Python 3.11 through 3.14. See
   [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
 The package version is `0.1.0rc1`. Two clean offline builds of the exact Matrix
@@ -44,13 +44,14 @@ pin successor because the repository heads and source archives change.
 
 ## Resume order
 
-1. Obtain the required independent approval and normal protected merge for
-   Tribe PR #65.
-2. Reconcile the three repositories' authoritative documentation and exact
-   downstream pins to the resulting final heads.
+1. Merge this Matrix documentation successor and repin Cluster's exact Matrix
+   dependency to the resulting commit without changing the reviewed functional
+   boundary.
+2. Reconcile Cluster and Tribe metadata to those protected merges, keeping
+   executable dependency pins distinct from documentation-only repository heads.
 3. Regenerate the content-addressed integrated manifest and repeat clean
    artifact installation from those exact heads. The latest pre-merge freezer
-   proof is provisional by construction.
+   proof is superseded and remains historical evidence only.
 4. Close automated tracking only after the three default branches and final
    manifest agree. Keep the physical preflight prepared but unexecuted.
 
