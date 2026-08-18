@@ -1,8 +1,9 @@
 # V0 release-candidate qualification receipt
 
-Status: accepted V7/V3-only functional qualification. Matrix, Cluster and
-Tribe functional successors are merged; the final integrated manifest remains
-pending documentation-only exact-head repins and artifact requalification.
+Status: accepted historical V7/V3-only Matrix qualification. Matrix, Cluster
+and Tribe functional successors are merged. This Matrix-local receipt does not
+assert whether a later external integrated manifest has completed its
+exact-head and artifact requalification.
 
 ## Subject
 
@@ -30,7 +31,7 @@ pending documentation-only exact-head repins and artifact requalification.
 - Source-isolated unittest result: 640 tests run, 22 declared skips and zero
   failures.
 - Ruff formatting/lint and strict mypy: pass for the release workflow surface.
-- Current vector generators, offline lock validation and byte comparison: pass.
+- Recorded vector generators, offline lock validation and byte comparison: pass.
 - Wheel SHA-256: `5896ae31813b7b9e1224ada14b7f9da9745790404c5a1eee9043079572f20089`.
 - Sdist SHA-256: `f0ba76eb6650647a8b808f8648d04ef6d35806fcafd2f271d140c4fa5f9e96a1`.
 
@@ -39,14 +40,18 @@ each pair was byte-identical, passed the closed distribution allowlist and
 passed the packaged-secret scan. Any later documentation/pin successor changes
 the repository source archive and must produce a new integrated manifest.
 
-## Prepared Hermes reachability successor
+## Merged Hermes reachability closeout
 
-The Hermes 0.19.0 compatibility bytes remain tree
-`ac7dec02ca029e895963402788bd1cdc3afb36f8`, but the former merge commit is no
-longer advertised by the source remote. The closeout successor therefore pins
-reachable public PR head `5c8870c1625761956a56fd2b225720dbe9083e45`, whose
-tree and every audited contract digest are identical. The replacement
-unprefixed git archive is SHA-256
+The merged Matrix closeout predecessor
+`7266de8551ae861f3773c587bf907cfcddde6ffd`, tree
+`d1ff7a6fc6b1351f67fd13171dcee51242fc9804`, carries the Hermes reachability
+repair. The Hermes 0.19.0 compatibility bytes remain tree
+`ac7dec02ca029e895963402788bd1cdc3afb36f8`. During closeout qualification the
+former merge commit was not advertised by the source remote. The merged
+closeout therefore pins public PR head
+`5c8870c1625761956a56fd2b225720dbe9083e45`, selected and verified during that
+qualification; its tree and every audited contract digest are identical. The
+replacement unprefixed git archive is SHA-256
 `09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
 
 The repinned source produced two byte-identical isolated builds with
@@ -55,9 +60,10 @@ The repinned source produced two byte-identical isolated builds with
 - Wheel SHA-256: `11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`.
 - Sdist SHA-256: `b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
 
-These hashes supersede the functional-merge package hashes for the prepared
-Matrix successor. The final integrated manifest must still bind the actual
-merged default-branch commit and exact copied artifacts.
+These hashes supersede the functional-merge package hashes for that merged
+Matrix closeout. Any integrated manifest must bind the actual selected
+default-branch commit and exact copied artifacts rather than infer them from
+this historical receipt.
 
 ## Cross-repository checkpoint
 
@@ -71,8 +77,8 @@ merged default-branch commit and exact copied artifacts.
   `d3ac479d4ff581e0f1dfb82a1a41f15d25ad3e45eb03723065e865d037cc8fd5`.
   Its exact subject was Matrix `09414d6`, Cluster `820e379` and Tribe
   `42d637245864fcd431198a570d19d7a6dd042924` (tree `5145f6446f3ec3013347509477a262f98825ebfa`).
-  It is superseded historical method evidence because it predates the Tribe
-  merge and the final documentation/pin successors.
+  It is superseded historical method evidence because it does not bind the
+  Tribe merge or any later documentation/pin successors.
 
 ## Scope
 

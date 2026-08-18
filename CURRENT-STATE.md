@@ -17,9 +17,13 @@ and sdist SHA-256
 Exact evidence is recorded in
 [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
-The prepared Matrix closeout successor also repairs the Hermes CI source pin.
-The former merge commit is no longer advertised by the Hermes remote; public
-PR head `5c8870c1625761956a56fd2b225720dbe9083e45` has the identical audited tree
+The merged Matrix closeout predecessor
+`7266de8551ae861f3773c587bf907cfcddde6ffd`, tree
+`d1ff7a6fc6b1351f67fd13171dcee51242fc9804`, also repairs the Hermes CI source
+pin. During closeout qualification the former Hermes merge commit was not
+advertised by that remote; public PR head
+`5c8870c1625761956a56fd2b225720dbe9083e45` was selected and verified with the
+identical audited tree
 `ac7dec02ca029e895963402788bd1cdc3afb36f8` and identical contract bytes. Its
 unprefixed git-archive SHA-256 is
 `09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
@@ -81,13 +85,16 @@ independent real-world custody, participant consent or a current deployment.
 Older reviews and runbooks are retained as historical records only; this file
 supersedes their operational-state claims.
 
-## Remaining release work
+## Successor qualification protocol
 
-- merge the prepared Matrix boundary successor and repin Cluster to that exact
-  Matrix commit;
-- reconcile final Cluster/Tribe metadata without treating documentation-only
-  commits as new functional authority;
-- regenerate the final three-repository manifest and repeat artifact-only
-  installation against the resulting exact default-branch heads;
-- leave publication and every physical or participant-facing action behind its
-  explicit human gate.
+This metadata handoff cannot embed the commit created by its own merge without
+creating a self-reference. A qualifying Cluster candidate therefore pins the
+actual Matrix merge containing this file; a Tribe metadata successor may record
+that Cluster head. Neither downstream head is predicted here. The
+external integrated manifest is authoritative only when it binds the three
+resulting default-branch commits, source artifacts and replayed offline-install
+evidence exactly.
+
+Documentation-only successors do not create new identity, custody or runtime
+authority. Publication and every physical or participant-facing action remain
+behind their explicit human gates regardless of software or manifest status.
