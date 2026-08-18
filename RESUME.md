@@ -1,8 +1,8 @@
 # Project resume checkpoint
 
-Status: the integrated V0 Matrix baseline is merged and release-candidate
-qualification is active. No current deployment, host state, service state or
-operator access is assumed by this checkpoint.
+Status: this checkpoint records the merged integrated V0 Matrix baseline and
+the release-candidate qualification contract. It does not claim a current
+deployment, host state, service state or operator access.
 
 Last reconciled: 2026-08-18.
 
@@ -16,9 +16,9 @@ Last reconciled: 2026-08-18.
 - Tribe protected merge: `294e1194db6cd60d9349a2d43938475bbd1c8c20`,
   tree `bcba9989a38519df87ecbb6c87a33a2f9740b85d`, PR #65. Its reviewed
   head ran 148 tests with zero failures on Python 3.10 through 3.13; its
-  post-merge `main` workflow is green.
+  post-merge `main` workflow completed green for that exact subject.
 - Matrix qualification: 640 tests run, including 22 declared skips, with zero
-  failures; CI is green on Python 3.11 through 3.14. See
+  failures; the recorded CI run completed green on Python 3.11 through 3.14. See
   [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
 The package version is `0.1.0rc1`. Two clean offline builds of the exact Matrix
@@ -31,9 +31,10 @@ pin successor because the repository heads and source archives change.
 
 The merged Matrix closeout predecessor
 `7266de8551ae861f3773c587bf907cfcddde6ffd`, tree
-`d1ff7a6fc6b1351f67fd13171dcee51242fc9804`, replaces the now-unreachable
-Hermes merge pin with public PR head
-`5c8870c1625761956a56fd2b225720dbe9083e45`. It has the same audited tree
+`d1ff7a6fc6b1351f67fd13171dcee51242fc9804`, replaces the Hermes merge pin that
+was not advertised during closeout qualification with public PR head
+`5c8870c1625761956a56fd2b225720dbe9083e45`, selected and verified during that
+qualification. It has the same audited tree
 `ac7dec02ca029e895963402788bd1cdc3afb36f8` and contract bytes; its unprefixed
 git-archive SHA-256 is
 `09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
@@ -66,8 +67,9 @@ three final default-branch commits and their exact artifacts.
 The manifest is acceptable only after clean artifact installation and the
 supported-Python gates replay against those heads. A physical preflight remains
 non-authorizing and unexecuted unless it later receives its own exact human GO.
-The current mutable checkpoint belongs in downstream tracking and the external
-manifest rather than another Matrix commit that would recreate the hash cycle.
+Cross-repository checkpoint identity and state belong in downstream tracking
+and the external manifest rather than another Matrix commit that would recreate
+the hash cycle.
 
 ## Human and external gates
 

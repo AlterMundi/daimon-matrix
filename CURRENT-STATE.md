@@ -20,8 +20,10 @@ Exact evidence is recorded in
 The merged Matrix closeout predecessor
 `7266de8551ae861f3773c587bf907cfcddde6ffd`, tree
 `d1ff7a6fc6b1351f67fd13171dcee51242fc9804`, also repairs the Hermes CI source
-pin. The former Hermes merge commit is no longer advertised by that remote;
-public PR head `5c8870c1625761956a56fd2b225720dbe9083e45` has the identical audited tree
+pin. During closeout qualification the former Hermes merge commit was not
+advertised by that remote; public PR head
+`5c8870c1625761956a56fd2b225720dbe9083e45` was selected and verified with the
+identical audited tree
 `ac7dec02ca029e895963402788bd1cdc3afb36f8` and identical contract bytes. Its
 unprefixed git-archive SHA-256 is
 `09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.

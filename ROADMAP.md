@@ -2,9 +2,10 @@
 
 ## RC closeout contract
 
-The V0 Matrix baseline is merged. The nearest milestone is a reproducible,
-cross-repository `0.1.0rc1` candidate proved entirely with clean local/CI and
-disposable end-to-end evidence. No infrastructure is presumed active.
+The V0 Matrix baseline is merged. This roadmap defines acceptance for a
+reproducible cross-repository `0.1.0rc1` candidate proved entirely with clean
+local/CI and disposable end-to-end evidence. No infrastructure is presumed
+active.
 
 Completed software milestones: V7/V3-only Matrix, separated recovery holders,
 shared Cluster admission/fencing, fresh-embodiment recovery, disposable
