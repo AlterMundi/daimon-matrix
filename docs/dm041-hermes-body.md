@@ -28,9 +28,9 @@ CompAII profile, account, credential, deployment or memory migration.
 ## Exact compatibility boundary
 
 The only supported Hermes payload is public commit
-`0db1912911fafa384aa5ee0145929658a9d1dd33`, version `0.19.0`, tree
+`5c8870c1625761956a56fd2b225720dbe9083e45`, version `0.19.0`, tree
 `ac7dec02ca029e895963402788bd1cdc3afb36f8`. The audited git-archive SHA-256 is
-`860a664f622e1099a095cb6cf06b04bcfe78b2fd3affc7192da9cf7ccefcdd63`.
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
 The exact source-file digests are in
 `provenance/hermes-agent-0.19.0.json` and cover configuration, CLI parsing,
 plugin discovery/LLM access, memory provider/manager, prompt composition,

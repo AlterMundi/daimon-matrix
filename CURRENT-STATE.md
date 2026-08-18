@@ -1,22 +1,32 @@
 # Current state
 
-## Release-candidate checkpoint — 2026-08-16
+## Release-candidate checkpoint — 2026-08-18
 
-The integrated Matrix V0 baseline is merged at commit
-`75b34804f8d013d348129946c0cd541a4448e71d`, tree
-`38f3edb002ac52aac2d51fbf533cb58c38b813c5`. The package is being prepared as
+The qualified Matrix V0 functional boundary is merged at commit
+`09414d6edd9586f539be8272c4979d0b36c86b87`, tree
+`d7146e291ae3f8313dc0b3d3c3a0b5e5f94d33ad` (PR #121). The package version is
 `0.1.0rc1`. No current deployment or live-host state is asserted.
 
-The merged code passed 600 tests with 37 intentional skips and 1,414
-parameterized subtests, plus the Python 3.11–3.14 CI matrix. The closed
-conformance registry currently contains 102 scenarios. Exact evidence and the
-pre-version-bump artifact hashes are recorded in
+The exact boundary ran 640 tests, including 22 declared skips, with zero
+failures, plus the Python 3.11–3.14 CI matrix. The closed conformance registry
+contains 102 scenarios.
+Two offline builds were byte-identical: wheel SHA-256
+`5896ae31813b7b9e1224ada14b7f9da9745790404c5a1eee9043079572f20089`
+and sdist SHA-256
+`f0ba76eb6650647a8b808f8648d04ef6d35806fcafd2f271d140c4fa5f9e96a1`.
+Exact evidence is recorded in
 [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
-Because package metadata is part of each distribution, the RC artifacts must
-be rebuilt and receive new hashes. The V7/V3-only successor has now been
-qualified locally with 619 unittest cases (22 intentional skips) and two
-byte-identical offline builds; exact hashes are recorded in
-[`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
+
+The prepared Matrix closeout successor also repairs the Hermes CI source pin.
+The former merge commit is no longer advertised by the Hermes remote; public
+PR head `5c8870c1625761956a56fd2b225720dbe9083e45` has the identical audited tree
+`ac7dec02ca029e895963402788bd1cdc3afb36f8` and identical contract bytes. Its
+unprefixed git-archive SHA-256 is
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+Two isolated builds after this repin were byte-identical: wheel SHA-256
+`11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`
+and sdist SHA-256
+`b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
 
 ## Implemented Matrix boundary
 
@@ -54,6 +64,13 @@ native encrypted peer and semantic-receipt path, but Tribe removal still needs
 explicit migration evidence and repository-owner authorization. No legacy
 dual-write or ambiguous compatibility path is part of the RC plan.
 
+Its final software successor is merged at
+`294e1194db6cd60d9349a2d43938475bbd1c8c20`, tree
+`bcba9989a38519df87ecbb6c87a33a2f9740b85d` (PR #65), after exact-head
+independent approval and 148 tests with zero failures on Python 3.10–3.13.
+This is software evidence, not evidence of live provisioning, key rotation,
+service changes or cutover.
+
 The external Matrix.org protocol is unrelated and is not a dependency.
 
 ## Evidence classification
@@ -66,13 +83,11 @@ supersedes their operational-state claims.
 
 ## Remaining release work
 
-- freeze the V7-only runtime-bundle and V3-only client surface now that the
-  never-deployed compatibility paths are removed;
-- finish exact cross-repository pins and manifests;
-- rebuild `0.1.0rc1` twice and record byte-identical artifact hashes;
-- perform clean artifact installation and the complete supported-Python suite;
-- pass disposable end-to-end backup/export, restore, recovery/rebirth,
-  disaster rebuild, rollback and concurrent-launch tests;
-- obtain independent review of each final content-addressed candidate;
+- merge the prepared Matrix boundary successor and repin Cluster to that exact
+  Matrix commit;
+- reconcile final Cluster/Tribe metadata without treating documentation-only
+  commits as new functional authority;
+- regenerate the final three-repository manifest and repeat artifact-only
+  installation against the resulting exact default-branch heads;
 - leave publication and every physical or participant-facing action behind its
   explicit human gate.

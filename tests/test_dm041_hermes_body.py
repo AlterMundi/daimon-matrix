@@ -438,7 +438,7 @@ class HermesBodyFixture(unittest.TestCase):
 class ContractAndProfileTests(HermesBodyFixture):
     def test_exact_plan_and_compatibility_contract(self) -> None:
         self.assertEqual(HERMES_VERSION, "0.19.0")
-        self.assertEqual(HERMES_COMMIT, "0db1912911fafa384aa5ee0145929658a9d1dd33")
+        self.assertEqual(HERMES_COMMIT, "5c8870c1625761956a56fd2b225720dbe9083e45")
         self.assertEqual(validate_plan(self.plan_value), self.plan_value)
         self.assertEqual(
             verify_compatibility_source(self.source)["contract_digests"],

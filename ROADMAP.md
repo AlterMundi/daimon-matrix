@@ -6,17 +6,20 @@ The V0 Matrix baseline is merged. The nearest milestone is a reproducible,
 cross-repository `0.1.0rc1` candidate proved entirely with clean local/CI and
 disposable end-to-end evidence. No infrastructure is presumed active.
 
-1. Freeze exact cross-repository dependency pins on the V7-only runtime and
-   V3-only client surface.
-2. Rebuild artifacts twice, verify their closed contents, install them into
-   empty environments and run Python 3.11–3.14 qualification.
-3. Complete disposable backup/export, restore, recovery/rebirth, rollback,
-   crash/restart, revocation and concurrent-launch rejection journeys.
-4. Consolidate provenance, limitations, operator instructions and exact
-   hashes, then obtain independent review of the final heads.
-5. Prepare—but do not execute—a content-addressed physical trial plan.
-6. Publish/cut over only after the corresponding human authorization.
-7. Retire Tribe only after native replacement evidence and its separate owner
+Completed software milestones: V7/V3-only Matrix, separated recovery holders,
+shared Cluster admission/fencing, fresh-embodiment recovery, disposable
+backup/restore/rebirth/rollback journeys, reproducible Matrix artifacts and a
+non-executing content-addressed physical preflight.
+
+1. Merge the prepared Matrix boundary successor, including the reachable
+   byte-equivalent Hermes contract pin, through normal review and pin Cluster
+   to that exact Matrix dependency.
+2. Reconcile Cluster/Tribe metadata and distinguish reviewed functional
+   boundaries from documentation-only repository heads.
+3. Regenerate and independently verify the integrated content-addressed
+   manifest plus clean artifact installations.
+4. Publish/cut over only after the corresponding human authorization.
+5. Retire Tribe only after native replacement evidence and its separate owner
    gate.
 
 ## Release invariants

@@ -4,22 +4,40 @@ Status: the integrated V0 Matrix baseline is merged and release-candidate
 qualification is active. No current deployment, host state, service state or
 operator access is assumed by this checkpoint.
 
-Last reconciled: 2026-08-16.
+Last reconciled: 2026-08-18.
 
-## Exact Matrix baseline
+## Exact qualified boundaries
 
-- Commit: `75b34804f8d013d348129946c0cd541a4448e71d`
-- Tree: `38f3edb002ac52aac2d51fbf533cb58c38b813c5`
-- Merge: PR #119, which includes the distributed-custody and least-authority
-  host-capability work through `c773029`.
-- Qualification: 600 passed, 37 skipped, 1,414 parameterized subtests; CI was
-  green on Python 3.11 through 3.14. See
+- Matrix functional merge: `09414d6edd9586f539be8272c4979d0b36c86b87`,
+  tree `d7146e291ae3f8313dc0b3d3c3a0b5e5f94d33ad`, PR #121.
+- Cluster functional merge: `820e3792a227b1848681a3421b113e8822c8d08a`,
+  tree `4f62eb4f6eff1dfafbd477339a86fa7d5e70a5d8`, PR #93. It pins the
+  exact Matrix functional merge.
+- Tribe protected merge: `294e1194db6cd60d9349a2d43938475bbd1c8c20`,
+  tree `bcba9989a38519df87ecbb6c87a33a2f9740b85d`, PR #65. Its reviewed
+  head ran 148 tests with zero failures on Python 3.10 through 3.13; its
+  post-merge `main` workflow is green.
+- Matrix qualification: 640 tests run, including 22 declared skips, with zero
+  failures; CI is green on Python 3.11 through 3.14. See
   [`docs/verification/v0-rc-qualification.md`](docs/verification/v0-rc-qualification.md).
 
-The package version is now `0.1.0rc1`. Artifact hashes recorded for the merged
-pre-version-bump tree are historical qualification evidence, not hashes for
-this RC metadata successor. Rebuild and record the final hashes before freezing
-or publishing the candidate.
+The package version is `0.1.0rc1`. Two clean offline builds of the exact Matrix
+functional merge were byte-identical: wheel SHA-256
+`5896ae31813b7b9e1224ada14b7f9da9745790404c5a1eee9043079572f20089`
+and sdist SHA-256
+`f0ba76eb6650647a8b808f8648d04ef6d35806fcafd2f271d140c4fa5f9e96a1`.
+The final integrated manifest must be regenerated after every documentation or
+pin successor because the repository heads and source archives change.
+
+The Matrix closeout successor replaces the now-unreachable Hermes merge pin
+with public PR head `5c8870c1625761956a56fd2b225720dbe9083e45`. It has the same
+audited tree `ac7dec02ca029e895963402788bd1cdc3afb36f8` and contract bytes;
+its unprefixed git-archive SHA-256 is
+`09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+The repinned package built twice byte-identically as wheel
+`11ef77b2b4c743cfa25d6652e9cad3594e41223cb73f558d5ead8f47bd43609d`
+and sdist
+`b23d66004039dc9d454c1bf4382b87a381c538fe8194a3c262440425ffa6de69`.
 
 ## Current architecture
 
@@ -36,14 +54,16 @@ or publishing the candidate.
 
 ## Resume order
 
-1. Regenerate and independently qualify reproducible `0.1.0rc1` artifacts; the
-   operational surface is now runtime-bundle V7 and client-config V3 only.
-2. Pin the exact Matrix, Cluster and Tribe candidate commits and dependency
-   hashes in their release manifests.
-3. Run clean-install and disposable end-to-end backup, restore,
-   recovery/rebirth, rollback and double-launch rejection suites.
-4. Reconcile cross-repository documentation and tracking to those exact heads.
-5. Prepare a content-addressed physical preflight, but do not execute it.
+1. Merge this Matrix boundary successor and repin Cluster's exact Matrix
+   dependency to the resulting commit without changing the reviewed identity,
+   custody or runtime behavior.
+2. Reconcile Cluster and Tribe metadata to those protected merges, keeping
+   executable dependency pins distinct from documentation-only repository heads.
+3. Regenerate the content-addressed integrated manifest and repeat clean
+   artifact installation from those exact heads. The latest pre-merge freezer
+   proof is superseded and remains historical evidence only.
+4. Close automated tracking only after the three default branches and final
+   manifest agree. Keep the physical preflight prepared but unexecuted.
 
 ## Human and external gates
 

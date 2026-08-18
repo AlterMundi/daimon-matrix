@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: nicoechaniz/hermes-agent
-          ref: 0db1912911fafa384aa5ee0145929658a9d1dd33
+          ref: 5c8870c1625761956a56fd2b225720dbe9083e45
           path: .hermes-contract
       - name: Verify real Hermes plugin discovery and turn composition
         env:
