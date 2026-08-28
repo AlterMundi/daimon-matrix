@@ -170,6 +170,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm036_collective_memory.DM036ContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-matrixd" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-genesis" --help
+          "${RUNNER_TEMP}/dm020-wheel/bin/daimon-first-embodiment" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-rebirth" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-conformance" --help
@@ -180,6 +181,14 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-reviewer" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-species" --help
           "${RUNNER_TEMP}/dm020-wheel/bin/daimon-synthetic-sources" --help
+          dm087_fifo="${RUNNER_TEMP}/dm087-genesis.fifo"
+          mkfifo "${dm087_fifo}"
+          set +e
+          timeout 2 "${RUNNER_TEMP}/dm020-wheel/bin/daimon-first-embodiment" prepare --genesis "${dm087_fifo}" --profile README.md --password-fd 0 --output "${RUNNER_TEMP}/dm087-forbidden-output" </dev/null
+          dm087_status="$?"
+          set -e
+          test "${dm087_status}" -eq 2
+          test ! -e "${RUNNER_TEMP}/dm087-forbidden-output"
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm040_codex_body -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm041_hermes_body -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm042_local_we -q

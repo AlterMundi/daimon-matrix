@@ -18,6 +18,7 @@ from tools.check_distribution import (
     SDIST_FILES,
     WHEEL_FILES,
     PackageCheckError,
+    _assert_source_parity,
     validate_member,
 )
 from tools.reproducible_build import BUILD_INPUTS
@@ -308,6 +309,26 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 archive.writestr(info, "../../private")
             with self.assertRaises(SecretScanError):
                 scan_archive(archive_path)
+
+    def test_first_embodiment_distribution_bytes_are_source_bound(self) -> None:
+        member = "daimon_matrix/operator_first_embodiment.py"
+        relative = "src/daimon_matrix/operator_first_embodiment.py"
+        _assert_source_parity(
+            {member: (ROOT / relative).read_bytes()},
+            ROOT,
+            {member: relative},
+            "wheel",
+        )
+        with self.assertRaisesRegex(
+            PackageCheckError,
+            "wheel source drift: daimon_matrix/operator_first_embodiment.py",
+        ):
+            _assert_source_parity(
+                {member: b"mutated installed payload"},
+                ROOT,
+                {member: relative},
+                "wheel",
+            )
 
     def test_checkout_secret_scan_is_clean(self) -> None:
         excluded_roots: tuple[Path, ...] = ()

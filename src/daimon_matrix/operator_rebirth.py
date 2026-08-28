@@ -1096,6 +1096,7 @@ def validate_activation(
     origin = _origin(body["origin"])
     if (
         transition["request_id"] != body["request_id"]
+        or transition["issued_at_ms"] != body["issued_at_ms"]
         or transition["body_ref"] != origin["body_ref"]
         or transition["embodiment_id"] != origin["embodiment_id"]
         or transition["incarnation_id"] != origin["incarnation_id"]
@@ -1640,7 +1641,8 @@ def validate_recovery_activation(
     )
     origin = _origin(body["origin"])
     if (
-        transition["embodiment_id"] != origin["embodiment_id"]
+        transition["issued_at_ms"] != body["issued_at_ms"]
+        or transition["embodiment_id"] != origin["embodiment_id"]
         or transition["incarnation_id"] != origin["incarnation_id"]
         or transition["body_ref"] != origin["body_ref"]
         or transition["principal_id"] != origin["principal_id"]
@@ -1660,6 +1662,103 @@ def validate_recovery_activation(
     return normalized, successor, history
 
 
+def _validate_runtime_peer_transport(
+    bundle: Mapping[str, Any],
+    authority: RootAuthority,
+    *,
+    exact_targets: bool,
+) -> None:
+    """Validate the public peer portion of a V7 candidate without custody."""
+
+    peer = _closed(
+        bundle.get("peer_transport"),
+        {
+            "enabled",
+            "encryption_slot",
+            "exchange_filename",
+            "listen_host",
+            "listen_port",
+            "outbox_filename",
+            "targets",
+        },
+        "rebirth_runtime_peer_transport_invalid",
+    )
+    encryption_slot = peer["encryption_slot"]
+    listen_host = peer["listen_host"]
+    listen_port = peer["listen_port"]
+    filenames = (peer["exchange_filename"], peer["outbox_filename"])
+    if (
+        peer["enabled"] is not True
+        or not isinstance(encryption_slot, str)
+        or not encryption_slot.startswith("peer.encryption.v1:")
+        or not isinstance(listen_host, str)
+        or not 1 <= len(listen_host.encode("utf-8")) <= 255
+        or any(character.isspace() for character in listen_host)
+        or not isinstance(listen_port, int)
+        or isinstance(listen_port, bool)
+        or not 1 <= listen_port <= 65_535
+        or any(
+            not isinstance(filename, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename) is None
+            for filename in filenames
+        )
+        or len(set(filenames)) != 2
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    origin = _origin(bundle.get("local_origin"))
+    manifested_origins = [
+        row
+        for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active"
+        and row["body_ref"] == origin["body_ref"]
+        and row["embodiment_id"] == origin["embodiment_id"]
+        and row["incarnation_id"] == origin["incarnation_id"]
+    ]
+    if len(manifested_origins) != 1:
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    targets = peer["targets"]
+    if not isinstance(targets, list) or len(targets) > 255:
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    normalized: list[tuple[str, str, int]] = []
+    for value in targets:
+        target = _closed(
+            value,
+            {"embodiment_id", "endpoint", "timeout_ms"},
+            "rebirth_runtime_peer_transport_invalid",
+        )
+        embodiment_id = target["embodiment_id"]
+        endpoint = target["endpoint"]
+        timeout_ms = target["timeout_ms"]
+        if (
+            not isinstance(embodiment_id, str)
+            or not embodiment_id
+            or not isinstance(endpoint, str)
+            or not isinstance(timeout_ms, int)
+            or isinstance(timeout_ms, bool)
+            or not 1 <= timeout_ms <= 30_000
+        ):
+            raise RebirthError("rebirth_runtime_peer_transport_invalid")
+        try:
+            http_peer_round_trip(endpoint, timeout_seconds=timeout_ms / 1000)
+        except (PeerTransportError, TypeError, ValueError) as exception:
+            raise RebirthError("rebirth_runtime_peer_transport_invalid") from exception
+        normalized.append((embodiment_id, endpoint, timeout_ms))
+    if normalized != sorted(normalized) or len({row[0] for row in normalized}) != len(
+        normalized
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    expected = {
+        str(row["embodiment_id"])
+        for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active" and row["embodiment_id"] != origin["embodiment_id"]
+    }
+    actual = {row[0] for row in normalized}
+    if (exact_targets and actual != expected) or (
+        not exact_targets and not actual.issubset(expected)
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+
+
 def apply_activation_to_runtime_bundle(
     bundle: Mapping[str, Any],
     activation: Any,
@@ -1670,8 +1769,10 @@ def apply_activation_to_runtime_bundle(
     """Return a forward-only public bundle update for an existing peer."""
 
     verified, successor, _history = validate_activation(activation, base)
-    if bundle.get("manifest") != base.manifest.value:
+    source_authority = authority_from_runtime_bundle(bundle)
+    if source_authority != base:
         raise RebirthError("rebirth_runtime_base_mismatch")
+    _validate_runtime_peer_transport(bundle, source_authority, exact_targets=True)
     result = copy.deepcopy(dict(bundle))
     authority_history = result.get("authority_history")
     if not isinstance(authority_history, list):
@@ -1702,6 +1803,14 @@ def apply_activation_to_runtime_bundle(
             }
         )
         peer["targets"].sort(key=lambda row: row["embodiment_id"])
+    candidate_authority = authority_from_runtime_bundle(result)
+    if candidate_authority != successor:
+        raise RebirthError("rebirth_runtime_candidate_mismatch")
+    _validate_runtime_peer_transport(
+        result,
+        candidate_authority,
+        exact_targets=target_endpoint is not None,
+    )
     return result
 
 
@@ -1713,11 +1822,10 @@ def apply_recovery_activation_to_runtime_bundle(
     """Return a target-only V7 bundle while preserving old public history."""
 
     verified, successor, _history = validate_recovery_activation(activation, previous)
-    if (
-        bundle.get("manifest") != previous.manifest.value
-        or bundle.get("control_head") != previous.state.head
-    ):
+    source_authority = authority_from_runtime_bundle(bundle)
+    if source_authority != previous:
         raise RebirthError("rebirth_recovery_runtime_base_mismatch")
+    _validate_runtime_peer_transport(bundle, source_authority, exact_targets=True)
     result = copy.deepcopy(dict(bundle))
     authority_history = result.get("authority_history")
     control_artifacts = result.get("control_artifacts")
@@ -1756,6 +1864,8 @@ def apply_recovery_activation_to_runtime_bundle(
     if not isinstance(peer, dict) or not isinstance(peer.get("targets"), list):
         raise RebirthError("rebirth_runtime_peer_transport_missing")
     peer["targets"] = []
+    if authority_from_runtime_bundle(result) != successor:
+        raise RebirthError("rebirth_runtime_candidate_mismatch")
     return result
 
 
@@ -1980,6 +2090,7 @@ def _safe_document(path: Path, code: str) -> Any:
 
 def _owner_directory(path: Path, code: str) -> Path:
     absolute = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(absolute, code)
     try:
         info = absolute.lstat()
     except FileNotFoundError as exception:
@@ -1994,6 +2105,18 @@ def _owner_directory(path: Path, code: str) -> Path:
     return absolute
 
 
+def _reject_symlink_ancestors(path: Path, code: str) -> None:
+    ancestor = path.parent
+    while ancestor != ancestor.parent:
+        try:
+            info = ancestor.lstat()
+        except OSError as exception:
+            raise RebirthError(code) from exception
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RebirthError(code)
+        ancestor = ancestor.parent
+
+
 def _owner_file_descriptor(
     path: Path,
     code: str,
@@ -2004,6 +2127,7 @@ def _owner_file_descriptor(
     """Open one stable owner-only regular file without following replacements."""
 
     absolute = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(absolute, code)
     try:
         before = absolute.lstat()
     except FileNotFoundError as exception:
@@ -2020,7 +2144,7 @@ def _owner_file_descriptor(
     try:
         descriptor = os.open(
             absolute,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
         )
         after = os.fstat(descriptor)
         if (
@@ -2749,6 +2873,9 @@ def _activate_target_runtime(
             "known_being_refs": known_refs,
             "store_filename": "relationships.sqlite3",
         }
+        if authority_from_runtime_bundle(bundle) != successor:
+            raise RebirthError("rebirth_runtime_candidate_mismatch")
+        _validate_runtime_peer_transport(bundle, successor, exact_targets=True)
         EncryptedKeystore.create(
             runtime_root / "custody.json",
             _password_reader(password),

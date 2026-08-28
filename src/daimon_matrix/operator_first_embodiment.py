@@ -41,15 +41,18 @@ from .operator_capabilities import (
 from .operator_genesis import HOLDER_SCHEMA, PENDING_CONTROL_HEAD
 from .operator_rebirth import (
     RebirthError,
+    _holder_attestation,
     _identity_signature,
     _origin,
     _validated_preparation,
+    _verify_holder_attestation,
     create_target_preparation,
     validate_enrollment_request,
 )
 from .weave import BeingManifest, RootAuthority
 
 SHARE_SCHEMA: Final = "dm.operator.first-embodiment-root-share/v1"
+SHARE_DOMAIN: Final = "dm.operator.first-embodiment-root-share/v1"
 ACTIVATION_SCHEMA: Final = "dm.operator.first-embodiment-activation/v1"
 ACTIVATION_DOMAIN: Final = "dm.operator.first-embodiment-activation/v1"
 ACTIVATION_ID_PREFIX: Final = "dm:first-embodiment-activation:v1:"
@@ -101,6 +104,7 @@ def _initial_base(genesis: Any) -> _InitialBase:
 
 def _owner_directory(path: Path, code: str) -> Path:
     target = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(target, code)
     try:
         info = target.lstat()
     except OSError as exception:
@@ -113,6 +117,18 @@ def _owner_directory(path: Path, code: str) -> Path:
     ):
         raise FirstEmbodimentError(code)
     return target
+
+
+def _reject_symlink_ancestors(path: Path, code: str) -> None:
+    ancestor = path.parent
+    while ancestor != ancestor.parent:
+        try:
+            info = ancestor.lstat()
+        except OSError as exception:
+            raise FirstEmbodimentError(code) from exception
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise FirstEmbodimentError(code)
+        ancestor = ancestor.parent
 
 
 def _fsync_directory(path: Path) -> None:
@@ -140,14 +156,30 @@ def _private_write(path: Path, value: Mapping[str, Any] | bytes) -> None:
 
 
 def _document(path: Path, code: str) -> Any:
+    target = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(target, code)
     descriptor = -1
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        info = os.fstat(descriptor)
+        before = target.lstat()
         if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.geteuid()
-            or not 1 <= info.st_size <= MAX_DOCUMENT_BYTES
+            stat.S_ISLNK(before.st_mode)
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or not 1 <= before.st_size <= MAX_DOCUMENT_BYTES
+        ):
+            raise FirstEmbodimentError(code)
+        descriptor = os.open(
+            target,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
+        after = os.fstat(descriptor)
+        if (
+            (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or not stat.S_ISREG(after.st_mode)
+            or after.st_uid != os.geteuid()
+            or stat.S_IMODE(after.st_mode) & 0o077
+            or not 1 <= after.st_size <= MAX_DOCUMENT_BYTES
         ):
             raise FirstEmbodimentError(code)
         raw = b""
@@ -275,7 +307,7 @@ def create_root_share(
     *,
     observed_at_ms: int,
 ) -> dict[str, Any]:
-    """Open one isolated root package and sign the exact credential body."""
+    """Open one isolated root package and attest the exact target request."""
 
     base = _initial_base(genesis)
     try:
@@ -293,12 +325,17 @@ def create_root_share(
         "root-authorization",
         domain_bytes(DOMAINS["embodiment-credential"], credential["body"]),
     )
-    return {
-        "schema": SHARE_SCHEMA,
+    share_body = {
         "being_ref": base.state.being_ref,
         "control_head": base.state.head,
         "request_id": verified["request_id"],
-        "signature": signature,
+        "request_sha256": hashlib.sha256(canonical_bytes(verified)).hexdigest(),
+        "credential_signature": signature,
+    }
+    return {
+        "schema": SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(seed, SHARE_DOMAIN, share_body),
     }
 
 
@@ -347,25 +384,68 @@ def aggregate_activation(
     except (KeyError, RebirthError, TypeError) as exception:
         raise FirstEmbodimentError("first_embodiment_request_rejected") from exception
     credential = copy.deepcopy(verified["body"]["credential"])
+    request_sha256 = hashlib.sha256(canonical_bytes(verified)).hexdigest()
     signatures: list[Mapping[str, Any]] = []
+    approvals: list[dict[str, Any]] = []
+    approved_ids: set[str] = set()
     for value in shares:
         row = _closed(
             value,
-            {"schema", "being_ref", "control_head", "request_id", "signature"},
+            {
+                "schema",
+                "being_ref",
+                "control_head",
+                "request_id",
+                "request_sha256",
+                "credential_signature",
+                "attestation",
+            },
             "first_embodiment_share_rejected",
         )
+        credential_signature = row["credential_signature"]
         if (
             row["schema"] != SHARE_SCHEMA
             or row["being_ref"] != base.state.being_ref
             or row["control_head"] != base.state.head
             or row["request_id"] != verified["request_id"]
-            or not isinstance(row["signature"], Mapping)
-            or row["signature"].get("role") != "root-authorization"
+            or row["request_sha256"] != request_sha256
+            or not isinstance(credential_signature, Mapping)
+            or credential_signature.get("role") != "root-authorization"
         ):
             raise FirstEmbodimentError("first_embodiment_share_rejected")
-        signatures.append(copy.deepcopy(dict(row["signature"])))
+        share_body = {
+            "being_ref": row["being_ref"],
+            "control_head": row["control_head"],
+            "request_id": row["request_id"],
+            "request_sha256": row["request_sha256"],
+            "credential_signature": credential_signature,
+        }
+        try:
+            attested_kid = _verify_holder_attestation(
+                row["attestation"],
+                SHARE_DOMAIN,
+                share_body,
+                base.state.root_policy["keys"],
+                code="first_embodiment_share_rejected",
+            )
+        except RebirthError as exception:
+            raise FirstEmbodimentError("first_embodiment_share_rejected") from exception
+        if (
+            credential_signature.get("key_id") != attested_kid
+            or attested_kid in approved_ids
+        ):
+            raise FirstEmbodimentError("first_embodiment_share_rejected")
+        approved_ids.add(attested_kid)
+        signatures.append(copy.deepcopy(dict(credential_signature)))
+        approvals.append(
+            {
+                **copy.deepcopy(share_body),
+                "attestation": copy.deepcopy(dict(row["attestation"])),
+            }
+        )
     credential["signatures"].extend(signatures)
     credential["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+    approvals.sort(key=lambda row: row["attestation"]["kid"])
     incarnation = copy.deepcopy(verified["body"]["incarnation"])
     try:
         credential_body = verify_embodiment_credential(
@@ -400,6 +480,7 @@ def aggregate_activation(
         "credential": credential,
         "incarnation": incarnation,
         "origin": origin,
+        "root_approvals": approvals,
         "issued_at_ms": issued_at_ms,
     }
     return {
@@ -435,6 +516,7 @@ def validate_activation(
             "credential",
             "incarnation",
             "origin",
+            "root_approvals",
             "issued_at_ms",
         },
         "invalid_first_embodiment_activation",
@@ -455,6 +537,74 @@ def validate_activation(
     credential = copy.deepcopy(body["credential"])
     incarnation = copy.deepcopy(body["incarnation"])
     origin = _origin(body["origin"])
+    approvals = body["root_approvals"]
+    if not isinstance(approvals, list):
+        raise FirstEmbodimentError("invalid_first_embodiment_activation")
+    request_sha256 = hashlib.sha256(canonical_bytes(verified_request)).hexdigest()
+    approved_ids: set[str] = set()
+    approved_signatures: list[Mapping[str, Any]] = []
+    for value in approvals:
+        approval = _closed(
+            value,
+            {
+                "being_ref",
+                "control_head",
+                "request_id",
+                "request_sha256",
+                "credential_signature",
+                "attestation",
+            },
+            "invalid_first_embodiment_activation",
+        )
+        credential_signature = approval["credential_signature"]
+        if (
+            approval["being_ref"] != base.state.being_ref
+            or approval["control_head"] != base.state.head
+            or approval["request_id"] != verified_request["request_id"]
+            or approval["request_sha256"] != request_sha256
+            or not isinstance(credential_signature, Mapping)
+            or credential_signature.get("role") != "root-authorization"
+        ):
+            raise FirstEmbodimentError("invalid_first_embodiment_activation")
+        approval_body = {
+            key: approval[key]
+            for key in (
+                "being_ref",
+                "control_head",
+                "request_id",
+                "request_sha256",
+                "credential_signature",
+            )
+        }
+        try:
+            attested_kid = _verify_holder_attestation(
+                approval["attestation"],
+                SHARE_DOMAIN,
+                approval_body,
+                base.state.root_policy["keys"],
+                code="invalid_first_embodiment_activation",
+            )
+        except RebirthError as exception:
+            raise FirstEmbodimentError(
+                "invalid_first_embodiment_activation"
+            ) from exception
+        if (
+            credential_signature.get("key_id") != attested_kid
+            or attested_kid in approved_ids
+        ):
+            raise FirstEmbodimentError("invalid_first_embodiment_activation")
+        approved_ids.add(attested_kid)
+        approved_signatures.append(credential_signature)
+    root_signatures = [
+        signature
+        for signature in credential.get("signatures", [])
+        if isinstance(signature, Mapping)
+        and signature.get("role") == "root-authorization"
+    ]
+    if canonical_bytes(
+        sorted(approved_signatures, key=lambda row: row["key_id"])
+    ) != canonical_bytes(sorted(root_signatures, key=lambda row: row["key_id"])):
+        raise FirstEmbodimentError("invalid_first_embodiment_activation")
     try:
         verify_embodiment_credential(credential, base.state, at_ms=body["issued_at_ms"])
         verify_incarnation_authorization(

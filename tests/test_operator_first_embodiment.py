@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import socket
@@ -13,10 +14,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.canonical import b64url, canonical_bytes, digest
 from daimon_matrix.daemon import create_peer_http_server
 from daimon_matrix.keystore import EncryptedKeystore, PasswordReader
 from daimon_matrix.local_api import LocalCapability, create_request
+from daimon_matrix.operator_first_embodiment import (
+    ACTIVATION_DOMAIN as FIRST_ACTIVATION_DOMAIN,
+)
+from daimon_matrix.operator_first_embodiment import (
+    ACTIVATION_ID_PREFIX as FIRST_ACTIVATION_ID_PREFIX,
+)
 from daimon_matrix.operator_first_embodiment import (
     FirstEmbodimentError,
     activate_runtime,
@@ -33,7 +40,11 @@ from daimon_matrix.operator_genesis import (
     create_intent,
 )
 from daimon_matrix.operator_rebirth import (
+    REQUEST_DOMAIN,
+    REQUEST_ID_PREFIX,
+    TRANSPORT_REQUEST_DOMAIN,
     RebirthError,
+    _request_signature,
     activate_target_runtime,
     aggregate_distributed_enrollment,
     apply_activation_to_runtime_bundle,
@@ -167,6 +178,38 @@ class FirstEmbodimentTests(TestCase):
             observed_at_ms=NOW + 20,
         )
 
+    def resigned_request(self) -> dict[str, object]:
+        body = copy.deepcopy(self.request["body"])
+        body["expires_at_ms"] += 30_000
+        body["nonce"] = b64url(b"r" * 32)
+        body_custody = EncryptedKeystore(
+            self.preparation_directory / "custody.json"
+        ).open(
+            _reader(self.target_password),
+            required_control_head=self.request["body"]["control_head"],
+        )
+        transport_custody = EncryptedKeystore(
+            self.preparation_directory / "transport-custody.json"
+        ).open(
+            _reader(self.target_password),
+            required_control_head=self.request["body"]["control_head"],
+        )
+        signing_seed = body_custody.secrets[self.preparation["slots"]["signing"]]
+        transport_seed = transport_custody.secrets[
+            self.preparation["slots"]["transport"]
+        ]
+        return {
+            "schema": self.request["schema"],
+            "request_id": REQUEST_ID_PREFIX + b64url(digest(REQUEST_DOMAIN, body)),
+            "body": body,
+            "signature": _request_signature(signing_seed, body),
+            "transport_signature": _request_signature(
+                transport_seed,
+                body,
+                domain=TRANSPORT_REQUEST_DOMAIN,
+            ),
+        }
+
     def test_distributed_genesis_becomes_a_loadable_first_runtime(self) -> None:
         activation = self.activation()
         verified, authority = validate_activation(
@@ -233,7 +276,7 @@ class FirstEmbodimentTests(TestCase):
                 observed_at_ms=NOW + 20,
             )
         with self.assertRaisesRegex(
-            FirstEmbodimentError, "first_embodiment_threshold_rejected"
+            FirstEmbodimentError, "first_embodiment_share_rejected"
         ):
             aggregate_activation(
                 self.genesis,
@@ -282,6 +325,92 @@ class FirstEmbodimentTests(TestCase):
             required_control_head=PENDING_CONTROL_HEAD,
         )
         self.assertEqual(set(root_store.secrets), {"genesis.root.v1:holder"})
+
+    def test_root_approvals_cannot_be_reassociated_to_a_new_request(self) -> None:
+        shares = [self.root_share("root-0"), self.root_share("root-1")]
+        replacement = self.resigned_request()
+        rebound = copy.deepcopy(shares)
+        for share in rebound:
+            share["request_id"] = replacement["request_id"]
+            share["request_sha256"] = hashlib.sha256(
+                canonical_bytes(replacement)
+            ).hexdigest()
+        with self.assertRaisesRegex(
+            FirstEmbodimentError, "first_embodiment_share_rejected"
+        ):
+            aggregate_activation(
+                self.genesis,
+                replacement,
+                rebound,
+                observed_at_ms=NOW + 20,
+            )
+
+        activation = aggregate_activation(
+            self.genesis,
+            self.request,
+            shares,
+            observed_at_ms=NOW + 20,
+        )
+        reassociated = copy.deepcopy(activation)
+        reassociated["body"]["request_id"] = replacement["request_id"]
+        replacement_hash = hashlib.sha256(canonical_bytes(replacement)).hexdigest()
+        for approval in reassociated["body"]["root_approvals"]:
+            approval["request_id"] = replacement["request_id"]
+            approval["request_sha256"] = replacement_hash
+        reassociated["activation_id"] = FIRST_ACTIVATION_ID_PREFIX + b64url(
+            digest(FIRST_ACTIVATION_DOMAIN, reassociated["body"])
+        )
+        with self.assertRaisesRegex(
+            FirstEmbodimentError, "invalid_first_embodiment_activation"
+        ):
+            validate_activation(self.genesis, replacement, reassociated)
+
+    def test_intermediate_symlink_and_fifo_inputs_fail_without_writes(self) -> None:
+        real = self.root / "real-output-parent"
+        real.mkdir(mode=0o700)
+        parent = real / "parent"
+        parent.mkdir(mode=0o700)
+        alias = self.root / "output-alias"
+        alias.symlink_to(real, target_is_directory=True)
+        with self.assertRaisesRegex(
+            FirstEmbodimentError, "first_embodiment_preparation_rejected"
+        ):
+            prepare_target(
+                alias / "parent/output",
+                self.genesis,
+                self.preparation["profile"],
+                _reader(b"another-target-password"),
+                created_at_ms=NOW + 20,
+            )
+        self.assertFalse((parent / "output").exists())
+
+        fifo = self.root / "genesis.fifo"
+        os.mkfifo(fifo, 0o600)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "daimon_matrix.operator_first_embodiment",
+                "prepare",
+                "--genesis",
+                str(fifo),
+                "--profile",
+                str(self.preparation_directory / "request.json"),
+                "--password-fd",
+                "0",
+                "--output",
+                str(self.root / "fifo-output"),
+            ],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=2,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr.decode())
+        self.assertIn(b"first_embodiment_genesis_unavailable", result.stderr)
+        self.assertFalse((self.root / "fifo-output").exists())
 
     def test_second_embodiment_syncs_an_event_from_before_its_birth(self) -> None:
         first_activation = self.activation()

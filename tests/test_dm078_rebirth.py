@@ -20,7 +20,7 @@ from daimon_matrix.authority_epochs import (
     create_embodiment_enrollment,
     verify_embodiment_enrollment,
 )
-from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.canonical import b64url, canonical_bytes, digest
 from daimon_matrix.identity import signing_descriptor, verify_genesis
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
@@ -33,6 +33,8 @@ from daimon_matrix.operator_capabilities import (
     operator_runtime_id,
 )
 from daimon_matrix.operator_rebirth import (
+    ACTIVATION_DOMAIN,
+    ACTIVATION_ID_PREFIX,
     RebirthError,
     activate_target_runtime,
     apply_activation_to_runtime_bundle,
@@ -311,18 +313,7 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
 
     def test_activation_updates_public_peers_forward_only(self) -> None:
         request, activation = self.activation()
-        existing_target = {
-            "embodiment_id": self.origins["daimonmatrix"]["embodiment_id"],
-            "endpoint": "http://127.0.0.1:18686/dm-peer/v1",
-            "timeout_ms": 5_000,
-        }
-        bundle = {
-            "manifest": copy.deepcopy(self.manifest.value),
-            "authority_history": [],
-            "credentials": list(self.credentials.values()),
-            "incarnations": list(self.incarnations.values()),
-            "peer_transport": {"targets": [existing_target]},
-        }
+        bundle = self.base_runtime_bundle()
         updated = apply_activation_to_runtime_bundle(
             bundle,
             activation,
@@ -343,6 +334,36 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
         forged["body"]["origin"]["principal_id"] = "forged@principal"
         with self.assertRaisesRegex(RebirthError, "origin_mismatch"):
             validate_activation(forged, self.authority, request=request)
+
+        changed_time = copy.deepcopy(activation)
+        changed_time["body"]["issued_at_ms"] += 1
+        changed_time["activation_id"] = ACTIVATION_ID_PREFIX + b64url(
+            digest(ACTIVATION_DOMAIN, changed_time["body"])
+        )
+        with self.assertRaisesRegex(RebirthError, "origin_mismatch"):
+            validate_activation(changed_time, self.authority, request=request)
+
+        incomplete = {
+            "manifest": copy.deepcopy(self.manifest.value),
+            "authority_history": [],
+            "peer_transport": {"targets": []},
+        }
+        with self.assertRaisesRegex(RebirthError, "invalid_rebirth_runtime_bundle"):
+            apply_activation_to_runtime_bundle(
+                incomplete,
+                activation,
+                self.authority,
+                target_endpoint="http://127.0.0.1:28686/dm-peer/v1",
+            )
+        with self.assertRaisesRegex(
+            RebirthError, "rebirth_runtime_peer_transport_invalid"
+        ):
+            apply_activation_to_runtime_bundle(
+                self.base_runtime_bundle(),
+                activation,
+                self.authority,
+                target_endpoint="file:///etc/passwd",
+            )
 
     def test_target_preparation_and_offline_root_custody_are_separate(self) -> None:
         parent = self.root_path / "rebirth"
