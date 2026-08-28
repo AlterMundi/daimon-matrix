@@ -502,7 +502,7 @@ class ContractAndProfileTests(HermesBodyFixture):
     def test_profile_is_deterministic_exclusive_and_native_memory_free(self) -> None:
         manifest = self.create()
         self.assertEqual(manifest, verify_profile(self.plan))
-        self.assertEqual(len(manifest["matrix_package"]["modules"]), 51)
+        self.assertEqual(len(manifest["matrix_package"]["modules"]), 52)
         self.assertIn(
             "collective_memory.py",
             {item["name"] for item in manifest["matrix_package"]["modules"]},
@@ -517,6 +517,10 @@ class ContractAndProfileTests(HermesBodyFixture):
         )
         self.assertIn(
             "operator_genesis.py",
+            {item["name"] for item in manifest["matrix_package"]["modules"]},
+        )
+        self.assertIn(
+            "operator_first_embodiment.py",
             {item["name"] for item in manifest["matrix_package"]["modules"]},
         )
         self.assertEqual(

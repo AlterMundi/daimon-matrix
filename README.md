@@ -69,6 +69,8 @@ python tools/reproducible_build.py --output dist
 
 The reproducible build and clean-wheel workflow are documented in
 [docs/packaging.md](docs/packaging.md). Delivery order is in
-[PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md).
+[PLAN.md](PLAN.md) and [ROADMAP.md](ROADMAP.md). The production-shaped path from
+distributed genesis through plural synchronized embodiments is documented in
+[docs/runbooks/distributed-first-embodiment.md](docs/runbooks/distributed-first-embodiment.md).
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.

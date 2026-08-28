@@ -38,11 +38,11 @@ No process or artifact in this flow requires root seeds and embodiment private
 keys together. Root custody cannot impersonate the embodiment acceptance or
 transport proof; target custody cannot reach the root threshold.
 
-The installed-module interface keeps that boundary executable even before a
-dedicated console alias is published. `prepare` runs on the target and writes
-only target custody; `authorize` runs at the offline root and receives only the
-public request. Passwords use inherited descriptors and neither command accepts
-private key bytes through arguments or environment:
+The installed `daimon-rebirth` interface keeps that boundary executable.
+`prepare` runs on the target and writes only target custody. Each
+`enrollment-share` invocation opens exactly one holder package; the intent and
+aggregation steps are keyless. Passwords use inherited descriptors and no
+command accepts private key bytes through arguments or environment:
 
 ```bash
 python -m daimon_matrix.operator_rebirth prepare \
@@ -51,12 +51,26 @@ python -m daimon_matrix.operator_rebirth prepare \
   --output /target-owner/rebirth-preparation \
   --password-fd 3 3</target-owner/password
 
-python -m daimon_matrix.operator_rebirth authorize \
+daimon-rebirth create-enrollment-intent \
   --authority /public/current-authority.json \
   --request /public/enrollment-request.json \
-  --root-custody /offline/root-custody.json \
-  --root-password-fd 3 \
-  --output /public/activation.json 3</offline/root-password
+  --output /public/enrollment-intent.json
+
+daimon-rebirth enrollment-share \
+  --authority /public/current-authority.json \
+  --request /public/enrollment-request.json \
+  --intent /public/enrollment-intent.json \
+  --holder /offline/root-a \
+  --password-fd 3 \
+  --output /public/root-a.share.json 3</offline/root-a.password
+
+daimon-rebirth aggregate-enrollment \
+  --authority /public/current-authority.json \
+  --request /public/enrollment-request.json \
+  --intent /public/enrollment-intent.json \
+  --share /public/root-a.share.json \
+  --share /public/root-b.share.json \
+  --output /public/activation.json
 
 python -m daimon_matrix.operator_rebirth activate \
   --base-runtime /public/current-runtime.json \

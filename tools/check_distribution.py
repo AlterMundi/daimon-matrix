@@ -61,6 +61,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/operator_bootstrap.py",
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_genesis.py",
+        "src/daimon_matrix/operator_first_embodiment.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
@@ -117,6 +118,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/operator_bootstrap.py",
         "daimon_matrix/operator_capabilities.py",
         "daimon_matrix/operator_genesis.py",
+        "daimon_matrix/operator_first_embodiment.py",
         "daimon_matrix/operator_rebirth.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
@@ -405,6 +407,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
+        b"daimon-first-embodiment = daimon_matrix.operator_first_embodiment:main\n"
         b"daimon-genesis = daimon_matrix.operator_genesis:main\n"
         b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"

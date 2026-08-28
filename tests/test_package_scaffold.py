@@ -46,6 +46,9 @@ class PackageMetadataTests(unittest.TestCase):
             project["scripts"],
             {
                 "daimon": "daimon_matrix.cli:main",
+                "daimon-first-embodiment": (
+                    "daimon_matrix.operator_first_embodiment:main"
+                ),
                 "daimon-genesis": "daimon_matrix.operator_genesis:main",
                 "daimon-codex-body": "daimon_matrix.codex_body:main",
                 "daimon-conformance": "daimon_matrix.conformance:main",
@@ -178,6 +181,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/operator_bootstrap.py",
                 "src/daimon_matrix/operator_capabilities.py",
                 "src/daimon_matrix/operator_genesis.py",
+                "src/daimon_matrix/operator_first_embodiment.py",
                 "src/daimon_matrix/operator_rebirth.py",
                 "src/daimon_matrix/memory_policy.py",
                 "src/daimon_matrix/memory_projection.py",
@@ -235,6 +239,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/operator_bootstrap.py",
                 "daimon_matrix/operator_capabilities.py",
                 "daimon_matrix/operator_genesis.py",
+                "daimon_matrix/operator_first_embodiment.py",
                 "daimon_matrix/operator_rebirth.py",
                 "daimon_matrix/memory_policy.py",
                 "daimon_matrix/memory_projection.py",

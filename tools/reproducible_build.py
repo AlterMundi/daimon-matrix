@@ -55,6 +55,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/operator_bootstrap.py"),
     Path("src/daimon_matrix/operator_capabilities.py"),
     Path("src/daimon_matrix/operator_genesis.py"),
+    Path("src/daimon_matrix/operator_first_embodiment.py"),
     Path("src/daimon_matrix/operator_rebirth.py"),
     Path("src/daimon_matrix/memory_policy.py"),
     Path("src/daimon_matrix/memory_projection.py"),
