@@ -96,6 +96,19 @@ REQUEST_ID_PREFIX: Final = "dm:embodiment-request:v1:"
 ACTIVATION_SCHEMA: Final = "dm.operator.embodiment-activation/v1"
 ACTIVATION_DOMAIN: Final = "dm.operator.embodiment-activation/v1"
 ACTIVATION_ID_PREFIX: Final = "dm:embodiment-activation:v1:"
+DISTRIBUTED_ENROLLMENT_INTENT_SCHEMA: Final = (
+    "dm.operator.distributed-enrollment-intent/v1"
+)
+DISTRIBUTED_ENROLLMENT_INTENT_DOMAIN: Final = (
+    "dm.operator.distributed-enrollment-intent/v1"
+)
+DISTRIBUTED_ENROLLMENT_INTENT_ID_PREFIX: Final = "dm:distributed-enrollment-intent:v1:"
+DISTRIBUTED_ENROLLMENT_SHARE_SCHEMA: Final = (
+    "dm.operator.distributed-enrollment-share/v1"
+)
+DISTRIBUTED_ENROLLMENT_SHARE_DOMAIN: Final = (
+    "dm.operator.distributed-enrollment-share/v1"
+)
 RECOVERY_ACTIVATION_SCHEMA: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_DOMAIN: Final = "dm.operator.recovery-activation/v1"
 RECOVERY_ACTIVATION_ID_PREFIX: Final = "dm:recovery-activation:v1:"
@@ -713,6 +726,320 @@ def authorize_enrollment_request(
     return activation
 
 
+def _distributed_enrollment_material(
+    request: Any,
+    base: RootAuthority,
+    *,
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    """Build the exact unsigned credential successor and epoch transition."""
+
+    issued = _uint(issued_at_ms, "invalid_rebirth_time")
+    verified = validate_enrollment_request(request, base, observed_at_ms=issued)
+    credential = copy.deepcopy(verified["body"]["credential"])
+    incarnation = copy.deepcopy(verified["body"]["incarnation"])
+    origin = _origin(verified["body"]["origin"])
+    rows = copy.deepcopy(base.manifest.value["embodiments"])
+    rows.append(
+        {
+            "body_ref": origin["body_ref"],
+            "embodiment_credential_id": credential["artifact_id"],
+            "embodiment_id": origin["embodiment_id"],
+            "incarnation_authorization_id": incarnation["artifact_id"],
+            "incarnation_id": origin["incarnation_id"],
+            "status": "active",
+        }
+    )
+    rows.sort(key=lambda row: (row["embodiment_id"], row["incarnation_id"]))
+    manifest = BeingManifest.from_value(
+        {
+            **base.manifest.value,
+            "revision": base.manifest.value["revision"] + 1,
+            "embodiments": rows,
+        }
+    )
+    transition = create_embodiment_enrollment(
+        base.manifest,
+        manifest,
+        request_id=verified["request_id"],
+        body_ref=origin["body_ref"],
+        embodiment_id=origin["embodiment_id"],
+        incarnation_id=origin["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=incarnation["artifact_id"],
+        principal_id=origin["principal_id"],
+        root_seeds=[],
+        issued_at_ms=issued,
+    )
+    if transition["signatures"]:
+        raise AssertionError("unsigned enrollment transition contains signatures")
+    return {
+        "request_id": verified["request_id"],
+        "being_ref": base.manifest.being_ref,
+        "control_head": base.state.head,
+        "previous_manifest_hash": base.manifest.digest,
+        "successor_manifest": manifest.value,
+        "credential": credential,
+        "incarnation": incarnation,
+        "origin": origin,
+        "transition": transition,
+        "issued_at_ms": issued,
+    }
+
+
+def create_distributed_enrollment_intent(
+    request: Any,
+    base: RootAuthority,
+    *,
+    issued_at_ms: int,
+    expires_at_ms: int,
+    nonce: bytes,
+) -> dict[str, Any]:
+    """Freeze one normal enrollment before isolated root holders sign it."""
+
+    material = _distributed_enrollment_material(
+        request, base, issued_at_ms=issued_at_ms
+    )
+    expires = _uint(expires_at_ms, "invalid_rebirth_enrollment_intent_time")
+    if (
+        expires <= material["issued_at_ms"]
+        or expires - material["issued_at_ms"] > 24 * 60 * 60 * 1000
+    ):
+        raise RebirthError("invalid_rebirth_enrollment_intent_time")
+    if len(nonce) != 32:
+        raise RebirthError("invalid_rebirth_enrollment_intent_nonce")
+    body = {
+        "activation_body": material,
+        "expires_at_ms": expires,
+        "nonce": b64url(nonce),
+    }
+    result = {
+        "schema": DISTRIBUTED_ENROLLMENT_INTENT_SCHEMA,
+        "intent_id": DISTRIBUTED_ENROLLMENT_INTENT_ID_PREFIX
+        + b64url(digest(DISTRIBUTED_ENROLLMENT_INTENT_DOMAIN, body)),
+        "body": body,
+    }
+    _canonical(result, "invalid_rebirth_enrollment_intent")
+    return result
+
+
+def validate_distributed_enrollment_intent(
+    value: Any,
+    request: Any,
+    base: RootAuthority,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Rebuild every public byte before accepting a holder signature."""
+
+    row = _closed(
+        value,
+        {"schema", "intent_id", "body"},
+        "invalid_rebirth_enrollment_intent",
+    )
+    if row["schema"] != DISTRIBUTED_ENROLLMENT_INTENT_SCHEMA:
+        raise RebirthError("unsupported_rebirth_enrollment_intent")
+    body = _closed(
+        row["body"],
+        {"activation_body", "expires_at_ms", "nonce"},
+        "invalid_rebirth_enrollment_intent",
+    )
+    observed = _uint(observed_at_ms, "invalid_rebirth_enrollment_intent_time")
+    expires = _uint(body["expires_at_ms"], "invalid_rebirth_enrollment_intent_time")
+    activation_body = body["activation_body"]
+    if not isinstance(activation_body, Mapping):
+        raise RebirthError("invalid_rebirth_enrollment_intent")
+    issued = _uint(
+        activation_body.get("issued_at_ms"),
+        "invalid_rebirth_enrollment_intent_time",
+    )
+    try:
+        nonce = b64url(unb64url(str(body["nonce"]), length=32))
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_rebirth_enrollment_intent_nonce") from exception
+    if (
+        nonce != body["nonce"]
+        or expires <= issued
+        or expires - issued > 24 * 60 * 60 * 1000
+        or not issued <= observed < expires
+    ):
+        raise RebirthError("rebirth_enrollment_intent_not_timely")
+    expected = _distributed_enrollment_material(request, base, issued_at_ms=issued)
+    if canonical_bytes(expected) != canonical_bytes(activation_body):
+        raise RebirthError("rebirth_enrollment_intent_mismatch")
+    expected_id = DISTRIBUTED_ENROLLMENT_INTENT_ID_PREFIX + b64url(
+        digest(DISTRIBUTED_ENROLLMENT_INTENT_DOMAIN, body)
+    )
+    normalized = copy.deepcopy(dict(row))
+    if row["intent_id"] != expected_id or _canonical(
+        normalized, "invalid_rebirth_enrollment_intent"
+    ) != _canonical(value, "invalid_rebirth_enrollment_intent"):
+        raise RebirthError("invalid_rebirth_enrollment_intent")
+    return normalized
+
+
+def create_distributed_enrollment_share(
+    intent: Any,
+    request: Any,
+    base: RootAuthority,
+    root_seed: bytes,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Sign credential and manifest transition with exactly one root key."""
+
+    verified = validate_distributed_enrollment_intent(
+        intent, request, base, observed_at_ms=observed_at_ms
+    )
+    body = verified["body"]["activation_body"]
+    kid = key_id("Ed25519", ed25519_public(root_seed))
+    if kid not in {row["key_id"] for row in base.state.root_policy["keys"]}:
+        raise RebirthError("rebirth_root_holder_not_authorized")
+    credential = body["credential"]
+    credential_signature = _identity_signature(
+        root_seed,
+        "root-authorization",
+        domain_bytes(DOMAINS["embodiment-credential"], credential["body"]),
+    )
+    signed_transition = create_embodiment_enrollment(
+        base.manifest,
+        BeingManifest.from_value(body["successor_manifest"]),
+        request_id=body["request_id"],
+        body_ref=body["origin"]["body_ref"],
+        embodiment_id=body["origin"]["embodiment_id"],
+        incarnation_id=body["origin"]["incarnation_id"],
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=body["incarnation"]["artifact_id"],
+        principal_id=body["origin"]["principal_id"],
+        root_seeds=[root_seed],
+        issued_at_ms=body["issued_at_ms"],
+    )
+    transition = body["transition"]
+    if canonical_bytes(
+        {key: value for key, value in signed_transition.items() if key != "signatures"}
+    ) != canonical_bytes(
+        {key: value for key, value in transition.items() if key != "signatures"}
+    ):
+        raise RebirthError("rebirth_enrollment_intent_mismatch")
+    share_body = {
+        "intent_id": verified["intent_id"],
+        "credential_artifact_id": credential["artifact_id"],
+        "transition_content_hash": transition["content_hash"],
+        "credential_signature": credential_signature,
+        "transition_signature": signed_transition["signatures"][0],
+    }
+    return {
+        "schema": DISTRIBUTED_ENROLLMENT_SHARE_SCHEMA,
+        **share_body,
+        "attestation": _holder_attestation(
+            root_seed, DISTRIBUTED_ENROLLMENT_SHARE_DOMAIN, share_body
+        ),
+    }
+
+
+def aggregate_distributed_enrollment(
+    intent: Any,
+    request: Any,
+    base: RootAuthority,
+    shares: Sequence[Any],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Build a normal activation without opening any root holder store."""
+
+    verified = validate_distributed_enrollment_intent(
+        intent, request, base, observed_at_ms=observed_at_ms
+    )
+    body = copy.deepcopy(verified["body"]["activation_body"])
+    credential = body["credential"]
+    transition = body["transition"]
+    credential_signatures: list[Mapping[str, Any]] = []
+    transition_signatures: list[Mapping[str, Any]] = []
+    paired_ids: set[str] = set()
+    for value in shares:
+        share = _closed(
+            value,
+            {
+                "schema",
+                "intent_id",
+                "credential_artifact_id",
+                "transition_content_hash",
+                "credential_signature",
+                "transition_signature",
+                "attestation",
+            },
+            "invalid_rebirth_enrollment_share",
+        )
+        credential_signature = share["credential_signature"]
+        transition_signature = share["transition_signature"]
+        if (
+            share["schema"] != DISTRIBUTED_ENROLLMENT_SHARE_SCHEMA
+            or share["intent_id"] != verified["intent_id"]
+            or share["credential_artifact_id"] != credential["artifact_id"]
+            or share["transition_content_hash"] != transition["content_hash"]
+            or not isinstance(credential_signature, Mapping)
+            or not isinstance(transition_signature, Mapping)
+            or credential_signature.get("key_id") != transition_signature.get("kid")
+            or credential_signature.get("key_id") in paired_ids
+        ):
+            raise RebirthError("invalid_rebirth_enrollment_share")
+        share_body = {
+            "intent_id": share["intent_id"],
+            "credential_artifact_id": share["credential_artifact_id"],
+            "transition_content_hash": share["transition_content_hash"],
+            "credential_signature": credential_signature,
+            "transition_signature": transition_signature,
+        }
+        attested_kid = _verify_holder_attestation(
+            share["attestation"],
+            DISTRIBUTED_ENROLLMENT_SHARE_DOMAIN,
+            share_body,
+            base.state.root_policy["keys"],
+            code="invalid_rebirth_enrollment_share",
+        )
+        if credential_signature.get("key_id") != attested_kid:
+            raise RebirthError("invalid_rebirth_enrollment_share")
+        paired_ids.add(str(attested_kid))
+        credential_signatures.append(credential_signature)
+        transition_signatures.append(transition_signature)
+    credential["signatures"].extend(
+        copy.deepcopy(dict(signature)) for signature in credential_signatures
+    )
+    credential["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+    transition["signatures"] = sorted(
+        (copy.deepcopy(dict(signature)) for signature in transition_signatures),
+        key=lambda row: row["kid"],
+    )
+    try:
+        verify_embodiment_credential(credential, base.state, at_ms=body["issued_at_ms"])
+        verify_incarnation_authorization(
+            body["incarnation"],
+            credential,
+            base.state,
+            at_ms=body["issued_at_ms"],
+        )
+        successor = RootAuthority(
+            BeingManifest.from_value(body["successor_manifest"]),
+            base.state,
+            {**base.credentials, credential["artifact_id"]: credential},
+            {
+                **base.incarnations,
+                body["incarnation"]["artifact_id"]: body["incarnation"],
+            },
+        )
+        verify_embodiment_enrollment(transition, base, successor)
+        RootHistoryAuthority(successor, [base], [transition])
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("rebirth_enrollment_share_threshold_rejected") from exception
+    activation = {
+        "schema": ACTIVATION_SCHEMA,
+        "activation_id": ACTIVATION_ID_PREFIX + b64url(digest(ACTIVATION_DOMAIN, body)),
+        "body": body,
+    }
+    validate_activation(activation, base, request=request)
+    return activation
+
+
 def validate_activation(
     value: Any,
     base: RootAuthority,
@@ -769,6 +1096,7 @@ def validate_activation(
     origin = _origin(body["origin"])
     if (
         transition["request_id"] != body["request_id"]
+        or transition["issued_at_ms"] != body["issued_at_ms"]
         or transition["body_ref"] != origin["body_ref"]
         or transition["embodiment_id"] != origin["embodiment_id"]
         or transition["incarnation_id"] != origin["incarnation_id"]
@@ -1313,7 +1641,8 @@ def validate_recovery_activation(
     )
     origin = _origin(body["origin"])
     if (
-        transition["embodiment_id"] != origin["embodiment_id"]
+        transition["issued_at_ms"] != body["issued_at_ms"]
+        or transition["embodiment_id"] != origin["embodiment_id"]
         or transition["incarnation_id"] != origin["incarnation_id"]
         or transition["body_ref"] != origin["body_ref"]
         or transition["principal_id"] != origin["principal_id"]
@@ -1333,6 +1662,103 @@ def validate_recovery_activation(
     return normalized, successor, history
 
 
+def _validate_runtime_peer_transport(
+    bundle: Mapping[str, Any],
+    authority: RootAuthority,
+    *,
+    exact_targets: bool,
+) -> None:
+    """Validate the public peer portion of a V7 candidate without custody."""
+
+    peer = _closed(
+        bundle.get("peer_transport"),
+        {
+            "enabled",
+            "encryption_slot",
+            "exchange_filename",
+            "listen_host",
+            "listen_port",
+            "outbox_filename",
+            "targets",
+        },
+        "rebirth_runtime_peer_transport_invalid",
+    )
+    encryption_slot = peer["encryption_slot"]
+    listen_host = peer["listen_host"]
+    listen_port = peer["listen_port"]
+    filenames = (peer["exchange_filename"], peer["outbox_filename"])
+    if (
+        peer["enabled"] is not True
+        or not isinstance(encryption_slot, str)
+        or not encryption_slot.startswith("peer.encryption.v1:")
+        or not isinstance(listen_host, str)
+        or not 1 <= len(listen_host.encode("utf-8")) <= 255
+        or any(character.isspace() for character in listen_host)
+        or not isinstance(listen_port, int)
+        or isinstance(listen_port, bool)
+        or not 1 <= listen_port <= 65_535
+        or any(
+            not isinstance(filename, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename) is None
+            for filename in filenames
+        )
+        or len(set(filenames)) != 2
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    origin = _origin(bundle.get("local_origin"))
+    manifested_origins = [
+        row
+        for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active"
+        and row["body_ref"] == origin["body_ref"]
+        and row["embodiment_id"] == origin["embodiment_id"]
+        and row["incarnation_id"] == origin["incarnation_id"]
+    ]
+    if len(manifested_origins) != 1:
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    targets = peer["targets"]
+    if not isinstance(targets, list) or len(targets) > 255:
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    normalized: list[tuple[str, str, int]] = []
+    for value in targets:
+        target = _closed(
+            value,
+            {"embodiment_id", "endpoint", "timeout_ms"},
+            "rebirth_runtime_peer_transport_invalid",
+        )
+        embodiment_id = target["embodiment_id"]
+        endpoint = target["endpoint"]
+        timeout_ms = target["timeout_ms"]
+        if (
+            not isinstance(embodiment_id, str)
+            or not embodiment_id
+            or not isinstance(endpoint, str)
+            or not isinstance(timeout_ms, int)
+            or isinstance(timeout_ms, bool)
+            or not 1 <= timeout_ms <= 30_000
+        ):
+            raise RebirthError("rebirth_runtime_peer_transport_invalid")
+        try:
+            http_peer_round_trip(endpoint, timeout_seconds=timeout_ms / 1000)
+        except (PeerTransportError, TypeError, ValueError) as exception:
+            raise RebirthError("rebirth_runtime_peer_transport_invalid") from exception
+        normalized.append((embodiment_id, endpoint, timeout_ms))
+    if normalized != sorted(normalized) or len({row[0] for row in normalized}) != len(
+        normalized
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+    expected = {
+        str(row["embodiment_id"])
+        for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active" and row["embodiment_id"] != origin["embodiment_id"]
+    }
+    actual = {row[0] for row in normalized}
+    if (exact_targets and actual != expected) or (
+        not exact_targets and not actual.issubset(expected)
+    ):
+        raise RebirthError("rebirth_runtime_peer_transport_invalid")
+
+
 def apply_activation_to_runtime_bundle(
     bundle: Mapping[str, Any],
     activation: Any,
@@ -1343,8 +1769,10 @@ def apply_activation_to_runtime_bundle(
     """Return a forward-only public bundle update for an existing peer."""
 
     verified, successor, _history = validate_activation(activation, base)
-    if bundle.get("manifest") != base.manifest.value:
+    source_authority = authority_from_runtime_bundle(bundle)
+    if source_authority != base:
         raise RebirthError("rebirth_runtime_base_mismatch")
+    _validate_runtime_peer_transport(bundle, source_authority, exact_targets=True)
     result = copy.deepcopy(dict(bundle))
     authority_history = result.get("authority_history")
     if not isinstance(authority_history, list):
@@ -1375,6 +1803,14 @@ def apply_activation_to_runtime_bundle(
             }
         )
         peer["targets"].sort(key=lambda row: row["embodiment_id"])
+    candidate_authority = authority_from_runtime_bundle(result)
+    if candidate_authority != successor:
+        raise RebirthError("rebirth_runtime_candidate_mismatch")
+    _validate_runtime_peer_transport(
+        result,
+        candidate_authority,
+        exact_targets=target_endpoint is not None,
+    )
     return result
 
 
@@ -1386,11 +1822,10 @@ def apply_recovery_activation_to_runtime_bundle(
     """Return a target-only V7 bundle while preserving old public history."""
 
     verified, successor, _history = validate_recovery_activation(activation, previous)
-    if (
-        bundle.get("manifest") != previous.manifest.value
-        or bundle.get("control_head") != previous.state.head
-    ):
+    source_authority = authority_from_runtime_bundle(bundle)
+    if source_authority != previous:
         raise RebirthError("rebirth_recovery_runtime_base_mismatch")
+    _validate_runtime_peer_transport(bundle, source_authority, exact_targets=True)
     result = copy.deepcopy(dict(bundle))
     authority_history = result.get("authority_history")
     control_artifacts = result.get("control_artifacts")
@@ -1429,6 +1864,8 @@ def apply_recovery_activation_to_runtime_bundle(
     if not isinstance(peer, dict) or not isinstance(peer.get("targets"), list):
         raise RebirthError("rebirth_runtime_peer_transport_missing")
     peer["targets"] = []
+    if authority_from_runtime_bundle(result) != successor:
+        raise RebirthError("rebirth_runtime_candidate_mismatch")
     return result
 
 
@@ -1653,6 +2090,7 @@ def _safe_document(path: Path, code: str) -> Any:
 
 def _owner_directory(path: Path, code: str) -> Path:
     absolute = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(absolute, code)
     try:
         info = absolute.lstat()
     except FileNotFoundError as exception:
@@ -1667,6 +2105,18 @@ def _owner_directory(path: Path, code: str) -> Path:
     return absolute
 
 
+def _reject_symlink_ancestors(path: Path, code: str) -> None:
+    ancestor = path.parent
+    while ancestor != ancestor.parent:
+        try:
+            info = ancestor.lstat()
+        except OSError as exception:
+            raise RebirthError(code) from exception
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RebirthError(code)
+        ancestor = ancestor.parent
+
+
 def _owner_file_descriptor(
     path: Path,
     code: str,
@@ -1677,6 +2127,7 @@ def _owner_file_descriptor(
     """Open one stable owner-only regular file without following replacements."""
 
     absolute = Path(os.path.abspath(path))
+    _reject_symlink_ancestors(absolute, code)
     try:
         before = absolute.lstat()
     except FileNotFoundError as exception:
@@ -1693,7 +2144,7 @@ def _owner_file_descriptor(
     try:
         descriptor = os.open(
             absolute,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
         )
         after = os.fstat(descriptor)
         if (
@@ -2422,6 +2873,9 @@ def _activate_target_runtime(
             "known_being_refs": known_refs,
             "store_filename": "relationships.sqlite3",
         }
+        if authority_from_runtime_bundle(bundle) != successor:
+            raise RebirthError("rebirth_runtime_candidate_mismatch")
+        _validate_runtime_peer_transport(bundle, successor, exact_targets=True)
         EncryptedKeystore.create(
             runtime_root / "custody.json",
             _password_reader(password),
@@ -3186,6 +3640,33 @@ def _validated_existing_replacement_holder(
         raise RebirthError("rebirth_holder_conflict") from exception
 
 
+def create_distributed_enrollment_share_from_holder(
+    intent: Any,
+    request: Any,
+    base: RootAuthority,
+    holder_path: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Open one isolated root holder and emit one paired enrollment share."""
+
+    holder_seed = _single_holder_seed(
+        holder_path,
+        base,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:",),
+        code="rebirth_root_holder_store_rejected",
+    )
+    return create_distributed_enrollment_share(
+        intent,
+        request,
+        base,
+        holder_seed,
+        observed_at_ms=observed_at_ms,
+    )
+
+
 def create_distributed_recovery_share_from_holder(
     intent: Any,
     previous: RootAuthority,
@@ -3445,6 +3926,45 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--output", type=Path, required=True)
     prepare.add_argument("--password-fd", type=int, required=True)
     prepare.add_argument("--ttl-seconds", type=int, default=3600)
+    enrollment_intent = commands.add_parser(
+        "create-enrollment-intent",
+        help="freeze one normal enrollment for isolated root holders",
+    )
+    enrollment_intent.add_argument("--authority", type=Path, required=True)
+    enrollment_intent.add_argument("--request", type=Path, required=True)
+    enrollment_intent.add_argument("--ttl-seconds", type=int, default=3600)
+    enrollment_intent.add_argument("--output", type=Path, required=True)
+    enrollment_share = commands.add_parser(
+        "enrollment-share",
+        help="emit one paired enrollment share from one isolated root holder",
+    )
+    enrollment_share.add_argument("--authority", type=Path, required=True)
+    enrollment_share.add_argument("--request", type=Path, required=True)
+    enrollment_share.add_argument("--intent", type=Path, required=True)
+    enrollment_share.add_argument("--holder", type=Path, required=True)
+    enrollment_share.add_argument("--password-fd", type=int, required=True)
+    enrollment_share.add_argument("--output", type=Path, required=True)
+    aggregate_enrollment = commands.add_parser(
+        "aggregate-enrollment",
+        help="aggregate enrollment shares without opening holder stores",
+    )
+    aggregate_enrollment.add_argument("--authority", type=Path, required=True)
+    aggregate_enrollment.add_argument("--request", type=Path, required=True)
+    aggregate_enrollment.add_argument("--intent", type=Path, required=True)
+    aggregate_enrollment.add_argument(
+        "--share", type=Path, action="append", required=True
+    )
+    aggregate_enrollment.add_argument("--output", type=Path, required=True)
+    advance_bundle = commands.add_parser(
+        "advance-bundle",
+        help="write a verified forward-only bundle candidate for an existing peer",
+    )
+    advance_bundle.add_argument("--authority", type=Path, required=True)
+    advance_bundle.add_argument("--base-runtime", type=Path, required=True)
+    advance_bundle.add_argument("--request", type=Path, required=True)
+    advance_bundle.add_argument("--activation", type=Path, required=True)
+    advance_bundle.add_argument("--target-endpoint", required=True)
+    advance_bundle.add_argument("--output", type=Path, required=True)
     authorize = commands.add_parser("authorize", help="offline-root authorization")
     authorize.add_argument("--authority", type=Path, required=True)
     authorize.add_argument("--request", type=Path, required=True)
@@ -3594,6 +4114,77 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             finally:
                 password[:] = b"\x00" * len(password)
+        elif arguments.command == "create-enrollment-intent":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            ttl = arguments.ttl_seconds
+            if (
+                not isinstance(ttl, int)
+                or isinstance(ttl, bool)
+                or not 60 <= ttl <= 86_400
+            ):
+                raise RebirthError("invalid_rebirth_ttl")
+            receipt = create_distributed_enrollment_intent(
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                issued_at_ms=now,
+                expires_at_ms=now + ttl * 1000,
+                nonce=secrets.token_bytes(32),
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "enrollment-share":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            password = _password(arguments.password_fd)
+            try:
+                receipt = create_distributed_enrollment_share_from_holder(
+                    _safe_document(
+                        arguments.intent, "rebirth_enrollment_intent_unavailable"
+                    ),
+                    _safe_document(arguments.request, "rebirth_request_unavailable"),
+                    authority,
+                    arguments.holder,
+                    _password_reader(password),
+                    observed_at_ms=now,
+                )
+                _write_new_document(arguments.output, receipt)
+            finally:
+                password[:] = b"\x00" * len(password)
+        elif arguments.command == "aggregate-enrollment":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            receipt = aggregate_distributed_enrollment(
+                _safe_document(
+                    arguments.intent, "rebirth_enrollment_intent_unavailable"
+                ),
+                _safe_document(arguments.request, "rebirth_request_unavailable"),
+                authority,
+                [
+                    _safe_document(path, "rebirth_enrollment_share_unavailable")
+                    for path in arguments.share
+                ],
+                observed_at_ms=now,
+            )
+            _write_new_document(arguments.output, receipt)
+        elif arguments.command == "advance-bundle":
+            authority = authority_from_document(
+                _safe_document(arguments.authority, "rebirth_authority_unavailable")
+            )
+            request = _safe_document(arguments.request, "rebirth_request_unavailable")
+            activation = _safe_document(
+                arguments.activation, "rebirth_activation_unavailable"
+            )
+            validate_activation(activation, authority, request=request)
+            receipt = apply_activation_to_runtime_bundle(
+                _safe_document(arguments.base_runtime, "rebirth_runtime_unavailable"),
+                activation,
+                authority,
+                target_endpoint=arguments.target_endpoint,
+            )
+            _write_new_document(arguments.output, receipt)
         elif arguments.command == "create-recovery-intent":
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
@@ -3923,6 +4514,7 @@ __all__ = [
     "RecoveryRequestBase",
     "activate_recovery_target_runtime",
     "activate_target_runtime",
+    "aggregate_distributed_enrollment",
     "apply_activation_to_runtime_bundle",
     "apply_recovery_activation_to_runtime_bundle",
     "authority_from_document",
@@ -3930,6 +4522,9 @@ __all__ = [
     "authorize_enrollment_request",
     "authorize_from_root_custody",
     "authorize_synthetic_single_store_recovery",
+    "create_distributed_enrollment_intent",
+    "create_distributed_enrollment_share",
+    "create_distributed_enrollment_share_from_holder",
     "create_enrollment_request",
     "create_recovery_target_preparation",
     "create_synthetic_single_store_recovery_custody",
@@ -3939,6 +4534,7 @@ __all__ = [
     "recovery_request_base",
     "restore_recovery_ledger",
     "validate_activation",
+    "validate_distributed_enrollment_intent",
     "validate_enrollment_request",
     "validate_recovery_activation",
 ]

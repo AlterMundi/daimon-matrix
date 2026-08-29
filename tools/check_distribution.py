@@ -13,6 +13,7 @@ import json
 import stat
 import tarfile
 import zipfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesParser
@@ -61,6 +62,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/operator_bootstrap.py",
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_genesis.py",
+        "src/daimon_matrix/operator_first_embodiment.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
@@ -117,6 +119,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/operator_bootstrap.py",
         "daimon_matrix/operator_capabilities.py",
         "daimon_matrix/operator_genesis.py",
+        "daimon_matrix/operator_first_embodiment.py",
         "daimon_matrix/operator_rebirth.py",
         "daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py",
@@ -261,6 +264,17 @@ def _check_metadata(data: bytes, source: str) -> None:
         )
 
 
+def _assert_source_parity(
+    files: Mapping[str, bytes],
+    source_root: Path,
+    source_map: Mapping[str, str],
+    kind: str,
+) -> None:
+    for member, relative in source_map.items():
+        if files.get(member) != (source_root / relative).read_bytes():
+            raise PackageCheckError(f"{kind} source drift: {member}")
+
+
 def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
     """Inspect an sdist without extracting it."""
 
@@ -329,6 +343,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/operator_bootstrap.py",
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_genesis.py",
+        "src/daimon_matrix/operator_first_embodiment.py",
         "src/daimon_matrix/operator_rebirth.py",
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
@@ -354,8 +369,7 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
         "src/daimon_matrix/synthetic_sources.py",
         "src/daimon_matrix/weave.py",
     ):
-        if files[relative] != (source_root / relative).read_bytes():
-            raise PackageCheckError(f"sdist source drift: {relative}")
+        _assert_source_parity(files, source_root, {relative: relative}, "sdist")
     return {
         "filename": path.name,
         "sha256": sha256_bytes(raw),
@@ -405,6 +419,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
+        b"daimon-first-embodiment = daimon_matrix.operator_first_embodiment:main\n"
         b"daimon-genesis = daimon_matrix.operator_genesis:main\n"
         b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
@@ -477,6 +492,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
             "src/daimon_matrix/operator_capabilities.py"
         ),
         "daimon_matrix/operator_genesis.py": "src/daimon_matrix/operator_genesis.py",
+        "daimon_matrix/operator_first_embodiment.py": (
+            "src/daimon_matrix/operator_first_embodiment.py"
+        ),
         "daimon_matrix/operator_rebirth.py": ("src/daimon_matrix/operator_rebirth.py"),
         "daimon_matrix/memory_policy.py": "src/daimon_matrix/memory_policy.py",
         "daimon_matrix/memory_projection.py": (
@@ -514,9 +532,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         ),
         "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",
     }
-    for member, relative in source_map.items():
-        if files[member] != (source_root / relative).read_bytes():
-            raise PackageCheckError(f"wheel source drift: {member}")
+    _assert_source_parity(files, source_root, source_map, "wheel")
     return {
         "filename": path.name,
         "sha256": sha256_bytes(raw),

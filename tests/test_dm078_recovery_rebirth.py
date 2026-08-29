@@ -24,7 +24,7 @@ from daimon_matrix.authority_epochs import (
     create_recovery_rebirth,
     verify_recovery_rebirth,
 )
-from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.canonical import b64url, canonical_bytes, digest
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.identity import (
     create_embodiment_credential,
@@ -54,6 +54,8 @@ from daimon_matrix.operator_capabilities import (
 )
 from daimon_matrix.operator_genesis import PENDING_CONTROL_HEAD
 from daimon_matrix.operator_rebirth import (
+    RECOVERY_ACTIVATION_DOMAIN,
+    RECOVERY_ACTIVATION_ID_PREFIX,
     RebirthError,
     activate_recovery_target_runtime,
     aggregate_distributed_recovery,
@@ -106,12 +108,14 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         expected = {
             "activate",
             "activate-recovery",
+            "aggregate-enrollment",
             "aggregate-recovery",
             "aggregate-recovery-authorization",
-            "authorize",
+            "create-enrollment-intent",
             "create-recovery-authorization-intent",
             "create-recovery-intent",
             "create-replacement-root-holder",
+            "enrollment-share",
             "prepare",
             "prepare-recovery",
             "recovery-authorization-share",
@@ -828,6 +832,13 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
         changed["body"]["recovered_control_head"] = self.state.head
         with self.assertRaisesRegex(RebirthError, "base_mismatch"):
             validate_recovery_activation(changed, self.authority, request=request)
+        changed_time = copy.deepcopy(activation)
+        changed_time["body"]["issued_at_ms"] += 1
+        changed_time["activation_id"] = RECOVERY_ACTIVATION_ID_PREFIX + b64url(
+            digest(RECOVERY_ACTIVATION_DOMAIN, changed_time["body"])
+        )
+        with self.assertRaisesRegex(RebirthError, "origin_mismatch"):
+            validate_recovery_activation(changed_time, self.authority, request=request)
 
     def test_recovery_preparation_builds_loadable_target_only_runtime(self) -> None:
         old_event = self.append(self.ledger_a, "legion", "before-runtime-recovery")
