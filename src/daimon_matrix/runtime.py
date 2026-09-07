@@ -45,6 +45,7 @@ from .peer_transport import (
     KeystorePeerCustody,
     PeerClient,
     PeerClientContext,
+    PeerCustody,
     PeerDispatcher,
     PeerExchangeStore,
     PeerOutbox,
@@ -73,7 +74,8 @@ from .routes import (
     RouteProfile,
 )
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
-from .sealed import RecipientTarget
+from .sealed import SIGNATURE_DOMAIN as DELIVERY_SIGNATURE_DOMAIN
+from .sealed import DeliveryCustody, RecipientTarget, SealedDeliveryError
 from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
@@ -90,6 +92,27 @@ class RuntimeError(ValueError):
     """Public authority, paths, or custody cannot safely host a runtime."""
 
 
+class _RuntimeDeliveryCustody:
+    """Adapt already authenticated peer keys to the sealed signature domain."""
+
+    def __init__(self, custody: PeerCustody) -> None:
+        self._custody = custody
+
+    def sign(self, key_id: str, unsigned: Mapping[str, Any]) -> bytes:
+        try:
+            return self._custody.sign(
+                key_id, DELIVERY_SIGNATURE_DOMAIN + canonical_bytes(unsigned)
+            )
+        except (CanonicalError, PeerTransportError) as exception:
+            raise SealedDeliveryError() from exception
+
+    def unwrap(self, key_id: str, combined: bytes, info: bytes) -> bytes:
+        try:
+            return self._custody.unwrap(key_id, combined, info)
+        except PeerTransportError as exception:
+            raise SealedDeliveryError() from exception
+
+
 @dataclass(frozen=True)
 class HostedRuntime:
     service: HostedWeave
@@ -100,6 +123,12 @@ class HostedRuntime:
     peer_outbox: PeerOutbox | None = None
     peer_context: PeerClientContext | None = None
     peer_listen: tuple[str, int] | None = None
+
+    def create_delivery_custody(self) -> DeliveryCustody:
+        """Reuse loaded keys without reopening custody or enabling messaging."""
+        if self.peer_context is None:
+            raise RuntimeError("messaging_custody_not_configured")
+        return _RuntimeDeliveryCustody(self.peer_context.custody)
 
     def create_peer_client(
         self, endpoint: str, *, timeout_seconds: float = 10

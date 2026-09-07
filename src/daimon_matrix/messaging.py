@@ -31,8 +31,8 @@ from .relationship_store import RelationshipStore, RelationshipView
 from .routes import ROUTE_SUBMISSION_SCHEMA, AuthenticatedProvider, RouteError
 from .sealed import (
     MAX_TTL_MS,
+    DeliveryCustody,
     DisclosureAuthorization,
-    KeystoreDeliveryCustody,
     RecipientTarget,
     SealedDeliveryError,
     _closed,
@@ -89,7 +89,7 @@ class MessagingSender:
         context: MessagingChannel,
         ledger: Ledger,
         signer: EventSigner,
-        custody: KeystoreDeliveryCustody,
+        custody: DeliveryCustody,
         outbox: MessagingOutboxStore,
         clock: Callable[[], int],
     ) -> None:
@@ -446,7 +446,7 @@ class MessagingChannel:
         local_credential_id: str,
         authority_resolver: Callable[[str], RootAuthority],
         relationships: RelationshipStore,
-        custody: KeystoreDeliveryCustody,
+        custody: DeliveryCustody,
         inbox: MessagingInboxStore,
         clock: Callable[[], int],
     ) -> None:

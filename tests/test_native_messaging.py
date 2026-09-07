@@ -6,6 +6,7 @@ import copy
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -359,6 +360,137 @@ class NativeMessagingTests(unittest.TestCase):
                 )
             )
         return providers[0], providers[1], calls
+
+    def test_loaded_runtime_delivery_custody_uses_one_password_read(self) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix.runtime import load_runtime
+        from daimon_matrix.sealed import (
+            open_event,
+            recipient_descriptor,
+            sender_descriptor,
+        )
+        from tests.test_dm022_ledger import seed
+        from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
+
+        fixture = RuntimeFixture()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        state_root, bundle, _ = fixture.make_bundle(
+            secrets={"peer.encryption.v1:local": seed("legion-encryption")}
+        )
+        bundle["peer_transport"] = {
+            "enabled": True,
+            "encryption_slot": "peer.encryption.v1:local",
+            "exchange_filename": "peer-exchange.sqlite",
+            "outbox_filename": "peer-outbox.sqlite",
+            "listen_host": "127.0.0.1",
+            "listen_port": 45193,
+            "targets": [
+                {
+                    "embodiment_id": "embodiment:daimonmatrix",
+                    "endpoint": "http://127.0.0.1:45194/dm-peer/v1",
+                    "timeout_ms": 1000,
+                }
+            ],
+        }
+        (state_root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        original_custody = (state_root / "custody.json").read_bytes()
+        reads = 0
+
+        def one_shot() -> bytearray:
+            nonlocal reads
+            reads += 1
+            self.assertEqual(reads, 1, "runtime password descriptor was reused")
+            return bytearray(PASSWORD)
+
+        runtime = load_runtime(state_root, "runtime.json", one_shot, clock=lambda: NOW)
+        factory = runtime.create_delivery_custody
+        context = runtime.peer_context
+        assert context is not None
+        event = fixture.append(fixture.ledger_a, "legion", "loaded-custody-roundtrip")
+        target = context.local_target
+        authorization = DisclosureAuthorization.synthetic(
+            event=event,
+            sender=sender_descriptor(event, context.authority, at_ms=NOW),
+            recipients=[recipient_descriptor(target, at_ms=NOW)],
+            evidence_hash="a" * 64,
+            authorized_at_ms=NOW,
+            expires_at_ms=NOW + 1000,
+        )
+        for _ in range(2):
+            loaded = factory()
+            envelope = seal_event(
+                event,
+                sender_authority=context.authority,
+                recipients=[target],
+                authorization=authorization,
+                custody=loaded,
+                issued_at_ms=NOW,
+                expires_at_ms=NOW + 1000,
+            )
+            opened = open_event(
+                envelope,
+                sender_authority=context.authority,
+                local_target=target,
+                recipient_targets=[target],
+                authorization=authorization,
+                custody=loaded,
+                at_ms=NOW + 1,
+            )
+            self.assertEqual(opened, event)
+        self.assertEqual(reads, 1)
+        self.assertEqual((state_root / "custody.json").read_bytes(), original_custody)
+        self.assertEqual(json.loads((state_root / "runtime.json").read_bytes()), bundle)
+        with self.assertRaisesRegex(ValueError, "messaging_custody_not_configured"):
+            replace(runtime, peer_context=None).create_delivery_custody()
+
+    def test_runtime_delivery_custody_preserves_domain_and_stable_rejection(
+        self,
+    ) -> None:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from daimon_matrix.peer_transport import SIGNATURE_DOMAIN as PEER_DOMAIN
+        from daimon_matrix.peer_transport import KeystorePeerCustody
+        from daimon_matrix.runtime import _RuntimeDeliveryCustody
+        from daimon_matrix.sealed import SIGNATURE_DOMAIN, SealedDeliveryError
+
+        identity = _identity("alpha")
+        signing_id = identity.credential["body"]["signing_key"]["key_id"]
+        encryption_id = identity.credential["body"]["encryption_key"]["key_id"]
+        peer = KeystorePeerCustody(
+            secrets={
+                "runtime.signing.v1:test": _seed("alpha:signing"),
+                "peer.encryption.v1:test": _seed("alpha:encryption"),
+            },
+            signing_slots={signing_id: "runtime.signing.v1:test"},
+            encryption_slots={encryption_id: "peer.encryption.v1:test"},
+        )
+        loaded = _RuntimeDeliveryCustody(peer)
+        unsigned = {"schema": "dm.sealed-delivery/v1", "probe": "domain separation"}
+        signature = loaded.sign(signing_id, unsigned)
+        public = Ed25519PrivateKey.from_private_bytes(
+            _seed("alpha:signing")
+        ).public_key()
+        public.verify(signature, SIGNATURE_DOMAIN + canonical_bytes(unsigned))
+        for wrong_domain in (b"", PEER_DOMAIN):
+            with self.assertRaises(InvalidSignature):
+                public.verify(signature, wrong_domain + canonical_bytes(unsigned))
+        operations: tuple[Callable[[], bytes], ...] = (
+            lambda: loaded.sign("unknown-key", unsigned),
+            lambda: loaded.sign(signing_id, {"noncanonical": float("nan")}),
+            lambda: loaded.unwrap("unknown-key", b"invalid", b"invalid"),
+            lambda: loaded.unwrap(encryption_id, bytes(80), b"invalid"),
+        )
+        for index, operation in enumerate(operations):
+            with (
+                self.subTest(operation=index),
+                self.assertRaisesRegex(
+                    SealedDeliveryError, "^sealed_delivery_rejected$"
+                ),
+            ):
+                operation()
 
     def test_production_messaging_http_listener_is_bounded_and_delivers(self) -> None:
         import http.client

@@ -191,6 +191,28 @@ produces one independent inbox entry without foreign Ledger ingestion.
 The factory is not yet connected to daemon startup or owner provisioning.
 Adding it has not enabled a listener in any installed service.
 
+## Reusing authenticated runtime custody
+
+`HostedRuntime.create_delivery_custody()` supplies the typed `DeliveryCustody`
+interface used by sealed delivery and native messaging. It wraps only the
+already-loaded peer custody, fixes signing to the sealed-delivery signature
+domain, and reuses the existing compatible HPKE operation. It neither reopens
+the encrypted store nor reads another password, copies private material to a
+new store, changes v7 secret slots, or invents a runtime capability profile.
+A runtime without its verified peer context rejects this factory call.
+
+The adapter is an owner-local Python seam, not a model-facing signing/decryption
+API or authorization decision. Ordinary message checks still precede private
+operations; this factory does not create a messaging channel or enable a
+listener. Client capability/configuration enrollment remains separate work.
+
+A test loads an actual synthetic v7 runtime with a one-shot password reader,
+seals and opens signed events repeatedly, and verifies one password read and
+unchanged custody/bundle bytes. Its disclosure authorization is deliberately a
+synthetic primitive test, not participant enrollment or the real cross-being
+journey. Separate controls verify signature-domain separation and stable
+rejection of unknown keys, malformed wrapping and noncanonical signing input.
+
 ## What this does not yet implement
 
 - Supported daemon provisioning, transport listener integration or client
