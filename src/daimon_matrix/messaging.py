@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .canonical import b64url, canonical_bytes
+from .canonical import CanonicalError, b64url, canonical_bytes
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
     RESOLUTION_PAYLOAD_SCHEMA,
@@ -28,6 +28,7 @@ from .messaging_store import (
     MessagingOutboxStore,
 )
 from .relationship_store import RelationshipStore, RelationshipView
+from .routes import ROUTE_SUBMISSION_SCHEMA, AuthenticatedProvider, RouteError
 from .sealed import (
     MAX_TTL_MS,
     DisclosureAuthorization,
@@ -281,6 +282,157 @@ class MessagingSender:
             for event, auth in ((evidence, bootstrap), (message, authorization))
         )
         return self.outbox._commit(owner, send_id, (envelopes[0], envelopes[1]))
+
+
+class MessagingDelivery:
+    """Trusted owner-local evidence/message transport, not semantic delivery.
+
+    The future owner config loader must derive config_digest from the validated
+    endpoints, key references and channel selection. Neither that digest nor
+    providers are model inputs. Results describe recipient intake only: never
+    consumer acknowledgment, reply, task completion or a signed Matrix receipt.
+    """
+
+    def __init__(
+        self,
+        *,
+        sender: MessagingSender,
+        evidence_provider: AuthenticatedProvider,
+        message_provider: AuthenticatedProvider,
+        config_digest: str,
+    ) -> None:
+        if (
+            not isinstance(config_digest, str)
+            or len(config_digest) != 64
+            or any(character not in "0123456789abcdef" for character in config_digest)
+        ):
+            raise ValueError("messaging_config_digest_invalid")
+        self.sender = sender
+        self.providers = (evidence_provider, message_provider)
+        self.config_digest = config_digest
+
+    def send(
+        self, *, client_id: str, send_id: str, thread_id: str, text: str
+    ) -> dict[str, Any]:
+        # Always authorize the original request before consulting private progress.
+        envelopes = self.sender.prepare(
+            client_id=client_id, send_id=send_id, thread_id=thread_id, text=text
+        )
+        owner = self.sender.context.policy.peer_being_ref
+        phases = ("evidence", "message")
+        submissions = {}
+        bindings = {}
+        for phase, provider, envelope in zip(
+            phases, self.providers, envelopes, strict=True
+        ):
+            metadata = _parse(envelope)
+            attempt_id = str(
+                uuid.uuid5(
+                    uuid.UUID(send_id), f"dm.messaging.transport/v1:{owner}:{phase}"
+                )
+            )
+            submissions[phase] = {
+                "schema": ROUTE_SUBMISSION_SCHEMA,
+                "attempt_id": attempt_id,
+                # Application stage label, not a fabricated DM-052 semantic leg.
+                "leg_id": "application-stage:" + phase,
+                "message_id": metadata["event_id"],
+                "recipient_id": self.sender.context.policy.membership_ref,
+                "delivery_id": metadata["delivery_id"],
+                "envelope": b64url(envelope),
+                "envelope_sha256": hashlib.sha256(envelope).hexdigest(),
+                "deadline_ms": metadata["expires_at_ms"],
+            }
+            bindings[phase] = {
+                "config_digest": self.config_digest,
+                "provider_ref": provider.provider_ref,
+                "route_ref": provider.route_ref,
+                "route_class": provider.route_class,
+                "attempt_id": attempt_id,
+                "submission_sha256": hashlib.sha256(
+                    canonical_bytes(submissions[phase])
+                ).hexdigest(),
+            }
+        providers = dict(zip(phases, self.providers, strict=True))
+        stages = self.sender.outbox._transport_stages(
+            owner,
+            send_id,
+            bindings,
+            lambda phase: providers[phase].prepare_submission(submissions[phase]),
+        )
+        # Validate BOTH retained requests before any network I/O, including when
+        # evidence succeeded already. This checks current transport keys without
+        # regenerating timestamps or retaining those keys in the outbox.
+        for phase in phases:
+            prepared, _, _ = providers[phase]._prepared_submission(
+                stages[phase]["request"]
+            )
+            if canonical_bytes(prepared) != canonical_bytes(submissions[phase]):
+                raise ValueError("messaging_transport_conflict")
+            stage = stages[phase]
+            if stage["transport_status"] in {
+                "recipient-intake",
+                "refused",
+                "hub-accepted",
+            }:
+                if not isinstance(stage["response"], bytes):
+                    raise ValueError("messaging_transport_response_missing")
+                verified = providers[phase].validate_prepared_response(
+                    stage["request"], stage["response"]
+                )
+                if (
+                    verified["outcome"] != stage["transport_status"]
+                    or hashlib.sha256(canonical_bytes(verified)).hexdigest()
+                    != stage["result_sha256"]
+                ):
+                    raise ValueError("messaging_transport_response_conflict")
+            elif stage["response"] is not None or stage["result_sha256"] is not None:
+                raise ValueError("messaging_transport_response_conflict")
+        for phase in phases:
+            # Evidence I/O may take us beyond expiry or a newly observed revocation.
+            # Recheck before releasing the next stage, without renewing the pair.
+            self.sender.prepare(
+                client_id=client_id, send_id=send_id, thread_id=thread_id, text=text
+            )
+            stage = stages[phase]
+            status = stage["transport_status"]
+            if status in {"prepared", "pending"}:
+                status = self.sender.outbox._transport_status(owner, send_id, phase)
+                if status == "pending":
+                    proofs: list[bytes] = []
+                    try:
+                        result = providers[phase].send_prepared(
+                            stage["request"], response_sink=proofs.append
+                        )
+                    except (RouteError, CanonicalError):
+                        # No authenticated outcome: recipient may already have admitted
+                        # the request. Keep the committed pending state across restart.
+                        result = None
+                    if result is not None and result["status"] in {
+                        "accepted",
+                        "refused",
+                    }:
+                        status = self.sender.outbox._transport_status(
+                            owner, send_id, phase, result=result, response=proofs[0]
+                        )
+            stage["transport_status"] = status
+            if status != "recipient-intake":
+                break
+        return {
+            "send_id": send_id,
+            "phase": phase,
+            "transport_status": status,
+            "retryable": status == "pending",
+            "ambiguous": status == "pending",
+            "stages": [
+                {
+                    "phase": label,
+                    "attempt_id": bindings[label]["attempt_id"],
+                    "transport_status": stages[label]["transport_status"],
+                }
+                for label in phases
+            ],
+        }
 
 
 class MessagingChannel:

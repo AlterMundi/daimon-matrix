@@ -1116,7 +1116,7 @@ class AuthenticatedProvider:
         return request
 
     def _prepared_submission(
-        self, request: bytes
+        self, request: bytes, *, check_time: bool = True
     ) -> tuple[Mapping[str, Any], str, str]:
         """Revalidate persisted framing, local credential binding and lifetime."""
         code = "transport_request_rejected"
@@ -1158,7 +1158,7 @@ class AuthenticatedProvider:
                 or auth["key_ref"] != self._key_ref
                 or expires != value["deadline_ms"]
                 or expires <= issued
-                or not issued - MAX_CLOCK_SKEW_MS <= now < expires
+                or (check_time and not issued - MAX_CLOCK_SKEW_MS <= now < expires)
                 or request_id
                 != str(uuid.uuid5(_ATTEMPT_NAMESPACE, f"request:{value['attempt_id']}"))
             ):
@@ -1174,15 +1174,37 @@ class AuthenticatedProvider:
         except (CanonicalError, ValueError, KeyError, TypeError) as exception:
             raise RouteError(code) from exception
 
-    def send_prepared(self, request: bytes) -> Mapping[str, Any]:
-        """Transmit retained bytes without regenerating IDs or timestamps."""
-        value, request_id, request_hash = self._prepared_submission(request)
+    def send_prepared(
+        self, request: bytes, *, response_sink: Callable[[bytes], None] | None = None
+    ) -> Mapping[str, Any]:
+        """Transmit exact bytes; optionally retain the authenticated response."""
+        value, _, _ = self._prepared_submission(request)
         if not self._available:
             return self._result(value, "unavailable", "unavailable", None)
         try:
             raw_response = self._round_trip(request)
-        except (ConnectionError, OSError, TimeoutError) as exception:
+        except (
+            ConnectionError,
+            OSError,
+            TimeoutError,
+            http.client.HTTPException,
+        ) as exception:
             raise RouteAmbiguous() from exception
+        result = self.validate_prepared_response(request, raw_response)
+        if response_sink is not None:
+            response_sink(raw_response)
+        return result
+
+    def validate_prepared_response(
+        self, request: bytes, raw_response: bytes
+    ) -> Mapping[str, Any]:
+        """Validate historical proof, not permission to transmit an expired request."""
+        # A response can arrive after expiry for an operation admitted beforehand.
+        # Fresh I/O remains lifetime-gated in send_prepared, and application cached
+        # disclosure must separately recheck current policy and authorization.
+        value, request_id, request_hash = self._prepared_submission(
+            request, check_time=False
+        )
         response = _decode_canonical(raw_response, "transport_response_rejected")
         expected_fields = {
             "auth",

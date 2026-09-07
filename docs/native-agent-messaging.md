@@ -102,9 +102,8 @@ Preparation returns an ordered encrypted evidence/message pair only after
 persisting both envelopes atomically. Completed retries and restarts return
 those exact bytes while current authority, policy and the original lifetime
 remain valid. A changed request, client, origin or policy is rejected; expired
-operations cannot silently renew their authorization. This is preparation only:
-there is no network worker, persistent transport-request replay or delivery
-inspection in this slice.
+operations cannot silently renew their authorization. This preparation API does
+not perform network I/O; the delivery facade below owns transport orchestration.
 
 ## Exact prepared transport requests
 
@@ -131,15 +130,48 @@ reconstructs the provider and retries at a later clock value. The request bytes
 remain identical and the receiver keeps one message. The test HTTP handler is
 only a fixture, not the installed daemon listener. `recipient-intake` remains
 transport/application intake evidence, not a consumer or signed semantic receipt.
-The application still needs journaled network-stage orchestration and runtime
-wiring; the preparation outbox alone does not provide them.
+The provider alone does not journal requests. The application facade below adds
+that journal; runtime wiring and a supported client remain incomplete.
+
+## Journaled application transport
+
+`MessagingDelivery(sender=..., evidence_provider=..., message_provider=...,
+config_digest=...).send(client_id=..., send_id=..., thread_id=..., text=...)`
+uses trusted owner-configured providers, not model-supplied endpoints or grant
+objects. The future loader must derive the lowercase 64-hex configuration digest
+from actual validated endpoints, key references and channel selection. Merely
+accepting a caller-chosen digest is not a configuration authorization boundary.
+
+The facade rechecks sender authority, policy, request binding and original
+lifetime before reading cached progress and before each stage. Both complete
+authenticated requests are committed atomically before I/O. Each stage commits
+`pending` before its byte exchange and then atomically records its authenticated
+response and outcome. Only evidence `recipient-intake` releases the message
+stage. Config changes conflict rather than replacing an in-flight generation.
+
+Returned progress includes the send UUID, phase, transport status, retryability,
+ambiguity and bounded stage summaries. Lost, truncated or unauthenticated
+responses remain pending/ambiguous; an identical manual call resumes the same
+requests without duplicate logical admission. Explicit refusal does not advance
+the next stage. There is no autonomous retry worker or status-only API yet.
+
+Cached terminal outcomes retain the exact HMAC-authenticated response, bound to
+the exact original request. Resume revalidates that proof, its outcome and
+normalized-result hash before trusting the cache. A status string plus an
+unverifiable digest is insufficient. `validate_prepared_response` checks
+historical proof, not permission for new I/O: a response may arrive after the
+original operation window, but `send_prepared` still rejects expired requests
+and the facade rechecks authority before releasing another stage.
+
+These results remain transport/application intake evidence only, not consumer
+acknowledgment, canonical direct reply, signed semantic receipt or task success.
 
 ## What this does not yet implement
 
 - Supported daemon provisioning, transport listener integration or client
   capability enrollment for this application.
 - Ordinary Codex CLI/MCP send, manual inbox read or response commands.
-- A transport retry worker (the durable encrypted preparation outbox exists).
+- An autonomous transport retry worker (manual journaled retry exists).
 - Consumer acknowledgment or remote application acknowledgment.
 - Canonical direct replies or signed DM-052 terminal delivery receipts.
 - Telegram projection, participant visibility consent, bot credential custody,

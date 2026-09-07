@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,120 @@ class MessagingOutboxStore:
                     CHECK ((evidence IS NULL) = (message IS NULL))
                 )
             """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS messaging_transport_stages (
+                    owner TEXT NOT NULL,
+                    send_id TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN ('evidence', 'message')),
+                    binding BLOB NOT NULL,
+                    request BLOB NOT NULL,
+                    request_sha256 TEXT NOT NULL,
+                    transport_status TEXT NOT NULL CHECK (transport_status IN
+                        ('prepared', 'pending', 'recipient-intake',
+                         'refused', 'hub-accepted')),
+                    result_sha256 TEXT,
+                    response BLOB,
+                    PRIMARY KEY(owner, send_id, phase)
+                )
+            """)
+
+    def _transport_stages(
+        self,
+        owner: str,
+        send_id: str,
+        bindings: Mapping[str, Mapping[str, Any]],
+        prepare: Callable[[str], bytes],
+    ) -> dict[str, dict[str, Any]]:
+        """Bind both stages atomically; local-only prepare is not called on retry."""
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            if (
+                database.execute(
+                    "SELECT 1 FROM messaging_outbox WHERE owner=? AND send_id=? "
+                    "AND evidence IS NOT NULL",
+                    (owner, send_id),
+                ).fetchone()
+                is None
+            ):
+                raise ValueError("messaging_outbox_missing")
+            stages = {}
+            for phase, binding in bindings.items():
+                encoded = canonical_bytes(binding)
+                row = database.execute(
+                    "SELECT binding, request, request_sha256, transport_status, "
+                    "response, result_sha256 "
+                    "FROM messaging_transport_stages "
+                    "WHERE owner=? AND send_id=? AND phase=?",
+                    (owner, send_id, phase),
+                ).fetchone()
+                if row is not None:
+                    if (
+                        bytes(row["binding"]) != encoded
+                        or hashlib.sha256(row["request"]).hexdigest()
+                        != row["request_sha256"]
+                    ):
+                        raise ValueError("messaging_transport_conflict")
+                    raw, status = bytes(row["request"]), row["transport_status"]
+                else:
+                    raw, status = prepare(phase), "prepared"
+                    database.execute(
+                        "INSERT INTO messaging_transport_stages "
+                        "(owner, send_id, phase, binding, request, "
+                        "request_sha256, transport_status) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            owner,
+                            send_id,
+                            phase,
+                            encoded,
+                            raw,
+                            hashlib.sha256(raw).hexdigest(),
+                            status,
+                        ),
+                    )
+                stages[phase] = {
+                    "request": raw,
+                    "transport_status": status,
+                    "response": None if row is None else row["response"],
+                    "result_sha256": None if row is None else row["result_sha256"],
+                }
+        return stages
+
+    def _transport_status(
+        self,
+        owner: str,
+        send_id: str,
+        phase: str,
+        *,
+        result: Mapping[str, Any] | None = None,
+        response: bytes | None = None,
+    ) -> str:
+        """Commit pending before I/O; atomically retain authenticated response proof."""
+        if (result is None) != (response is None):
+            raise ValueError("messaging_transport_response_missing")
+        status = "pending" if result is None else result["outcome"]
+        digest = (
+            None
+            if result is None
+            else hashlib.sha256(canonical_bytes(result)).hexdigest()
+        )
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "UPDATE messaging_transport_stages "
+                "SET transport_status=?, result_sha256=?, response=? "
+                "WHERE owner=? AND send_id=? AND phase=? "
+                "AND transport_status IN ('prepared', 'pending')",
+                (status, digest, response, owner, send_id, phase),
+            )
+            row = database.execute(
+                "SELECT transport_status FROM messaging_transport_stages "
+                "WHERE owner=? AND send_id=? AND phase=?",
+                (owner, send_id, phase),
+            ).fetchone()
+            if row is None:
+                raise ValueError("messaging_transport_missing")
+            return str(row["transport_status"])
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:

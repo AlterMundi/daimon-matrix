@@ -288,6 +288,496 @@ class NativeMessagingTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
 
+    def delivery_transports(
+        self, pair: Pair, sender: Any, send_id: str
+    ) -> tuple[Any, Any, list[tuple[str, bytes]]]:
+        import sqlite3
+
+        from daimon_matrix.routes import (
+            AuthenticatedProvider,
+            OpaqueInbox,
+            TransportIngress,
+        )
+
+        calls: list[tuple[str, bytes]] = []
+        providers = []
+        for phase, callback in (
+            ("evidence", pair.receiver.receive_evidence),
+            ("message", pair.receiver.receive_message),
+        ):
+
+            def validate(raw: bytes, callback: Any = callback) -> None:
+                callback(raw)
+
+            ingress = TransportIngress(
+                provider_ref="provider:" + phase,
+                route_ref="route:" + phase,
+                key_ref="fixture:transport",
+                secret=bytes(range(32)),
+                recipient_id=pair.policy.membership_ref,
+                recipient_body_ref=pair.recipient.origin["body_ref"],
+                recipient_embodiment_id=pair.recipient.origin["embodiment_id"],
+                inbox=OpaqueInbox(
+                    self.root / "receiver" / (phase + "-opaque.sqlite3"),
+                    clock=lambda: pair.now,
+                ),
+                clock=lambda: pair.now,
+                intake_validator=validate,
+            )
+
+            def exchange(
+                raw: bytes, phase: str = phase, ingress: Any = ingress
+            ) -> bytes:
+                # Separate connection proves the complete request and pending state
+                # were committed, not merely inserted into an open transaction.
+                with closing(sqlite3.connect(sender.outbox.path)) as database:
+                    rows = database.execute(
+                        "SELECT phase, request, transport_status "
+                        "FROM messaging_transport_stages "
+                        "WHERE owner=? AND send_id=? ORDER BY phase",
+                        (pair.sender.state.being_ref, send_id),
+                    ).fetchall()
+                self.assertEqual(len(rows), 2)
+                stages = {row[0]: row[1:] for row in rows}
+                self.assertEqual(stages[phase], (raw, "pending"))
+                if phase == "message":
+                    self.assertEqual(stages["evidence"][1], "recipient-intake")
+                calls.append((phase, raw))
+                return bytes(ingress.handle(raw))
+
+            providers.append(
+                AuthenticatedProvider(
+                    provider_ref="provider:" + phase,
+                    route_ref="route:" + phase,
+                    route_class="direct",
+                    key_ref="fixture:transport",
+                    secret=bytes(range(32)),
+                    sender_principal=pair.sender.state.being_ref,
+                    sender_body_ref=pair.sender.origin["body_ref"],
+                    clock=lambda: pair.now,
+                    round_trip=exchange,
+                )
+            )
+        return providers[0], providers[1], calls
+
+    def test_delivery_stages_are_durable_before_independent_intake(self) -> None:
+        import sqlite3
+
+        from daimon_matrix import messaging
+        from daimon_matrix.canonical import unb64url
+
+        delivery_type = getattr(messaging, "MessagingDelivery", None)
+        self.assertIsNotNone(delivery_type, "durable delivery facade is missing")
+        assert delivery_type is not None
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("delivery-send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        delivery = delivery_type(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        result = delivery.send(**request)
+        self.assertEqual(result["phase"], "message")
+        self.assertEqual(result["transport_status"], "recipient-intake")
+        self.assertFalse(result["retryable"])
+        self.assertFalse(result["ambiguous"])
+        self.assertNotIn("receipt", result)
+        self.assertEqual([phase for phase, _ in calls], ["evidence", "message"])
+        submissions = [json.loads(raw)["submission"] for _, raw in calls]
+        self.assertNotEqual(submissions[0]["attempt_id"], submissions[1]["attempt_id"])
+        self.assertEqual(
+            [s["leg_id"] for s in submissions],
+            ["application-stage:evidence", "application-stage:message"],
+        )
+        pair_bytes = tuple(unb64url(s["envelope"]) for s in submissions)
+        self.assertEqual(sender.prepare(**request), pair_bytes)
+        self.assertTrue(all(TEXT.encode() not in raw for _, raw in calls))
+        events = sender.ledger.events()
+        self.assertEqual(len(events), 3)
+        page = pair.receiver.page(after=0, limit=10)
+        self.assertEqual(len(page), 1)
+        self.assertEqual(page[0]["message"], events[0])
+        self.assertEqual(page[0]["evidence"], events[2])
+        self.assertEqual(pair.local_ledger.events(), [])
+        with closing(sqlite3.connect(sender.outbox.path)) as database:
+            rows = database.execute(
+                "SELECT transport_status FROM messaging_transport_stages ORDER BY phase"
+            ).fetchall()
+        self.assertEqual(rows, [("recipient-intake",), ("recipient-intake",)])
+
+        # Real receiver policy refusal must not release the second stage.
+        pair.receiver_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        pair.now = NOW + 17
+        request["send_id"] = _uuid("refused-delivery")
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        result = delivery_type(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        ).send(**request)
+        self.assertEqual(result["phase"], "evidence")
+        self.assertEqual(result["transport_status"], "refused")
+        self.assertFalse(result["retryable"])
+        self.assertEqual([phase for phase, _ in calls], ["evidence"])
+
+    def test_delivery_restart_retries_exact_request_after_real_admission(self) -> None:
+        import sqlite3
+
+        from daimon_matrix.messaging import MessagingDelivery
+        from daimon_matrix.routes import RouteError
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("lost-delivery"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        exchange = message._round_trip
+
+        def lose_result(raw: bytes) -> bytes:
+            exchange(raw)  # Actual recipient admission, not a fabricated success.
+            raise ConnectionError("response lost after admission")
+
+        message._round_trip = lose_result
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        try:
+            pending = delivery.send(**request)
+        except RouteError as exception:
+            self.fail(f"lost result must return durable pending progress: {exception}")
+        self.assertEqual(pending["phase"], "message")
+        self.assertEqual(pending["transport_status"], "pending")
+        self.assertTrue(pending["ambiguous"])
+        self.assertTrue(pending["retryable"])
+        page = pair.receiver.page(after=0, limit=10)
+        self.assertEqual(len(page), 1)
+        with closing(sqlite3.connect(sender.outbox.path)) as database:
+            rows = database.execute(
+                "SELECT phase, request, transport_status, result_sha256 "
+                "FROM messaging_transport_stages ORDER BY phase"
+            ).fetchall()
+        self.assertEqual(rows[0][2], "recipient-intake")
+        self.assertIsNotNone(rows[0][3])
+        self.assertEqual(rows[1][2:], ("pending", None))
+        original_pair = sender.prepare(**request)
+        original_events = sender.ledger.events()
+        pair.now += 1
+        restarted = self.make_sender(pair)
+        evidence, message, retried = self.delivery_transports(
+            pair, restarted, request["send_id"]
+        )
+        delivery = MessagingDelivery(
+            sender=restarted,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        accepted = delivery.send(**request)
+        self.assertEqual(accepted["transport_status"], "recipient-intake")
+        self.assertEqual(retried, [calls[-1]])
+        self.assertEqual(retried[0][1], rows[1][1])
+        self.assertEqual(pair.receiver.page(after=0, limit=10), page)
+        self.assertEqual(restarted.prepare(**request), original_pair)
+        self.assertEqual(restarted.ledger.events(), original_events)
+        self.assertEqual(pair.local_ledger.events(), [])
+        self.assertEqual(delivery.send(**request), accepted)
+        self.assertEqual(len(retried), 1)
+
+        # Admission without an authenticated response is not evidence acceptance.
+        request["send_id"] = _uuid("unauthenticated-evidence-result")
+        evidence, message, calls = self.delivery_transports(
+            pair, restarted, request["send_id"]
+        )
+        exchange = evidence._round_trip
+
+        def damage_response(raw: bytes) -> bytes:
+            response = json.loads(exchange(raw))
+            response["auth"]["value"] = "A" * 43
+            return canonical_bytes(response)
+
+        evidence._round_trip = damage_response
+        pending = MessagingDelivery(
+            sender=restarted,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        ).send(**request)
+        self.assertEqual(pending["phase"], "evidence")
+        self.assertEqual(pending["transport_status"], "pending")
+        self.assertTrue(pending["ambiguous"])
+        self.assertEqual([phase for phase, _ in calls], ["evidence"])
+        self.assertEqual(pair.receiver.page(after=0, limit=10), page)
+
+    def test_delivery_rejects_unproven_cached_success_before_io(self) -> None:
+        import sqlite3
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging import MessagingDelivery
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("false-success"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        # Neither peer has admitted anything: interrupt the first byte-I/O seam.
+        with patch.object(evidence, "_round_trip", side_effect=ConnectionError):
+            self.assertEqual(delivery.send(**request)["transport_status"], "pending")
+        self.assertEqual(pair.receiver.page(after=0, limit=10), [])
+        with closing(sqlite3.connect(sender.outbox.path)) as database, database:
+            database.execute(
+                "UPDATE messaging_transport_stages "
+                "SET transport_status='recipient-intake', "
+                "result_sha256=?",
+                ("0" * 64,),
+            )
+        with self.assertRaises(ValueError):
+            delivery.send(**request)
+        self.assertEqual(calls, [])
+        self.assertEqual(pair.receiver.page(after=0, limit=10), [])
+
+    def test_delivery_retains_pending_after_truncated_http_response(self) -> None:
+        import http.client
+
+        from daimon_matrix.messaging import MessagingDelivery
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("truncated-response"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        exchange = message._round_trip
+
+        def truncate(raw: bytes) -> bytes:
+            response = exchange(raw)
+            raise http.client.IncompleteRead(response[:1], len(response) - 1)
+
+        message._round_trip = truncate
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        result = delivery.send(**request)
+        self.assertEqual(result["transport_status"], "pending")
+        self.assertTrue(result["ambiguous"])
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+        original = calls[-1]
+        message._round_trip = exchange
+        self.assertEqual(
+            delivery.send(**request)["transport_status"], "recipient-intake"
+        )
+        self.assertEqual(calls[-1], original)
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+
+    def test_delivery_conflicts_and_current_authority_block_all_io(self) -> None:
+        import sqlite3
+        from dataclasses import replace
+
+        from daimon_matrix.messaging import MessagingDelivery
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("gated-delivery"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        options = dict(
+            sender=sender, evidence_provider=evidence, message_provider=message
+        )
+        for invalid in ("", "a" * 63, "g" * 64, "A" * 64):
+            with (
+                self.subTest(digest=invalid),
+                self.assertRaisesRegex(ValueError, "config_digest"),
+            ):
+                MessagingDelivery(**options, config_digest=invalid)
+        delivery = MessagingDelivery(**options, config_digest="a" * 64)
+        original_io = evidence._round_trip
+
+        def lose_evidence_result(raw: bytes) -> bytes:
+            original_io(raw)
+            raise ConnectionError("lost evidence result")
+
+        evidence._round_trip = lose_evidence_result
+        self.assertEqual(delivery.send(**request)["transport_status"], "pending")
+        original_pair = sender.prepare(**request)
+        original_events = sender.ledger.events()
+        for cached in (False, True):
+            before_calls = list(calls)
+            before_database = sender.outbox.path.read_bytes()
+            with self.subTest(cached=cached):
+                for changed in (
+                    {"client_id": "other-client"},
+                    {"text": "different text"},
+                    {"thread_id": _uuid("other-thread")},
+                ):
+                    with self.assertRaisesRegex(ValueError, "messaging_send_conflict"):
+                        delivery.send(**{**request, **changed})
+                with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+                    MessagingDelivery(**options, config_digest="b" * 64).send(**request)
+                # Even a misconfigured owner reusing a digest cannot rebind the
+                # second provider's visible route/key/body fields before evidence I/O.
+                for field, alternative in (
+                    ("_provider_ref", "provider:other"),
+                    ("_route_ref", "route:other"),
+                    ("_route_class", "hub"),
+                    ("_key_ref", "fixture:other"),
+                    ("_secret", bytes(reversed(range(32)))),
+                    ("_sender_principal", "being:other"),
+                    ("_sender_body_ref", "body:other"),
+                ):
+                    original = getattr(message, field)
+                    setattr(message, field, alternative)
+                    try:
+                        with self.subTest(field=field), self.assertRaises(ValueError):
+                            delivery.send(**request)
+                    finally:
+                        setattr(message, field, original)
+                sender.context.policy = replace(pair.policy, max_ttl_ms=20_000)
+                try:
+                    with self.assertRaises(ValueError):
+                        delivery.send(**request)
+                finally:
+                    sender.context.policy = pair.policy
+                pair.now = json.loads(original_pair[0])["expires_at_ms"]
+                with self.assertRaisesRegex(
+                    ValueError, "messaging_authorization_expired"
+                ):
+                    delivery.send(**request)
+                pair.now = NOW + 11
+                self.assertEqual(calls, before_calls)
+                self.assertEqual(sender.outbox.path.read_bytes(), before_database)
+                self.assertEqual(sender.ledger.events(), original_events)
+            if not cached:
+                # Also reject corruption or freshly reauthenticated replacement of
+                # persisted requests; never silently accept regenerated timestamps.
+                with closing(sqlite3.connect(sender.outbox.path)) as database:
+                    raw = database.execute(
+                        "SELECT request FROM messaging_transport_stages "
+                        "WHERE phase='message'"
+                    ).fetchone()[0]
+                regenerated = message.prepare_submission(json.loads(raw)["submission"])
+                self.assertNotEqual(raw, regenerated)
+                for changed_raw in (raw + b"\n", regenerated):
+                    with (
+                        closing(sqlite3.connect(sender.outbox.path)) as database,
+                        database,
+                    ):
+                        database.execute(
+                            "UPDATE messaging_transport_stages SET request=? "
+                            "WHERE phase='message'",
+                            (changed_raw,),
+                        )
+                    with self.assertRaisesRegex(
+                        ValueError, "messaging_transport_conflict"
+                    ):
+                        delivery.send(**request)
+                    self.assertEqual(calls, before_calls)
+                    with (
+                        closing(sqlite3.connect(sender.outbox.path)) as database,
+                        database,
+                    ):
+                        database.execute(
+                            "UPDATE messaging_transport_stages SET request=? "
+                            "WHERE phase='message'",
+                            (raw,),
+                        )
+                evidence._round_trip = original_io
+                self.assertEqual(
+                    delivery.send(**request)["transport_status"], "recipient-intake"
+                )
+        self.assertEqual(sender.prepare(**request), original_pair)
+
+        # A long evidence round trip cannot carry an expired authorization onward.
+        later = {**request, "send_id": _uuid("expires-between-stages")}
+        evidence, message, later_calls = self.delivery_transports(
+            pair, sender, later["send_id"]
+        )
+        original_io = evidence._round_trip
+
+        def expire_after_evidence(raw: bytes) -> bytes:
+            response = original_io(raw)
+            pair.now = json.loads(raw)["expires_at_ms"]
+            return bytes(response)
+
+        evidence._round_trip = expire_after_evidence
+        with self.assertRaisesRegex(ValueError, "messaging_authorization_expired"):
+            MessagingDelivery(
+                sender=sender,
+                evidence_provider=evidence,
+                message_provider=message,
+                config_digest="a" * 64,
+            ).send(**later)
+        self.assertEqual([phase for phase, _ in later_calls], ["evidence"])
+
+        pair.now = NOW + 17
+        pair.sender_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        before_calls = list(calls)
+        before_database = sender.outbox.path.read_bytes()
+        for original_request in (request, later):
+            with self.assertRaises(ValueError):
+                delivery.send(**original_request)
+        self.assertEqual(calls, before_calls)
+        self.assertEqual(sender.outbox.path.read_bytes(), before_database)
+        self.assertEqual(pair.local_ledger.events(), [])
+
     def test_prepared_http_retry_preserves_request_after_lost_response(self) -> None:
         import hashlib
         import threading
