@@ -288,6 +288,222 @@ class NativeMessagingTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
 
+    def test_prepared_http_retry_preserves_request_after_lost_response(self) -> None:
+        import hashlib
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from daimon_matrix.canonical import b64url
+        from daimon_matrix.routes import (
+            ROUTE_SUBMISSION_SCHEMA,
+            DirectHTTPProvider,
+            OpaqueInbox,
+            RouteAmbiguous,
+            TransportIngress,
+        )
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        envelopes = sender.prepare(
+            client_id="owner-ui",
+            send_id=_uuid("http-send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        secret = bytes(
+            range(32)
+        )  # Disposable fixture transport key, not identity custody.
+        requests: dict[str, list[bytes]] = {"evidence": [], "message": []}
+        drop_response = {"message": True}
+        ingresses = {}
+        for phase, validate in (
+            ("evidence", pair.receiver.receive_evidence),
+            ("message", pair.receiver.receive_message),
+        ):
+
+            def validator(raw: bytes, callback: Any = validate) -> None:
+                callback(raw)
+
+            ingresses[phase] = TransportIngress(
+                provider_ref="provider:" + phase,
+                route_ref="route:" + phase,
+                key_ref="fixture:transport",
+                secret=secret,
+                recipient_id=pair.policy.membership_ref,
+                recipient_body_ref=pair.recipient.origin["body_ref"],
+                recipient_embodiment_id=pair.recipient.origin["embodiment_id"],
+                inbox=OpaqueInbox(
+                    self.root / "receiver" / (phase + "-opaque.sqlite3"),
+                    clock=lambda: pair.now,
+                ),
+                clock=lambda: pair.now,
+                intake_validator=validator,
+            )
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                phase = self.path.removeprefix("/")
+                raw = self.rfile.read(int(self.headers["Content-Length"]))
+                requests[phase].append(raw)
+                response = ingresses[phase].handle(raw)
+                if drop_response.pop(phase, False):
+                    self.close_connection = True
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        with HTTPServer(("127.0.0.1", 0), Handler) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+
+                def provider(phase: str) -> DirectHTTPProvider:
+                    return DirectHTTPProvider(
+                        endpoint=f"http://127.0.0.1:{server.server_port}/{phase}",
+                        provider_ref="provider:" + phase,
+                        route_ref="route:" + phase,
+                        route_class="direct",
+                        key_ref="fixture:transport",
+                        secret=secret,
+                        sender_principal=pair.sender.state.being_ref,
+                        sender_body_ref=pair.sender.origin["body_ref"],
+                        clock=lambda: pair.now,
+                    )
+
+                for phase, envelope in zip(
+                    ("evidence", "message"), envelopes, strict=True
+                ):
+                    value = json.loads(envelope)
+                    submission = {
+                        "schema": ROUTE_SUBMISSION_SCHEMA,
+                        "attempt_id": _uuid("http-" + phase),
+                        "leg_id": "application-stage:" + phase,
+                        "message_id": value["event_id"],
+                        "recipient_id": pair.policy.membership_ref,
+                        "delivery_id": value["delivery_id"],
+                        "envelope": b64url(envelope),
+                        "envelope_sha256": hashlib.sha256(envelope).hexdigest(),
+                        "deadline_ms": value["expires_at_ms"],
+                    }
+                    transport = provider(phase)
+                    prepared = transport.prepare_submission(submission)
+                    self.assertEqual(
+                        requests[phase], []
+                    )  # Preparation performs no I/O.
+                    path = self.root / "sender" / (phase + "-prepared.json")
+                    path.touch(mode=0o600)
+                    path.write_bytes(prepared)
+                    if phase == "message":
+                        with self.assertRaises(RouteAmbiguous):
+                            transport.send_prepared(path.read_bytes())
+                        pair.now += 1
+                    result = provider(phase).send_prepared(path.read_bytes())
+                    self.assertEqual(result["outcome"], "recipient-intake")
+                    self.assertTrue(all(raw == prepared for raw in requests[phase]))
+                    self.assertNotIn(TEXT.encode(), prepared)
+                self.assertEqual(len(requests["message"]), 2)
+                self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+                self.assertEqual(len(sender.ledger.events()), 3)
+                self.assertEqual(pair.local_ledger.events(), [])
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+
+    def test_prepared_transport_rejects_invalid_or_rebound_bytes_before_io(
+        self,
+    ) -> None:
+        import hashlib
+
+        from daimon_matrix.canonical import b64url
+        from daimon_matrix.routes import (
+            ROUTE_SUBMISSION_SCHEMA,
+            AuthenticatedProvider,
+            RouteError,
+        )
+
+        pair = Pair(self.root)
+        envelope = self.make_sender(pair).prepare(
+            client_id="owner-ui",
+            send_id=_uuid("transport-negative"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )[0]
+        metadata = json.loads(envelope)
+        calls: list[bytes] = []
+
+        def forbidden_io(raw: bytes) -> bytes:
+            calls.append(raw)
+            raise ConnectionError("negative control reached I/O")
+
+        options: dict[str, Any] = dict(
+            provider_ref="provider:fixed",
+            route_ref="route:fixed",
+            route_class="direct",
+            key_ref="fixture:transport",
+            secret=bytes(range(32)),
+            sender_principal=pair.sender.state.being_ref,
+            sender_body_ref=pair.sender.origin["body_ref"],
+            round_trip=forbidden_io,
+            clock=lambda: pair.now,
+        )
+        provider = AuthenticatedProvider(**options)
+        submission = dict(
+            schema=ROUTE_SUBMISSION_SCHEMA,
+            attempt_id=_uuid("transport-negative-attempt"),
+            leg_id="application-stage:evidence",
+            message_id=metadata["event_id"],
+            recipient_id=pair.policy.membership_ref,
+            delivery_id=metadata["delivery_id"],
+            envelope=b64url(envelope),
+            envelope_sha256=hashlib.sha256(envelope).hexdigest(),
+            deadline_ms=metadata["expires_at_ms"],
+        )
+        prepared = provider.prepare_submission(submission)
+        value = json.loads(prepared)
+        bad_auth = copy.deepcopy(value)
+        bad_auth["auth"]["value"] = "A" * 43
+        malformed = [
+            b"{}",
+            b"[]",
+            prepared + b"\n",
+            canonical_bytes(bad_auth),
+            canonical_bytes({**value, "extra": True}),
+            canonical_bytes({k: v for k, v in value.items() if k != "auth"}),
+        ]
+        for raw in malformed:
+            with self.subTest(raw=raw[:20]), self.assertRaises(RouteError):
+                provider.send_prepared(raw)
+            self.assertEqual(calls, [])
+        for field, alternative in (
+            ("provider_ref", "provider:other"),
+            ("route_ref", "route:other"),
+            ("key_ref", "fixture:other"),
+            ("secret", bytes(reversed(range(32)))),
+            ("sender_principal", "being:other"),
+            ("sender_body_ref", "body:other"),
+        ):
+            other = AuthenticatedProvider(**{**options, field: alternative})
+            with self.subTest(field=field), self.assertRaises(RouteError):
+                other.send_prepared(prepared)
+            self.assertEqual(calls, [])
+        for at in (metadata["expires_at_ms"], NOW - 60_000):
+            pair.now = at
+            with self.subTest(at=at), self.assertRaises(RouteError):
+                provider.send_prepared(prepared)
+            self.assertEqual(calls, [])
+        pair.now = NOW + 10
+        with self.assertRaises(RouteError):
+            provider.send_prepared(prepared)
+        self.assertEqual(
+            calls, [prepared]
+        )  # Valid control alone reaches the I/O boundary.
+
     def test_sender_recovers_interrupted_authoring_without_duplicate_events(
         self,
     ) -> None:

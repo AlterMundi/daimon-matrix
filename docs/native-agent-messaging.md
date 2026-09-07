@@ -106,6 +106,34 @@ operations cannot silently renew their authorization. This is preparation only:
 there is no network worker, persistent transport-request replay or delivery
 inspection in this slice.
 
+## Exact prepared transport requests
+
+`AuthenticatedProvider.prepare_submission(submission)` produces canonical HMAC
+transport request bytes without network I/O. A caller must persist those exact
+bytes before calling `send_prepared(raw)`. Reconstructing a provider after a
+restart does not regenerate request IDs or timestamps when resending that file.
+`send_prepared` revalidates the closed framing, current provider/route/key and
+sender binding, HMAC and original lifetime before I/O; response authentication
+and exact request-hash correlation remain enforced. The wire schemas are
+unchanged. The provider does not itself journal the request.
+
+The existing `deliver(submission)` convenience method still prepares a fresh
+request on each call. Durable callers must use the split API: reusing an
+attempt ID while regenerating its timestamp is not exact replay. Expired
+requests are rejected, not silently renewed. Endpoint ownership/configuration
+remains a trusted caller responsibility; envelope encryption independently
+limits who can read the content.
+
+A real loopback HTTP test now carries the genuine sender's evidence and message
+through `DirectHTTPProvider` and `TransportIngress` into the independent inbox.
+It drops the HTTP response after message admission, reloads the stored request,
+reconstructs the provider and retries at a later clock value. The request bytes
+remain identical and the receiver keeps one message. The test HTTP handler is
+only a fixture, not the installed daemon listener. `recipient-intake` remains
+transport/application intake evidence, not a consumer or signed semantic receipt.
+The application still needs journaled network-stage orchestration and runtime
+wiring; the preparation outbox alone does not provide them.
+
 ## What this does not yet implement
 
 - Supported daemon provisioning, transport listener integration or client
