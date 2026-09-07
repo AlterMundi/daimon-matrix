@@ -135,11 +135,13 @@ local plurality. It is a prerequisite for a later real rebirth demonstration,
 not that demonstration itself.
 
 To rebirth CompAII on another host, the remaining roadmap must still supply
-Cluster-hosted body lifecycle/presence, communications migration from Tribe,
+Cluster-hosted body lifecycle/presence, native communications without Bridge,
 multihost transport and sync, handoff/park fencing, installation and operations
 receipts, then a live canary that restores no ambient model memory. Those
 responsibilities stay with their owning cards; DM-042 deliberately cannot
-simulate them into completion.
+simulate them into completion. [TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md)
+supersedes the former Bridge-migration wording: no Bridge operational state
+is migrated, and live removal retains its separate authorization.
 
 ## Rollback
 

@@ -99,8 +99,10 @@ merged Matrix package and:
 The completed Cluster #48 adapter does not by itself claim hardened
 inter-process fence CAS,
 production supervision, real Incus relocation, a generic projection executor
-or live Tribe transport. Those remain separate follow-ups and must stay visible
-as unsupported rather than being inferred from this adapter boundary.
+or live transport. Lifecycle and native-transport integration remain separate
+responsibilities and must not be inferred from this adapter boundary. The
+former live-Tribe follow-up is superseded by
+[TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md), not a stable requirement.
 
 ## DM-031 follow-up boundary
 

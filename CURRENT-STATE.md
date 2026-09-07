@@ -1,6 +1,15 @@
 # Current state
 
-## Release-candidate checkpoint — 2026-08-18
+## Current Bridge retirement policy
+
+The [retirement policy](TRIBE-MIGRATION.md) incorporates the merged Bridge
+#71/#72 decision and Cluster #103 dependency removal. It supersedes older
+transitional-Bridge requirements, not the historical RC evidence below. The
+stable successor is Matrix plus Cluster with Bridge absent, with no Bridge
+state migration, compatibility, fallback or dual-run phase. This source-level
+reconciliation does not claim a completed stable release or live removal.
+
+## Historical release-candidate checkpoint — 2026-08-18
 
 The qualified Matrix V0 functional boundary is merged at commit
 `09414d6edd9586f539be8272c4979d0b36c86b87`, tree
@@ -63,12 +72,14 @@ truth. Cluster may verify embodiment/incarnation and resource-fence evidence,
 but cannot derive being roots, relationships, grants or semantic receipts.
 Conversely, Matrix does not claim that a local lock provides global admission.
 
-Tribe Bridge remains a transitional ordinary-message component. Matrix has a
-native encrypted peer and semantic-receipt path, but Tribe removal still needs
-explicit migration evidence and repository-owner authorization. No legacy
-dual-write or ambiguous compatibility path is part of the RC plan.
+Tribe Bridge is superseded. Matrix has native same-being peer transport and a
+distinct encrypted logical-message/semantic-receipt path; native `/tribe` and
+relationship authority remain. Live Bridge removal requires its own exact
+inventory and human GO, not operational-state migration. The cross-being
+participant gate remains separate; isolated implementation evidence cannot
+satisfy consent or establish a live relationship.
 
-Its final software successor is merged at
+The historical Bridge RC software boundary was merged at
 `294e1194db6cd60d9349a2d43938475bbd1c8c20`, tree
 `bcba9989a38519df87ecbb6c87a33a2f9740b85d` (PR #65), after exact-head
 independent approval and 148 tests with zero failures on Python 3.10–3.13.
@@ -85,15 +96,18 @@ independent real-world custody, participant consent or a current deployment.
 Older reviews and runbooks are retained as historical records only; this file
 supersedes their operational-state claims.
 
-## Successor qualification protocol
+## Qualification evidence boundary
 
-This metadata handoff cannot embed the commit created by its own merge without
-creating a self-reference. A qualifying Cluster candidate therefore pins the
-actual Matrix merge containing this file; a Tribe metadata successor may record
-that Cluster head. Neither downstream head is predicted here. The
-external integrated manifest is authoritative only when it binds the three
-resulting default-branch commits, source artifacts and replayed offline-install
-evidence exactly.
+The historical RC metadata handoff could not embed its own merge commit. Its
+external integrated manifest had to bind the three exact Matrix, Cluster and
+Bridge heads, source artifacts and replayed offline-install evidence. Preserve
+that record; do not retroactively turn it into a two-component stable manifest.
+
+The stable successor must separately bind and qualify Matrix plus Cluster,
+demonstrate native birth/continuity with Bridge absent, and obtain its explicit
+publication/cutover authorization. Existing three-component freezer tools are
+historical RC tooling, not an already implemented stable contract. Follow
+[TRIBE-MIGRATION.md](TRIBE-MIGRATION.md) for successor tracking and gates.
 
 Documentation-only successors do not create new identity, custody or runtime
 authority. Publication and every physical or participant-facing action remain

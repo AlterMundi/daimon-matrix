@@ -2,6 +2,13 @@
 
 Status: complete for the work observed on 2026-07-31.
 
+> Retirement supersession, 2026-09-07: the observations and original decisions
+> below remain historical evidence. Their instructions to deploy, operate or
+> retain transitional Tribe Bridge are superseded by
+> [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md). Do not use this audit to onboard
+> participants, provision/rotate Bridge or require a dual-run phase for stable
+> Matrix. Source changes alone do not authorize live service removal or archive.
+
 > Semantic correction, 2026-08-04: references below to several simultaneous
 > CompAII principals as distinct beings or to one identity-wide awake body are
 > historical audit language and are superseded. One being may authorize plural

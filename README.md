@@ -35,10 +35,13 @@ semantics. `daimon-cluster` owns body/incarnation lifecycle, storage and
 resource-scoped admission/fencing. Neither side may infer the other's
 authority.
 
-Tribe Bridge remains transitional. Its transport acknowledgement cannot
-replace authenticated Matrix intake or a signed semantic receipt. No legacy
-dual-write is part of the release-candidate design, and retirement remains an
-explicit human gate. See [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md).
+Tribe Bridge is a superseded experimental transport. The stable successor is
+Matrix plus Cluster, with no Bridge operational-state migration, compatibility,
+fallback or dual-run requirement. Native Matrix `/tribe` and relationship
+governance remain. Live removal, publication and archive still require their
+separate human authorizations. The historical RC checkpoint above is not
+evidence of stable qualification or current deployment. See the current
+[retirement policy](TRIBE-MIGRATION.md).
 
 This project is unrelated to the external Matrix.org protocol.
 

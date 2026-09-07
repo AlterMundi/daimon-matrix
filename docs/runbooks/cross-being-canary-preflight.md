@@ -1,6 +1,25 @@
 # Cross-being canary preflight
 
-Status: preparation only. This runbook does not authorize contact or execution.
+Status: historical three-component RC preparation tooling. This runbook does
+not authorize contact or execution.
+
+## Stable successor boundary
+
+The [current retirement policy](../../TRIBE-MIGRATION.md) supersedes any
+requirement to qualify, provision or retain Bridge for stable Matrix. The
+existing freezer described below still requires three component inventories;
+its strict schema and recorded receipts have not changed. Do not relabel an RC
+receipt as a two-component stable plan or remove Bridge fields from that
+closed schema by hand.
+
+A stable Matrix+Cluster freezer/schema and its qualification must be addressed
+through the release work in DM-076 (#72) and DM-075 (#44), with normal tests and
+review. This documentation does not implement those successors. Preserve
+historical RC inputs and receipts. DM-071 (#40) still requires independently
+verified participant consent/custody and authorized real delivery; neither this
+freezer nor an RC transport ACK satisfies those gates.
+
+## Historical RC purpose
 
 This gate freezes the exact inputs for a future canary between two different
 beings. It is deliberately offline: it cannot resolve an endpoint, open a
