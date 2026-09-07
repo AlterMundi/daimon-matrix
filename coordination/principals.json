@@ -9,6 +9,7 @@
     "compaii@localhost": {
       "enabled": true,
       "github_logins": [
+        "compaii",
         "nicoechaniz"
       ]
     }
