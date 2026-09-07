@@ -360,6 +360,152 @@ class NativeMessagingTests(unittest.TestCase):
             )
         return providers[0], providers[1], calls
 
+    def test_production_messaging_http_listener_is_bounded_and_delivers(self) -> None:
+        import http.client
+        import socket
+        import threading
+        from unittest.mock import patch
+
+        from daimon_matrix import daemon
+        from daimon_matrix.messaging import MessagingDelivery
+        from daimon_matrix.routes import (
+            DirectHTTPProvider,
+            OpaqueInbox,
+            TransportIngress,
+        )
+
+        factory = getattr(daemon, "create_messaging_http_server", None)
+        self.assertIsNotNone(factory, "production messaging HTTP listener is missing")
+        assert factory is not None
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        ingresses = {}
+        for phase, callback in (
+            ("evidence", pair.receiver.receive_evidence),
+            ("message", pair.receiver.receive_message),
+        ):
+
+            def validate(raw: bytes, callback: Any = callback) -> None:
+                callback(raw)
+
+            ingresses[phase] = TransportIngress(
+                provider_ref="provider:" + phase,
+                route_ref="route:" + phase,
+                key_ref="fixture:transport",
+                secret=bytes(range(32)),
+                recipient_id=pair.policy.membership_ref,
+                recipient_body_ref=pair.recipient.origin["body_ref"],
+                recipient_embodiment_id=pair.recipient.origin["embodiment_id"],
+                inbox=OpaqueInbox(
+                    self.root / "receiver" / (phase + "-http.sqlite3"),
+                    clock=lambda: pair.now,
+                ),
+                clock=lambda: pair.now,
+                intake_validator=validate,
+            )
+        with factory(
+            ("127.0.0.1", 0),
+            evidence_ingress=ingresses["evidence"],
+            message_ingress=ingresses["message"],
+        ) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                dispatched: list[bytes] = []
+                original = TransportIngress.handle
+
+                def observe(ingress: TransportIngress, raw: bytes) -> bytes:
+                    dispatched.append(raw)
+                    return original(ingress, raw)
+
+                path = "/dm-messaging/v1/evidence"
+                bad_frames = [
+                    (path, ["Content-Length: 2", "Content-Length: 2"], 400),
+                    (path, ["Content-Length: 2", "Transfer-Encoding: chunked"], 400),
+                    (path, ["Content-Length: -1"], 400),
+                    (path, ["Content-Length: +2"], 400),
+                    (path, ["Content-Length: 999999999"], 400),
+                    (path, [], 400),
+                    ("/unknown", ["Content-Length: 2"], 404),
+                    (path + "?peer=other", ["Content-Length: 2"], 404),
+                    (path, ["Content-Length: 2", "Content-Type: text/plain"], 400),
+                ]
+                with patch.object(TransportIngress, "handle", observe):
+                    for target, extra, expected in bad_frames:
+                        frame = (
+                            f"POST {target} HTTP/1.1\r\nHost: localhost\r\n"
+                            "Content-Type: application/daimon+jcs\r\n"
+                            + "\r\n".join(extra)
+                            + "\r\n\r\n{}"
+                        ).encode()
+                        with (
+                            self.subTest(headers=extra, path=target),
+                            socket.create_connection(
+                                server.server_address, timeout=2
+                            ) as connection,
+                        ):
+                            connection.sendall(frame)
+                            with http.client.HTTPResponse(connection) as response:
+                                response.begin()
+                                self.assertEqual(response.status, expected)
+                                self.assertEqual(response.read(), b"")
+                                self.assertEqual(
+                                    response.getheader("Connection"), "close"
+                                )
+                    self.assertEqual(dispatched, [])
+                # Correct HTTP framing never substitutes for transport authentication.
+                with closing(
+                    http.client.HTTPConnection(
+                        "127.0.0.1", server.server_port, timeout=2
+                    )
+                ) as http_connection:
+                    http_connection.request(
+                        "POST",
+                        path,
+                        body=b"{}",
+                        headers={"Content-Type": "application/daimon+jcs"},
+                    )
+                    with http_connection.getresponse() as response:
+                        self.assertEqual(response.status, 400)
+                        self.assertEqual(response.read(), b"")
+                self.assertEqual(pair.receiver.page(after=0, limit=10), [])
+                providers = [
+                    DirectHTTPProvider(
+                        endpoint=f"http://127.0.0.1:{server.server_port}/dm-messaging/v1/{phase}",
+                        provider_ref="provider:" + phase,
+                        route_ref="route:" + phase,
+                        route_class="direct",
+                        key_ref="fixture:transport",
+                        secret=bytes(range(32)),
+                        sender_principal=pair.sender.state.being_ref,
+                        sender_body_ref=pair.sender.origin["body_ref"],
+                        clock=lambda: pair.now,
+                    )
+                    for phase in ("evidence", "message")
+                ]
+                delivery = MessagingDelivery(
+                    sender=sender,
+                    evidence_provider=providers[0],
+                    message_provider=providers[1],
+                    config_digest="b" * 64,
+                )
+                request = dict(
+                    client_id="owner-ui",
+                    send_id=_uuid("production-http"),
+                    thread_id=_uuid("thread"),
+                    text=TEXT,
+                )
+                result = delivery.send(**request)
+                self.assertEqual(result["transport_status"], "recipient-intake")
+                self.assertEqual(delivery.send(**request), result)
+                self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+                self.assertEqual(len(sender.ledger.events()), 3)
+                self.assertEqual(pair.local_ledger.events(), [])
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+
     def test_delivery_stages_are_durable_before_independent_intake(self) -> None:
         import sqlite3
 

@@ -166,6 +166,31 @@ and the facade rechecks authority before releasing another stage.
 These results remain transport/application intake evidence only, not consumer
 acknowledgment, canonical direct reply, signed semantic receipt or task success.
 
+## Bounded HTTP listener factory
+
+`daemon.create_messaging_http_server(listen, evidence_ingress=...,\nmessage_ingress=...)` now returns a bound server using the daemon's existing
+connection/concurrency limit. Its only application POST paths are
+`/dm-messaging/v1/evidence` and `/dm-messaging/v1/message`, each bound to a
+separately configured authenticated ingress. Paths do not select arbitrary
+peers or supply authority.
+
+The handler rejects missing/duplicate/non-decimal/oversized content lengths,
+transfer encoding and non-exact media types before calling an ingress. Unknown
+paths and query variants are not routed. It bounds body size, uses the existing
+socket idle timeout, closes each connection, emits bounded empty error bodies
+and suppresses request logging. This is not an absolute slow-client deadline,
+a TLS terminator or a public-edge rate limiter; those deployment boundaries
+remain to be configured and verified before public exposure.
+
+A real loopback test now exercises this production handler with
+`MessagingDelivery` and `DirectHTTPProvider`, not a substitute test handler.
+Malformed framing never reaches ingress, correctly framed unauthenticated input
+is rejected, and authenticated evidence/message delivery plus cached retry
+produces one independent inbox entry without foreign Ledger ingestion.
+
+The factory is not yet connected to daemon startup or owner provisioning.
+Adding it has not enabled a listener in any installed service.
+
 ## What this does not yet implement
 
 - Supported daemon provisioning, transport listener integration or client
