@@ -84,12 +84,34 @@ Policy/recipient changes can make older rows unavailable under the new policy
 hash; no automatic cross-policy migration or fallback is provided. SQLite is an
 owner-local persistence boundary, not a tamper-proof or rollback-proof archive.
 
+## Durable sender preparation
+
+`MessagingSender.prepare(client_id=..., send_id=..., thread_id=..., text=...)`
+uses the sender's real local `Ledger`, signer and delivery custody. The sender
+context holds independently configured public recipient authority and verified
+relationship history; it never needs the recipient's private custody.
+
+The owner-only `MessagingOutboxStore` binds the stable caller operation UUID to
+its client, message request, local origin and exact policy. It reserves the
+original authorization IDs and lifetime before authoring. Message, resolution
+and evidence are appended through the existing Ledger idempotency journal with
+separate deterministic phase IDs. Recovery after interrupted signing resumes
+those same events rather than authoring another logical message.
+
+Preparation returns an ordered encrypted evidence/message pair only after
+persisting both envelopes atomically. Completed retries and restarts return
+those exact bytes while current authority, policy and the original lifetime
+remain valid. A changed request, client, origin or policy is rejected; expired
+operations cannot silently renew their authorization. This is preparation only:
+there is no network worker, persistent transport-request replay or delivery
+inspection in this slice.
+
 ## What this does not yet implement
 
 - Supported daemon provisioning, transport listener integration or client
   capability enrollment for this application.
 - Ordinary Codex CLI/MCP send, manual inbox read or response commands.
-- A durable sender outbox and retry worker.
+- A transport retry worker (the durable encrypted preparation outbox exists).
 - Consumer acknowledgment or remote application acknowledgment.
 - Canonical direct replies or signed DM-052 terminal delivery receipts.
 - Telegram projection, participant visibility consent, bot credential custody,

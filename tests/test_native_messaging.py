@@ -268,6 +268,219 @@ class NativeMessagingTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
+    def make_sender(self, pair: Pair) -> Any:
+        from daimon_matrix.messaging import MessagingSender
+        from daimon_matrix.messaging_store import MessagingOutboxStore
+
+        ledger = Ledger(
+            self.root / "sender/local.sqlite3",
+            authority=pair.sender.authority,
+            local_origin=pair.sender.origin,
+            clock=lambda: pair.now,
+        )
+        ledger.initialize()
+        return MessagingSender(
+            context=pair.sender_context,
+            ledger=ledger,
+            signer=pair.sender.signer,
+            custody=pair.sender_custody,
+            outbox=MessagingOutboxStore(self.root / "sender/outbox.sqlite3"),
+            clock=lambda: pair.now,
+        )
+
+    def test_sender_recovers_interrupted_authoring_without_duplicate_events(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        from daimon_matrix.weave import EventSigner
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("interrupted-send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        original = EventSigner.signature
+        calls = 0
+
+        def interrupted(signer: EventSigner, content_hash: str) -> dict[str, str]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("synthetic signing device interrupted")
+            return dict(original(signer, content_hash))
+
+        with (
+            patch.object(EventSigner, "signature", new=interrupted),
+            self.assertRaises(OSError),
+        ):
+            sender.prepare(**request)
+        partial = sender.ledger.events()
+        self.assertEqual(len(partial), 1)
+        self.assertIsNone(
+            sender.outbox._prepared(pair.sender.state.being_ref, request["send_id"])
+        )
+        pair.now += 1
+        restarted = self.make_sender(pair)
+        evidence, message = restarted.prepare(**request)
+        recovered = restarted.ledger.events()
+        self.assertEqual(len(recovered), 3)
+        self.assertEqual(recovered[0], partial[0])
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        self.assertEqual(
+            pair.receiver.page(after=0, limit=10)[0]["message"], partial[0]
+        )
+        self.assertEqual(restarted.prepare(**request), (evidence, message))
+        self.assertEqual(pair.local_ledger.events(), [])
+
+    def test_sender_prepares_real_local_events_for_independent_receiver(self) -> None:
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        evidence, message = sender.prepare(
+            client_id="owner-ui",
+            send_id=_uuid("send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        events = sender.ledger.events()
+        self.assertEqual(
+            [event["subject"] for event in events],
+            ["communication", "communication-resolution", "communication-evidence"],
+        )
+        self.assertEqual([event["sequence"] for event in events], [1, 2, 3])
+        self.assertTrue(
+            all(event["being_ref"] == pair.sender.state.being_ref for event in events)
+        )
+        self.assertTrue(all(TEXT.encode() not in raw for raw in (evidence, message)))
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        page = pair.receiver.page(after=0, limit=10)
+        self.assertEqual(page[0]["message"]["payload"]["body"]["text"], TEXT)
+        self.assertIsNone(page[0]["message"]["payload"]["reply"])
+        self.assertEqual(page[0]["message"], events[0])
+        self.assertEqual(page[0]["evidence"], events[2])
+        self.assertEqual(pair.local_ledger.events(), [])
+
+    def test_sender_retry_restart_preserves_envelopes_and_checks_fresh_authority(
+        self,
+    ) -> None:
+        import sqlite3
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("retry-send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        first = sender.prepare(**request)
+        events = sender.ledger.events()
+        pair.now += 1
+        self.assertEqual(sender.prepare(**request), first)
+        restarted = self.make_sender(pair)
+        self.assertEqual(restarted.prepare(**request), first)
+        self.assertEqual(restarted.ledger.events(), events)
+        with closing(sqlite3.connect(restarted.outbox.path)) as database:
+            row = database.execute(
+                "SELECT evidence, message FROM messaging_outbox"
+            ).fetchone()
+        self.assertEqual(tuple(row), first)
+        before = restarted.outbox.path.read_bytes()
+        pair.now = json.loads(first[0])["expires_at_ms"]
+        with self.assertRaisesRegex(ValueError, "messaging_authorization_expired"):
+            restarted.prepare(**request)
+        self.assertEqual(restarted.outbox.path.read_bytes(), before)
+        self.assertEqual(restarted.ledger.events(), events)
+        revocation = next(
+            event
+            for event in pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        pair.sender_relationships.ingest(revocation)
+        pair.now = NOW + 17
+        with self.assertRaises(ValueError):
+            restarted.prepare(**request)
+        self.assertEqual(restarted.outbox.path.read_bytes(), before)
+        self.assertEqual(restarted.ledger.events(), events)
+
+    def test_sender_rejects_changed_request_policy_or_owner_without_mutation(
+        self,
+    ) -> None:
+        from dataclasses import replace
+
+        pair = Pair(self.root)
+        sender = self.make_sender(pair)
+        request = dict(
+            client_id="owner-ui",
+            send_id=_uuid("bound-send"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        first = sender.prepare(**request)
+        before = sender.outbox.path.read_bytes()
+        events = sender.ledger.events()
+        for changed in (
+            {"text": "changed"},
+            {"thread_id": _uuid("other-thread")},
+            {"client_id": "other-client"},
+        ):
+            with (
+                self.subTest(changed=changed),
+                self.assertRaisesRegex(ValueError, "messaging_send_conflict"),
+            ):
+                sender.prepare(**{**request, **changed})
+        sender.context.policy = replace(pair.policy, max_ttl_ms=20_000)
+        with self.assertRaisesRegex(ValueError, "messaging_send_conflict"):
+            sender.prepare(**request)
+        sender.context.policy = pair.policy
+        for field, value in (
+            ("local_being_ref", pair.sender.state.being_ref),
+            ("local_credential_id", pair.sender.credential["artifact_id"]),
+        ):
+            original = getattr(sender.context, field)
+            setattr(sender.context, field, value)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                sender.prepare(**request)
+            setattr(sender.context, field, original)
+        self.assertEqual(sender.outbox.path.read_bytes(), before)
+        self.assertEqual(sender.ledger.events(), events)
+        self.assertEqual(sender.prepare(**request), first)
+        sender.ledger = pair.local_ledger
+        for send_id in (request["send_id"], _uuid("wrong-owner")):
+            with self.assertRaisesRegex(ValueError, "messaging_sender_binding"):
+                sender.prepare(**{**request, "send_id": send_id})
+        self.assertEqual(pair.local_ledger.events(), [])
+        sender = self.make_sender(pair)
+        for field in ("embodiment_id", "incarnation_id", "body_ref", "principal_id"):
+            original = sender.ledger.local_origin[field]
+            sender.ledger.local_origin[field] = "unconfigured"
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(ValueError, "messaging_sender_binding"),
+            ):
+                sender.prepare(**request)
+            sender.ledger.local_origin[field] = original
+        sender.signer = pair.recipient.signer
+        with self.assertRaisesRegex(ValueError, "messaging_sender_binding"):
+            sender.prepare(**request)
+        sender.signer = pair.sender.signer
+        invalid_requests: list[dict[str, Any]] = [
+            {"text": 123},
+            {"send_id": "not-a-uuid"},
+            {"client_id": ""},
+            {"thread_id": "not-a-uuid"},
+        ]
+        for invalid_request in invalid_requests:
+            with self.subTest(changed=invalid_request), self.assertRaises(ValueError):
+                sender.prepare(**{**request, **invalid_request})
+        self.assertEqual(sender.outbox.path.read_bytes(), before)
+        self.assertEqual(sender.ledger.events(), events)
+
     def test_independent_encrypted_evidence_materializes_actual_foreign_body(
         self,
     ) -> None:

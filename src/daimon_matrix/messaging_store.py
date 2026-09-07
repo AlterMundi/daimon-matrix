@@ -18,6 +18,110 @@ class MessagingInboxError(ValueError):
     """Foreign evidence conflicts or local persistence is unsafe."""
 
 
+class MessagingOutboxStore:
+    """Owner-local prepared envelopes, separate from inbox and RPC journals."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.absolute()
+        with self._database() as database:
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS messaging_outbox (
+                    owner TEXT NOT NULL,
+                    send_id TEXT NOT NULL,
+                    plan BLOB NOT NULL,
+                    evidence BLOB,
+                    message BLOB,
+                    PRIMARY KEY(owner, send_id),
+                    CHECK ((evidence IS NULL) = (message IS NULL))
+                )
+            """)
+
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
+        _prepare_path(self.path)
+        database = sqlite3.connect(self.path, timeout=5)
+        try:
+            database.row_factory = sqlite3.Row
+            database.execute("PRAGMA journal_mode=DELETE")
+            database.execute("PRAGMA synchronous=FULL")
+            with database:
+                yield database
+        finally:
+            database.close()
+
+    def _reserve(
+        self, owner: str, send_id: str, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            row = database.execute(
+                "SELECT plan FROM messaging_outbox WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchone()
+            if row is not None:
+                existing = dict(json.loads(row["plan"]))
+                if any(
+                    existing[key] != plan[key]
+                    for key in (
+                        "client_id",
+                        "request_hash",
+                        "policy_hash",
+                        "origin",
+                    )
+                ):
+                    raise ValueError("messaging_send_conflict")
+                return existing
+            database.execute(
+                "INSERT INTO messaging_outbox (owner, send_id, plan) VALUES (?, ?, ?)",
+                (owner, send_id, canonical_bytes(plan)),
+            )
+        return plan
+
+    def _check_time(self, owner: str, send_id: str, now: int) -> None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT plan FROM messaging_outbox WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchone()
+        if row is not None:
+            plan = json.loads(row["plan"])
+            if now >= plan["expires_at_ms"]:
+                raise ValueError("messaging_authorization_expired")
+            if now < plan["issued_at_ms"]:
+                raise ValueError("messaging_authorization_not_yet_valid")
+
+    def _prepared(self, owner: str, send_id: str) -> tuple[bytes, bytes] | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT evidence, message FROM messaging_outbox "
+                "WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchone()
+        if row is None or row["evidence"] is None:
+            return None
+        return bytes(row["evidence"]), bytes(row["message"])
+
+    def _commit(
+        self, owner: str, send_id: str, envelopes: tuple[bytes, bytes]
+    ) -> tuple[bytes, bytes]:
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "UPDATE messaging_outbox SET evidence=?, message=? "
+                "WHERE owner=? AND send_id=? AND evidence IS NULL",
+                (*envelopes, owner, send_id),
+            )
+            row = database.execute(
+                "SELECT evidence, message FROM messaging_outbox "
+                "WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("messaging_outbox_missing")
+            result = bytes(row["evidence"]), bytes(row["message"])
+        return result
+
+
 class MessagingInboxStore:
     """Internal materialization sink. Receive through MessagingChannel only."""
 

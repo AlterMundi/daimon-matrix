@@ -8,28 +8,44 @@ only canonical DM-051 envelope bytes enter the receive methods.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .canonical import canonical_bytes
-from .communication import CommunicationError, _message_payload, _resolution_payload
-from .messaging_store import MessagingInboxError, MessagingInboxStore
+from .canonical import b64url, canonical_bytes
+from .communication import (
+    MESSAGE_PAYLOAD_SCHEMA,
+    RESOLUTION_PAYLOAD_SCHEMA,
+    CommunicationError,
+    _message_payload,
+    _resolution_payload,
+)
+from .ledger import Ledger
+from .messaging_store import (
+    MessagingInboxError,
+    MessagingInboxStore,
+    MessagingOutboxStore,
+)
 from .relationship_store import RelationshipStore, RelationshipView
 from .sealed import (
+    MAX_TTL_MS,
     DisclosureAuthorization,
     KeystoreDeliveryCustody,
     RecipientTarget,
     SealedDeliveryError,
     _closed,
     _parse,
+    _text,
     _uint,
+    _uuid,
     inspect_delivery,
     open_event,
     recipient_descriptor,
+    seal_event,
     sender_descriptor,
 )
-from .weave import RootAuthority, verify_event
+from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
 
@@ -56,6 +72,215 @@ class MessagingPeerPolicy:
     classification: str
     grant_refs: tuple[GrantReference, ...]
     max_ttl_ms: int = 60_000
+
+
+class MessagingSender:
+    """Trusted owner-local /tribe authoring; prepare returns evidence, message bytes.
+
+    The context holds only public recipient authority and signed relationship
+    material. Its policy's peer is this sender; its local target is the receiver.
+    No transport, foreign Ledger history or generic event-signing API is exposed.
+    """
+
+    def __init__(
+        self,
+        *,
+        context: MessagingChannel,
+        ledger: Ledger,
+        signer: EventSigner,
+        custody: KeystoreDeliveryCustody,
+        outbox: MessagingOutboxStore,
+        clock: Callable[[], int],
+    ) -> None:
+        self.context = context
+        self.ledger = ledger
+        self.signer = signer
+        self.custody = custody
+        self.outbox = outbox
+        self.clock = clock
+
+    def _bind(self, now: int) -> None:
+        policy, authority = self.context.policy, self.context._sender()
+        try:
+            member = authority.validate_origin(
+                self.ledger.local_origin, require_active=True
+            )
+            recipient_descriptor(
+                RecipientTarget(authority, policy.peer_credential_id), at_ms=now
+            )
+            signing = authority.credentials[policy.peer_credential_id]["body"][
+                "signing_key"
+            ]
+            if (
+                self.ledger.authority.manifest.being_ref != policy.peer_being_ref
+                or self.ledger.authority.manifest.digest != authority.manifest.digest
+                or authority.state.being_ref != policy.peer_being_ref
+                or member["embodiment_id"] != policy.peer_embodiment_id
+                or member["embodiment_credential_id"] != policy.peer_credential_id
+                or self.signer.key_id != signing["key_id"]
+                or b64url(self.signer.public_key) != signing["public"]
+            ):
+                raise ValueError("binding")
+        except (ValueError, KeyError, TypeError):
+            raise ValueError("messaging_sender_binding") from None
+
+    def prepare(
+        self,
+        *,
+        client_id: str,
+        send_id: str,
+        thread_id: str,
+        text: str,
+    ) -> tuple[bytes, bytes]:
+        now = _uint(self.clock())
+        context, policy = self.context, self.context.policy
+        self._bind(now)
+        if not isinstance(text, str):
+            raise ValueError("messaging_text_required")
+        if not 0 < _uint(policy.max_ttl_ms) <= MAX_TTL_MS:
+            raise ValueError("messaging_ttl_invalid")
+        owner = policy.peer_being_ref
+        self.outbox._check_time(owner, send_id, now)
+        policy_hash = context._policy_hash(now)
+        payload = {
+            "schema": MESSAGE_PAYLOAD_SCHEMA,
+            "body": {"text": text, "resource_ref": policy.resource_ref},
+            "intent": {
+                "operation": policy.operation,
+                "scope": "/tribe",
+                "thread_id": thread_id,
+            },
+            "reply": None,
+        }
+        _message_payload(
+            {
+                "kind": "experience.observed",
+                "subject": "communication",
+                "payload": payload,
+            }
+        )
+        request_hash = hashlib.sha256(canonical_bytes(payload)).hexdigest()
+        _text(client_id, maximum=128)
+        _uuid(send_id)
+        plan = self.outbox._reserve(
+            owner,
+            send_id,
+            {
+                "client_id": client_id,
+                "request_hash": request_hash,
+                "origin": dict(self.ledger.local_origin),
+                "policy_hash": policy_hash,
+                "issued_at_ms": now,
+                "expires_at_ms": now + policy.max_ttl_ms,
+                "message_authorization_id": str(uuid.uuid4()),
+                "evidence_authorization_id": str(uuid.uuid4()),
+            },
+        )
+        issued, expires = plan["issued_at_ms"], plan["expires_at_ms"]
+        if now >= expires:
+            raise ValueError("messaging_authorization_expired")
+        if now < issued:
+            raise ValueError("messaging_authorization_not_yet_valid")
+        cached = self.outbox._prepared(owner, send_id)
+        if cached is not None:
+            return cached
+
+        def append(
+            subject: str, body: Mapping[str, Any], parents: tuple[str, ...] = ()
+        ) -> dict[str, Any]:
+            operation_id = str(
+                uuid.uuid5(uuid.UUID(plan["message_authorization_id"]), subject)
+            )
+            phase_hash = hashlib.sha256(
+                canonical_bytes(
+                    {
+                        "subject": subject,
+                        "payload": body,
+                        "parents": list(parents),
+                        "issued_at_ms": issued,
+                        "sensitivity": policy.classification,
+                    }
+                )
+            ).hexdigest()
+            return self.ledger.append_local_idempotent(
+                client_id="dm.messaging.prepare/v1",
+                request_id=operation_id,
+                request_hash=phase_hash,
+                kind="experience.observed",
+                subject=subject,
+                payload=body,
+                signer=self.signer,
+                sensitivity=policy.classification,
+                occurred_at_ms=issued,
+                causal_parents=parents,
+            )
+
+        message = append("communication", payload)
+        target = context._local()
+        resolution = append(
+            "communication-resolution",
+            {
+                "schema": RESOLUTION_PAYLOAD_SCHEMA,
+                "message_id": message["event_id"],
+                "scope": "/tribe",
+                "targets": [
+                    {
+                        "evidence_cursor": policy_hash,
+                        "receipt_origin_embodiment_id": recipient_descriptor(
+                            target, at_ms=now
+                        )["embodiment_id"],
+                        "recipient_id": policy.membership_ref,
+                        "recipient_type": "relationship",
+                        "scope_kind": "relationship",
+                    }
+                ],
+            },
+            (message["event_id"],),
+        )
+        authorization = DisclosureAuthorization.from_relationship_resolution_event(
+            event=message,
+            resolution_event=resolution,
+            sender_authority=context._sender(),
+            recipient_targets=[target],
+            disclosures={policy.membership_ref: context._disclosure(now)},
+            expires_at_ms=expires,
+            authorization_id=plan["message_authorization_id"],
+        )
+        evidence = append(
+            "communication-evidence",
+            {
+                "schema": EVIDENCE_SCHEMA,
+                "message_id": message["event_id"],
+                "message_hash": message["content_hash"],
+                "resolution_event": resolution,
+                "message_authorization_id": plan["message_authorization_id"],
+                "message_authorized_at_ms": issued,
+                "message_expires_at_ms": expires,
+            },
+            (resolution["event_id"],),
+        )
+        bootstrap = context._authorization(
+            evidence,
+            sender=sender_descriptor(evidence, context._sender(), at_ms=now),
+            evidence_hash=policy_hash,
+            authorized_at_ms=issued,
+            expires_at_ms=expires,
+            authorization_id=plan["evidence_authorization_id"],
+            at_ms=now,
+        )
+        envelopes = tuple(
+            seal_event(
+                event,
+                sender_authority=context._sender(),
+                recipients=[target],
+                authorization=auth,
+                custody=self.custody,
+                issued_at_ms=issued,
+                expires_at_ms=expires,
+            )
+            for event, auth in ((evidence, bootstrap), (message, authorization))
+        )
+        return self.outbox._commit(owner, send_id, (envelopes[0], envelopes[1]))
 
 
 class MessagingChannel:
