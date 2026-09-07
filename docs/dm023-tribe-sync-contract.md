@@ -1,5 +1,14 @@
 # DM-023 transport contract for Tribe integration
 
+> Historical adapter examples: the `tribe-v1` scheme, Bridge queues/cursors
+> and Tribe adapter references below describe the former integration, not an
+> enabled stable route or a state-migration requirement. Native DM-055 now
+> carries same-being scope/sync documents; see
+> [dm055-native-peer-cutover.md](dm055-native-peer-cutover.md) and
+> [TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md). Transport-neutral authentication,
+> replay, cursor separation and non-adoption requirements remain in force.
+> No current adapter/schema is changed by this historical classification.
+
 Status: implemented by the DM-024 local boundary and required input to
 DM-050–DM-055.
 

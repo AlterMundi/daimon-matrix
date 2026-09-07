@@ -242,10 +242,21 @@ The target runtime package must be assembled on the target host from its own
 encrypted custody and fresh stores. Cluster owns the surrounding host-level transaction:
 quiescence when needed, body registration, owner-only directory creation,
 release installation, durable-volume semantics, resource fences, service
-start, backup and rollback. Tribe/AnyVPN supplies authenticated reachability;
-it does not create Matrix identity.
+start, backup and rollback. Explicitly configured native Matrix transport
+over the authorized network supplies reachability; the network cannot create
+Matrix identity. Bridge is not a stable runtime dependency; see
+[TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md).
 
 ## Operational gates
+
+The Matrix/Cluster/Tribe preflight references preserved below are the
+historical three-component RC contract, not a stable requirement to retain or
+provision Bridge. Their recorded inputs and strict schemas are not rewritten
+by this documentation. A separately reviewed stable successor must qualify
+native Matrix+Cluster with Bridge absent. Existing custody, exact-plan and
+human-authorization requirements still apply; no RC digest authorizes the
+stable cutover. See [TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md) for successor
+tracking and separate retirement gates.
 
 The vectors and local process journeys are synthetic evidence only. DM-078 is
 not complete until the issue's distinct-host/Incus additional-embodiment, true

@@ -4,6 +4,19 @@ Status: implementation complete in runtime bundle V7; synthetic and real
 loopback HTTP evidence pass. No live endpoint, host, Tribe service or repository
 state has been changed.
 
+## Retirement successor
+
+[TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md) supersedes the former Bridge
+coexistence requirement. The live-canary and rollback sequence preserved below
+is historical RC procedure, not a stable-cutover plan or authorization. Do not
+provision, renew, retain or restore Bridge to replay its ordinary-message step.
+The stable successor must prove native continuity with Bridge absent and use a
+separately reviewed exact execution/rollback plan; no Bridge migration,
+compatibility, fallback or dual-run phase is required.
+
+This document describes same-being scope/sync transport, not proof of the
+separately consented cross-being logical-message integration in DM-071 (#40).
+
 ## What changed
 
 The final Weave carrier is native to `daimon-matrix`. Scope and sync protocol
@@ -78,7 +91,7 @@ SQLite ledgers. They prove:
 These are release-blocking scenarios in conformance suite DM-026.14. They are
 production-shaped local evidence, not a claim that a remote host was contacted.
 
-## Live canary procedure
+## Historical RC live-canary procedure
 
 The operator must first authorize the exact two hosts and maintenance window.
 For each embodiment, record only public evidence: Matrix build, bundle digest,
@@ -103,7 +116,7 @@ AnyVPN endpoint. Never copy or print keystore values.
    verify it is unchanged and no Matrix peer envelope entered Tribe storage.
 9. Review the redacted receipts and obtain the explicit human cutover decision.
 
-## Rollback
+## Historical RC rollback
 
 Stop the peer listener or restore the previous bundle with `peer_transport`
 absent. Preserve the exchange/outbox databases for diagnosis. Restart and

@@ -4,7 +4,17 @@ Status: this checkpoint records the merged integrated V0 Matrix baseline and
 the release-candidate qualification contract. It does not claim a current
 deployment, host state, service state or operator access.
 
-Last reconciled: 2026-08-18.
+RC evidence checkpoint: 2026-08-18.
+Retirement policy reconciled: 2026-09-07.
+
+## Current retirement policy
+
+The [Bridge retirement policy](TRIBE-MIGRATION.md) supersedes the former
+transitional-Bridge release requirements. Bridge operational state is not
+migrated; there is no compatibility, fallback or dual-run phase. Native Matrix
+tribe/relationship governance remains. The exact RC boundaries below are
+historical evidence, not a statement that a two-component stable manifest,
+live cutover, service removal or repository archive is complete.
 
 ## Exact qualified boundaries
 
@@ -50,19 +60,25 @@ and sdist
   owner-local runtime.
 - `daimon-cluster` owns body/incarnation lifecycle, storage and shared-resource
   admission/fencing. Lifecycle evidence cannot create Matrix social authority.
-- `tribe-bridge` is transitional. Its transport acknowledgement is never a
-  substitute for Matrix-authenticated intake or a semantic receipt.
+- `tribe-bridge` is superseded and not a stable runtime dependency. Its
+  historical transport acknowledgement is never a substitute for
+  Matrix-authenticated intake or a semantic receipt.
 - Multiple embodiments of one being are legitimate. Admission excludes two
   bodies using the same embodiment credential; it is not a being-wide
   singleton.
 
-## Successor qualification protocol
+## Historical RC qualification protocol
 
-The merge containing this metadata-only handoff cannot name its own resulting
-commit. Cluster must pin that actual Matrix merge as its exact installed
-dependency; Tribe metadata may then record the resulting Cluster merge. The
-external integrated manifest, not this forward-looking prose, records all
-three final default-branch commits and their exact artifacts.
+The historical metadata-only RC handoff could not name its own resulting
+commit. Cluster had to pin that actual Matrix merge as its exact installed
+dependency; Tribe metadata could then record the resulting Cluster merge. The
+external integrated RC manifest records the three exact repository commits and
+artifacts. Preserve those records without relabeling them as stable evidence.
+
+The stable successor instead qualifies Matrix plus Cluster with Bridge absent,
+as defined in [TRIBE-MIGRATION.md](TRIBE-MIGRATION.md). The existing RC freezers
+retain their three-component contracts until a separately reviewed successor
+implements stable inputs; this documentation does not implement that change.
 
 The manifest is acceptable only after clean artifact installation and the
 supported-Python gates replay against those heads. A physical preflight remains

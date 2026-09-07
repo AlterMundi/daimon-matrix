@@ -1,5 +1,12 @@
 # DM-083 two-host CompAII dogfood
 
+> Historical operational record: all deployment, PR and transitional-Bridge
+> statements below describe the dated experiments, not present host or release
+> state. [TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md) supersedes the old Bridge
+> retention requirement. Do not repeat its deployment/coexistence steps as a
+> stable release gate. Native same-being evidence does not complete the
+> independently consented cross-being canary.
+
 Status: accepted live same-being dogfood executed under operator authorization
 on 2026-08-10. The successor-incarnation retry defect it exposed was repaired,
 redeployed as Matrix runtime commit `f0181f7`, and confirmed against Daimon

@@ -8,8 +8,11 @@ runtime dependency, state, credential, message or configuration is imported.
 The reusable target is behavior, not the upstream authority model or codebase.
 DM-051 through DM-053 independently implement recipient encryption, logical
 communication state and routes under the already frozen Daimon contracts.
-Tribe Bridge remains the reversible transitional transport until those gates
-and DM-054/DM-055 complete; it is not a permanent third authority.
+The former reversible transitional-Bridge phase is superseded by the
+[current retirement policy](../TRIBE-MIGRATION.md). Stable native Matrix does
+not require Bridge provisioning, rotation or operational-state migration. This
+changes neither the exact no-copy provenance evidence below nor the separate
+authorizations required for live removal, publication and archive.
 
 The reviewed upstream snapshot is
 `nicoechaniz/tribe-bridge@b81a6838dd81167f7a8ffcae82cd7ebaadfa21e2`,

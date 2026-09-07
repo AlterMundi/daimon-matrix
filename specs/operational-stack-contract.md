@@ -1,6 +1,16 @@
 # Operational stack contract: daimon-matrix, Cluster, Weave, and Tribe
 
-Status: normative for the V0.1 MVP and its provisional migration stage.
+Status: authority boundaries for the V0.1 MVP; the provisional Bridge
+migration stage described below is historical.
+
+> Retirement successor: [TRIBE-MIGRATION.md](../TRIBE-MIGRATION.md) supersedes
+> the transitional Bridge carrier/retained-delivery provisions below. They do
+> not require migrating Bridge messages, keys, queues or other operational
+> state, and do not require compatibility, fallback or dual-run for stable.
+> Native Matrix communication replaces that carrier; native `/tribe` remains.
+> The authority separation and non-adoption/resource-fence invariants below
+> remain in force. No schema, runtime, live removal or archive is changed by
+> this documentation reconciliation.
 
 This contract assigns authority while the provisional Cluster/Tribe canary is
 migrated into the required `daimon-matrix` runtime. It is intentionally strict
