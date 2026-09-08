@@ -277,8 +277,17 @@ def load_runtime(
     tribe_verifier: SnapshotVerifier | None = None,
     curator_fence_verifier: FenceVerifier | None = None,
     curator_effect_observer: EffectTruthObserver | None = None,
+    relationship_authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
+    | None = None,
 ) -> HostedRuntime:
-    """Verify all public/secret bindings before exposing a hosted service."""
+    """Verify all public/secret bindings before exposing a hosted service.
+
+    relationship_authorities is an explicit trusted-host public-authority seam,
+    not a model RPC or source Ledger inventory. Callers must validate documents
+    with the canonical authority validators before supplying these objects.
+    Existing local/source authorities cannot be replaced through this seam.
+    """
+    supplied_relationship_authorities = dict(relationship_authorities or {})
 
     root = Path(os.path.abspath(state_root))
     _owner_directory(root)
@@ -866,6 +875,8 @@ def load_runtime(
             species_context.registry.load_local_policy(species_context.local_policy_ref)
         except (KeyError, SpeciesError, TypeError) as exception:
             raise RuntimeError("runtime_species_configuration_rejected") from exception
+    if relationship_authorities is not None and bundle["relationships"] is None:
+        raise RuntimeError("runtime_relationship_configuration_rejected")
     relationship_store_path: Path | None = None
     relationship_known_refs: tuple[str, ...] = ()
     if bundle["relationships"] is not None:
@@ -1112,17 +1123,32 @@ def load_runtime(
             configuration[0]: configuration[2]
             for configuration in known_source_configurations
         }
+        for ref, supplied in supplied_relationship_authorities.items():
+            if (
+                not isinstance(supplied, (RootAuthority, RootHistoryAuthority))
+                or ref != supplied.manifest.being_ref
+            ):
+                raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
+            expected = (
+                authority if ref == manifest.being_ref else known_authorities.get(ref)
+            )
+            if expected is not None and supplied != expected:
+                raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
+            known_authorities[ref] = supplied
         if not set(relationship_known_refs).issubset(known_authorities):
             raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
-        relationship_authorities: dict[str, Any] = {
+        selected_relationship_authorities: dict[str, Any] = {
             manifest.being_ref: authority,
             **{
                 being_ref: known_authorities[being_ref]
-                for being_ref in relationship_known_refs
+                for being_ref in set(relationship_known_refs)
+                | set(supplied_relationship_authorities)
             },
         }
         active_authorities: dict[str, RootAuthority] = {manifest.being_ref: active}
-        for being_ref in relationship_known_refs:
+        for being_ref in set(relationship_known_refs) | set(
+            supplied_relationship_authorities
+        ):
             known_authority = known_authorities[being_ref]
             active_authorities[being_ref] = (
                 known_authority.active
@@ -1176,11 +1202,12 @@ def load_runtime(
             relationship_context = RelationshipServiceContext(
                 RelationshipStore(
                     relationship_store_path,
-                    authority_resolver=lambda being_ref: relationship_authorities[
-                        being_ref
-                    ],
+                    authority_resolver=lambda being_ref: (
+                        selected_relationship_authorities[being_ref]
+                    ),
                 ),
                 verify_relationship_card,
+                authority_resolver=lambda being_ref: active_authorities[being_ref],
             )
             relationship_context.store.initialize()
         except (KeyError, RelationshipError, RelationshipStoreError) as exception:

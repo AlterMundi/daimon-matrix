@@ -72,6 +72,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/memory_policy.py",
         "src/daimon_matrix/memory_projection.py",
         "src/daimon_matrix/multihost.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
         "src/daimon_matrix/peer_transport.py",
         "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
@@ -125,6 +126,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/messaging_store.py",
         "daimon_matrix/messaging_config.py",
         "daimon_matrix/operator_messaging.py",
+        "daimon_matrix/operator_runtime_upgrade.py",
         "daimon_matrix/telegram_mirror.py",
         "daimon_matrix/operator_bootstrap.py",
         "daimon_matrix/operator_capabilities.py",
@@ -327,64 +329,9 @@ def inspect_sdist(path: Path, source_root: Path) -> dict[str, object]:
 
     _assert_exact(set(files), SDIST_FILES, "sdist")
     _check_metadata(files["PKG-INFO"], "sdist PKG-INFO")
-    for relative in (
-        "src/daimon_matrix/__init__.py",
-        "src/daimon_matrix/authority_epochs.py",
-        "src/daimon_matrix/birth.py",
-        "src/daimon_matrix/canonical.py",
-        "src/daimon_matrix/cli.py",
-        "src/daimon_matrix/client.py",
-        "src/daimon_matrix/cluster.py",
-        "src/daimon_matrix/collective_memory.py",
-        "src/daimon_matrix/communication.py",
-        "src/daimon_matrix/conformance.py",
-        "src/daimon_matrix/curator.py",
-        "src/daimon_matrix/curator_worker.py",
-        "src/daimon_matrix/curator_worker_process.py",
-        "src/daimon_matrix/daemon.py",
-        "src/daimon_matrix/identity.py",
-        "src/daimon_matrix/human_review.py",
-        "src/daimon_matrix/hermes_body.py",
-        "src/daimon_matrix/keystore.py",
-        "src/daimon_matrix/ledger.py",
-        "src/daimon_matrix/local_api.py",
-        "src/daimon_matrix/local_we.py",
-        "src/daimon_matrix/mcp_server.py",
-        "src/daimon_matrix/messaging.py",
-        "src/daimon_matrix/messaging_store.py",
-        "src/daimon_matrix/messaging_config.py",
-        "src/daimon_matrix/operator_messaging.py",
-        "src/daimon_matrix/telegram_mirror.py",
-        "src/daimon_matrix/operator_bootstrap.py",
-        "src/daimon_matrix/operator_capabilities.py",
-        "src/daimon_matrix/operator_genesis.py",
-        "src/daimon_matrix/operator_first_embodiment.py",
-        "src/daimon_matrix/operator_rebirth.py",
-        "src/daimon_matrix/memory_policy.py",
-        "src/daimon_matrix/memory_projection.py",
-        "src/daimon_matrix/multihost.py",
-        "src/daimon_matrix/publication.py",
-        "src/daimon_matrix/projections.py",
-        "src/daimon_matrix/py.typed",
-        "src/daimon_matrix/relationship_store.py",
-        "src/daimon_matrix/relationships.py",
-        "src/daimon_matrix/reviewer_cli.py",
-        "src/daimon_matrix/runtime.py",
-        "src/daimon_matrix/routes.py",
-        "src/daimon_matrix/sealed.py",
-        "src/daimon_matrix/service.py",
-        "src/daimon_matrix/species.py",
-        "src/daimon_matrix/species_runner.py",
-        "src/daimon_matrix/sources.py",
-        "src/daimon_matrix/sync.py",
-        "src/daimon_matrix/synthetic_birth.py",
-        "src/daimon_matrix/synthetic_multihost.py",
-        "src/daimon_matrix/synthetic_relationships.py",
-        "src/daimon_matrix/synthetic_species.py",
-        "src/daimon_matrix/synthetic_sources.py",
-        "src/daimon_matrix/weave.py",
-    ):
-        _assert_source_parity(files, source_root, {relative: relative}, "sdist")
+    for relative in sorted(SDIST_FILES):
+        if relative.startswith("src/daimon_matrix/"):
+            _assert_source_parity(files, source_root, {relative: relative}, "sdist")
     return {
         "filename": path.name,
         "sha256": sha256_bytes(raw),
@@ -474,85 +421,9 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         raise PackageCheckError("wheel RECORD member set mismatch")
 
     source_map = {
-        "daimon_matrix/__init__.py": "src/daimon_matrix/__init__.py",
-        "daimon_matrix/authority_epochs.py": "src/daimon_matrix/authority_epochs.py",
-        "daimon_matrix/birth.py": "src/daimon_matrix/birth.py",
-        "daimon_matrix/canonical.py": "src/daimon_matrix/canonical.py",
-        "daimon_matrix/cli.py": "src/daimon_matrix/cli.py",
-        "daimon_matrix/client.py": "src/daimon_matrix/client.py",
-        "daimon_matrix/cluster.py": "src/daimon_matrix/cluster.py",
-        "daimon_matrix/collective_memory.py": (
-            "src/daimon_matrix/collective_memory.py"
-        ),
-        "daimon_matrix/communication.py": "src/daimon_matrix/communication.py",
-        "daimon_matrix/conformance.py": "src/daimon_matrix/conformance.py",
-        "daimon_matrix/curator.py": "src/daimon_matrix/curator.py",
-        "daimon_matrix/curator_worker.py": "src/daimon_matrix/curator_worker.py",
-        "daimon_matrix/curator_worker_process.py": (
-            "src/daimon_matrix/curator_worker_process.py"
-        ),
-        "daimon_matrix/daemon.py": "src/daimon_matrix/daemon.py",
-        "daimon_matrix/identity.py": "src/daimon_matrix/identity.py",
-        "daimon_matrix/human_review.py": "src/daimon_matrix/human_review.py",
-        "daimon_matrix/hermes_body.py": "src/daimon_matrix/hermes_body.py",
-        "daimon_matrix/keystore.py": "src/daimon_matrix/keystore.py",
-        "daimon_matrix/ledger.py": "src/daimon_matrix/ledger.py",
-        "daimon_matrix/local_api.py": "src/daimon_matrix/local_api.py",
-        "daimon_matrix/local_we.py": "src/daimon_matrix/local_we.py",
-        "daimon_matrix/mcp_server.py": "src/daimon_matrix/mcp_server.py",
-        "daimon_matrix/messaging.py": "src/daimon_matrix/messaging.py",
-        "daimon_matrix/messaging_store.py": "src/daimon_matrix/messaging_store.py",
-        "daimon_matrix/messaging_config.py": "src/daimon_matrix/messaging_config.py",
-        "daimon_matrix/operator_messaging.py": (
-            "src/daimon_matrix/operator_messaging.py"
-        ),
-        "daimon_matrix/telegram_mirror.py": "src/daimon_matrix/telegram_mirror.py",
-        "daimon_matrix/operator_bootstrap.py": (
-            "src/daimon_matrix/operator_bootstrap.py"
-        ),
-        "daimon_matrix/operator_capabilities.py": (
-            "src/daimon_matrix/operator_capabilities.py"
-        ),
-        "daimon_matrix/operator_genesis.py": "src/daimon_matrix/operator_genesis.py",
-        "daimon_matrix/operator_first_embodiment.py": (
-            "src/daimon_matrix/operator_first_embodiment.py"
-        ),
-        "daimon_matrix/operator_rebirth.py": ("src/daimon_matrix/operator_rebirth.py"),
-        "daimon_matrix/memory_policy.py": "src/daimon_matrix/memory_policy.py",
-        "daimon_matrix/memory_projection.py": (
-            "src/daimon_matrix/memory_projection.py"
-        ),
-        "daimon_matrix/multihost.py": "src/daimon_matrix/multihost.py",
-        "daimon_matrix/publication.py": "src/daimon_matrix/publication.py",
-        "daimon_matrix/projections.py": "src/daimon_matrix/projections.py",
-        "daimon_matrix/py.typed": "src/daimon_matrix/py.typed",
-        "daimon_matrix/relationship_store.py": (
-            "src/daimon_matrix/relationship_store.py"
-        ),
-        "daimon_matrix/relationships.py": "src/daimon_matrix/relationships.py",
-        "daimon_matrix/reviewer_cli.py": "src/daimon_matrix/reviewer_cli.py",
-        "daimon_matrix/runtime.py": "src/daimon_matrix/runtime.py",
-        "daimon_matrix/routes.py": "src/daimon_matrix/routes.py",
-        "daimon_matrix/sealed.py": "src/daimon_matrix/sealed.py",
-        "daimon_matrix/service.py": "src/daimon_matrix/service.py",
-        "daimon_matrix/species.py": "src/daimon_matrix/species.py",
-        "daimon_matrix/species_runner.py": "src/daimon_matrix/species_runner.py",
-        "daimon_matrix/sources.py": "src/daimon_matrix/sources.py",
-        "daimon_matrix/sync.py": "src/daimon_matrix/sync.py",
-        "daimon_matrix/synthetic_birth.py": "src/daimon_matrix/synthetic_birth.py",
-        "daimon_matrix/synthetic_multihost.py": (
-            "src/daimon_matrix/synthetic_multihost.py"
-        ),
-        "daimon_matrix/synthetic_relationships.py": (
-            "src/daimon_matrix/synthetic_relationships.py"
-        ),
-        "daimon_matrix/synthetic_species.py": (
-            "src/daimon_matrix/synthetic_species.py"
-        ),
-        "daimon_matrix/synthetic_sources.py": (
-            "src/daimon_matrix/synthetic_sources.py"
-        ),
-        "daimon_matrix/weave.py": "src/daimon_matrix/weave.py",
+        relative: f"src/{relative}"
+        for relative in sorted(WHEEL_FILES)
+        if relative.startswith("daimon_matrix/")
     }
     _assert_source_parity(files, source_root, source_map, "wheel")
     return {

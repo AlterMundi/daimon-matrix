@@ -541,6 +541,35 @@
         "secret_sha256"
       ],
       "additionalProperties": false
+    },
+    "relationship_mode": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "const": "shared"
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "state_root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "store_filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        }
+      },
+      "required": [
+        "mode",
+        "runtime_id",
+        "state_root",
+        "store_filename"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

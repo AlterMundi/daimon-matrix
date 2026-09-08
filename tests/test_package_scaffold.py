@@ -152,7 +152,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 57)
+        self.assertEqual(len(modules), 58)
+        self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         for inventory in (
             {path.as_posix() for path in BUILD_INPUTS},
             set(SDIST_FILES),
@@ -163,13 +164,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
                     {path for path in inventory if path.endswith(".py")}, modules
                 )
 
-    def test_real_artifacts_bind_messaging_bytes_to_source(self) -> None:
-        modules = (
-            "messaging",
-            "messaging_store",
-            "messaging_config",
-            "operator_messaging",
-            "telegram_mirror",
+    def test_real_artifacts_bind_all_package_bytes_to_source(self) -> None:
+        modules = tuple(
+            sorted(path.stem for path in (ROOT / "src/daimon_matrix").glob("*.py"))
         )
         with tempfile.TemporaryDirectory(prefix="dm020-artifact-") as directory:
             workspace = Path(directory)
@@ -309,6 +306,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/messaging_store.py",
                 "src/daimon_matrix/messaging_config.py",
                 "src/daimon_matrix/operator_messaging.py",
+                "src/daimon_matrix/operator_runtime_upgrade.py",
                 "src/daimon_matrix/telegram_mirror.py",
                 "src/daimon_matrix/operator_bootstrap.py",
                 "src/daimon_matrix/operator_capabilities.py",
@@ -372,6 +370,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/messaging_store.py",
                 "daimon_matrix/messaging_config.py",
                 "daimon_matrix/operator_messaging.py",
+                "daimon_matrix/operator_runtime_upgrade.py",
                 "daimon_matrix/telegram_mirror.py",
                 "daimon_matrix/operator_bootstrap.py",
                 "daimon_matrix/operator_capabilities.py",

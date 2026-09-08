@@ -7,6 +7,7 @@ No ordinary operator/host capability profiles or runtime schemas are extended.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -27,34 +28,52 @@ class MessagingConfigError(ValueError):
     """Bounded public error; never includes input values or secret bytes."""
 
 
-def _identity(runtime: HostedRuntime) -> dict[str, Any]:
-    service = runtime.service
-    authority = service.ledger.authority
-    if not isinstance(authority, (RootAuthority, RootHistoryAuthority)):
-        raise MessagingConfigError("messaging_binding_rejected")
-    member = authority.validate_origin(service.origin, require_active=True)
+def _public_identity(
+    authority: RootAuthority | RootHistoryAuthority,
+    origin: Mapping[str, Any],
+    runtime_id: str,
+    runtime_label: str,
+    at_ms: int,
+) -> dict[str, Any]:
+    member = authority.validate_origin(origin, require_active=True)
     credential = authority.credentials[member["embodiment_credential_id"]]
     incarnation = authority.incarnations[member["incarnation_authorization_id"]]
-    verify_embodiment_credential(credential, authority.state, at_ms=service.clock())
+    verify_embodiment_credential(credential, authority.state, at_ms=at_ms)
     verify_incarnation_authorization(
-        incarnation, credential, authority.state, at_ms=service.clock()
+        incarnation, credential, authority.state, at_ms=at_ms
     )
     signing = credential["body"]["signing_key"]
-    if signing["key_id"] != service.signer.key_id or signing["public"] != b64url(
-        service.signer.public_key
-    ):
-        raise MessagingConfigError("messaging_binding_rejected")
     return {
-        "runtime_id": service.runtime_id,
-        "runtime_label": service.runtime_label,
+        "runtime_id": runtime_id,
+        "runtime_label": runtime_label,
         "being_ref": authority.manifest.being_ref,
-        "origin": dict(service.origin),
+        "origin": dict(origin),
         "control_head": authority.state.head,
         "manifest_hash": authority.manifest.digest,
         "credential_id": member["embodiment_credential_id"],
         "incarnation_authorization_id": member["incarnation_authorization_id"],
         "signing_key_id": signing["key_id"],
     }
+
+
+def _identity(runtime: HostedRuntime) -> dict[str, Any]:
+    service = runtime.service
+    authority = service.ledger.authority
+    if not isinstance(authority, (RootAuthority, RootHistoryAuthority)):
+        raise MessagingConfigError("messaging_binding_rejected")
+    identity = _public_identity(
+        authority,
+        service.origin,
+        service.runtime_id,
+        service.runtime_label,
+        service.clock(),
+    )
+    signing = authority.credentials[identity["credential_id"]]["body"]["signing_key"]
+    if signing["key_id"] != service.signer.key_id or signing["public"] != b64url(
+        service.signer.public_key
+    ):
+        raise MessagingConfigError("messaging_binding_rejected")
+    return identity
 
 
 def config_digest(application: Any) -> str:
@@ -75,7 +94,9 @@ def create_binding(runtime: HostedRuntime, application: Any) -> dict[str, Any]:
         raise MessagingConfigError("messaging_binding_rejected") from None
 
 
-def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> None:
+def _verify_public_binding(
+    identity: dict[str, Any], public_key: bytes, application: Any, binding: Any
+) -> None:
     try:
         if (
             not isinstance(binding, dict)
@@ -84,14 +105,23 @@ def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> No
         ):
             raise ValueError()
         expected = {
-            **_identity(runtime),
+            **identity,
             "application_sha256": config_digest(application),
         }
         if binding["body"] != expected:
             raise ValueError()
-        Ed25519PublicKey.from_public_bytes(runtime.service.signer.public_key).verify(
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
             unb64url(binding["signature"], length=64),
             BINDING_DOMAIN + canonical_bytes(expected),
+        )
+    except Exception:
+        raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> None:
+    try:
+        _verify_public_binding(
+            _identity(runtime), runtime.service.signer.public_key, application, binding
         )
     except Exception:
         raise MessagingConfigError("messaging_binding_rejected") from None
@@ -198,6 +228,20 @@ APPLICATION_JSON_SCHEMA = _object(
 )
 
 
+# Optional signed composition contract. Absent means the original isolated mode.
+# stores.relationships remains a reserved app-local leaf, never opened in shared
+# mode. The separate binding below names the exact ordinary store instead.
+for _application_schema in (SPECIFICATION_SCHEMA, APPLICATION_JSON_SCHEMA):
+    _application_schema["properties"]["relationship_mode"] = _object(
+        {
+            "mode": {"const": "shared"},
+            "runtime_id": _TEXT,
+            "state_root": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "store_filename": _LEAF,
+        }
+    )
+
+
 BINDING_JSON_SCHEMA = _object(
     {
         "schema": {"const": BINDING_SCHEMA},
@@ -249,10 +293,12 @@ def _shape(value: Any, schema: dict[str, Any]) -> None:
         if not isinstance(value, dict):
             raise ValueError()
         if "properties" in schema:
-            if set(value) != set(schema["properties"]):
+            if not set(schema["required"]).issubset(value) or not set(value).issubset(
+                schema["properties"]
+            ):
                 raise ValueError()
-            for name, child in schema["properties"].items():
-                _shape(value[name], child)
+            for name in value:
+                _shape(value[name], schema["properties"][name])
     elif kind == "array":
         if (
             not isinstance(value, list)
@@ -603,8 +649,29 @@ def _compose(
     service = runtime.service
     # The ordinary RPC store has its own resolver/card and authorization contract.
     # Silently replacing it or maintaining a second history loses revocations.
-    if service.relationships is not None:
+    shared = application.get("relationship_mode")
+    ordinary = service.relationships
+    if shared is None and ordinary is not None:
         raise MessagingConfigError("messaging_relationship_composition_rejected")
+    if shared is not None:
+        if (
+            ordinary is None
+            or ordinary.authority_resolver is None
+            or shared
+            != {
+                "mode": "shared",
+                "runtime_id": service.runtime_id,
+                "state_root": str(runtime.state_root),
+                "store_filename": ordinary.store.path.name,
+            }
+            or ordinary.store.path != runtime.state_root / shared["store_filename"]
+        ):
+            raise MessagingConfigError("messaging_relationship_composition_rejected")
+        _directory(runtime.state_root)
+        path = _store_path(runtime.state_root, shared["store_filename"])
+        if not path.is_file():
+            raise MessagingConfigError("messaging_required_store_missing")
+        _validate_store_schema("relationships", path)
     identity = _identity(runtime)
     custody = runtime.create_delivery_custody()
     authorities = {}
@@ -625,6 +692,25 @@ def _compose(
         or local.incarnations != runtime_authority.incarnations
     ):
         raise ValueError()
+    if shared is not None:
+        assert ordinary is not None and ordinary.authority_resolver is not None
+        for ref, approved in authorities.items():
+            if ordinary.authority_resolver(ref) != approved:
+                raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        resolve_authority = ordinary.authority_resolver
+        relationships = ordinary.store
+        # No bootstrap replay, even during prepare: the trusted host must have
+        # already ingested every enrollment event. Failure never modifies this DB.
+        retained = {canonical_bytes(event) for event in relationships.events()}
+        for event in application["relationship_events"]:
+            relationships._validated_event(event)
+            if canonical_bytes(event) not in retained:
+                raise MessagingConfigError("messaging_shared_history_incomplete")
+    else:
+
+        def resolve_authority(being_ref: str) -> RootAuthority:
+            return authorities[being_ref]
+
     incoming, outgoing = application["incoming"], application["outgoing"]
     if (
         incoming["recipient_being_ref"] != identity["being_ref"]
@@ -678,27 +764,32 @@ def _compose(
     }
     if read_document((metadata_root or root) / "client.json") != expected_client:
         raise ValueError()
+    selected_stores = {
+        name: filename
+        for name, filename in application["stores"].items()
+        if shared is None or name != "relationships"
+    }
     if not initialize:
-        for filename in application["stores"].values():
+        for filename in selected_stores.values():
             if not (root / filename).is_file():
                 raise MessagingConfigError("messaging_required_store_missing")
             if (root / filename).stat().st_size == 0:
                 raise MessagingConfigError("messaging_required_store_invalid")
     stores = {
-        name: _store_path(root, filename)
-        for name, filename in application["stores"].items()
+        name: _store_path(root, filename) for name, filename in selected_stores.items()
     }
     if not initialize:
         # Validate every store before the first constructor can initialize anything.
         for name, path in stores.items():
             _validate_store_schema(name, path)
-    relationships = RelationshipStore(
-        stores["relationships"],
-        authority_resolver=lambda being_ref: authorities[being_ref],
-    )
-    if initialize:
-        for event in application["relationship_events"]:
-            relationships.ingest(event)
+    if shared is None:
+        relationships = RelationshipStore(
+            stores["relationships"],
+            authority_resolver=lambda being_ref: authorities[being_ref],
+        )
+        if initialize:
+            for event in application["relationship_events"]:
+                relationships.ingest(event)
 
     def channel(row: Any, store: Path) -> MessagingChannel:
         policy = dict(row["policy"])
@@ -709,7 +800,7 @@ def _compose(
             policy=MessagingPeerPolicy(**policy),
             local_being_ref=row["recipient_being_ref"],
             local_credential_id=row["recipient_credential_id"],
-            authority_resolver=lambda being_ref: authorities[being_ref],
+            authority_resolver=resolve_authority,
             relationships=relationships,
             custody=custody,
             inbox=MessagingInboxStore(store),
@@ -793,7 +884,9 @@ def _compose(
     )
 
 
-def read_publication(runtime: HostedRuntime, root: Path) -> tuple[Any, Path]:
+def _read_publication(
+    root: Path, verify: Callable[[Any, Any], None]
+) -> tuple[Any, Path]:
     """Read one atomic signed publication; missing pointer never means bootstrap."""
     import re
 
@@ -814,14 +907,88 @@ def read_publication(runtime: HostedRuntime, root: Path) -> tuple[Any, Path]:
         and re.fullmatch(r"generation-[0-9a-f]{32}", generation) is None
     ):
         raise MessagingConfigError("messaging_publication_rejected")
-    verify_binding(runtime, body, publication["binding"])
+    verify(body, publication["binding"])
     metadata = root if generation == "." else _directory(root / generation)
     application = read_document(metadata / "application.json")
     validate_shape(application)
-    verify_binding(runtime, application, read_document(metadata / "binding.json"))
+    verify(application, read_document(metadata / "binding.json"))
     if config_digest(application) != body["application_sha256"]:
         raise MessagingConfigError("messaging_publication_rejected")
     return application, metadata
+
+
+def read_publication(runtime: HostedRuntime, root: Path) -> tuple[Any, Path]:
+    return _read_publication(
+        root, lambda value, binding: verify_binding(runtime, value, binding)
+    )
+
+
+def read_application_authorities(
+    state_root: Path | str, bundle_name: str, app_directory: Path | str, *, at_ms: int
+) -> dict[str, RootAuthority]:
+    """Host-only preflight BEFORE load_runtime, under the same runtime lock.
+
+    Reads public data only. Verifies signed app/publication against the trusted
+    local bundle's verified public authority. Pass the result as load_runtime's
+    relationship_authorities, preserve all hooks, then call load_application
+    before readiness. Neither this reader nor application loading ingests grants.
+    This is not enrollment, a custody reader, or a historical-root subscription.
+    """
+    from .operator_rebirth import authority_from_document, authority_from_runtime_bundle
+    from .runtime import _read_bundle, _safe_file
+
+    try:
+        root = _directory(state_root)
+        bundle = _read_bundle(_safe_file(root, bundle_name, must_exist=True))
+        local = authority_from_runtime_bundle(bundle)
+        identity = _public_identity(
+            local,
+            bundle["local_origin"],
+            bundle["runtime_id"],
+            bundle["runtime_label"],
+            at_ms,
+        )
+        signing = local.credentials[identity["credential_id"]]["body"]["signing_key"]
+        public = unb64url(signing["public"], length=32)
+        app_root = _directory(app_directory)
+        if app_root == root or root in app_root.parents:
+            raise ValueError()
+        app, _ = _read_publication(
+            app_root,
+            lambda value, binding: _verify_public_binding(
+                identity, public, value, binding
+            ),
+        )
+        relationships = bundle["relationships"]
+        if relationships is None or app.get("relationship_mode") != {
+            "mode": "shared",
+            "runtime_id": identity["runtime_id"],
+            "state_root": str(root),
+            "store_filename": relationships["store_filename"],
+        }:
+            raise MessagingConfigError("messaging_relationship_composition_rejected")
+        authorities = {}
+        for document in app["authorities"]:
+            authority = authority_from_document(document)
+            ref = authority.manifest.being_ref
+            if ref in authorities:
+                raise ValueError()
+            authorities[ref] = authority
+        if authorities.get(local.manifest.being_ref) != local:
+            raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        # Preflight before ordinary load_runtime can initialize an existing DB.
+        path = _store_path(root, relationships["store_filename"])
+        if not path.is_file():
+            raise MessagingConfigError("messaging_required_store_missing")
+        _validate_store_schema("relationships", path)
+        # Local epochs remain owned by the runtime bundle, never replaced by
+        # the app's active public snapshot.
+        del authorities[local.manifest.being_ref]
+        return authorities
+    except MessagingConfigError:
+        raise
+    except Exception:
+        raise MessagingConfigError("messaging_application_rejected") from None
 
 
 def load_application(

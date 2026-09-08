@@ -253,6 +253,95 @@ synthetic primitive test, not participant enrollment or the real cross-being
 journey. Separate controls verify signature-domain separation and stable
 rejection of unknown keys, malformed wrapping and noncanonical signing input.
 
+## Shared ordinary relationship history
+
+A shared application includes the optional signed `relationship_mode` object:
+
+```json
+{
+  "mode": "shared",
+  "runtime_id": "<exact existing runtime ID>",
+  "state_root": "<exact absolute runtime state root>",
+  "store_filename": "<configured ordinary relationship store leaf>"
+}
+```
+
+These are placeholders, not a valid enrollment or executable approval. The
+object is inside the signed application, not an unsigned host preference.
+Absent shared selection retains isolated semantics. In shared mode the existing
+app-local `stores.relationships` name remains reserved for format compatibility
+but is never opened or created; the signed ordinary store is authoritative.
+
+### Initial trusted preparation
+
+The authorized operator first validates the participants' public authorities
+through the canonical document/history validators and obtains their real
+consent, cards and narrow grants. It loads the existing ordinary runtime with
+that verified `relationship_authorities` mapping and explicitly ingests the
+reviewed signed events through its ordinary relationship service. Only then
+may it call the trusted `operator_messaging.prepare` API with the shared
+specification. This is not automatic enrollment through the standalone CLI.
+
+Shared preparation and loading never replay bootstrap events into ordinary
+history. All required exact enrollment events must already be retained and
+valid. A failed prepare therefore cannot leave partially inserted shared
+grants. Existing revocations remain effective even while original grant events
+remain in history; retaining a grant is not current authorization.
+
+### Required host startup order
+
+Under the existing host/runtime lock, before readiness or consumer startup:
+
+```python
+from daimon_matrix.messaging_config import (
+    load_application,
+    read_application_authorities,
+)
+from daimon_matrix.runtime import load_runtime
+
+public = read_application_authorities(
+    state_root, bundle_name, app_directory, at_ms=clock()
+)
+runtime = load_runtime(
+    state_root,
+    bundle_name,
+    password_reader,
+    clock=clock,
+    relationship_authorities=public,
+    body_reader=body_reader,
+    curator_fence_verifier=curator_fence_verifier,
+    curator_effect_observer=curator_effect_observer,
+)
+runtime = load_application(runtime, app_directory)
+```
+
+The variables above are the host's existing verified inputs and hooks, not
+values to discover from an incoming message. Preserve any other existing host
+verification hook, including its tribe verifier when applicable. Serve the
+returned runtime only after successful composition; do not reconstruct its
+service or silently fall back on failure.
+
+The pre-reader verifies both publication and application signatures against
+protected local public identity, exact shared target bindings, canonical peer
+authorities and the existing ordinary SQLite schema. It opens neither custody
+nor mutable stores. It supplies only foreign current authority snapshots;
+local retained epochs remain owned by the runtime bundle. The base loader
+still performs full custody/runtime checks and final application loading
+revalidates the signed selection, stores and current grants. Public preflight
+alone is not readiness or authorization to disclose plaintext.
+
+Calling only `load_application` after an unprepared zero-peer base load is not
+an equivalent integration. The host pre-reader deliberately rejects isolated
+or missing shared selection; it does not return a permissive fallback. A host
+with retained foreign epochs must supply independently verified history
+objects instead of replacing them with conflicting current-only snapshots.
+The mapping is a trusted per-load selection, not a live root-update subscription
+or model-facing root-enrollment capability.
+
+Ordinary signed revocation is immediately visible to native send, manual/cached
+inbox disclosure and later transport phases through the same context/store.
+It survives reload. Already transmitted effects are not retroactively recalled.
+
 ## Explicit application provisioning and tool mode
 
 The source now provides `daimon_matrix.operator_messaging` for an external,
@@ -261,8 +350,10 @@ runtime bundle or host/operator profiles. The base runtime must already satisfy
 the current identity and signed-capability contracts and have compatible loaded
 peer custody. This command is **not a migrator for an older installed runtime**.
 
-Trusted operator commands (replace uppercase path placeholders with verified
-local paths; FD 3 must supply the runtime password without an added newline):
+Standalone operator commands for **isolated composition** (replace uppercase
+path placeholders with verified local paths; FD 3 supplies the runtime password
+without an added newline). These are not the shared Cluster enrollment/boot
+sequence described above:
 
 ```sh
 python -m daimon_matrix.operator_messaging prepare \
@@ -286,9 +377,11 @@ All operator commands take the runtime lock; stop the matching daemon under its
 authorized lifecycle before invoking them. Do not launch this standalone daemon
 beside a Cluster-hosted receiver or use it to bypass Cluster hooks/fences. A
 Cluster deployment must explicitly compose the application in its own hosting
-path. Composition currently rejects an ordinary relationship-service context
-rather than allow two histories to disagree about revocation. This fail-closed
-restriction is not a completed production compatibility transition.
+path. Isolated composition still rejects an ordinary relationship-service
+context rather than allow two histories to disagree about revocation. Explicit
+signed shared composition now uses the existing ordinary context and store;
+see the required pre-base sequence above. Neither path automatically migrates
+an incompatible installed runtime.
 
 Preparation publishes initialized stores and a signed metadata pointer. Runtime
 loading never reinitializes a missing or empty required store from historical

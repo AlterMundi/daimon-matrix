@@ -30,7 +30,7 @@ from .relationships import (
     relationship_event_subject,
     validate_relationship_event_payload,
 )
-from .weave import EventAuthority, WeaveProtocolError, verify_event
+from .weave import EventAuthority, RootAuthority, WeaveProtocolError, verify_event
 
 SCHEMA_VERSION: Final = 1
 BUSY_TIMEOUT_MS: Final = 5_000
@@ -59,6 +59,8 @@ class RelationshipServiceContext:
 
     store: RelationshipStore
     card_verifier: CardVerifier
+    # Current authority only; store resolver separately retains historical epochs.
+    authority_resolver: Callable[[str], RootAuthority] | None = None
 
 
 def _assert_owner_directory(path: Path) -> None:
