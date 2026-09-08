@@ -132,6 +132,7 @@ class MessagingSender:
         send_id: str,
         thread_id: str,
         text: str,
+        response_to: tuple[MessagingChannel, str] | None = None,
     ) -> tuple[bytes, bytes]:
         now = _uint(self.clock())
         context, policy = self.context, self.context.policy
@@ -143,7 +144,7 @@ class MessagingSender:
         owner = policy.peer_being_ref
         self.outbox._check_time(owner, send_id, now)
         policy_hash = context._policy_hash(now)
-        payload = {
+        payload: dict[str, Any] = {
             "schema": MESSAGE_PAYLOAD_SCHEMA,
             "body": {"text": text, "resource_ref": policy.resource_ref},
             "intent": {
@@ -153,6 +154,27 @@ class MessagingSender:
             },
             "reply": None,
         }
+        if response_to is not None:
+            channel, message_id = response_to
+            received = channel.message(message_id)
+            if (
+                channel.local_being_ref != owner
+                or channel.local_credential_id != policy.peer_credential_id
+                or channel.policy.peer_being_ref != context.local_being_ref
+                or channel.policy.peer_credential_id != context.local_credential_id
+                or channel.policy.tribe_ref != policy.tribe_ref
+                or channel.policy.relationship_id != policy.relationship_id
+                or received["payload"]["intent"]["thread_id"] != thread_id
+            ):
+                raise ValueError("messaging_response_context_mismatch")
+            payload["body"]["response_context"] = {
+                "schema": "dm.messaging.application-response/v1",
+                "message_id": received["event_id"],
+                "message_hash": received["content_hash"],
+                "sender_being_ref": received["being_ref"],
+                "sender_embodiment_id": received["origin"]["embodiment_id"],
+                "thread_id": thread_id,
+            }
         _message_payload(
             {
                 "kind": "experience.observed",
@@ -311,12 +333,86 @@ class MessagingDelivery:
         self.providers = (evidence_provider, message_provider)
         self.config_digest = config_digest
 
-    def send(
-        self, *, client_id: str, send_id: str, thread_id: str, text: str
+    def inspect(
+        self,
+        *,
+        client_id: str,
+        send_id: str,
+        response_channels: tuple[MessagingChannel, ...] = (),
     ) -> dict[str, Any]:
+        """Current-authorized transport proof inspection; never transmits or authors."""
+        self.sender._bind(self.sender.clock())
+        owner = self.sender.context.policy.peer_being_ref
+        self.sender.outbox._check_client(owner, _uuid(send_id), client_id)
+        envelopes = self.sender.outbox._prepared(owner, send_id)
+        if envelopes is None:
+            raise ValueError("messaging_outbox_missing")
+        event = self.sender.ledger.event(_parse(envelopes[1])["event_id"])
+        if event is None:
+            raise ValueError("messaging_outbox_missing")
+        payload = _message_payload(event)
+        response_to = None
+        if "response_context" in payload["body"]:
+            reference = payload["body"]["response_context"]
+            for channel in response_channels:
+                try:
+                    received = channel.message(reference["message_id"])
+                except ValueError:
+                    continue
+                if received["content_hash"] == reference["message_hash"]:
+                    response_to = (channel, reference["message_id"])
+                    break
+            if response_to is None:
+                raise ValueError("messaging_response_context_missing")
+        return self._run(
+            client_id=client_id,
+            send_id=send_id,
+            thread_id=payload["intent"]["thread_id"],
+            text=payload["body"]["text"],
+            transmit=False,
+            response_to=response_to,
+        )
+
+    def send(
+        self,
+        *,
+        client_id: str,
+        send_id: str,
+        thread_id: str,
+        text: str,
+        response_to: tuple[MessagingChannel, str] | None = None,
+        authorize: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        return self._run(
+            client_id=client_id,
+            send_id=send_id,
+            thread_id=thread_id,
+            text=text,
+            transmit=True,
+            response_to=response_to,
+            authorize=authorize,
+        )
+
+    def _run(
+        self,
+        *,
+        client_id: str,
+        send_id: str,
+        thread_id: str,
+        text: str,
+        transmit: bool,
+        response_to: tuple[MessagingChannel, str] | None = None,
+        authorize: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        if authorize is not None:
+            authorize()
         # Always authorize the original request before consulting private progress.
         envelopes = self.sender.prepare(
-            client_id=client_id, send_id=send_id, thread_id=thread_id, text=text
+            client_id=client_id,
+            send_id=send_id,
+            thread_id=thread_id,
+            text=text,
+            response_to=response_to,
         )
         owner = self.sender.context.policy.peer_being_ref
         phases = ("evidence", "message")
@@ -359,6 +455,7 @@ class MessagingDelivery:
             send_id,
             bindings,
             lambda phase: providers[phase].prepare_submission(submissions[phase]),
+            create=transmit,
         )
         # Validate BOTH retained requests before any network I/O, including when
         # evidence succeeded already. This checks current transport keys without
@@ -389,14 +486,20 @@ class MessagingDelivery:
             elif stage["response"] is not None or stage["result_sha256"] is not None:
                 raise ValueError("messaging_transport_response_conflict")
         for phase in phases:
+            if authorize is not None:
+                authorize()
             # Evidence I/O may take us beyond expiry or a newly observed revocation.
             # Recheck before releasing the next stage, without renewing the pair.
             self.sender.prepare(
-                client_id=client_id, send_id=send_id, thread_id=thread_id, text=text
+                client_id=client_id,
+                send_id=send_id,
+                thread_id=thread_id,
+                text=text,
+                response_to=response_to,
             )
             stage = stages[phase]
             status = stage["transport_status"]
-            if status in {"prepared", "pending"}:
+            if transmit and status in {"prepared", "pending"}:
                 status = self.sender.outbox._transport_status(owner, send_id, phase)
                 if status == "pending":
                     proofs: list[bytes] = []
@@ -418,6 +521,8 @@ class MessagingDelivery:
             stage["transport_status"] = status
             if status != "recipient-intake":
                 break
+        if authorize is not None:
+            authorize()
         return {
             "send_id": send_id,
             "phase": phase,
@@ -755,12 +860,23 @@ class MessagingChannel:
         except (ValueError, KeyError, TypeError):
             raise MessagingInboxError("messaging_stored_evidence_invalid") from None
 
+    def message(self, message_id: str) -> dict[str, Any]:
+        """Look up exact locally admitted evidence under current authorization."""
+        now = self.clock()
+        row = self.inbox._message(_uuid(message_id), self._policy_hash(now))
+        self._validate_rows([row], now)
+        return dict(row["message"])
+
     def page(self, *, after: int, limit: int) -> list[dict[str, Any]]:
         """Manual current-policy read, not a delivered/consumed semantic receipt."""
         now = self.clock()
         rows = self.inbox._page(
             after=after, limit=limit, policy_hash=self._policy_hash(now)
         )
+        self._validate_rows(rows, now)
+        return rows
+
+    def _validate_rows(self, rows: list[dict[str, Any]], now: int) -> None:
         for row in rows:
             row["message"] = self._verify_retained(row["message"])
             row["evidence"] = self._verify_retained(row["evidence"])
@@ -771,4 +887,3 @@ class MessagingChannel:
                 )
             except (ValueError, KeyError, TypeError):
                 raise MessagingInboxError("messaging_stored_evidence_invalid") from None
-        return rows

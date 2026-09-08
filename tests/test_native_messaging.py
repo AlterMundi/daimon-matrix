@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import copy
+import http.client
+import http.server
 import json
+import os
+import select
 import tempfile
+import threading
 import unittest
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
+from unittest.mock import Mock, patch
 
+from daimon_matrix import daemon
+from daimon_matrix import runtime as runtime_module
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import (
     MESSAGE_PAYLOAD_SCHEMA,
@@ -19,6 +28,7 @@ from daimon_matrix.communication import (
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.relationship_store import RelationshipStore
+from daimon_matrix.runtime import load_runtime
 from daimon_matrix.sealed import (
     DisclosureAuthorization,
     KeystoreDeliveryCustody,
@@ -27,6 +37,7 @@ from daimon_matrix.sealed import (
 )
 from daimon_matrix.synthetic_relationships import NOW, _identity, _seed, _uuid
 from daimon_matrix.weave import create_event
+from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 
 ROOT = Path(__file__).resolve().parents[1]
 TEXT = "Only the independently authorized recipient may read this native message."
@@ -180,13 +191,13 @@ class Pair:
         )
 
     def wire(
-        self, sequence: int = 100
+        self, sequence: int = 100, *, text: str = TEXT
     ) -> tuple[bytes, bytes, dict[str, Any], dict[str, Any]]:
         message = self.event(
             "communication",
             {
                 "schema": MESSAGE_PAYLOAD_SCHEMA,
-                "body": {"text": TEXT, "resource_ref": self.policy.resource_ref},
+                "body": {"text": text, "resource_ref": self.policy.resource_ref},
                 "intent": {
                     "operation": "read",
                     "scope": "/tribe",
@@ -261,6 +272,1644 @@ class Pair:
             message,
             evidence,
         )
+
+
+class _SendRequest(TypedDict):
+    client_id: str
+    send_id: str
+    thread_id: str
+    text: str
+
+
+class NativeMessagingDaemonLifecycleTests(RuntimeFixture):
+    def test_listener_start_failure_closes_without_waiting_for_absent_thread(
+        self,
+    ) -> None:
+        root, _, _ = self.make_bundle()
+        runtime = load_runtime(
+            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        ingress = Mock()
+        runtime = replace(
+            runtime,
+            messaging_http=runtime_module.MessagingHTTPContext(
+                listen=("127.0.0.1", 0),
+                evidence_ingress=ingress,
+                message_ingress=ingress,
+            ),
+        )
+        server = Mock()
+        with (
+            patch.object(daemon, "create_messaging_http_server", return_value=server),
+            patch.object(
+                threading.Thread,
+                "start",
+                side_effect=OSError("synthetic-thread-start-failure"),
+            ),
+            self.assertRaisesRegex(OSError, "synthetic-thread-start-failure"),
+        ):
+            daemon.serve_forever(runtime)
+        server.shutdown.assert_not_called()
+        server.server_close.assert_called_once_with()
+        self.assertFalse(runtime.socket_path.exists())
+
+    def test_shutdown_waits_for_inflight_messaging_intake(self) -> None:
+        root, _, _ = self.make_bundle()
+        runtime = load_runtime(
+            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        entered, release, returned = (
+            threading.Event(),
+            threading.Event(),
+            threading.Event(),
+        )
+        ingress = Mock()
+
+        def handle(raw: bytes) -> bytes:
+            entered.set()
+            release.wait(10)
+            return b"{}"
+
+        ingress.handle.side_effect = handle
+        runtime = replace(
+            runtime,
+            messaging_http=runtime_module.MessagingHTTPContext(
+                listen=("127.0.0.1", 0),
+                evidence_ingress=ingress,
+                message_ingress=ingress,
+            ),
+        )
+        servers: list[http.server.ThreadingHTTPServer] = []
+        original = daemon.create_messaging_http_server
+
+        def create(*args: Any, **kwargs: Any) -> http.server.ThreadingHTTPServer:
+            server = original(*args, **kwargs)
+            servers.append(server)
+            return server
+
+        stop = threading.Event()
+        read_fd, write_fd = os.pipe()
+
+        def serve() -> None:
+            try:
+                daemon.serve_forever(runtime, stop=stop, ready_descriptor=write_fd)
+            finally:
+                returned.set()
+
+        with patch.object(daemon, "create_messaging_http_server", side_effect=create):
+            worker = threading.Thread(target=serve)
+            worker.start()
+            connection = None
+            try:
+                ready, _, _ = select.select([read_fd], [], [], 10)
+                self.assertTrue(ready)
+                self.assertEqual(os.read(read_fd, 6), b"READY\n")
+                connection = http.client.HTTPConnection(
+                    str(servers[0].server_address[0]),
+                    int(servers[0].server_address[1]),
+                    timeout=3,
+                )
+                connection.request(
+                    "POST",
+                    "/dm-messaging/v1/message",
+                    b"{}",
+                    {"Content-Type": "application/daimon+jcs"},
+                )
+                self.assertTrue(entered.wait(3))
+                stop.set()
+                self.assertFalse(
+                    returned.wait(1), "daemon returned with intake still running"
+                )
+            finally:
+                release.set()
+                stop.set()
+                if connection is not None:
+                    connection.close()
+                worker.join(timeout=10)
+                os.close(read_fd)
+        self.assertTrue(returned.is_set())
+        self.assertFalse(worker.is_alive())
+
+    def test_configured_messaging_listener_serves_and_closes_with_daemon(self) -> None:
+        self.assertTrue(hasattr(runtime_module, "MessagingHTTPContext"))
+        root, _, _ = self.make_bundle()
+        runtime = load_runtime(
+            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        ingress = Mock()
+        ingress.handle.return_value = b"{}"
+        runtime = replace(
+            runtime,
+            messaging_http=runtime_module.MessagingHTTPContext(
+                listen=("127.0.0.1", 0),
+                evidence_ingress=ingress,
+                message_ingress=ingress,
+            ),
+        )
+        stop = threading.Event()
+        errors = []
+        servers = []
+        original = daemon.create_messaging_http_server
+
+        def create(*args: Any, **kwargs: Any) -> http.server.ThreadingHTTPServer:
+            server = original(*args, **kwargs)
+            servers.append(server)
+            return server
+
+        read_fd, write_fd = os.pipe()
+
+        def serve() -> None:
+            try:
+                daemon.serve_forever(runtime, stop=stop, ready_descriptor=write_fd)
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch.object(daemon, "create_messaging_http_server", side_effect=create):
+            worker = threading.Thread(target=serve)
+            worker.start()
+            try:
+                ready, _, _ = select.select([read_fd], [], [], 10)
+                self.assertTrue(ready, errors)
+                self.assertEqual(os.read(read_fd, 6), b"READY\n")
+                self.assertEqual(len(servers), 1)
+                connection = http.client.HTTPConnection(
+                    str(servers[0].server_address[0]),
+                    int(servers[0].server_address[1]),
+                    timeout=3,
+                )
+                try:
+                    connection.request(
+                        "POST",
+                        "/dm-messaging/v1/message",
+                        b"{}",
+                        {"Content-Type": "application/daimon+jcs"},
+                    )
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.read(), b"{}")
+                finally:
+                    connection.close()
+            finally:
+                stop.set()
+                worker.join(timeout=10)
+                os.close(read_fd)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertFalse(runtime.socket_path.exists())
+        self.assertEqual(servers[0].socket.fileno(), -1)
+
+
+class NativeMessagingMcpTests(unittest.TestCase):
+    def test_stdio_modes_use_authenticated_dedicated_uds(self) -> None:
+        import socketserver
+        import subprocess
+        import sys
+        import time
+
+        from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
+        from daimon_matrix.local_api import (
+            authenticate_request,
+            create_capability,
+            create_response,
+            encode_frame,
+            request_hash,
+        )
+        from daimon_matrix.service import MESSAGING_METHODS
+        from tests.test_dm025_cli_mcp import META
+
+        now = time.time_ns() // 1_000_000
+        capability = create_capability(
+            _seed("mcp-only"),
+            client_id="client:mcp-only",
+            methods=sorted(MESSAGING_METHODS),
+            not_before_ms=now - 60_000,
+            not_after_ms=now + 600_000,
+        )
+        origin = _identity("member").origin
+        runtime = {
+            "runtime_id": "dm:runtime:v1:" + "n" * 43,
+            "runtime_label": "mcp-test",
+        }
+        received: list[dict[str, Any]] = []
+        errors: list[Exception] = []
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                try:
+                    self.request.settimeout(5)
+                    request = cast(dict[str, Any], daemon._receive(self.request))
+                    authenticate_request(
+                        request, capability, now_ms=time.time_ns() // 1_000_000
+                    )
+                    received.append(request)
+                    response = create_response(
+                        capability,
+                        request_id=request["request_id"],
+                        request_digest=request_hash(request),
+                        server=origin,
+                        runtime=runtime,
+                        completed_at_ms=time.time_ns() // 1_000_000,
+                        result={
+                            "params": request["params"],
+                            "text": "untrusted $(do-not-execute)",
+                        },
+                    )
+                    self.request.sendall(encode_frame(response))
+                except Exception as exc:
+                    errors.append(exc)
+
+        with tempfile.TemporaryDirectory(prefix="dm-mcp-") as directory:
+            root = Path(directory)
+            config = root / "client.json"
+            config.write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": CLIENT_CONFIG_SCHEMA_V3,
+                        "capability": capability.descriptor,
+                        "expected_server": origin,
+                        **runtime,
+                    }
+                )
+            )
+            config.chmod(0o600)
+            requests = root / "requests"
+            requests.mkdir(mode=0o700)
+            with socketserver.UnixStreamServer(
+                str(root / "rpc.sock"), Handler
+            ) as server:
+                (root / "rpc.sock").chmod(0o600)
+                worker = threading.Thread(target=server.serve_forever)
+                worker.start()
+                try:
+                    for legacy in (False, True):
+                        with self.subTest(legacy=legacy):
+                            read_fd, write_fd = os.pipe()
+                            os.write(write_fd, capability.key)
+                            os.close(write_fd)
+                            try:
+                                process = subprocess.Popen(
+                                    [
+                                        sys.executable,
+                                        "-m",
+                                        "daimon_matrix.mcp_server",
+                                        "--messaging-only",
+                                        "--socket",
+                                        str(root / "rpc.sock"),
+                                        "--client-config",
+                                        str(config),
+                                        "--capability-key-fd",
+                                        str(read_fd),
+                                        "--request-dir",
+                                        str(requests),
+                                    ],
+                                    cwd=ROOT,
+                                    env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+                                    pass_fds=(read_fd,),
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                )
+                            finally:
+                                os.close(read_fd)
+                            assert (
+                                process.stdin is not None
+                                and process.stdout is not None
+                                and process.stderr is not None
+                            )
+                            try:
+
+                                def exchange(
+                                    method: str,
+                                    params: dict[str, Any],
+                                    process: subprocess.Popen[bytes] = process,
+                                    legacy: bool = legacy,
+                                ) -> dict[str, Any]:
+                                    assert (
+                                        process.stdin is not None
+                                        and process.stdout is not None
+                                    )
+                                    frame = {
+                                        "jsonrpc": "2.0",
+                                        "id": method,
+                                        "method": method,
+                                        "params": params
+                                        if legacy or method == "initialize"
+                                        else {"_meta": META, **params},
+                                    }
+                                    process.stdin.write(canonical_bytes(frame) + b"\n")
+                                    process.stdin.flush()
+                                    ready, _, _ = select.select(
+                                        [process.stdout], [], [], 10
+                                    )
+                                    self.assertTrue(ready, "stdio timeout")
+                                    raw = process.stdout.readline()
+                                    self.assertTrue(raw, "stdio exited before replying")
+                                    return cast(dict[str, Any], json.loads(raw))
+
+                                if legacy:
+                                    result = exchange(
+                                        "initialize",
+                                        {
+                                            "protocolVersion": "2025-06-18",
+                                            "capabilities": {},
+                                            "clientInfo": {
+                                                "name": "test",
+                                                "version": "1",
+                                            },
+                                        },
+                                    )
+                                    self.assertEqual(
+                                        result["result"]["protocolVersion"],
+                                        "2025-06-18",
+                                    )
+                                    process.stdin.write(
+                                        b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n'
+                                    )
+                                    process.stdin.flush()
+                                result = exchange("tools/list", {})
+                                self.assertEqual(
+                                    {t["name"] for t in result["result"]["tools"]},
+                                    {
+                                        "messaging_" + method
+                                        for method in (
+                                            "inbox",
+                                            "send",
+                                            "reply",
+                                            "delivery",
+                                        )
+                                    },
+                                )
+                                for method, args in {
+                                    "inbox": {"channel_id": "incoming"},
+                                    "send": {
+                                        "channel_id": "outgoing",
+                                        "send_id": _uuid("stdio-send"),
+                                        "thread_id": _uuid("stdio-thread"),
+                                        "text": "untrusted",
+                                    },
+                                    "reply": {
+                                        "channel_id": "outgoing",
+                                        "received_channel_id": "incoming",
+                                        "send_id": _uuid("stdio-reply"),
+                                        "message_id": _uuid("stdio-message"),
+                                        "text": "untrusted",
+                                    },
+                                    "delivery": {
+                                        "channel_id": "outgoing",
+                                        "send_id": _uuid("stdio-send"),
+                                    },
+                                }.items():
+                                    result = exchange(
+                                        "tools/call",
+                                        {
+                                            "name": "messaging_" + method,
+                                            "arguments": args,
+                                        },
+                                    )
+                                    self.assertFalse(result["result"]["isError"])
+                                    public = json.loads(
+                                        result["result"]["content"][0]["text"]
+                                    )
+                                    self.assertNotIn("auth", public)
+                                    self.assertEqual(
+                                        received[-1]["method"], "messaging." + method
+                                    )
+                                    self.assertEqual(
+                                        public["result"]["params"],
+                                        {"after": 0, "limit": 100, **args}
+                                        if method == "inbox"
+                                        else args,
+                                    )
+                                count = len(received)
+                                for name, bad_args in (
+                                    ("scope_me", {}),
+                                    (
+                                        "messaging_inbox",
+                                        {"channel_id": "incoming", "limit": True},
+                                    ),
+                                    ("messaging_send", {"endpoint": "evil"}),
+                                ):
+                                    self.assertIn(
+                                        "error",
+                                        exchange(
+                                            "tools/call",
+                                            {"name": name, "arguments": bad_args},
+                                        ),
+                                    )
+                                self.assertIn(
+                                    "error",
+                                    exchange(
+                                        "resources/read", {"uri": "daimon:scope/me"}
+                                    ),
+                                )
+                                self.assertEqual(len(received), count)
+                            finally:
+                                if process.stdin is not None:
+                                    process.stdin.close()
+                                try:
+                                    process.wait(timeout=10)
+                                except subprocess.TimeoutExpired:
+                                    process.kill()
+                                    process.wait(timeout=5)
+                                stderr = process.stderr.read()
+                                process.stdout.close()
+                                process.stderr.close()
+                            self.assertEqual(process.returncode, 0, stderr)
+                    self.assertEqual(len(received), 8)
+                    self.assertEqual(errors, [])
+                finally:
+                    server.shutdown()
+                    worker.join(timeout=5)
+
+    def test_typed_calls_validate_before_io(self) -> None:
+        import asyncio
+
+        import mcp_types as types
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import DaimonMcp
+
+        cases: dict[str, dict[str, Any]] = {
+            "messaging_inbox": {"channel_id": "incoming", "after": 0, "limit": 100},
+            "messaging_send": {
+                "channel_id": "outgoing",
+                "send_id": _uuid("mcp-send"),
+                "thread_id": _uuid("mcp-thread"),
+                "text": "$(untrusted)",
+            },
+            "messaging_reply": {
+                "channel_id": "outgoing",
+                "received_channel_id": "incoming",
+                "send_id": _uuid("mcp-reply"),
+                "message_id": _uuid("mcp-message"),
+                "text": "inert data",
+            },
+            "messaging_delivery": {
+                "channel_id": "outgoing",
+                "send_id": _uuid("mcp-send"),
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.send.return_value = {"ok": True, "result": {}, "auth": "secret"}
+            adapter = DaimonMcp(client, Path(directory), messaging_only=True)
+            for name, args in cases.items():
+                with self.subTest(name=name):
+                    result = asyncio.run(
+                        adapter.call_tool(
+                            Mock(),
+                            types.CallToolRequestParams(name=name, arguments=args),
+                        )
+                    )
+                    self.assertFalse(result.is_error)
+                    self.assertNotIn("auth", result.structured_content)
+                    client.prepare.assert_called_with(name.replace("_", ".", 1), args)
+                    client.reset_mock()
+                    invalid: list[dict[str, Any]] = [
+                        {**args, "endpoint": "https://evil"},
+                        {**args, "operation_id": None},
+                    ]
+                    invalid_types: tuple[Any, ...] = (None, True, [], {})
+                    for field in args:
+                        invalid.extend({**args, field: bad} for bad in invalid_types)
+                    invalid += [{**args, "channel_id": "bad\n"}]
+                    for field in ("send_id", "thread_id", "message_id"):
+                        if field in args:
+                            invalid.extend(
+                                {**args, field: bad}
+                                for bad in (
+                                    "not-uuid",
+                                    args[field].upper(),
+                                    args[field].replace("-", ""),
+                                )
+                            )
+                    if "text" in args:
+                        invalid.extend(
+                            {**args, "text": bad} for bad in ("", "x" * 16385)
+                        )
+                    if name == "messaging_inbox":
+                        invalid.extend(
+                            {**args, **bad}
+                            for bad in (
+                                {"after": -1},
+                                {"after": 2**53},
+                                {"limit": 0},
+                                {"limit": 101},
+                                {"limit": 1.5},
+                            )
+                        )
+                    for bad in invalid:
+                        with self.subTest(bad=bad), self.assertRaises(MCPError):
+                            asyncio.run(
+                                adapter.call_tool(
+                                    Mock(),
+                                    types.CallToolRequestParams(
+                                        name=name, arguments=bad
+                                    ),
+                                )
+                            )
+                    client.prepare.assert_not_called()
+                    client.send.assert_not_called()
+            asyncio.run(
+                adapter.call_tool(
+                    Mock(),
+                    types.CallToolRequestParams(
+                        name="messaging_inbox", arguments={"channel_id": "incoming"}
+                    ),
+                )
+            )
+            client.prepare.assert_called_with(
+                "messaging.inbox", cases["messaging_inbox"]
+            )
+
+    def test_closed_mode_selection(self) -> None:
+        import asyncio
+
+        import mcp_types as types
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import TOOL_CONTRACTS, DaimonMcp
+
+        with tempfile.TemporaryDirectory() as directory:
+            client = Mock()
+            client.config.expected_server = {}
+            narrow = DaimonMcp(client, Path(directory), messaging_only=True)
+            ordinary = DaimonMcp(client, Path(directory))
+            expected = {
+                "messaging_inbox",
+                "messaging_send",
+                "messaging_reply",
+                "messaging_delivery",
+            }
+            tools = asyncio.run(narrow.list_tools(Mock(), None))
+            self.assertEqual({tool.name for tool in tools.tools}, expected)
+            self.assertEqual(
+                {
+                    tool.name
+                    for tool in asyncio.run(ordinary.list_tools(Mock(), None)).tools
+                },
+                set(TOOL_CONTRACTS),
+            )
+            self.assertFalse(expected & set(TOOL_CONTRACTS))
+            for tool in tools.tools:
+                assert tool.description is not None and tool.annotations is not None
+                self.assertIn("untrusted", tool.description)
+                self.assertIn("no execution authority", tool.description)
+                self.assertEqual(
+                    tool.annotations.read_only_hint,
+                    tool.name in {"messaging_inbox", "messaging_delivery"},
+                )
+                self.assertEqual(
+                    tool.annotations.open_world_hint,
+                    tool.name in {"messaging_send", "messaging_reply"},
+                )
+                self.assertFalse(tool.input_schema["additionalProperties"])
+            resources = asyncio.run(narrow.list_resources(Mock(), None))
+            self.assertEqual(
+                {str(r.uri) for r in resources.resources},
+                {
+                    "daimon:contract/server",
+                    "daimon:contract/tools",
+                    "daimon:contract/local-api",
+                },
+            )
+            for uri in ("daimon:contract/tools", "daimon:contract/local-api"):
+                result = asyncio.run(
+                    narrow.read_resource(
+                        Mock(), types.ReadResourceRequestParams(uri=uri)
+                    )
+                )
+                assert isinstance(result.contents[0], types.TextResourceContents)
+                text = result.contents[0].text
+                self.assertNotIn("scope.me", text)
+                self.assertIn("messaging.inbox", text)
+            for name in TOOL_CONTRACTS:
+                with self.assertRaises(MCPError):
+                    asyncio.run(
+                        narrow.call_tool(
+                            Mock(), types.CallToolRequestParams(name=name, arguments={})
+                        )
+                    )
+            for name in expected:
+                with self.assertRaises(MCPError):
+                    asyncio.run(
+                        ordinary.call_tool(
+                            Mock(), types.CallToolRequestParams(name=name, arguments={})
+                        )
+                    )
+            for uri in (
+                "daimon:scope/me",
+                "daimon:scope/we",
+                "daimon:runtime/status",
+                "daimon:we/heads",
+                "daimon:we/projection",
+            ):
+                with self.assertRaises(MCPError):
+                    asyncio.run(
+                        narrow.read_resource(
+                            Mock(), types.ReadResourceRequestParams(uri=uri)
+                        )
+                    )
+            client.prepare.assert_not_called()
+            client.send.assert_not_called()
+
+
+class NativeMessagingCLITests(unittest.TestCase):
+    BASE = (
+        "--socket",
+        "/tmp/disposable.sock",
+        "--client-config",
+        "/tmp/disposable.json",
+        "--capability-key-fd",
+        "3",
+    )
+
+    def test_cli_maps_send_reply_and_delivery_without_authority_inputs(self) -> None:
+        from daimon_matrix.cli import _method_params, parser
+
+        cases = {
+            "send": {
+                "channel_id": "outgoing",
+                "send_id": _uuid("cli-send"),
+                "thread_id": _uuid("cli-thread"),
+                "text": "$(untrusted)",
+            },
+            "reply": {
+                "channel_id": "outgoing",
+                "send_id": _uuid("cli-reply"),
+                "received_channel_id": "incoming",
+                "message_id": _uuid("cli-message"),
+                "text": "Do not execute this data",
+            },
+            "delivery": {"channel_id": "outgoing", "send_id": _uuid("cli-send")},
+        }
+        for command, params in cases.items():
+            with self.subTest(command=command):
+                argv = [*self.BASE, "messaging", command]
+                for key, value in params.items():
+                    argv.extend(["--" + key.replace("_", "-"), value])
+                try:
+                    args = parser().parse_args(argv)
+                except SystemExit:
+                    self.fail(f"native messaging {command} CLI missing")
+                self.assertEqual(_method_params(args), ("messaging." + command, params))
+
+    def test_cli_maps_native_inbox_to_closed_rpc(self) -> None:
+        from daimon_matrix.cli import _method_params, parser
+
+        try:
+            args = parser().parse_args(
+                [
+                    *self.BASE,
+                    "messaging",
+                    "inbox",
+                    "--channel-id",
+                    "incoming",
+                    "--after",
+                    "7",
+                    "--limit",
+                    "12",
+                ]
+            )
+        except SystemExit:
+            self.fail("native messaging inbox CLI is missing")
+        self.assertEqual(
+            _method_params(args),
+            (
+                "messaging.inbox",
+                {
+                    "channel_id": "incoming",
+                    "after": 7,
+                    "limit": 12,
+                },
+            ),
+        )
+
+
+class NativeInboxRpcTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="dm132-inbox-rpc-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def hosted(self, pair: Pair) -> Any:
+        from daimon_matrix import service
+        from daimon_matrix.local_api import create_capability
+
+        self.assertTrue(
+            hasattr(service, "MessagingServiceContext"),
+            "dedicated native inbox service context is missing",
+        )
+        self.capability = create_capability(
+            _seed("native-inbox-client"),
+            client_id="client:manual-native-inbox",
+            methods=["messaging.inbox"],
+            not_before_ms=NOW,
+            not_after_ms=NOW + 1_000_000,
+        )
+        self.channels = {"founder": pair.receiver}
+        self.assignments = {self.capability.client_id: frozenset({"founder"})}
+        return service.HostedWeave(
+            ledger=pair.local_ledger,
+            signer=pair.recipient.signer,
+            capabilities={self.capability.capability_id: self.capability},
+            clock=lambda: pair.now,
+            runtime_id="dm:runtime:v1:" + "n" * 43,
+            runtime_label="native-inbox-test",
+            messaging=service.MessagingServiceContext(
+                channels=self.channels, client_channels=self.assignments
+            ),
+        )
+
+    def request(self, pair: Pair, label: str, **params: Any) -> dict[str, Any]:
+        from daimon_matrix.local_api import create_request
+
+        return create_request(
+            self.capability,
+            request_id=_uuid("inbox-rpc:" + label),
+            issued_at_ms=pair.now,
+            method="messaging.inbox",
+            params={"channel_id": "founder", "after": 0, "limit": 10, **params},
+        )
+
+    def invoke(self, hosted: Any, request: dict[str, Any]) -> dict[str, Any]:
+        from daimon_matrix.local_api import request_hash, verify_response
+
+        return verify_response(
+            hosted.handle(request),
+            self.capability,
+            expected_request_id=request["request_id"],
+            expected_request_hash=request_hash(request),
+            expected_server=hosted.origin,
+            expected_runtime=hosted.runtime_identity,
+        )
+
+    def assert_rejected(
+        self, hosted: Any, request: dict[str, Any], code: str = "messaging_rejected"
+    ) -> None:
+        response = self.invoke(hosted, request)
+        self.assertFalse(response["ok"], "inbox plaintext survived authorization loss")
+        self.assertIsNone(response["result"])
+        self.assertEqual(response["error"], {"code": code, "retryable": False})
+        self.assertNotIn(TEXT, json.dumps(response))
+
+    def test_local_client_supports_dedicated_inbox_without_broad_roles(self) -> None:
+        from daimon_matrix.client import ClientConfig, ClientError, LocalClient
+        from daimon_matrix.service import SERVICE_METHODS
+
+        pair = Pair(self.root)
+        hosted = self.hosted(pair)
+        client = LocalClient(
+            self.root / "absent.sock",
+            ClientConfig(
+                self.capability, hosted.origin, hosted.runtime_id, hosted.runtime_label
+            ),
+            clock=lambda: pair.now,
+        )
+        request = client.prepare(
+            "messaging.inbox",
+            {
+                "channel_id": "founder",
+                "after": 0,
+                "limit": 1,
+            },
+        )
+        self.assertEqual(request["method"], "messaging.inbox")
+        self.assertNotIn("messaging.inbox", SERVICE_METHODS)
+        # Exact retry must pass the same method gate and reach the socket check.
+        with self.assertRaisesRegex(ClientError, "daemon_unavailable"):
+            client.send(request)
+
+    def test_cached_inbox_rechecks_real_signed_grant_revocation(self) -> None:
+        pair = Pair(self.root)
+        evidence, message, _, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        request = self.request(pair, "revoked-cache")
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        pair.receiver_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        pair.now = NOW + 17
+        before = pair.store_path.read_bytes()
+        self.assert_rejected(hosted, request)
+        self.assert_rejected(hosted, self.request(pair, "revoked-fresh"))
+        self.assertEqual(pair.store_path.read_bytes(), before)
+        self.assertEqual(pair.local_ledger.events(), [])
+        control = Pair(self.root / "fresh-control")
+        evidence, message, _, _ = control.wire()
+        control.receiver.receive_evidence(evidence)
+        control.receiver.receive_message(message)
+        fresh_host = self.hosted(control)
+        self.assertTrue(self.invoke(fresh_host, self.request(control, "control"))["ok"])
+
+    def test_cached_inbox_rechecks_client_assignment(self) -> None:
+        pair = Pair(self.root)
+        evidence, message, _, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        request = self.request(pair, "assignment-cache")
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        for index, assignment in enumerate((frozenset(), frozenset({"other"}))):
+            with self.subTest(assignment=assignment):
+                self.assignments[self.capability.client_id] = assignment
+                self.assert_rejected(hosted, request)
+                self.assert_rejected(hosted, self.request(pair, f"unassigned-{index}"))
+        del self.assignments[self.capability.client_id]
+        self.assert_rejected(hosted, request)
+        self.assignments[self.capability.client_id] = frozenset({"founder"})
+        self.assertTrue(
+            self.invoke(hosted, self.request(pair, "reassigned-control"))["ok"]
+        )
+
+    def test_cached_inbox_rejects_valid_changed_channel_policy_or_store(self) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix.messaging_store import MessagingInboxStore
+
+        pair = Pair(self.root)
+        evidence, message, _, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        request = self.request(pair, "policy-cache")
+        original = self.invoke(hosted, request)
+        self.assertTrue(original["ok"])
+        replacement = copy.copy(pair.receiver)
+        replacement.policy = replace(pair.policy, max_ttl_ms=59_999)
+        self.assertNotEqual(
+            replacement._policy_hash(pair.now), original["result"]["policy_hash"]
+        )
+        replacement_store = copy.copy(pair.receiver)
+        replacement_store.inbox = MessagingInboxStore(self.root / "other-inbox.sqlite3")
+        for index, channel in enumerate((replacement, replacement_store)):
+            with self.subTest(remapping=index):
+                self.channels["founder"] = channel
+                # Both replacements remain independently authorized, but neither
+                # owns the old page. A fresh RPC may read its actual empty inbox.
+                fresh = self.invoke(hosted, self.request(pair, f"remapped-{index}"))
+                self.assertTrue(fresh["ok"], fresh["error"])
+                self.assertEqual(fresh["result"]["items"], [])
+                self.assert_rejected(hosted, request)
+        self.channels["founder"] = pair.receiver
+        self.assertEqual(self.invoke(hosted, request), original)
+        self.assertEqual(pair.local_ledger.events(), [])
+
+    def test_inbox_params_are_closed_and_bounded(self) -> None:
+        from daimon_matrix.local_api import create_request
+
+        pair = Pair(self.root)
+        hosted = self.hosted(pair)
+        valid: dict[str, Any] = {"channel_id": "founder", "after": 0, "limit": 10}
+        invalid = [
+            {key: value for key, value in valid.items() if key != field}
+            for field in valid
+        ]
+        invalid_fields: tuple[tuple[str, tuple[Any, ...]], ...] = (
+            ("channel_id", (None, False, 1, [], {}, "", "x" * 129, "../founder")),
+            ("after", (None, False, True, -1, "0", [], {})),
+            ("limit", (None, False, True, 0, 101, "10", [], {})),
+        )
+        invalid.extend(
+            {**valid, field: value}
+            for field, values in invalid_fields
+            for value in values
+        )
+        invalid.extend(
+            {**valid, field: "not-model-authority"}
+            for field in ("authority", "grant", "key", "endpoint", "unexpected")
+        )
+        for index, params in enumerate(invalid):
+            with self.subTest(params=params):
+                request = create_request(
+                    self.capability,
+                    request_id=_uuid(f"invalid-inbox:{index}"),
+                    issued_at_ms=pair.now,
+                    method="messaging.inbox",
+                    params=params,
+                )
+                self.assert_rejected(hosted, request, "invalid_params")
+                self.assert_rejected(hosted, request, "invalid_params")
+        for channel_id in ("unknown", "other"):
+            self.assert_rejected(
+                hosted, self.request(pair, channel_id, channel_id=channel_id)
+            )
+        for index, bounds in enumerate(((0, 1), (2**53 - 1, 100))):
+            result = self.invoke(
+                hosted,
+                self.request(
+                    pair, f"valid-bound:{index}", after=bounds[0], limit=bounds[1]
+                ),
+            )
+            self.assertTrue(result["ok"], result["error"])
+            self.assertEqual(result["result"]["items"], [])
+
+    def test_context_requires_exact_host_binding_and_assigned_dedicated_clients(
+        self,
+    ) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix.service import MessagingServiceContext, ServiceError
+
+        pair = Pair(self.root)
+        hosted = self.hosted(pair)
+        assert hosted.messaging is not None
+        wrong_being = copy.copy(pair.receiver)
+        wrong_being.local_being_ref = pair.sender.state.being_ref
+        wrong_being.local_credential_id = pair.sender.credential["artifact_id"]
+        wrong_credential = copy.copy(pair.receiver)
+        wrong_credential.local_credential_id = pair.sender.credential["artifact_id"]
+        wrong_resolver = copy.copy(pair.receiver)
+        wrong_resolver.authority_resolver = lambda _: pair.sender.authority
+        # Deliberately bypass static types to exercise the construction boundary.
+        invalid_assignment: Any = "founder"
+        invalid_channel: Any = object()
+        contexts: list[Any] = [
+            {},
+            MessagingServiceContext({}, self.assignments),
+            MessagingServiceContext(self.channels, {}),
+            MessagingServiceContext(
+                self.channels, {self.capability.client_id: frozenset()}
+            ),
+            MessagingServiceContext(
+                self.channels, {"unknown-client": frozenset({"founder"})}
+            ),
+            MessagingServiceContext(
+                self.channels, {self.capability.client_id: frozenset({"unknown"})}
+            ),
+            MessagingServiceContext(
+                self.channels, {self.capability.client_id: invalid_assignment}
+            ),
+            MessagingServiceContext({"../founder": pair.receiver}, self.assignments),
+            MessagingServiceContext({"founder": invalid_channel}, self.assignments),
+        ]
+        contexts.extend(
+            MessagingServiceContext({"founder": channel}, self.assignments)
+            for channel in (wrong_being, wrong_credential, wrong_resolver)
+        )
+        contexts.append(
+            MessagingServiceContext(
+                {**self.channels, "unselected": wrong_being}, self.assignments
+            )
+        )
+        for index, context in enumerate(contexts):
+            with self.subTest(context=index), self.assertRaises(ServiceError):
+                replace(hosted, messaging=context)
+        foreign_ledger = Ledger(
+            self.root / "foreign-host.sqlite3",
+            authority=pair.sender.authority,
+            local_origin=pair.sender.origin,
+            clock=lambda: pair.now,
+        )
+        with self.assertRaises(ServiceError):
+            replace(
+                hosted,
+                ledger=foreign_ledger,
+                signer=pair.sender.signer,
+                communication=None,
+                scopes=None,
+                curator=None,
+                review=None,
+            )
+        request = self.request(pair, "binding-cache")
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        # Even an unselected channel must not let a mutated invalid context keep
+        # serving a previously valid cache entry.
+        self.channels["unselected"] = wrong_being
+        self.assert_rejected(hosted, request)
+        self.assert_rejected(hosted, self.request(pair, "binding-fresh"))
+        del self.channels["unselected"]
+        self.assertTrue(
+            self.invoke(hosted, self.request(pair, "binding-control"))["ok"]
+        )
+
+    def test_authorized_oversized_page_returns_small_authenticated_error(self) -> None:
+        from daimon_matrix.local_api import (
+            MAX_FRAME_BYTES,
+            create_response,
+            encode_frame,
+            request_hash,
+        )
+
+        pair = Pair(self.root)
+        for index in range(12):
+            # Escaped text is within each signed event's text/body bounds but
+            # its canonical JSON expansion makes this count-bounded page huge.
+            evidence, message, _, _ = pair.wire(
+                100 + index * 10, text=TEXT + "\x01" * 31_000
+            )
+            pair.receiver.receive_evidence(evidence)
+            pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        page = pair.receiver.page(after=0, limit=100)
+        self.assertGreater(len(canonical_bytes(page)), MAX_FRAME_BYTES)
+        oversized = self.request(pair, "oversized", limit=100)
+        self.assert_rejected(hosted, oversized, "messaging_page_too_large")
+        retry = self.invoke(hosted, oversized)
+        self.assertEqual(retry["error"]["code"], "messaging_page_too_large")
+        self.assertLess(len(encode_frame(retry)), 2048)
+        reduced = self.invoke(hosted, self.request(pair, "reduced", limit=1))
+        self.assertTrue(reduced["ok"], reduced["error"])
+        self.assertEqual(len(reduced["result"]["items"]), 1)
+        self.assertLess(len(encode_frame(reduced)), MAX_FRAME_BYTES)
+        # A genuine HMAC cache from an older unbounded implementation is not
+        # permission to emit a frame the local protocol cannot carry.
+        cached_request = self.request(pair, "oversized-old-cache", limit=100)
+        identity = dict(
+            client_id=self.capability.client_id,
+            request_id=cached_request["request_id"],
+            request_hash=request_hash(cached_request),
+            method="messaging.inbox",
+        )
+        pair.local_ledger.begin_rpc(**identity)
+        pair.local_ledger.finish_rpc(
+            **identity,
+            response=create_response(
+                self.capability,
+                request_id=cached_request["request_id"],
+                request_digest=request_hash(cached_request),
+                server=hosted.origin,
+                runtime=hosted.runtime_identity,
+                completed_at_ms=pair.now,
+                result={
+                    "channel_id": "founder",
+                    "items": page,
+                    "policy_hash": pair.receiver._policy_hash(pair.now),
+                },
+            ),
+        )
+        self.assert_rejected(hosted, cached_request, "messaging_page_too_large")
+        self.assertEqual(pair.local_ledger.events(), [])
+
+    def test_inbox_rechecks_policy_changes_during_page_and_journal_finish(self) -> None:
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        pair = Pair(self.root)
+        evidence, message, _, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        original_page = pair.receiver.page
+        changed_policy = replace(pair.policy, max_ttl_ms=59_999)
+
+        def change_after_page(*, after: int, limit: int) -> list[dict[str, Any]]:
+            rows = original_page(after=after, limit=limit)
+            pair.receiver.policy = changed_policy
+            return rows
+
+        with patch.object(pair.receiver, "page", side_effect=change_after_page):
+            self.assert_rejected(hosted, self.request(pair, "changed-during-page"))
+        pair.receiver.policy = pair.policy
+        finish = pair.local_ledger.finish_rpc
+
+        def change_after_finish(**kwargs: Any) -> dict[str, Any]:
+            response = finish(**kwargs)
+            self.assignments[self.capability.client_id] = frozenset()
+            return response
+
+        with patch.object(
+            pair.local_ledger, "finish_rpc", side_effect=change_after_finish
+        ):
+            self.assert_rejected(hosted, self.request(pair, "changed-during-finish"))
+        self.assignments[self.capability.client_id] = frozenset({"founder"})
+        control = self.invoke(hosted, self.request(pair, "post-change-control"))
+        self.assertTrue(control["ok"], control["error"])
+        self.assertEqual(len(control["result"]["items"]), 1)
+
+    def test_inbox_preserves_rpc_auth_conflicts_and_historical_page_retry(self) -> None:
+        from daimon_matrix.canonical import CanonicalError
+        from daimon_matrix.local_api import LocalApiError
+
+        pair = Pair(self.root)
+        evidence, message, _, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        request = self.request(pair, "stable")
+        response = self.invoke(hosted, request)
+        self.assertTrue(response["ok"])
+        tampered = copy.deepcopy(request)
+        tampered["params"]["limit"] = 1
+        with self.assertRaisesRegex(LocalApiError, "^authentication_failed$"):
+            hosted.handle(tampered)
+        self.assert_rejected(
+            hosted, self.request(pair, "stable", limit=1), "request_conflict"
+        )
+        evidence, message, _, _ = pair.wire(200)
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        self.assertEqual(self.invoke(hosted, request), response)
+        fresh = self.invoke(hosted, self.request(pair, "new-page"))
+        self.assertEqual(len(fresh["result"]["items"]), 2)
+        with self.assertRaises(CanonicalError):
+            self.request(pair, "too-large-cursor", after=2**53)
+        stale_unseen = self.request(pair, "stale-unseen")
+        pair.now = NOW + 31_011
+        self.assertEqual(self.invoke(hosted, request), response)
+        with self.assertRaisesRegex(LocalApiError, "^authentication_failed$"):
+            hosted.handle(stale_unseen)
+        pair.now = NOW + 1_000_000
+        with self.assertRaisesRegex(LocalApiError, "^authentication_failed$"):
+            hosted.handle(request)
+        self.assertEqual(pair.local_ledger.events(), [])
+
+    def test_genuine_receive_then_dedicated_authenticated_manual_inbox(self) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix import service
+        from daimon_matrix.local_api import create_capability
+
+        pair = Pair(self.root)
+        evidence, wire, message, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(wire)
+        before = pair.store_path.read_bytes()
+        hosted = self.hosted(pair)
+        request = self.request(pair, "positive")
+        response = self.invoke(hosted, request)
+        self.assertTrue(response["ok"], response["error"])
+        self.assertEqual(
+            response["result"],
+            {
+                "channel_id": "founder",
+                "items": pair.receiver.page(after=0, limit=10),
+                "policy_hash": pair.receiver._policy_hash(pair.now),
+            },
+        )
+        self.assertEqual(response["result"]["items"][0]["message"], message)
+        self.assertEqual(self.invoke(hosted, request), response)
+        self.assertEqual(pair.store_path.read_bytes(), before)
+        self.assertEqual(pair.local_ledger.events(), [])
+        self.assertEqual(
+            service.MESSAGING_METHODS,
+            frozenset(
+                {
+                    "messaging.inbox",
+                    "messaging.send",
+                    "messaging.reply",
+                    "messaging.delivery",
+                }
+            ),
+        )
+        self.assertFalse(service.MESSAGING_METHODS & service.SERVICE_METHODS)
+        with self.assertRaises(service.ServiceError):
+            replace(hosted, messaging=None)
+        mixed = create_capability(
+            _seed("native-mixed-client"),
+            client_id=self.capability.client_id,
+            methods=["messaging.inbox", "we.observe"],
+            not_before_ms=NOW,
+            not_after_ms=NOW + 1000,
+        )
+        with self.assertRaises(service.ServiceError):
+            replace(hosted, capabilities={mixed.capability_id: mixed})
+
+
+class NativeSendRpcTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="dm132-send-rpc-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def setup_sender(self) -> tuple[Any, Any, Any, list[Any]]:
+        from daimon_matrix import service
+        from daimon_matrix.local_api import create_capability
+        from daimon_matrix.messaging import MessagingDelivery
+
+        pair = Pair(self.root)
+        sender = NativeMessagingTests.make_sender(cast(Any, self), pair)
+        self.send_id = _uuid("native-rpc-send")
+        evidence, message, calls = NativeMessagingTests.delivery_transports(
+            cast(Any, self), pair, sender, self.send_id
+        )
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        self.capability = create_capability(
+            _seed("native-send-client"),
+            client_id="client:native-send",
+            methods=["messaging.send"],
+            not_before_ms=NOW,
+            not_after_ms=NOW + 1_000_000,
+        )
+        self.assignments = {self.capability.client_id: frozenset({"member"})}
+        self.assertIn(
+            "deliveries", service.MessagingServiceContext.__dataclass_fields__
+        )
+        self.context = service.MessagingServiceContext(
+            channels={},
+            deliveries={"member": delivery},
+            client_channels=self.assignments,
+        )
+        hosted = service.HostedWeave(
+            ledger=sender.ledger,
+            signer=pair.sender.signer,
+            capabilities={self.capability.capability_id: self.capability},
+            clock=lambda: pair.now,
+            runtime_id="dm:runtime:v1:" + "s" * 43,
+            runtime_label="native-send-test",
+            messaging=self.context,
+        )
+        return pair, hosted, delivery, calls
+
+    def request(self, pair: Pair, **changes: Any) -> dict[str, Any]:
+        from daimon_matrix.local_api import create_request
+
+        return create_request(
+            self.capability,
+            request_id=_uuid("send-rpc:" + str(changes)),
+            issued_at_ms=pair.now,
+            method="messaging.send",
+            params={
+                "channel_id": "member",
+                "send_id": self.send_id,
+                "thread_id": _uuid("native-rpc-thread"),
+                "text": TEXT,
+                **changes,
+            },
+        )
+
+    def invoke(self, hosted: Any, request: dict[str, Any]) -> dict[str, Any]:
+        return NativeInboxRpcTests.invoke(cast(Any, self), hosted, request)
+
+    def reverse_channel(self, pair: Pair) -> Any:
+        from dataclasses import replace
+
+        from daimon_matrix.canonical import b64url
+        from daimon_matrix.messaging import GrantReference, MessagingChannel
+        from daimon_matrix.messaging_store import MessagingInboxStore
+        from daimon_matrix.relationships import (
+            grant_id,
+            relationship_event_subject,
+        )
+
+        def append(
+            identity: Any, kind: str, payload: dict[str, Any], label: str
+        ) -> Any:
+            event = create_event(
+                identity.authority,
+                identity.origin,
+                identity.signer,
+                event_id=_uuid("reverse:" + label),
+                sequence=100 + len(events),
+                previous_event_id=_uuid("reverse:previous:" + label),
+                occurred_at_ms=payload.get(
+                    "issued_at_ms", payload.get("accepted_at_ms", NOW + 8)
+                ),
+                causal_parents=(),
+                kind=kind,
+                subject=relationship_event_subject(kind, payload),
+                payload=payload,
+                sensitivity="shareable",
+            )
+            for store in (pair.sender_relationships, pair.receiver_relationships):
+                store.ingest(event)
+            events.append(event)
+            return event
+
+        events: list[Any] = []
+        resource = pair.policy.resource_ref
+        nonce = b64url(_seed("reverse-grant"))
+        identifier = grant_id(
+            nonce=nonce,
+            relationship=pair.policy.relationship_id,
+            grantor_being_ref=pair.recipient.state.being_ref,
+            subject_being_ref=pair.sender.state.being_ref,
+        )
+        grant = append(
+            pair.recipient,
+            "matrix/relationship-grant",
+            {
+                **pair.grant["payload"],
+                "grant_id": identifier,
+                "nonce": nonce,
+                "grantor_being_ref": pair.recipient.state.being_ref,
+                "subject_being_ref": pair.sender.state.being_ref,
+                "issued_at_ms": NOW + 8,
+                "parent_grant_ref": {
+                    "event_id": pair.grant["event_id"],
+                    "event_hash": pair.grant["content_hash"],
+                },
+                "permissions": [
+                    {
+                        **pair.grant["payload"]["permissions"][0],
+                        "resource_ref": resource,
+                        "delegable": False,
+                        "remaining_delegation_depth": 0,
+                    }
+                ],
+            },
+            "grant",
+        )
+        append(
+            pair.sender,
+            "matrix/relationship-grant-acceptance",
+            {
+                "schema": "dm.relationship.grant-acceptance/v1",
+                "grant_id": identifier,
+                "grant_ref": {
+                    "event_id": grant["event_id"],
+                    "event_hash": grant["content_hash"],
+                },
+                "relationship_id": pair.policy.relationship_id,
+                "grantor_being_ref": pair.recipient.state.being_ref,
+                "subject_being_ref": pair.sender.state.being_ref,
+                "accepted_at_ms": NOW + 9,
+            },
+            "acceptance",
+        )
+        snapshot = pair.sender_relationships.view(
+            at_ms=pair.now, card_verifier=pair.receiver._card
+        ).snapshot(pair.policy.tribe_ref)
+        member = next(
+            m
+            for m in snapshot.value["members"]
+            if m["principal_id"] == pair.sender.state.being_ref
+        )
+        policy = replace(
+            pair.policy,
+            peer_being_ref=pair.recipient.state.being_ref,
+            peer_embodiment_id=pair.recipient.origin["embodiment_id"],
+            peer_credential_id=pair.recipient.credential["artifact_id"],
+            membership_ref=member["membership_ref"],
+            resource_ref=resource,
+            grant_refs=(
+                GrantReference(identifier, grant["event_id"], grant["content_hash"]),
+            ),
+        )
+        self.reverse_grant = grant
+        return MessagingChannel(
+            policy=policy,
+            local_being_ref=pair.sender.state.being_ref,
+            local_credential_id=pair.sender.credential["artifact_id"],
+            authority_resolver=lambda ref: pair.public[ref],
+            custody=pair.sender_custody,
+            relationships=pair.sender_relationships,
+            inbox=MessagingInboxStore(self.root / "sender/replies.sqlite3"),
+            clock=lambda: pair.now,
+        )
+
+    def test_application_response_uses_exact_received_context_and_reverse_grant(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from daimon_matrix.local_api import create_capability, create_request
+        from daimon_matrix.messaging import (
+            MessagingChannel,
+            MessagingDelivery,
+            MessagingSender,
+        )
+        from daimon_matrix.messaging_store import (
+            MessagingInboxStore,
+            MessagingOutboxStore,
+        )
+        from daimon_matrix.service import HostedWeave, MessagingServiceContext
+
+        pair, forward_host, _, _ = self.setup_sender()
+        reverse_receiver = self.reverse_channel(pair)
+        forward = self.invoke(forward_host, self.request(pair))
+        self.assertTrue(forward["ok"], forward)
+        received = pair.receiver.page(after=0, limit=1)[0]["message"]
+        reverse_context = MessagingChannel(
+            policy=reverse_receiver.policy,
+            local_being_ref=pair.sender.state.being_ref,
+            local_credential_id=pair.sender.credential["artifact_id"],
+            authority_resolver=lambda ref: pair.public[ref],
+            custody=pair.receiver_custody,
+            relationships=pair.receiver_relationships,
+            inbox=MessagingInboxStore(self.root / "receiver/unused.sqlite3"),
+            clock=lambda: pair.now,
+        )
+        sender = MessagingSender(
+            context=reverse_context,
+            ledger=pair.local_ledger,
+            signer=pair.recipient.signer,
+            custody=pair.receiver_custody,
+            outbox=MessagingOutboxStore(self.root / "receiver/replies-outbox.sqlite3"),
+            clock=lambda: pair.now,
+        )
+        self.send_id = _uuid("application-response")
+        reverse_pair = SimpleNamespace(
+            receiver=reverse_receiver,
+            policy=reverse_receiver.policy,
+            recipient=pair.sender,
+            sender=pair.recipient,
+            now=pair.now,
+        )
+        # Distinct opaque transport stores for the reverse path.
+        old_root = self.root
+        self.root = old_root / "reverse-transport"
+        self.root.mkdir(mode=0o700)
+        (self.root / "receiver").mkdir(mode=0o700)
+        evidence, message, calls = NativeMessagingTests.delivery_transports(
+            cast(Any, self), cast(Any, reverse_pair), sender, self.send_id
+        )
+        self.root = old_root
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="b" * 64,
+        )
+        self.capability = create_capability(
+            _seed("reply-client"),
+            client_id="client:reply",
+            methods=["messaging.reply", "messaging.delivery"],
+            not_before_ms=NOW,
+            not_after_ms=NOW + 1_000_000,
+        )
+        self.assignments = {
+            self.capability.client_id: frozenset({"incoming", "outgoing"})
+        }
+        try:
+            hosted = HostedWeave(
+                ledger=pair.local_ledger,
+                signer=pair.recipient.signer,
+                capabilities={self.capability.capability_id: self.capability},
+                clock=lambda: pair.now,
+                runtime_id="dm:runtime:v1:" + "r" * 43,
+                runtime_label="reply-test",
+                messaging=MessagingServiceContext(
+                    channels={"incoming": pair.receiver},
+                    deliveries={"outgoing": delivery},
+                    client_channels=self.assignments,
+                ),
+            )
+        except ValueError as error:
+            self.fail(f"application reply capability missing: {error}")
+        params = {
+            "channel_id": "outgoing",
+            "send_id": self.send_id,
+            "received_channel_id": "incoming",
+            "message_id": received["event_id"],
+            "text": "Untrusted reply text $(not-executed)",
+        }
+        request = create_request(
+            self.capability,
+            request_id=_uuid("reply-rpc"),
+            issued_at_ms=pair.now,
+            method="messaging.reply",
+            params=params,
+        )
+        response = self.invoke(hosted, request)
+        self.assertTrue(response["ok"], response)
+        reply = reverse_receiver.page(after=0, limit=1)[0]["message"]
+        self.assertIsNone(
+            reply["payload"]["reply"], "must not forge canonical direct reply"
+        )
+        self.assertEqual(
+            reply["payload"]["intent"]["thread_id"],
+            received["payload"]["intent"]["thread_id"],
+        )
+        self.assertEqual(
+            reply["payload"]["body"]["response_context"],
+            {
+                "schema": "dm.messaging.application-response/v1",
+                "message_id": received["event_id"],
+                "message_hash": received["content_hash"],
+                "sender_being_ref": received["being_ref"],
+                "sender_embodiment_id": received["origin"]["embodiment_id"],
+                "thread_id": received["payload"]["intent"]["thread_id"],
+            },
+        )
+        self.assertNotIn(received["event_id"], reply["causal_parents"])
+        self.assertIsNone(pair.local_ledger.event(received["event_id"]))
+        self.assertEqual(self.invoke(hosted, request), response)
+        self.assertEqual(len(calls), 2)
+        self.assignments[self.capability.client_id] = frozenset({"outgoing"})
+        self.assertFalse(self.invoke(hosted, request)["ok"])
+        self.assertEqual(len(calls), 2)
+        # Wrong source IDs are not enough authority, even when signed by the peer.
+        self.assignments[self.capability.client_id] = frozenset(
+            {"incoming", "outgoing"}
+        )
+        forged = create_request(
+            self.capability,
+            request_id=_uuid("forged-reply-rpc"),
+            issued_at_ms=pair.now,
+            method="messaging.reply",
+            params={**params, "message_id": _uuid("not-received")},
+        )
+        self.assertFalse(self.invoke(hosted, forged)["ok"])
+        self.assertEqual(len(calls), 2)
+
+    def test_delivery_inspection_is_authenticated_read_only_and_current(self) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix.local_api import create_capability, create_request
+
+        pair, hosted, delivery, calls = self.setup_sender()
+        self.capability = create_capability(
+            _seed("native-send-client"),
+            client_id=self.capability.client_id,
+            methods=["messaging.send", "messaging.delivery"],
+            not_before_ms=NOW,
+            not_after_ms=NOW + 1_000_000,
+        )
+        try:
+            hosted = replace(
+                hosted, capabilities={self.capability.capability_id: self.capability}
+            )
+        except ValueError as error:
+            self.fail(f"delivery inspection capability missing: {error}")
+        self.assertTrue(self.invoke(hosted, self.request(pair))["ok"])
+        request = create_request(
+            self.capability,
+            request_id=_uuid("inspect-rpc"),
+            issued_at_ms=pair.now,
+            method="messaging.delivery",
+            params={"channel_id": "member", "send_id": self.send_id},
+        )
+        before = delivery.sender.outbox.path.read_bytes()
+        result = self.invoke(hosted, request)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["transport_status"], "recipient-intake")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(before, delivery.sender.outbox.path.read_bytes())
+        self.assignments[self.capability.client_id] = frozenset()
+        self.assertFalse(self.invoke(hosted, request)["ok"])
+        self.assertEqual(len(calls), 2)
+
+    def test_cached_send_cannot_rebind_outbox_or_reauthor(self) -> None:
+        from daimon_matrix.messaging_store import MessagingOutboxStore
+
+        pair, hosted, delivery, calls = self.setup_sender()
+        request = self.request(pair)
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        original = delivery.sender.outbox
+        delivery.sender.outbox = MessagingOutboxStore(
+            self.root / "sender/rebound.sqlite3"
+        )
+        events = delivery.sender.ledger.events()
+        response = self.invoke(hosted, request)
+        self.assertFalse(response["ok"], response)
+        self.assertEqual(delivery.sender.ledger.events(), events)
+        self.assertEqual(len(calls), 2)
+        delivery.sender.outbox = original
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+
+    def test_assignment_revoked_during_evidence_stops_message_stage(self) -> None:
+        pair, hosted, delivery, calls = self.setup_sender()
+        provider = delivery.providers[0]
+        original = provider._round_trip
+
+        def revoke(raw: bytes) -> bytes:
+            result = original(raw)
+            self.assignments[self.capability.client_id] = frozenset()
+            return bytes(result)
+
+        provider._round_trip = revoke
+        response = self.invoke(hosted, self.request(pair))
+        self.assertFalse(response["ok"], response)
+        self.assertEqual([phase for phase, _ in calls], ["evidence"])
+        self.assertEqual(pair.receiver.page(after=0, limit=1), [])
+
+    def test_cached_send_rechecks_assignment_and_signed_grant(self) -> None:
+        pair, hosted, delivery, calls = self.setup_sender()
+        request = self.request(pair)
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        self.assignments[self.capability.client_id] = frozenset()
+        response = self.invoke(hosted, request)
+        self.assertFalse(response["ok"], "cached send bypassed channel revocation")
+        self.assignments[self.capability.client_id] = frozenset({"member"})
+        pair.sender_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        pair.now = NOW + 17
+        self.assertFalse(self.invoke(hosted, request)["ok"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(delivery.sender.ledger.events()), 3)
+
+    def test_authenticated_send_reaches_independent_inbox_once(self) -> None:
+        pair, hosted, delivery, calls = self.setup_sender()
+        request = self.request(pair)
+        response = self.invoke(hosted, request)
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"]["transport_status"], "recipient-intake")
+        self.assertEqual(
+            pair.receiver.page(after=0, limit=1)[0]["message"]["payload"]["body"][
+                "text"
+            ],
+            TEXT,
+        )
+        self.assertEqual(self.invoke(hosted, request), response)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(delivery.sender.ledger.events()), 3)
 
 
 class NativeMessagingTests(unittest.TestCase):
@@ -621,7 +2270,7 @@ class NativeMessagingTests(unittest.TestCase):
                     message_provider=providers[1],
                     config_digest="b" * 64,
                 )
-                request = dict(
+                request: _SendRequest = dict(
                     client_id="owner-ui",
                     send_id=_uuid("production-http"),
                     thread_id=_uuid("thread"),
@@ -649,7 +2298,7 @@ class NativeMessagingTests(unittest.TestCase):
         assert delivery_type is not None
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("delivery-send"),
             thread_id=_uuid("thread"),
@@ -725,7 +2374,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("lost-delivery"),
             thread_id=_uuid("thread"),
@@ -822,7 +2471,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("false-success"),
             thread_id=_uuid("thread"),
@@ -860,7 +2509,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("truncated-response"),
             thread_id=_uuid("thread"),
@@ -902,7 +2551,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("gated-delivery"),
             thread_id=_uuid("thread"),
@@ -941,7 +2590,7 @@ class NativeMessagingTests(unittest.TestCase):
                     {"thread_id": _uuid("other-thread")},
                 ):
                     with self.assertRaisesRegex(ValueError, "messaging_send_conflict"):
-                        delivery.send(**{**request, **changed})
+                        delivery.send(**cast(_SendRequest, {**request, **changed}))
                 with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
                     MessagingDelivery(**options, config_digest="b" * 64).send(**request)
                 # Even a misconfigured owner reusing a digest cannot rebind the
@@ -1018,7 +2667,7 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertEqual(sender.prepare(**request), original_pair)
 
         # A long evidence round trip cannot carry an expired authorization onward.
-        later = {**request, "send_id": _uuid("expires-between-stages")}
+        later: _SendRequest = {**request, "send_id": _uuid("expires-between-stages")}
         evidence, message, later_calls = self.delivery_transports(
             pair, sender, later["send_id"]
         )
@@ -1281,7 +2930,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("interrupted-send"),
             thread_id=_uuid("thread"),
@@ -1356,7 +3005,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("retry-send"),
             thread_id=_uuid("thread"),
@@ -1399,7 +3048,7 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
-        request = dict(
+        request: _SendRequest = dict(
             client_id="owner-ui",
             send_id=_uuid("bound-send"),
             thread_id=_uuid("thread"),

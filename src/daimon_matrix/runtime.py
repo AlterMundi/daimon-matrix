@@ -72,6 +72,7 @@ from .routes import (
     RouteCoordinator,
     RouteError,
     RouteProfile,
+    TransportIngress,
 )
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import SIGNATURE_DOMAIN as DELIVERY_SIGNATURE_DOMAIN
@@ -114,6 +115,15 @@ class _RuntimeDeliveryCustody:
 
 
 @dataclass(frozen=True)
+class MessagingHTTPContext:
+    """Explicit owner-bound listener; construction alone grants no authority."""
+
+    listen: tuple[str, int]
+    evidence_ingress: TransportIngress
+    message_ingress: TransportIngress
+
+
+@dataclass(frozen=True)
 class HostedRuntime:
     service: HostedWeave
     state_root: Path
@@ -123,6 +133,7 @@ class HostedRuntime:
     peer_outbox: PeerOutbox | None = None
     peer_context: PeerClientContext | None = None
     peer_listen: tuple[str, int] | None = None
+    messaging_http: MessagingHTTPContext | None = None
 
     def create_delivery_custody(self) -> DeliveryCustody:
         """Reuse loaded keys without reopening custody or enabling messaging."""

@@ -28,7 +28,9 @@ from .local_api import (
     encode_frame,
     verify_response,
 )
-from .service import SERVICE_METHODS
+from .service import MESSAGING_METHODS, SERVICE_METHODS
+
+CLIENT_METHODS: Final = SERVICE_METHODS | MESSAGING_METHODS
 
 CLIENT_CONFIG_SCHEMA_V3: Final = "dm.local.client-config/v3"
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
@@ -312,7 +314,7 @@ class LocalClient:
         *,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        if method not in SERVICE_METHODS:
+        if method not in CLIENT_METHODS:
             raise ClientError("unsupported_client_method")
         return create_request(
             self.config.capability,
@@ -334,7 +336,7 @@ class LocalClient:
             )
         except (KeyError, LocalApiError, TypeError, ValueError) as exception:
             raise ClientError("client_request_rejected") from exception
-        if normalized["method"] not in SERVICE_METHODS:
+        if normalized["method"] not in CLIENT_METHODS:
             raise ClientError("unsupported_client_method")
         _socket_is_owner_only(self.socket_path)
         try:

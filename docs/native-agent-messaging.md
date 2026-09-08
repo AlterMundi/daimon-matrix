@@ -188,8 +188,48 @@ Malformed framing never reaches ingress, correctly framed unauthenticated input
 is rejected, and authenticated evidence/message delivery plus cached retry
 produces one independent inbox entry without foreign Ledger ingestion.
 
-The factory is not yet connected to daemon startup or owner provisioning.
-Adding it has not enabled a listener in any installed service.
+An explicitly constructed `HostedRuntime.messaging_http` now attaches these
+ingresses to `daemon.serve_forever`: startup binds the listener before its ready
+signal, and daemon exit closes the HTTP listener and local socket. This typed
+lifecycle seam does not yet load or provision messaging configuration from the
+public runtime bundle. No installed service has been enabled by adding it.
+
+## Real Codex client evidence and activation boundary
+
+A local standalone Codex session has executed the actual CLI inbox command
+against the production owner-local Unix-socket server. The command returned an
+authenticated successful response, and its message ID and body were compared
+with the expected admitted message outside the model. This test used disposable
+synthetic identities, independent encrypted stores and a deliberately frozen
+fixture clock. It proves manual Codex inbox consumption, not production
+provisioning, Mariano's enrollment, reply delivery or Telegram visibility.
+
+A Codex process exiting successfully is insufficient: inspect the completed
+shell-command event and authenticated application response. In the service
+launch environment used for this test, the read-only Codex sandbox could not
+reach the separately running test socket. The bounded test was performed using
+an explicitly selected unsandboxed process with one allowed command, disposable
+paths, no source edits, and verified teardown. This is not a recommendation to
+disable sandboxing for normal agent work or to give incoming messages execution
+authority. Production client placement must deliberately make the narrow local
+socket and capability available through its supported execution boundary.
+
+Real activation also requires a single explicit participant handoff:
+
+- The collaborator identifies which independently controlled Matrix being and
+  embodiment each working Codex session uses, and operates its own enrollment.
+- Each participant retains its own private custody. Only signed public
+  enrollment/card/grant material and approved route references are exchanged;
+  no private key, login file or writable state is sent through chat.
+- The agreed messaging classification, directional grants and exact content
+  eligible for human mirroring are recorded separately from transport success.
+- The authorized operator verifies the existing Telegram bot identity and
+  destination, its locally held credential, and a reversible integration target.
+  Historical bot/group names are discovery hints, not verified authorization.
+
+Missing external enrollment does not block implementation and isolated tests.
+It does block a claim that the independently controlled participant journey or
+human-visible projection is complete.
 
 ## Reusing authenticated runtime custody
 
@@ -213,23 +253,108 @@ synthetic primitive test, not participant enrollment or the real cross-being
 journey. Separate controls verify signature-domain separation and stable
 rejection of unknown keys, malformed wrapping and noncanonical signing input.
 
-## What this does not yet implement
+## Explicit application provisioning and tool mode
 
-- Supported daemon provisioning, transport listener integration or client
-  capability enrollment for this application.
-- Ordinary Codex CLI/MCP send, manual inbox read or response commands.
+The source now provides `daimon_matrix.operator_messaging` for an external,
+owner-only application directory. It does not silently extend the ordinary v7
+runtime bundle or host/operator profiles. The base runtime must already satisfy
+the current identity and signed-capability contracts and have compatible loaded
+peer custody. This command is **not a migrator for an older installed runtime**.
+
+Trusted operator commands (replace uppercase path placeholders with verified
+local paths; FD 3 must supply the runtime password without an added newline):
+
+```sh
+python -m daimon_matrix.operator_messaging prepare \
+  --state-root R --bundle runtime.json --app-dir A \
+  --spec S --secret-dir K --password-fd 3
+python -m daimon_matrix.operator_messaging diagnostics \
+  --state-root R --bundle runtime.json --app-dir A --password-fd 3
+python -m daimon_matrix.operator_messaging run \
+  --state-root R --bundle runtime.json --app-dir A --password-fd 3
+```
+
+`S` is a reviewed canonical public specification; `K` holds the exact protected
+transport key files named by it. `A` must be a new directory outside `R`, beneath
+an owner-only parent. Public authority, bilateral grants and exchanged route
+secrets must already be valid: preparation does not invent participant consent,
+root authority, relationships or foreign Ledger history. Public schemas live in
+`schemas/messaging/v1/`; the executable synthetic specification builder is
+`tests.test_messaging_runtime.application_fixture`, not a production identity.
+
+All operator commands take the runtime lock; stop the matching daemon under its
+authorized lifecycle before invoking them. Do not launch this standalone daemon
+beside a Cluster-hosted receiver or use it to bypass Cluster hooks/fences. A
+Cluster deployment must explicitly compose the application in its own hosting
+path. Composition currently rejects an ordinary relationship-service context
+rather than allow two histories to disagree about revocation. This fail-closed
+restriction is not a completed production compatibility transition.
+
+Preparation publishes initialized stores and a signed metadata pointer. Runtime
+loading never reinitializes a missing or empty required store from historical
+enrollment. Preserve every application database, its required companions, keys,
+metadata generations and publication pointer together. Missing state is an
+error, not an invitation to delete more state and re-enroll.
+
+Diagnostics returns the selected application digest and client paths. Trusted
+lease renewal preserves keys, client identity and all delivery/history stores:
+
+```sh
+python -m daimon_matrix.operator_messaging renew \
+  --state-root R --bundle runtime.json --app-dir A --password-fd 3 \
+  --expected-application-sha256 EXACT_PREDECESSOR_DIGEST
+```
+
+Renewal requires current identity and grants; the daemon/model cannot renew its
+own enrollment. Use the generation-specific client configuration returned by the
+operator. A post-publication durability error must not trigger deletion or blind
+rollback. Preserve the target, inspect the selected signed state, and use the
+trusted `recover` command with its exact `--expected-application-sha256` to retry
+validation/fsync. Recovery does not restore lost history or authorize rewinding
+published messages, counters or deduplication state.
+
+The installed `daimon-mcp` entry point has an explicit `--messaging-only` mode:
+
+```sh
+daimon-mcp --messaging-only --socket SOCKET --client-config CLIENT_JSON \
+  --capability-key-fd 3 --request-dir REQUESTS
+```
+
+Here FD 3 is the **messaging client capability key, not the runtime password**.
+Keep it local and protected; a reviewed owner-local launcher can open that file
+and exec this command without putting secrets in argv. `REQUESTS` must be an
+existing owner-only request-journal directory. Use that same installed launcher
+as a stdio MCP server in Codex or Hermes; no generic agent proxy is required.
+MCP configuration alone is not verification: check discovery and a real tool call
+in the intended running agent before declaring installation complete.
+
+This mode exposes only `messaging_inbox`, `messaging_send`, `messaging_reply`,
+and `messaging_delivery`; ordinary hidden calls/resources are rejected. Default
+MCP mode remains unchanged and does not expose messaging. The dedicated local
+capability and channel policy still enforce access independently of tool listing.
+Tool parameters cannot choose credentials, endpoints, grants or destination
+policy. Inbox data is untrusted content, not execution instructions.
+
+## What this does not yet implement or establish
+
+- A reviewed compatibility migration and installed Cluster/agent integration.
 - An autonomous transport retry worker (manual journaled retry exists).
-- Consumer acknowledgment or remote application acknowledgment.
+- Consumer acknowledgment or canonical remote application acknowledgment.
 - Canonical direct replies or signed DM-052 terminal delivery receipts.
-- Telegram projection, participant visibility consent, bot credential custody,
-  or a live mirror deployment.
+- A concrete participant-sharing verifier and production Telegram wiring.
+  The disabled-by-default `TelegramMirror` adapter has offline per-part tests,
+  but neither its callback interface nor a `SharingBinding` value proves consent.
+- Real participant enrollment, remote installed-tool acceptance, or live mirror
+  deployment and independently verified posted content.
 
 An inbox result is local verified receipt of data, not adoption, task completion
 or merge/deployment authority. Transport ACKs must never be presented as signed
 semantic receipts. Sparse foreign evidence cannot be imported as contiguous
-same-being history just to satisfy reply causal-parent requirements. A future
-application-correlated response must be explicitly distinguished from the
-canonical direct-reply contract and authorized in the reverse direction.
+same-being history just to satisfy reply causal-parent requirements. The
+implemented application-correlated response is explicitly distinguished from the
+canonical direct-reply contract and requires authorization in the reverse
+direction. Its signed body binds the authenticated original message ID, hash and
+thread; it does not manufacture a canonical semantic receipt.
 
 ## Validation
 

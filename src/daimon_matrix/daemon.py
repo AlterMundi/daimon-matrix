@@ -225,6 +225,13 @@ class _BoundedPeerHTTPServer(http.server.ThreadingHTTPServer):
             self._peer_slots.release()
 
 
+class _BoundedMessagingHTTPServer(_BoundedPeerHTTPServer):
+    """Drain admitted handlers before releasing the runtime's ownership lock."""
+
+    daemon_threads = False
+    block_on_close = True
+
+
 def create_messaging_http_server(
     listen: tuple[str, int],
     *,
@@ -293,7 +300,7 @@ def create_messaging_http_server(
         def log_message(self, format: str, *args: object) -> None:
             return
 
-    return _BoundedPeerHTTPServer(listen, Handler)
+    return _BoundedMessagingHTTPServer(listen, Handler)
 
 
 def create_peer_http_server(runtime: HostedRuntime) -> http.server.ThreadingHTTPServer:
@@ -374,6 +381,8 @@ def serve_forever(
     created: tuple[int, int] | None = None
     peer_server: http.server.ThreadingHTTPServer | None = None
     peer_thread: threading.Thread | None = None
+    messaging_server: http.server.ThreadingHTTPServer | None = None
+    messaging_thread: threading.Thread | None = None
     try:
         if runtime.peer_dispatcher is not None:
             peer_server = create_peer_http_server(runtime)
@@ -383,6 +392,19 @@ def serve_forever(
                 daemon=True,
             )
             peer_thread.start()
+        if runtime.messaging_http is not None:
+            context = runtime.messaging_http
+            messaging_server = create_messaging_http_server(
+                context.listen,
+                evidence_ingress=context.evidence_ingress,
+                message_ingress=context.message_ingress,
+            )
+            messaging_thread = threading.Thread(
+                target=messaging_server.serve_forever,
+                name="daimon-matrix-messaging-http",
+                daemon=True,
+            )
+            messaging_thread.start()
         _bind_private_socket(listener, path)
         info = path.lstat()
         created = (info.st_dev, info.st_ino)
@@ -417,6 +439,13 @@ def serve_forever(
                     continue
                 workers.submit(run, connection)
     finally:
+        if messaging_server is not None:
+            # shutdown waits for serve_forever: never call it after start failed.
+            if messaging_thread is not None and messaging_thread.ident is not None:
+                messaging_server.shutdown()
+            messaging_server.server_close()
+        if messaging_thread is not None and messaging_thread.ident is not None:
+            messaging_thread.join(timeout=2)
         if peer_server is not None:
             peer_server.shutdown()
             peer_server.server_close()

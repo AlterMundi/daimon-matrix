@@ -58,6 +58,8 @@ class MessagingOutboxStore:
         send_id: str,
         bindings: Mapping[str, Mapping[str, Any]],
         prepare: Callable[[str], bytes],
+        *,
+        create: bool = True,
     ) -> dict[str, dict[str, Any]]:
         """Bind both stages atomically; local-only prepare is not called on retry."""
         with self._database() as database:
@@ -90,6 +92,8 @@ class MessagingOutboxStore:
                         raise ValueError("messaging_transport_conflict")
                     raw, status = bytes(row["request"]), row["transport_status"]
                 else:
+                    if not create:
+                        raise ValueError("messaging_transport_missing")
                     raw, status = prepare(phase), "prepared"
                     database.execute(
                         "INSERT INTO messaging_transport_stages "
@@ -190,6 +194,15 @@ class MessagingOutboxStore:
                 (owner, send_id, canonical_bytes(plan)),
             )
         return plan
+
+    def _check_client(self, owner: str, send_id: str, client_id: str) -> None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT plan FROM messaging_outbox WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchone()
+        if row is None or json.loads(row["plan"])["client_id"] != client_id:
+            raise ValueError("messaging_send_conflict")
 
     def _check_time(self, owner: str, send_id: str, now: int) -> None:
         with self._database() as database:
@@ -407,6 +420,21 @@ class MessagingInboxStore:
                 "inbox_sequence": cursor.lastrowid,
                 "message_id": message["event_id"],
             }
+
+    def _message(self, message_id: str, policy_hash: str) -> dict[str, Any]:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT inbox_sequence, message, evidence FROM inbox "
+                "WHERE message_id=? AND policy_hash=?",
+                (message_id, policy_hash),
+            ).fetchone()
+        if row is None:
+            raise MessagingInboxError("messaging_message_missing")
+        return {
+            "inbox_sequence": row["inbox_sequence"],
+            "message": json.loads(row["message"]),
+            "evidence": json.loads(row["evidence"]),
+        }
 
     def _page(
         self, *, after: int, limit: int, policy_hash: str

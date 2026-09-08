@@ -502,9 +502,15 @@ class ContractAndProfileTests(HermesBodyFixture):
     def test_profile_is_deterministic_exclusive_and_native_memory_free(self) -> None:
         manifest = self.create()
         self.assertEqual(manifest, verify_profile(self.plan))
-        self.assertEqual(len(manifest["matrix_package"]["modules"]), 54)
+        self.assertEqual(len(manifest["matrix_package"]["modules"]), 57)
         self.assertTrue(
-            {"messaging.py", "messaging_store.py"}
+            {
+                "messaging.py",
+                "messaging_store.py",
+                "messaging_config.py",
+                "operator_messaging.py",
+                "telegram_mirror.py",
+            }
             <= {item["name"] for item in manifest["matrix_package"]["modules"]}
         )
         self.assertIn(
