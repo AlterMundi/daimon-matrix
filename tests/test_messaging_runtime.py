@@ -229,6 +229,199 @@ def application_fixture(test):
 
 
 class ComposeTests(unittest.TestCase):
+    def test_published_missing_tables_refused_without_mutation(self):
+        import sqlite3
+        from contextlib import closing
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, spec, sources, _ = application_fixture(self)
+        for store, tables in (
+            ("relationships", ("metadata", "events", "operations")),
+            ("inbox", ("deliveries", "identities", "evidence", "inbox")),
+            ("outgoing-context", ("deliveries", "identities", "evidence", "inbox")),
+            ("outbox", ("messaging_outbox", "messaging_transport_stages")),
+            (
+                "opaque-evidence",
+                (
+                    "inbox_meta",
+                    "inbox_items",
+                    "inbox_requests",
+                    "inbox_tombstones",
+                    "inbox_claims",
+                ),
+            ),
+            (
+                "opaque-message",
+                (
+                    "inbox_meta",
+                    "inbox_items",
+                    "inbox_requests",
+                    "inbox_tombstones",
+                    "inbox_claims",
+                ),
+            ),
+        ):
+            for table in tables:
+                with self.subTest(store=store, table=table):
+                    target = self.root / (store + "-" + table)
+                    result = prepare(runtime, target, spec, secret_sources=sources)
+                    app = load_application(runtime, target)
+                    sender = app.service.messaging.deliveries["peer-out"].sender
+                    args = dict(
+                        client_id=app.service.capabilities[
+                            result["capability_id"]
+                        ].client_id,
+                        send_id=_uuid("schema-loss-send"),
+                        thread_id=_uuid("schema-loss-thread"),
+                        text="retained ciphertext",
+                    )
+                    sender.prepare(**args)
+                    events = sender.ledger.events()
+                    path = target / spec["stores"][store]
+                    with closing(sqlite3.connect(path)) as db:
+                        db.execute(f'DROP TABLE "{table}"')
+                        db.commit()
+                    self.assertGreater(path.stat().st_size, 0)
+                    before = {p.name: p.read_bytes() for p in target.iterdir()}
+                    try:
+                        with self.assertRaisesRegex(
+                            ValueError, "messaging_required_store_invalid"
+                        ):
+                            # A returned application would let the old send ID
+                            # prepare anew.
+                            reloaded = load_application(runtime, target)
+                            reloaded.service.messaging.deliveries[
+                                "peer-out"
+                            ].sender.prepare(**args)
+                    finally:
+                        self.assertEqual(
+                            before, {p.name: p.read_bytes() for p in target.iterdir()}
+                        )
+                        self.assertEqual(events, sender.ledger.events())
+
+    def test_published_partial_schema_refused_before_any_constructor(self):
+        import re
+        import shutil
+        import sqlite3
+        from contextlib import ExitStack, closing
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+
+        runtime, spec, sources, _ = application_fixture(self)
+        pristine = self.root / "pristine"
+        prepare(runtime, pristine, spec, secret_sources=sources)
+        count = 0
+
+        def reject(store, sql=None, *, sidecar=None):
+            nonlocal count
+            count += 1
+            target = self.root / f"partial-{count}"
+            shutil.copytree(pristine, target)
+            path = target / spec["stores"][store]
+            if sql is not None:
+                with closing(sqlite3.connect(path)) as db:
+                    db.executescript(sql)
+            if sidecar is not None:
+                sibling = path.with_name(path.name + sidecar)
+                sibling.write_bytes(b"unrecovered synthetic journal")
+                sibling.chmod(0o600)
+            before = {p.name: p.read_bytes() for p in target.iterdir()}
+            with ExitStack() as stack:
+                constructors = [
+                    stack.enter_context(patch(name))
+                    for name in (
+                        "daimon_matrix.relationship_store.RelationshipStore",
+                        "daimon_matrix.messaging_store.MessagingInboxStore",
+                        "daimon_matrix.messaging_store.MessagingOutboxStore",
+                        "daimon_matrix.routes.OpaqueInbox",
+                    )
+                ]
+                try:
+                    with self.assertRaisesRegex(
+                        ValueError, "messaging_required_store_invalid"
+                    ):
+                        load_application(runtime, target)
+                finally:
+                    self.assertTrue(
+                        before == {p.name: p.read_bytes() for p in target.iterdir()}
+                    )
+                    for constructor in constructors:
+                        constructor.assert_not_called()
+
+        for store, filename in spec["stores"].items():
+            with closing(sqlite3.connect(pristine / filename)) as db:
+                tables = db.execute(
+                    "SELECT name, sql FROM sqlite_schema WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+                for table, ddl in tables:
+                    columns = db.execute(f'PRAGMA table_info("{table}")').fetchall()
+                    # Every required column independently missing, preserving the
+                    # remaining declaration including constraints on renamed columns.
+                    for column in columns:
+                        altered = re.sub(
+                            r"\b" + column[1] + r"\b", "lost_" + column[1], ddl
+                        )
+                        with self.subTest(store=store, table=table, column=column[1]):
+                            reject(store, f'DROP TABLE "{table}"; {altered};')
+                    # CTAS preserves names/types but discards PK/UNIQUE/NOT NULL,
+                    # CHECK, WITHOUT ROWID and AUTOINCREMENT constraints.
+                    with self.subTest(store=store, table=table, constraints="removed"):
+                        reject(
+                            store,
+                            f'ALTER TABLE "{table}" RENAME TO old_table; '
+                            f'CREATE TABLE "{table}" AS SELECT * FROM old_table; '
+                            "DROP TABLE old_table;",
+                        )
+            with self.subTest(store=store, version="unexpected"):
+                reject(store, "PRAGMA user_version=99;")
+            for suffix in ("-journal", "-wal", "-shm"):
+                with self.subTest(store=store, sidecar=suffix):
+                    reject(store, sidecar=suffix)
+        for sql in (
+            "DELETE FROM metadata WHERE key='schema_version';",
+            "UPDATE metadata SET value='99' WHERE key='schema_version';",
+            "DROP INDEX relationship_origin_position;",
+        ):
+            with self.subTest(sql=sql):
+                reject("relationships", sql)
+        for store in ("opaque-evidence", "opaque-message"):
+            with self.subTest(store=store, initialization="missing"):
+                reject(store, "DELETE FROM inbox_meta;")
+
+    def test_initialized_empty_stores_reload_without_mutation(self):
+        import sqlite3
+        from contextlib import closing
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "empty-stores"
+        prepare(runtime, target, spec, secret_sources=sources)
+        for store, filename in spec["stores"].items():
+            with closing(sqlite3.connect(target / filename)) as db:
+                for (table,) in db.execute(
+                    "SELECT name FROM sqlite_schema WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                ).fetchall():
+                    if (
+                        store == "relationships" and table in {"metadata", "events"}
+                    ) or table == "inbox_meta":
+                        # Required initialization/authority, not queue traffic.
+                        continue
+                    self.assertEqual(
+                        db.execute(f'SELECT count(*) FROM "{table}"').fetchone(), (0,)
+                    )
+        before = {p.name: p.read_bytes() for p in target.iterdir()}
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+        self.assertTrue(before == {p.name: p.read_bytes() for p in target.iterdir()})
+
     def test_prepare_load_v7_one_shot_and_bounded_client(self):
         from daimon_matrix.messaging_config import config_digest, load_application
         from daimon_matrix.operator_messaging import prepare

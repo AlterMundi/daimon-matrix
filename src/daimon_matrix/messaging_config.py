@@ -441,6 +441,139 @@ def _store_path(root: Path, name: str) -> Path:
     return root / name
 
 
+# Pinned constructor schemas: relationship_store, messaging_store and routes.
+# Only trusted staging may create them. Changes require explicit loader review;
+# published loading is deliberately not a migration/repair path.
+_STORE_SCHEMA_SQL = {
+    "relationships": """
+        CREATE TABLE IF NOT EXISTS metadata ( key TEXT PRIMARY KEY, value TEXT NOT
+        NULL ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS events ( event_id TEXT NOT NULL, content_hash
+        TEXT NOT NULL, being_ref TEXT NOT NULL, embodiment_id TEXT NOT NULL,
+        incarnation_id TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL,
+        subject TEXT NOT NULL, event_json BLOB NOT NULL, inserted_order INTEGER
+        PRIMARY KEY AUTOINCREMENT, UNIQUE(event_id, content_hash) );
+        CREATE INDEX IF NOT EXISTS relationship_event_id ON events(event_id);
+        CREATE INDEX IF NOT EXISTS relationship_origin_position ON events(being_ref,
+        incarnation_id, sequence);
+        CREATE INDEX IF NOT EXISTS relationship_kind_subject ON events(kind,
+        subject);
+        CREATE TABLE IF NOT EXISTS operations ( request_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL, event_id TEXT NOT NULL, content_hash TEXT NOT
+        NULL ) WITHOUT ROWID;
+    """,
+    "inbox": """
+        CREATE TABLE IF NOT EXISTS deliveries ( delivery_id TEXT PRIMARY KEY,
+        bytes_hash TEXT NOT NULL );
+        CREATE TABLE IF NOT EXISTS identities ( event_id TEXT PRIMARY KEY, being_ref
+        TEXT NOT NULL, incarnation_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+        bytes_hash TEXT NOT NULL, UNIQUE(being_ref, incarnation_id, sequence) );
+        CREATE TABLE IF NOT EXISTS evidence ( message_id TEXT NOT NULL,
+        authorization_id TEXT NOT NULL, policy_hash TEXT NOT NULL, event BLOB NOT
+        NULL, envelope BLOB NOT NULL, PRIMARY KEY(message_id, authorization_id) );
+        CREATE TABLE IF NOT EXISTS inbox ( inbox_sequence INTEGER PRIMARY KEY
+        AUTOINCREMENT, message_id TEXT NOT NULL UNIQUE, policy_hash TEXT NOT NULL,
+        message BLOB NOT NULL, evidence BLOB NOT NULL, envelope BLOB NOT NULL );
+    """,
+    "outbox": """
+        CREATE TABLE IF NOT EXISTS messaging_outbox ( owner TEXT NOT NULL, send_id
+        TEXT NOT NULL, plan BLOB NOT NULL, evidence BLOB, message BLOB, PRIMARY
+        KEY(owner, send_id), CHECK ((evidence IS NULL) = (message IS NULL)) );
+        CREATE TABLE IF NOT EXISTS messaging_transport_stages ( owner TEXT NOT NULL,
+        send_id TEXT NOT NULL, phase TEXT NOT NULL CHECK (phase IN ('evidence',
+        'message')), binding BLOB NOT NULL, request BLOB NOT NULL, request_sha256
+        TEXT NOT NULL, transport_status TEXT NOT NULL CHECK (transport_status IN
+        ('prepared', 'pending', 'recipient-intake', 'refused', 'hub-accepted')),
+        result_sha256 TEXT, response BLOB, PRIMARY KEY(owner, send_id, phase) );
+    """,
+    "opaque": """
+        CREATE TABLE IF NOT EXISTS inbox_meta (singleton INTEGER PRIMARY KEY
+        CHECK(singleton=1), next_sequence INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS inbox_items (sequence INTEGER PRIMARY KEY,
+        delivery_id TEXT UNIQUE NOT NULL, recipient_id TEXT NOT NULL, envelope_hash
+        TEXT NOT NULL, envelope BLOB NOT NULL, received_at_ms INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','acked')), claim_id TEXT,
+        consumer_id TEXT, lease_until_ms INTEGER);
+        CREATE TABLE IF NOT EXISTS inbox_requests (request_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL, delivery_id TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS inbox_tombstones (delivery_id TEXT PRIMARY KEY,
+        recipient_id TEXT NOT NULL, envelope_hash TEXT NOT NULL, received_at_ms
+        INTEGER NOT NULL, sequence INTEGER NOT NULL UNIQUE);
+        CREATE TABLE IF NOT EXISTS inbox_claims (claim_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL, result_json BLOB NOT NULL);
+    """,
+}
+
+
+def _validate_store_schema(name: str, path: Path) -> None:
+    """Inspect published state without DDL, recovery, or sidecar creation."""
+    import re
+    import sqlite3
+    from contextlib import closing
+
+    from .relationship_store import SCHEMA_VERSION
+
+    def catalog(db: sqlite3.Connection) -> list[tuple[Any, ...]]:
+        # Preserve quoted literals and token boundaries, ignoring only spacing.
+        # Table SQL binds CHECK/PK/UNIQUE/NOT NULL, AUTOINCREMENT, WITHOUT ROWID;
+        # catalog index entries also require the backing unique/ordinary indexes.
+        return [
+            (kind, table, name, re.findall(r"'(?:''|[^'])*'|\w+|[^\s]", sql or ""))
+            for kind, table, name, sql in db.execute(
+                "SELECT type, tbl_name, name, sql FROM sqlite_schema ORDER BY name"
+            )
+        ]
+
+    try:
+        # These stores use DELETE journals. Never ignore pending WAL/journal state
+        # or let SQLite create/recover sidecars during validation. A busy/crashed
+        # store needs a separate trusted recovery decision, not implicit repair.
+        if any(
+            path.with_name(path.name + suffix).exists()
+            for suffix in ("-journal", "-wal", "-shm")
+        ):
+            raise ValueError()
+        schema = (
+            "opaque"
+            if name.startswith("opaque-")
+            else "inbox"
+            if name == "outgoing-context"
+            else name
+        )
+        with (
+            closing(
+                sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
+            ) as db,
+            closing(sqlite3.connect(":memory:")) as expected,
+        ):
+            # DDL is confined to an anonymous in-memory reference, never a store.
+            # No store constructor is used even for this reference.
+            expected.executescript(_STORE_SCHEMA_SQL[schema])
+            if (
+                catalog(db) != catalog(expected)
+                or db.execute("PRAGMA user_version").fetchone() != (0,)
+                or db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+            ):
+                raise ValueError()
+            if name == "relationships" and db.execute(
+                "SELECT value FROM metadata WHERE key='schema_version'"
+            ).fetchall() != [(str(SCHEMA_VERSION),)]:
+                raise ValueError()
+            if schema == "opaque":
+                rows = db.execute(
+                    "SELECT singleton, next_sequence FROM inbox_meta"
+                ).fetchall()
+                if (
+                    len(rows) != 1
+                    or rows[0][0] != 1
+                    or type(rows[0][1]) is not int
+                    or rows[0][1] < 1
+                ):
+                    raise ValueError()
+    except (sqlite3.Error, ValueError):
+        raise MessagingConfigError("messaging_required_store_invalid") from None
+
+
 def _compose(
     runtime: HostedRuntime,
     root: Path,
@@ -555,6 +688,10 @@ def _compose(
         name: _store_path(root, filename)
         for name, filename in application["stores"].items()
     }
+    if not initialize:
+        # Validate every store before the first constructor can initialize anything.
+        for name, path in stores.items():
+            _validate_store_schema(name, path)
     relationships = RelationshipStore(
         stores["relationships"],
         authority_resolver=lambda being_ref: authorities[being_ref],
