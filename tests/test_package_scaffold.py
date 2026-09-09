@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import csv
+import gzip
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -15,13 +19,21 @@ from pathlib import Path
 from typing import Any
 
 from tools.check_distribution import (
+    DIST_INFO,
     SDIST_FILES,
+    SDIST_NAME,
+    SDIST_ROOT,
+    SOURCE_DATE_EPOCH,
     WHEEL_FILES,
+    WHEEL_NAME,
     PackageCheckError,
     _assert_source_parity,
+    _record_digest,
+    inspect_sdist,
+    inspect_wheel,
     validate_member,
 )
-from tools.reproducible_build import BUILD_INPUTS
+from tools.reproducible_build import BUILD_INPUTS, _build_once, _copy_clean_source
 from tools.scan_secrets import SecretScanError, scan_archive, scan_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,6 +146,117 @@ class PackageMetadataTests(unittest.TestCase):
 
 
 class ArtifactBoundaryTests(unittest.TestCase):
+    def test_closed_inventories_cover_actual_package_modules(self) -> None:
+        # Discovery is an assertion only, never permission to ship arbitrary files.
+        modules = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src/daimon_matrix").rglob("*.py")
+        }
+        self.assertEqual(len(modules), 58)
+        self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
+        for inventory in (
+            {path.as_posix() for path in BUILD_INPUTS},
+            set(SDIST_FILES),
+            {f"src/{path}" for path in WHEEL_FILES},
+        ):
+            with self.subTest(inventory=sorted(inventory)):
+                self.assertEqual(
+                    {path for path in inventory if path.endswith(".py")}, modules
+                )
+
+    def test_real_artifacts_bind_all_package_bytes_to_source(self) -> None:
+        modules = tuple(
+            sorted(path.stem for path in (ROOT / "src/daimon_matrix").glob("*.py"))
+        )
+        with tempfile.TemporaryDirectory(prefix="dm020-artifact-") as directory:
+            workspace = Path(directory)
+            source = workspace / "snapshot"
+            _copy_clean_source(ROOT, source)
+            artifacts = _build_once(source, workspace)
+            wheel = artifacts[WHEEL_NAME]
+            sdist = artifacts[SDIST_NAME]
+            inspect_wheel(wheel, source)
+            inspect_sdist(sdist, source)
+            scan_archive(wheel)
+            scan_archive(sdist)
+            # -I ignores checkout PYTHONPATH and the child runs outside the repo.
+            probe = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import importlib, sys; sys.path.insert(0, sys.argv[1]); "
+                    "names = sys.argv[2:]; "
+                    "loaded = [importlib.import_module('daimon_matrix.' + n) "
+                    "for n in names]; "
+                    "assert all(m.__file__.startswith(sys.argv[1] + '/') "
+                    "for m in loaded)",
+                    str(wheel),
+                    "mcp_server",
+                    *modules,
+                ],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+            with zipfile.ZipFile(wheel) as archive:
+                wheel_members = [
+                    (info, archive.read(info)) for info in archive.infolist()
+                ]
+            with tarfile.open(sdist, "r:gz") as archive:
+                sdist_members = []
+                for info in archive.getmembers():
+                    stream = archive.extractfile(info) if info.isfile() else None
+                    sdist_members.append((info, stream.read() if stream else b""))
+            changed = workspace / "changed"
+            changed.mkdir()
+            for module in modules:
+                with self.subTest(module=module, kind="wheel"):
+                    member = f"daimon_matrix/{module}.py"
+                    payloads = {info.filename: data for info, data in wheel_members}
+                    payloads[member] += b"\n# distribution drift probe\n"
+                    record = f"{DIST_INFO}/RECORD"
+                    rows = io.StringIO(newline="")
+                    writer = csv.writer(rows, lineterminator="\n")
+                    for name, data in payloads.items():
+                        writer.writerow(
+                            [name, "", ""]
+                            if name == record
+                            else [name, _record_digest(data), str(len(data))]
+                        )
+                    payloads[record] = rows.getvalue().encode()
+                    mutated = changed / WHEEL_NAME
+                    with zipfile.ZipFile(mutated, "w") as archive:
+                        for wheel_info, _ in wheel_members:
+                            archive.writestr(wheel_info, payloads[wheel_info.filename])
+                    with self.assertRaisesRegex(
+                        PackageCheckError, f"wheel source drift: {member}"
+                    ):
+                        inspect_wheel(mutated, source)
+                with self.subTest(module=module, kind="sdist"):
+                    member = f"src/daimon_matrix/{module}.py"
+                    mutated = changed / SDIST_NAME
+                    with (
+                        mutated.open("wb") as raw,
+                        gzip.GzipFile(
+                            fileobj=raw, mode="wb", mtime=SOURCE_DATE_EPOCH
+                        ) as compressed,
+                        tarfile.open(fileobj=compressed, mode="w") as archive,
+                    ):
+                        for info, data in sdist_members:
+                            if info.name == f"{SDIST_ROOT}/{member}":
+                                data += b"\n# distribution drift probe\n"
+                            info.size = len(data)
+                            archive.addfile(
+                                info, io.BytesIO(data) if info.isfile() else None
+                            )
+                    with self.assertRaisesRegex(
+                        PackageCheckError, f"sdist source drift: {member}"
+                    ):
+                        inspect_sdist(mutated, source)
+
     def test_reproducible_build_inputs_match_sdist_sources(self) -> None:
         expected_sources = {
             Path(path) for path in SDIST_FILES if path.startswith("src/daimon_matrix/")
@@ -179,6 +302,12 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/local_api.py",
                 "src/daimon_matrix/local_we.py",
                 "src/daimon_matrix/mcp_server.py",
+                "src/daimon_matrix/messaging.py",
+                "src/daimon_matrix/messaging_store.py",
+                "src/daimon_matrix/messaging_config.py",
+                "src/daimon_matrix/operator_messaging.py",
+                "src/daimon_matrix/operator_runtime_upgrade.py",
+                "src/daimon_matrix/telegram_mirror.py",
                 "src/daimon_matrix/operator_bootstrap.py",
                 "src/daimon_matrix/operator_capabilities.py",
                 "src/daimon_matrix/operator_genesis.py",
@@ -237,6 +366,12 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/local_api.py",
                 "daimon_matrix/local_we.py",
                 "daimon_matrix/mcp_server.py",
+                "daimon_matrix/messaging.py",
+                "daimon_matrix/messaging_store.py",
+                "daimon_matrix/messaging_config.py",
+                "daimon_matrix/operator_messaging.py",
+                "daimon_matrix/operator_runtime_upgrade.py",
+                "daimon_matrix/telegram_mirror.py",
                 "daimon_matrix/operator_bootstrap.py",
                 "daimon_matrix/operator_capabilities.py",
                 "daimon_matrix/operator_genesis.py",

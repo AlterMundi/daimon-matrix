@@ -20,11 +20,15 @@ audited on every host; peers with different hashes do not synchronize.
 
 ## Matrix identity in the V0.1 MVP
 
-The Matrix identity has an offline root and recovery policy. The root
-authorizes a distinct credential for every embodiment. Incarnations use
-short-lived subordinate keys or sessions without changing the embodiment.
-Root material is never installed in ordinary bodies and is never replaced by
-Tribe transport keys.
+The Matrix identity has a root and recovery custody policy. Offline custody
+outside ordinary bodies is the default. An explicitly owner-authorized Source
+custodian MAY instead use the online custody policy in
+[identity-root-v1.md](identity-root-v1.md#owner-authorized-source-custody).
+The root authorizes a distinct credential for every embodiment. Incarnations
+use short-lived subordinate keys or sessions without changing the embodiment.
+Root material is never installed in ordinary runtime custody and is never
+replaced by Tribe transport keys. Source access is an explicit operator grant,
+not authority inherited by other embodiments, models, species or descendants.
 
 DM-021 implements an explicit binding artifact naming the provisional
 `being_ref`, manifest hash, accepted event heads, new Matrix identifier, and

@@ -18,7 +18,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Protocol, cast
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -566,6 +566,14 @@ def _validate_authorization(value: Any, *, at_ms: int) -> Mapping[str, Any]:
     return auth
 
 
+class DeliveryCustody(Protocol):
+    """Private operations for the sealed-delivery profile, not a raw signer."""
+
+    def sign(self, key_id: str, unsigned: Mapping[str, Any]) -> bytes: ...
+
+    def unwrap(self, key_id: str, combined: bytes, info: bytes) -> bytes: ...
+
+
 class KeystoreDeliveryCustody:
     """Purpose-specific private operations over an encrypted DM-021 keystore."""
 
@@ -842,7 +850,7 @@ def seal_event(
     sender_authority: RootAuthority,
     recipients: Sequence[RecipientTarget],
     authorization: DisclosureAuthorization,
-    custody: KeystoreDeliveryCustody,
+    custody: DeliveryCustody,
     issued_at_ms: int,
     expires_at_ms: int,
 ) -> bytes:
@@ -976,7 +984,7 @@ def open_event(
     local_target: RecipientTarget,
     recipient_targets: Sequence[RecipientTarget],
     authorization: DisclosureAuthorization,
-    custody: KeystoreDeliveryCustody,
+    custody: DeliveryCustody,
     at_ms: int,
 ) -> Mapping[str, Any]:
     """Authenticate, authorize and decrypt exactly one local recipient entry."""
@@ -1182,6 +1190,7 @@ __all__ = [
     "AUTH_SCHEMA",
     "PROFILE",
     "SCHEMA",
+    "DeliveryCustody",
     "DisclosureAuthorization",
     "EnvelopeStore",
     "KeystoreDeliveryCustody",

@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "dm.messaging.operator-binding/v1"
+    },
+    "body": {
+      "type": "object",
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "runtime_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "being_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "control_head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "manifest_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "credential_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "incarnation_authorization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "signing_key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "body_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "embodiment_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "incarnation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "principal_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "principal_id"
+          ],
+          "additionalProperties": false
+        },
+        "application_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "runtime_id",
+        "runtime_label",
+        "being_ref",
+        "control_head",
+        "manifest_hash",
+        "credential_id",
+        "incarnation_authorization_id",
+        "signing_key_id",
+        "origin",
+        "application_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$"
+    }
+  },
+  "required": [
+    "schema",
+    "body",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/messaging/v1/operator-binding.schema.json"
+}

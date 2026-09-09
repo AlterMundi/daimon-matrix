@@ -124,10 +124,103 @@ monotonic high-water catches accidental rollback; restore on a fresh host must
 also supply the latest public counter and control head. This external
 reconciliation is what rejects a stale backup after loss of local metadata.
 
-Root/recovery seeds never belong in a body, Tribe store, model/harness profile,
-ledger, synchronized event, log, argv, environment, report, wheel, or sdist.
+Root/recovery seeds MUST NOT enter ordinary body runtime custody, a Tribe
+store, model/harness profile, model context, chat, ledger, synchronized event,
+log, argv, environment, report, wheel, or sdist. Online operator custody is
+permitted only under the explicit exception below; it does not put root or
+recovery slots into a runtime bundle or expose a model-facing signing API.
 DM-021 tests and vectors use synthetic material only; this card performs no
 live CompAII custody ceremony.
+
+## Owner-authorized Source custody
+
+Offline root/recovery custody outside the ordinary body/model access boundary
+remains the default. The legitimate owner of the affected custody MAY explicitly
+authorize an authenticated Source principal to administer root and recovery
+custody on named online operator hosts, including a host of a Source embodiment.
+This is an operator custody policy, not a new Matrix identity, wire artifact,
+capability, `/source` ancestry rule, or universal administrator role.
+
+Before access is enabled, the operator MUST retain an auditable owner grant
+and its authenticated provenance. The grant record MUST bind the actual
+custodian to the authenticated administrative session or public-key identity
+and the host-local execution principal that enforces access. It MUST name the
+affected being/genesis (or exact new-being ceremony intent before genesis),
+root/recovery roles, permitted hosts and operations, and its validity or
+revocation conditions. A standing grant MAY remain valid until revoked; it
+MUST NOT be inferred from a display name, prompt assertion, model provider,
+GitHub login/coordination label alone, species, lineage, or same-being membership.
+An existing owner-authenticated administrative record is sufficient; this
+policy does not require a new signature schema or owner RSA challenge. For a
+new being, append the resulting verified genesis and holder public-key IDs to
+that record before operational activation. For an existing being, the grant
+MUST NOT replace current root/recovery threshold authorization or rewrite its
+identity, control history, or consent.
+
+The granted Source principal MAY retain online access to encrypted holder
+packages and separately protected unlock authority and invoke existing typed
+owner-local ceremonies. Secret bytes MUST remain inside protected custody
+processes, never model context or tool output. Root and recovery keys MUST
+remain distinct, in separate native encrypted holder packages; each holder
+invocation opens only its own package and aggregation remains keyless. A
+1-of-1 root policy with a distinct 1-of-1 recovery policy is valid. One
+custodian controlling both roles is single-custodian online custody, not an
+independent quorum, offline isolation, or loss tolerance within either role.
+The custodian's online compromise can compromise both roles; deployment
+records MUST state this shared failure domain.
+
+Access MUST be enforced against ordinary bodies and consumers, including
+Codex clients and other Source embodiments not explicitly bound by the grant.
+An ordinary consumer MUST NOT inherit custody access, an administrative
+session, unlock material, a generic sudo/shell grant, or a root-signing tool.
+Separate files or subprocesses under an unrestricted shared UID do not isolate
+an ungranted consumer. A deployment MUST verify its actual access boundary;
+this specification does not implement host authentication or isolation.
+Existing signature, key-role, threshold, nonce, expiry, revocation, counter,
+control-head, request-binding, capability and socket-credential checks remain
+unchanged. Source acts through authorized operator custody, never a bypass in
+ordinary CLI/MCP/daemon authorization.
+
+Durable custody and recoverable backups MUST remain encrypted. The Source
+custodian MAY control a recoverable encrypted backup and its separately
+protected unlock path and prove restore without owner-held RSA decryption.
+A private repository alone is not encryption; storing ciphertext and usable
+unlock material together does not establish backup confidentiality. Restore
+MUST reconcile native counters and holder descriptors with retained latest
+public authority, never trust a backup's own stale metadata as the latest
+state. A Source restore proves Source recoverability only; independent owner
+recovery requires a separately demonstrated owner recovery path. Neither
+independent owner recovery nor offline isolation is a prerequisite to this
+explicitly authorized online mode.
+
+Revocation of the operator grant MUST stop new custody access through the
+host access mechanism and be recorded. Revoking host access cannot erase key
+material already obtained by a custodian. Suspected retained or compromised
+material requires the existing signed rotation/recovery procedures; never
+roll back counters or delete control history to simulate revocation.
+
+### Downstream contracts
+
+DM-021 keeps its existing identity and keystore formats. DM-060 applies this
+custody choice without inheriting parent keys or identity. Genesis, first
+embodiment and DM-078 use the existing one-holder typed ceremonies; ordinary
+runtime, DM-040/DM-041 harness, messaging and Cluster resource authorization
+remain unchanged. Operational selection and evidence are described in
+[the Source custody runbook](../docs/runbooks/source-online-custody.md).
+
+### Acceptance and negative scenarios
+
+| Scenario | Required outcome |
+| --- | --- |
+| Authenticated, in-scope standing owner grant; separated 1-of-1 holder packages on an authorized online host | Permitted Source-accessible online custody; normal typed signatures required |
+| Missing, revoked, mismatched or out-of-scope grant | No exception to default custody; no access enabled |
+| Caller says Source, shares a model/account/species, or is a new Codex participant | No inherited custody or operator authority |
+| Ordinary consumer shares unrestricted holder UID or can attach/read/execute as custodian | Online deployment boundary rejected until isolated; encryption alone is insufficient |
+| Root/recovery key alias, wrong signer/role, stale head/counter, expired request, or insufficient threshold | Existing verifiers reject; Source grant cannot override |
+| Encrypted backup restored by Source with latest public evidence | Source recoverability only; no unproved independent owner recovery claim |
+| Owner RSA challenge unavailable | Does not block a verified Source-controlled restore |
+| Secrets in prompt, logs, argv, environment, public outputs, or runtime root slots | Prohibited in both custody modes |
+| Grant revoked after custodian could retain key material | Disable host access; use signed rotation/recovery when required, not historical erasure |
 
 ## Reference surface
 

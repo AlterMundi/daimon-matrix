@@ -23,6 +23,7 @@ from typing import Final, cast
 from .canonical import canonical_bytes
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
 from .peer_transport import MAX_ENVELOPE_BYTES, PeerTransportBusy, PeerTransportError
+from .routes import MAX_TRANSPORT_BYTES, RouteError, TransportIngress
 from .runtime import HostedRuntime, RuntimeError, load_runtime
 
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
@@ -224,6 +225,84 @@ class _BoundedPeerHTTPServer(http.server.ThreadingHTTPServer):
             self._peer_slots.release()
 
 
+class _BoundedMessagingHTTPServer(_BoundedPeerHTTPServer):
+    """Drain admitted handlers before releasing the runtime's ownership lock."""
+
+    daemon_threads = False
+    block_on_close = True
+
+
+def create_messaging_http_server(
+    listen: tuple[str, int],
+    *,
+    evidence_ingress: TransportIngress,
+    message_ingress: TransportIngress,
+) -> http.server.ThreadingHTTPServer:
+    """Serve explicitly supplied owner-bound ingresses; never infer enrollment."""
+    ingresses = {
+        "/dm-messaging/v1/evidence": evidence_ingress,
+        "/dm-messaging/v1/message": message_ingress,
+    }
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(DEFAULT_TIMEOUT_SECONDS)
+
+        def _respond(self, status: int, body: bytes = b"") -> None:
+            self.close_connection = True
+            with suppress(ConnectionError, OSError):
+                self.send_response_only(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                if body:
+                    self.send_header("Content-Type", "application/daimon+jcs")
+                self.end_headers()
+                self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            self.close_connection = True
+            ingress = ingresses.get(self.path)
+            if ingress is None:
+                self._respond(404)
+                return
+            lengths = self.headers.get_all("Content-Length", failobj=[])
+            types = self.headers.get_all("Content-Type", failobj=[])
+            if (
+                types != ["application/daimon+jcs"]
+                or self.headers.get_all("Transfer-Encoding") is not None
+                or len(lengths) != 1
+                or not lengths[0].isascii()
+                or not lengths[0].isdecimal()
+                or len(lengths[0]) > 10
+            ):
+                self._respond(400)
+                return
+            size = int(lengths[0])
+            if not 1 <= size <= MAX_TRANSPORT_BYTES:
+                self._respond(400)
+                return
+            try:
+                raw = self.rfile.read(size)
+            except (TimeoutError, OSError):
+                self._respond(408)
+                return
+            if len(raw) != size:
+                self._respond(400)
+                return
+            try:
+                response = ingress.handle(raw)
+            except RouteError:
+                self._respond(400)
+                return
+            self._respond(200, response)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    return _BoundedMessagingHTTPServer(listen, Handler)
+
+
 def create_peer_http_server(runtime: HostedRuntime) -> http.server.ThreadingHTTPServer:
     if runtime.peer_dispatcher is None or runtime.peer_listen is None:
         raise DaemonError("peer_transport_not_configured")
@@ -302,6 +381,8 @@ def serve_forever(
     created: tuple[int, int] | None = None
     peer_server: http.server.ThreadingHTTPServer | None = None
     peer_thread: threading.Thread | None = None
+    messaging_server: http.server.ThreadingHTTPServer | None = None
+    messaging_thread: threading.Thread | None = None
     try:
         if runtime.peer_dispatcher is not None:
             peer_server = create_peer_http_server(runtime)
@@ -311,6 +392,19 @@ def serve_forever(
                 daemon=True,
             )
             peer_thread.start()
+        if runtime.messaging_http is not None:
+            context = runtime.messaging_http
+            messaging_server = create_messaging_http_server(
+                context.listen,
+                evidence_ingress=context.evidence_ingress,
+                message_ingress=context.message_ingress,
+            )
+            messaging_thread = threading.Thread(
+                target=messaging_server.serve_forever,
+                name="daimon-matrix-messaging-http",
+                daemon=True,
+            )
+            messaging_thread.start()
         _bind_private_socket(listener, path)
         info = path.lstat()
         created = (info.st_dev, info.st_ino)
@@ -345,6 +439,13 @@ def serve_forever(
                     continue
                 workers.submit(run, connection)
     finally:
+        if messaging_server is not None:
+            # shutdown waits for serve_forever: never call it after start failed.
+            if messaging_thread is not None and messaging_thread.ident is not None:
+                messaging_server.shutdown()
+            messaging_server.server_close()
+        if messaging_thread is not None and messaging_thread.ident is not None:
+            messaging_thread.join(timeout=2)
         if peer_server is not None:
             peer_server.shutdown()
             peer_server.server_close()

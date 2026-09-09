@@ -45,6 +45,7 @@ from .peer_transport import (
     KeystorePeerCustody,
     PeerClient,
     PeerClientContext,
+    PeerCustody,
     PeerDispatcher,
     PeerExchangeStore,
     PeerOutbox,
@@ -71,9 +72,11 @@ from .routes import (
     RouteCoordinator,
     RouteError,
     RouteProfile,
+    TransportIngress,
 )
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
-from .sealed import RecipientTarget
+from .sealed import SIGNATURE_DOMAIN as DELIVERY_SIGNATURE_DOMAIN
+from .sealed import DeliveryCustody, RecipientTarget, SealedDeliveryError
 from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
@@ -90,6 +93,36 @@ class RuntimeError(ValueError):
     """Public authority, paths, or custody cannot safely host a runtime."""
 
 
+class _RuntimeDeliveryCustody:
+    """Adapt already authenticated peer keys to the sealed signature domain."""
+
+    def __init__(self, custody: PeerCustody) -> None:
+        self._custody = custody
+
+    def sign(self, key_id: str, unsigned: Mapping[str, Any]) -> bytes:
+        try:
+            return self._custody.sign(
+                key_id, DELIVERY_SIGNATURE_DOMAIN + canonical_bytes(unsigned)
+            )
+        except (CanonicalError, PeerTransportError) as exception:
+            raise SealedDeliveryError() from exception
+
+    def unwrap(self, key_id: str, combined: bytes, info: bytes) -> bytes:
+        try:
+            return self._custody.unwrap(key_id, combined, info)
+        except PeerTransportError as exception:
+            raise SealedDeliveryError() from exception
+
+
+@dataclass(frozen=True)
+class MessagingHTTPContext:
+    """Explicit owner-bound listener; construction alone grants no authority."""
+
+    listen: tuple[str, int]
+    evidence_ingress: TransportIngress
+    message_ingress: TransportIngress
+
+
 @dataclass(frozen=True)
 class HostedRuntime:
     service: HostedWeave
@@ -100,6 +133,13 @@ class HostedRuntime:
     peer_outbox: PeerOutbox | None = None
     peer_context: PeerClientContext | None = None
     peer_listen: tuple[str, int] | None = None
+    messaging_http: MessagingHTTPContext | None = None
+
+    def create_delivery_custody(self) -> DeliveryCustody:
+        """Reuse loaded keys without reopening custody or enabling messaging."""
+        if self.peer_context is None:
+            raise RuntimeError("messaging_custody_not_configured")
+        return _RuntimeDeliveryCustody(self.peer_context.custody)
 
     def create_peer_client(
         self, endpoint: str, *, timeout_seconds: float = 10
@@ -237,8 +277,17 @@ def load_runtime(
     tribe_verifier: SnapshotVerifier | None = None,
     curator_fence_verifier: FenceVerifier | None = None,
     curator_effect_observer: EffectTruthObserver | None = None,
+    relationship_authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
+    | None = None,
 ) -> HostedRuntime:
-    """Verify all public/secret bindings before exposing a hosted service."""
+    """Verify all public/secret bindings before exposing a hosted service.
+
+    relationship_authorities is an explicit trusted-host public-authority seam,
+    not a model RPC or source Ledger inventory. Callers must validate documents
+    with the canonical authority validators before supplying these objects.
+    Existing local/source authorities cannot be replaced through this seam.
+    """
+    supplied_relationship_authorities = dict(relationship_authorities or {})
 
     root = Path(os.path.abspath(state_root))
     _owner_directory(root)
@@ -826,6 +875,8 @@ def load_runtime(
             species_context.registry.load_local_policy(species_context.local_policy_ref)
         except (KeyError, SpeciesError, TypeError) as exception:
             raise RuntimeError("runtime_species_configuration_rejected") from exception
+    if relationship_authorities is not None and bundle["relationships"] is None:
+        raise RuntimeError("runtime_relationship_configuration_rejected")
     relationship_store_path: Path | None = None
     relationship_known_refs: tuple[str, ...] = ()
     if bundle["relationships"] is not None:
@@ -1072,17 +1123,32 @@ def load_runtime(
             configuration[0]: configuration[2]
             for configuration in known_source_configurations
         }
+        for ref, supplied in supplied_relationship_authorities.items():
+            if (
+                not isinstance(supplied, (RootAuthority, RootHistoryAuthority))
+                or ref != supplied.manifest.being_ref
+            ):
+                raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
+            expected = (
+                authority if ref == manifest.being_ref else known_authorities.get(ref)
+            )
+            if expected is not None and supplied != expected:
+                raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
+            known_authorities[ref] = supplied
         if not set(relationship_known_refs).issubset(known_authorities):
             raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
-        relationship_authorities: dict[str, Any] = {
+        selected_relationship_authorities: dict[str, Any] = {
             manifest.being_ref: authority,
             **{
                 being_ref: known_authorities[being_ref]
-                for being_ref in relationship_known_refs
+                for being_ref in set(relationship_known_refs)
+                | set(supplied_relationship_authorities)
             },
         }
         active_authorities: dict[str, RootAuthority] = {manifest.being_ref: active}
-        for being_ref in relationship_known_refs:
+        for being_ref in set(relationship_known_refs) | set(
+            supplied_relationship_authorities
+        ):
             known_authority = known_authorities[being_ref]
             active_authorities[being_ref] = (
                 known_authority.active
@@ -1136,11 +1202,12 @@ def load_runtime(
             relationship_context = RelationshipServiceContext(
                 RelationshipStore(
                     relationship_store_path,
-                    authority_resolver=lambda being_ref: relationship_authorities[
-                        being_ref
-                    ],
+                    authority_resolver=lambda being_ref: (
+                        selected_relationship_authorities[being_ref]
+                    ),
                 ),
                 verify_relationship_card,
+                authority_resolver=lambda being_ref: active_authorities[being_ref],
             )
             relationship_context.store.initialize()
         except (KeyError, RelationshipError, RelationshipStoreError) as exception:

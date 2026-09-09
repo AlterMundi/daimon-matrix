@@ -1080,6 +1080,11 @@ class AuthenticatedProvider:
         value = _submission(submission)
         if not self._available:
             return self._result(value, "unavailable", "unavailable", None)
+        return self.send_prepared(self.prepare_submission(value))
+
+    def prepare_submission(self, submission: Mapping[str, Any]) -> bytes:
+        """Build exact authenticated request bytes; caller persists before I/O."""
+        value = _submission(submission)
         issued = self._clock()
         expires = cast(int, value["deadline_ms"])
         request_id = str(
@@ -1097,7 +1102,6 @@ class AuthenticatedProvider:
             "sender_body_ref": self._sender_body_ref,
             "submission": copy.deepcopy(dict(value)),
         }
-        request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
         request = canonical_bytes(
             {
                 **unsigned,
@@ -1109,10 +1113,98 @@ class AuthenticatedProvider:
                 },
             }
         )
+        return request
+
+    def _prepared_submission(
+        self, request: bytes, *, check_time: bool = True
+    ) -> tuple[Mapping[str, Any], str, str]:
+        """Revalidate persisted framing, local credential binding and lifetime."""
+        code = "transport_request_rejected"
+        try:
+            prepared = _closed(
+                _decode_canonical(request, code),
+                {
+                    "auth",
+                    "expires_at_ms",
+                    "issued_at_ms",
+                    "provider_ref",
+                    "request_id",
+                    "route_ref",
+                    "schema",
+                    "sender_body_ref",
+                    "sender_principal",
+                    "submission",
+                    "version",
+                },
+                code,
+            )
+            auth = _closed(
+                prepared["auth"], {"alg", "key_ref", "schema", "value"}, code
+            )
+            value = _submission(prepared["submission"])
+            request_id = _uuid(prepared["request_id"], code)
+            issued = _uint(prepared["issued_at_ms"], code)
+            expires = _uint(prepared["expires_at_ms"], code)
+            now = _uint(self._clock(), code)
+            if (
+                prepared["schema"] != TRANSPORT_REQUEST_SCHEMA
+                or prepared["version"] != TRANSPORT_VERSION
+                or prepared["provider_ref"] != self.provider_ref
+                or prepared["route_ref"] != self.route_ref
+                or prepared["sender_principal"] != self._sender_principal
+                or prepared["sender_body_ref"] != self._sender_body_ref
+                or auth["schema"] != TRANSPORT_AUTH_SCHEMA
+                or auth["alg"] != "HMAC-SHA256"
+                or auth["key_ref"] != self._key_ref
+                or expires != value["deadline_ms"]
+                or expires <= issued
+                or (check_time and not issued - MAX_CLOCK_SKEW_MS <= now < expires)
+                or request_id
+                != str(uuid.uuid5(_ATTEMPT_NAMESPACE, f"request:{value['attempt_id']}"))
+            ):
+                raise RouteError(code)
+            unsigned = {key: item for key, item in prepared.items() if key != "auth"}
+            encoded = canonical_bytes(unsigned)
+            if not hmac.compare_digest(
+                unb64url(cast(str, auth["value"]), length=32),
+                hmac.digest(self._secret, encoded, "sha256"),
+            ):
+                raise RouteError(code)
+            return value, request_id, hashlib.sha256(encoded).hexdigest()
+        except (CanonicalError, ValueError, KeyError, TypeError) as exception:
+            raise RouteError(code) from exception
+
+    def send_prepared(
+        self, request: bytes, *, response_sink: Callable[[bytes], None] | None = None
+    ) -> Mapping[str, Any]:
+        """Transmit exact bytes; optionally retain the authenticated response."""
+        value, _, _ = self._prepared_submission(request)
+        if not self._available:
+            return self._result(value, "unavailable", "unavailable", None)
         try:
             raw_response = self._round_trip(request)
-        except (ConnectionError, OSError, TimeoutError) as exception:
+        except (
+            ConnectionError,
+            OSError,
+            TimeoutError,
+            http.client.HTTPException,
+        ) as exception:
             raise RouteAmbiguous() from exception
+        result = self.validate_prepared_response(request, raw_response)
+        if response_sink is not None:
+            response_sink(raw_response)
+        return result
+
+    def validate_prepared_response(
+        self, request: bytes, raw_response: bytes
+    ) -> Mapping[str, Any]:
+        """Validate historical proof, not permission to transmit an expired request."""
+        # A response can arrive after expiry for an operation admitted beforehand.
+        # Fresh I/O remains lifetime-gated in send_prepared, and application cached
+        # disclosure must separately recheck current policy and authorization.
+        value, request_id, request_hash = self._prepared_submission(
+            request, check_time=False
+        )
         response = _decode_canonical(raw_response, "transport_response_rejected")
         expected_fields = {
             "auth",

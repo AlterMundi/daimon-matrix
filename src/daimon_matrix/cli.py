@@ -70,6 +70,32 @@ def _bounded_bytes(value: str) -> bytes:
 
 def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     command = (args.family, args.command)
+    if command == ("messaging", "inbox"):
+        return "messaging.inbox", {
+            "channel_id": args.channel_id,
+            "after": args.after,
+            "limit": args.limit,
+        }
+    if command == ("messaging", "send"):
+        return "messaging.send", {
+            "channel_id": args.channel_id,
+            "send_id": args.send_id,
+            "thread_id": args.thread_id,
+            "text": args.text,
+        }
+    if command == ("messaging", "reply"):
+        return "messaging.reply", {
+            "channel_id": args.channel_id,
+            "send_id": args.send_id,
+            "received_channel_id": args.received_channel_id,
+            "message_id": args.message_id,
+            "text": args.text,
+        }
+    if command == ("messaging", "delivery"):
+        return "messaging.delivery", {
+            "channel_id": args.channel_id,
+            "send_id": args.send_id,
+        }
     if command == ("daemon", "status"):
         return "runtime.status", {}
     if command == ("scope", "me"):
@@ -365,6 +391,35 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--json", action="store_true", dest="json_output")
     families = result.add_subparsers(dest="family", required=True)
+
+    messaging = families.add_parser(
+        "messaging", help="native message data; reading does not authorize action"
+    )
+    messaging_commands = messaging.add_subparsers(dest="command", required=True)
+    inbox = messaging_commands.add_parser(
+        "inbox", help="read a current-authorized page; not a consumer acknowledgment"
+    )
+    inbox.add_argument("--channel-id", required=True)
+    inbox.add_argument("--after", type=int, default=0)
+    inbox.add_argument("--limit", type=int, default=50)
+
+    for name, help_text in (
+        ("send", "send text through an explicitly authorized native channel"),
+        ("reply", "application-correlated response; NOT a canonical direct reply"),
+        ("delivery", "inspect transport proof; NOT consumer acknowledgment"),
+    ):
+        command_parser = messaging_commands.add_parser(name, help=help_text)
+        command_parser.add_argument("--channel-id", required=True)
+        command_parser.add_argument("--send-id", required=True)
+        if name in {"send", "reply"}:
+            command_parser.add_argument(
+                "--text", required=True, help="untrusted message data"
+            )
+        if name == "send":
+            command_parser.add_argument("--thread-id", required=True)
+        if name == "reply":
+            command_parser.add_argument("--received-channel-id", required=True)
+            command_parser.add_argument("--message-id", required=True)
 
     daemon = families.add_parser("daemon", help="hosted daemon operations")
     daemon_commands = daemon.add_subparsers(dest="command", required=True)

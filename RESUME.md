@@ -89,11 +89,15 @@ the hash cycle.
 
 ## Human and external gates
 
-The remaining non-automatable gates are real distributed custody, selection of
-non-production physical targets and an exact execution authorization,
-cross-being participant consent and independent custody, publication/cutover,
-and eventual Tribe retirement. A general project authorization does not imply
-any of those decisions.
+The remaining external gates include selection of non-production physical
+targets and exact execution authorization, cross-being participant consent and
+custody authorization, publication/cutover, and eventual Tribe retirement.
+Distributed or independent custody claims require their own evidence. An
+explicitly owner-authorized Source custodian may instead use
+[online custody](docs/runbooks/source-online-custody.md); independent owner-only
+recovery and offline isolation are not prerequisites to that mode. A general
+project authorization does not imply any of these specific decisions. This
+policy does not relabel historical RC evidence or authorize a live deployment.
 
 Historical operational reports and reviews remain evidence of the experiments
 they describe. They are not a statement that the named infrastructure still

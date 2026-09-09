@@ -9,6 +9,7 @@ import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
@@ -25,6 +26,7 @@ from .ledger import (
 )
 from .local_api import (
     MAX_CLOCK_SKEW_MS,
+    MAX_FRAME_BYTES,
     LocalApiError,
     LocalCapability,
     authenticate_request,
@@ -39,6 +41,7 @@ from .memory_policy import (
     memory_checkpoint,
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
+from .messaging import MessagingChannel, MessagingDelivery
 from .peer_transport import (
     PeerClientContext,
     PeerTransportAmbiguous,
@@ -79,6 +82,10 @@ METHODS: Final = frozenset(
     }
 )
 PEER_METHODS: Final = frozenset({"we.sync.peer-pull"})
+MESSAGING_METHODS: Final = frozenset(
+    {"messaging.inbox", "messaging.send", "messaging.delivery", "messaging.reply"}
+)
+_MESSAGING_CHANNEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 COMMUNICATION_METHODS: Final = frozenset(
     {
         "communication.accept",
@@ -321,6 +328,15 @@ def _transport(value: Any) -> Mapping[str, str]:
 
 
 @dataclass(frozen=True)
+class MessagingServiceContext:
+    """Trusted owner-local channel assignments, never model-supplied authority."""
+
+    channels: Mapping[str, MessagingChannel]
+    client_channels: Mapping[str, frozenset[str]]
+    deliveries: Mapping[str, MessagingDelivery] = dataclass_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class HostedWeave:
     """One root-authorized ledger, signer, and authenticated local API."""
 
@@ -339,6 +355,7 @@ class HostedWeave:
     sources: SourceServiceContext | None = None
     relationships: RelationshipServiceContext | None = None
     peer_context: PeerClientContext | None = None
+    messaging: MessagingServiceContext | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -355,12 +372,17 @@ class HostedWeave:
         for capability_id, capability in self.capabilities.items():
             if capability_id != capability.capability_id:
                 raise ServiceError("capability_index_mismatch")
-            if not set(capability.methods) <= SERVICE_METHODS:
+            if not set(capability.methods) <= SERVICE_METHODS and (
+                self.messaging is None
+                or not set(capability.methods) <= MESSAGING_METHODS
+            ):
                 raise ServiceError("unsupported_capability_method")
             marker = (capability.client_id, capability.capability_id)
             if marker in seen_clients:
                 raise ServiceError("duplicate_capability")
             seen_clients.add(marker)
+        if self.messaging is not None:
+            self._messaging_context(startup=True)
         self.ledger.authority.validate_origin(
             self.ledger.local_origin, require_active=True
         )
@@ -485,6 +507,47 @@ class HostedWeave:
                 expected_server=cached_server,
                 expected_runtime=self.runtime_identity,
             )
+            if method == "messaging.inbox":
+                return self._messaging_response(verified, request, capability)
+            if method in {"messaging.send", "messaging.delivery", "messaging.reply"}:
+                # A previous RPC result never grants continuing send authority.
+                # The application journal resumes only the exact admitted pair.
+                try:
+                    if verified["ok"] and method != "messaging.delivery":
+                        self._messaging_delivery(
+                            {
+                                "channel_id": request["params"]["channel_id"],
+                                "send_id": request["params"]["send_id"],
+                            },
+                            client_id=client_id,
+                        )
+                    current = {
+                        "messaging.send": self._messaging_send,
+                        "messaging.reply": self._messaging_reply,
+                        "messaging.delivery": self._messaging_delivery,
+                    }[method](request["params"], client_id=client_id)
+                    if verified["ok"] and current == verified["result"]:
+                        return verified
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        result=current,
+                    )
+                except ServiceError as exception:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={
+                            "code": exception.code,
+                            "retryable": exception.retryable,
+                        },
+                    )
             if method == "curator.complete" and verified["ok"]:
                 curator = self.curator
                 result = verified["result"]
@@ -521,6 +584,11 @@ class HostedWeave:
                 completed_at_ms=self.clock(),
                 result=result,
             )
+            if (
+                method == "messaging.inbox"
+                and len(canonical_bytes(response)) > MAX_FRAME_BYTES
+            ):
+                raise ServiceError("messaging_page_too_large")
         except ServiceError as exception:
             response = create_response(
                 capability,
@@ -711,7 +779,7 @@ class HostedWeave:
             method=method,
             response=response,
         )
-        return verify_response(
+        verified = verify_response(
             stored,
             capability,
             expected_request_id=request_id,
@@ -719,6 +787,286 @@ class HostedWeave:
             expected_server=self.origin,
             expected_runtime=self.runtime_identity,
         )
+        if method == "messaging.inbox":
+            # finish_rpc can select a concurrent finisher's earlier response.
+            return self._messaging_response(verified, request, capability)
+        return verified
+
+    def _messaging_response(
+        self,
+        verified: dict[str, Any],
+        request: Mapping[str, Any],
+        capability: LocalCapability,
+    ) -> dict[str, Any]:
+        # The journal is evidence of a past response, not continuing disclosure
+        # permission. Re-read signed content under today's exact policy even on
+        # byte-identical retries; newer admissions may extend the cached prefix.
+        try:
+            current = self._messaging_inbox(
+                request["params"], client_id=capability.client_id
+            )
+            if verified["ok"]:
+                result = verified["result"]
+                if (
+                    not isinstance(result, Mapping)
+                    or set(result) != {"channel_id", "items", "policy_hash"}
+                    or result["channel_id"] != current["channel_id"]
+                    or result["policy_hash"] != current["policy_hash"]
+                    or not isinstance(result["items"], list)
+                    or result["items"] != current["items"][: len(result["items"])]
+                ):
+                    raise ServiceError("messaging_rejected")
+            if len(canonical_bytes(verified)) > MAX_FRAME_BYTES:
+                raise ServiceError("messaging_page_too_large")
+        except ServiceError as exception:
+            return self._response(
+                capability,
+                request_id=request["request_id"],
+                request_digest=verified["request_hash"],
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
+        return verified
+
+    def _messaging_context(self, *, startup: bool = False) -> MessagingServiceContext:
+        try:
+            context = self.messaging
+            if (
+                not isinstance(context, MessagingServiceContext)
+                or not isinstance(context.channels, Mapping)
+                or not isinstance(context.deliveries, Mapping)
+                or not (context.channels or context.deliveries)
+                or not isinstance(context.client_channels, Mapping)
+            ):
+                raise ValueError
+            clients = set()
+            for capability in self.capabilities.values():
+                methods = set(capability.methods)
+                if methods & MESSAGING_METHODS:
+                    if not methods <= MESSAGING_METHODS:
+                        raise ValueError
+                    clients.add(capability.client_id)
+            for client, assigned in context.client_channels.items():
+                if (
+                    client not in clients
+                    or not isinstance(assigned, frozenset)
+                    or not assigned
+                    <= context.channels.keys() | context.deliveries.keys()
+                ):
+                    raise ValueError
+            if startup and any(
+                not context.client_channels.get(client) for client in clients
+            ):
+                raise ValueError
+            member = self.ledger.authority.validate_origin(
+                self.origin, require_active=True
+            )
+            for channel_id, channel in context.channels.items():
+                if (
+                    not isinstance(channel_id, str)
+                    or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+                    or not isinstance(channel, MessagingChannel)
+                ):
+                    raise ValueError
+                local = channel._local()
+                if (
+                    channel.local_being_ref != self.ledger.authority.manifest.being_ref
+                    or local.authority.manifest.digest
+                    != self.ledger.authority.manifest.digest
+                    or local.credential_id != member["embodiment_credential_id"]
+                    or local.authority.validate_origin(self.origin, require_active=True)
+                    != member
+                ):
+                    raise ValueError
+            for channel_id, delivery in context.deliveries.items():
+                if (
+                    not isinstance(channel_id, str)
+                    or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+                    or not isinstance(delivery, MessagingDelivery)
+                    or delivery.sender.ledger is not self.ledger
+                    or delivery.sender.signer is not self.signer
+                ):
+                    raise ValueError
+                delivery.sender._bind(self.clock())
+            return context
+        except Exception:
+            raise ServiceError("messaging_rejected") from None
+
+    def _messaging_guard(
+        self,
+        context: MessagingServiceContext,
+        client_id: str,
+        outgoing: str,
+        incoming: str | None = None,
+    ) -> Callable[[], None]:
+        delivery = context.deliveries[outgoing]
+        sender = delivery.sender
+        binding = (
+            sender.context,
+            sender.custody,
+            sender.outbox,
+            delivery.providers,
+            delivery.config_digest,
+        )
+        channel = None if incoming is None else context.channels[incoming]
+        inbox = None if channel is None else channel.inbox
+
+        def authorize() -> None:
+            current = self._messaging_context()
+            assigned = current.client_channels.get(client_id, frozenset())
+            if (
+                outgoing not in assigned
+                or current.deliveries.get(outgoing) is not delivery
+                or delivery.sender is not sender
+                or binding
+                != (
+                    sender.context,
+                    sender.custody,
+                    sender.outbox,
+                    delivery.providers,
+                    delivery.config_digest,
+                )
+                or (
+                    incoming is not None
+                    and (
+                        incoming not in assigned
+                        or current.channels.get(incoming) is not channel
+                        or channel is None
+                        or channel.inbox is not inbox
+                    )
+                )
+            ):
+                raise ServiceError("messaging_rejected")
+
+        return authorize
+
+    def _messaging_delivery(self, params: Any, *, client_id: str) -> dict[str, Any]:
+        value = _closed(params, {"channel_id", "send_id"})
+        channel_id = value["channel_id"]
+        if (
+            not isinstance(channel_id, str)
+            or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+        ):
+            raise ServiceError("invalid_params")
+        send_id = _uuid(value["send_id"])
+        try:
+            context = self._messaging_context()
+            if channel_id not in context.client_channels.get(client_id, frozenset()):
+                raise ValueError
+            return context.deliveries[channel_id].inspect(
+                client_id=client_id,
+                send_id=send_id,
+                response_channels=tuple(
+                    channel
+                    for name, channel in context.channels.items()
+                    if name in context.client_channels.get(client_id, frozenset())
+                ),
+            )
+        except Exception:
+            raise ServiceError("messaging_rejected") from None
+
+    def _messaging_reply(self, params: Any, *, client_id: str) -> dict[str, Any]:
+        """Application-correlated response, NOT the canonical direct-reply contract."""
+        value = _closed(
+            params,
+            {"channel_id", "send_id", "received_channel_id", "message_id", "text"},
+        )
+        for field_name in ("channel_id", "received_channel_id"):
+            if (
+                not isinstance(value[field_name], str)
+                or _MESSAGING_CHANNEL_ID.fullmatch(value[field_name]) is None
+            ):
+                raise ServiceError("invalid_params")
+        send_id, message_id = _uuid(value["send_id"]), _uuid(value["message_id"])
+        text = _optional_text(value["text"], 16_384)
+        if text is None:
+            raise ServiceError("invalid_params")
+        try:
+            context = self._messaging_context()
+            if not {
+                value["channel_id"],
+                value["received_channel_id"],
+            } <= context.client_channels.get(client_id, frozenset()):
+                raise ValueError
+            incoming = context.channels[value["received_channel_id"]]
+            received = incoming.message(message_id)
+            return context.deliveries[value["channel_id"]].send(
+                client_id=client_id,
+                send_id=send_id,
+                thread_id=received["payload"]["intent"]["thread_id"],
+                text=text,
+                response_to=(incoming, message_id),
+                authorize=self._messaging_guard(
+                    context,
+                    client_id,
+                    value["channel_id"],
+                    value["received_channel_id"],
+                ),
+            )
+        except Exception:
+            raise ServiceError("messaging_rejected") from None
+
+    def _messaging_send(self, params: Any, *, client_id: str) -> dict[str, Any]:
+        value = _closed(params, {"channel_id", "send_id", "thread_id", "text"})
+        channel_id = value["channel_id"]
+        if (
+            not isinstance(channel_id, str)
+            or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+        ):
+            raise ServiceError("invalid_params")
+        send_id, thread_id = _uuid(value["send_id"]), _uuid(value["thread_id"])
+        text = _optional_text(value["text"], 16_384)
+        if text is None:
+            raise ServiceError("invalid_params")
+        try:
+            context = self._messaging_context()
+            if channel_id not in context.client_channels.get(client_id, frozenset()):
+                raise ValueError
+            return context.deliveries[channel_id].send(
+                client_id=client_id,
+                send_id=send_id,
+                thread_id=thread_id,
+                text=text,
+                authorize=self._messaging_guard(context, client_id, channel_id),
+            )
+        except Exception:
+            raise ServiceError("messaging_rejected") from None
+
+    def _messaging_inbox(self, params: Any, *, client_id: str) -> dict[str, Any]:
+        value = _closed(params, {"channel_id", "after", "limit"})
+        channel_id = value["channel_id"]
+        if (
+            not isinstance(channel_id, str)
+            or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+        ):
+            raise ServiceError("invalid_params")
+        after = _uint(value["after"])
+        limit = _uint(value["limit"], minimum=1, maximum=100)
+        try:
+            context = self._messaging_context()
+            if channel_id not in context.client_channels.get(client_id, frozenset()):
+                raise ServiceError("messaging_rejected")
+            channel = context.channels[channel_id]
+            policy_hash = channel._policy_hash(self.clock())
+            inbox = channel.inbox
+            items = channel.page(after=after, limit=limit)
+            current = self._messaging_context()
+            if (
+                channel_id not in current.client_channels.get(client_id, frozenset())
+                or current.channels.get(channel_id) is not channel
+                or channel.inbox is not inbox
+                or channel._policy_hash(self.clock()) != policy_hash
+            ):
+                raise ServiceError("messaging_rejected")
+            return {
+                "channel_id": channel_id,
+                "items": items,
+                "policy_hash": policy_hash,
+            }
+        except Exception:
+            # This owner-local boundary never serializes custody/store exceptions.
+            raise ServiceError("messaging_rejected") from None
 
     def _dispatch(
         self,
@@ -729,6 +1077,14 @@ class HostedWeave:
         request_id: str,
         request_hash: str,
     ) -> dict[str, Any]:
+        if method == "messaging.inbox":
+            return self._messaging_inbox(params, client_id=client_id)
+        if method == "messaging.send":
+            return self._messaging_send(params, client_id=client_id)
+        if method == "messaging.delivery":
+            return self._messaging_delivery(params, client_id=client_id)
+        if method == "messaging.reply":
+            return self._messaging_reply(params, client_id=client_id)
         communication = self.communication
         if communication is None:  # established in __post_init__
             raise ServiceError("communication_unavailable")
@@ -1868,6 +2224,7 @@ __all__ = [
     "BODY_METHODS",
     "COMMUNICATION_METHODS",
     "MEMORY_METHODS",
+    "MESSAGING_METHODS",
     "METHODS",
     "OBSERVE_METHODS",
     "OPERATOR_CAPABILITY_PROFILES",
@@ -1877,5 +2234,6 @@ __all__ = [
     "SERVICE_METHODS",
     "SOURCE_METHODS",
     "HostedWeave",
+    "MessagingServiceContext",
     "ServiceError",
 ]

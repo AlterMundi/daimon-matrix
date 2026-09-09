@@ -5,6 +5,11 @@ root and recovery holder runs `create-holder` separately, retains one encrypted
 seed in one owner-only package, and publishes only `descriptor.json`. An
 operator freezes those public descriptors with `create-intent`; each holder
 then runs `sign`, and the keyless `aggregate` step emits the genesis artifact.
+Offline custody is the default; an explicitly owner-authorized Source
+custodian may use [online custody](source-online-custody.md) with these same
+commands. Separate packages do not establish independent custodians. The
+example below uses threshold two, not a normative minimum; separate 1-of-1
+root and recovery policies are supported.
 Threshold shortfall, duplicate shares, role substitution and key substitution
 fail closed.
 
@@ -59,8 +64,8 @@ endpoint in repository evidence.
 
 ## Distributed genesis ceremony
 
-Run each `create-holder` and `sign` invocation in its holder's independent
-process and custody boundary. The following abbreviated example shows the file
+Run each `create-holder` and `sign` invocation in its holder's separate
+process and package. Enforce the selected custody policy's access boundary. The following abbreviated example shows the file
 flow; passwords enter through inherited descriptors. Outputs must be new except
 for the exact validated `create-holder` post-rename retry described above:
 
@@ -99,7 +104,10 @@ separated custody. Never use its evidence to claim a production quorum.
 After encrypted runtime directories are transferred through an authenticated
 channel and verified on their destination hosts, remove the transferred copy
 from staging. At rest, each host retains only its own encrypted runtime and
-transport custody; the root/recovery custody remains offline and separate.
+transport custody. Root/recovery custody remains separate under the selected
+custody policy; the authorized Source operator host is not an ordinary consumer
+host. This fixture does not prove either offline isolation or live Source
+access enforcement.
 
 The output contains:
 
