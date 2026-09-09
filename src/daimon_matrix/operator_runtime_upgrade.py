@@ -273,11 +273,20 @@ def stage(
             or bundle["keystore"]["filename"] != "custody.json"
             or signing_slot != f"runtime.signing.v1:{label}"
             or len(bundle["capabilities"]) != 2
-            or {row["secret_slot"] for row in bundle["capabilities"]}
-            != {
-                f"runtime.capability.v1:{label}",
-                f"runtime.capability.v1:status:{label}",
-            }
+            or len({row["secret_slot"] for row in bundle["capabilities"]}) != 2
+            or f"runtime.capability.v1:{label}"
+            not in {row["secret_slot"] for row in bundle["capabilities"]}
+            # The independently named observer must be the other distinct row,
+            # even when the signing label itself begins with "status:".
+            or not any(
+                isinstance(row["secret_slot"], str)
+                and row["secret_slot"] != f"runtime.capability.v1:{label}"
+                and row["secret_slot"].startswith("runtime.capability.v1:status:")
+                and row["secret_slot"] != "runtime.capability.v1:status:"
+                and row["descriptor"]["methods"]
+                == sorted(profiles.HOST_CAPABILITY_PROFILES["status"])
+                for row in bundle["capabilities"]
+            )
             or {"runtime_id", "runtime_label", "operator_capability_binding"}
             & bundle.keys()
         ):

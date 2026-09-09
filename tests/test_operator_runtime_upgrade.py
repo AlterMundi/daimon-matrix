@@ -277,6 +277,197 @@ rt.service.ledger.append_local(
         args.update(changes)
         return upgrade.stage(**args)
 
+    def provision_legacy_status(self, status_label="clusterd"):
+        """Fresh fixture rotation via pinned legacy APIs, not a production repair."""
+        script = """
+import sys, os, json, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from daimon_matrix.operator_bootstrap import _private_write
+from daimon_matrix.keystore import EncryptedKeystore
+from daimon_matrix.local_api import create_capability
+from daimon_matrix.runtime import load_runtime
+root, label = Path(sys.argv[2]), sys.argv[3]
+password = b"synthetic-upgrade-password"
+bundle = json.loads((root / "runtime.json").read_bytes())
+store = EncryptedKeystore(root / "custody.json")
+current = store.open(lambda: bytearray(password))
+old = next(row for row in bundle["capabilities"] if ":status:" in row["secret_slot"])
+now = time.time_ns() // 1000000
+cap = create_capability(
+    os.urandom(32), client_id="client:status:" + label,
+    methods=old["descriptor"]["methods"],
+    not_before_ms=now, not_after_ms=now + 3600000,
+)
+slot = "runtime.capability.v1:status:" + label
+secrets = {
+    key: value for key, value in current.secrets.items() if key != old["secret_slot"]
+}
+secrets[slot] = cap.key
+updated = store.rotate(
+    lambda: bytearray(password), lambda: bytearray(password),
+    expected_counter=current.counter, control_head=current.control_head,
+    secrets=secrets,
+)
+bundle["capabilities"] = [row for row in bundle["capabilities"] if row != old] + [
+    dict(descriptor=cap.descriptor, secret_slot=slot)
+]
+bundle["keystore"]["counter"] = updated.counter
+(root / "runtime.json").unlink()
+_private_write(root / "runtime.json", bundle)
+load_runtime(
+    root, "runtime.json", lambda: bytearray(password),
+    clock=lambda: time.time_ns() // 1000000,
+)
+"""
+        subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                script,
+                str(LEGACY),
+                str(self.source),
+                status_label,
+            ],
+            check=True,
+        )
+        self.bundle = json.loads((self.source / "runtime.json").read_bytes())
+        self.before = files(self.source)
+        self.assertEqual(self.bundle["keystore"]["counter"], 2)
+
+    def test_native_status_labels_preserve_exact_slots_through_forward_and_rollback(
+        self,
+    ):
+        for status_label in ("alpha", "clusterd"):
+            with self.subTest(status_label=status_label):
+                self.setUp()
+                self.provision_legacy_status(status_label)
+                old = EncryptedKeystore(self.source / "custody.json").open(
+                    lambda: bytearray(PASSWORD)
+                )
+                old_slots = {row["secret_slot"] for row in self.bundle["capabilities"]}
+                self.assertEqual(
+                    old_slots,
+                    {
+                        "runtime.capability.v1:alpha",
+                        "runtime.capability.v1:status:" + status_label,
+                    },
+                )
+                ready = self.stage()
+                self.assertEqual(
+                    (ready["counter_before"], ready["counter_after"]), (2, 3)
+                )
+                self.assertEqual(files(self.source), self.before)
+                self.assertEqual(files(self.transaction / "checkpoint"), self.before)
+                upgrade.publish(**self.publish_args())
+                current = json.loads((self.source / "runtime.json").read_bytes())
+                self.assertEqual(current["runtime_label"], "alpha")
+                self.assertEqual(
+                    current["runtime_id"],
+                    upgrade.profiles.operator_runtime_id(
+                        "alpha",
+                        self.bundle["manifest"]["being_ref"],
+                        self.bundle["local_origin"],
+                        upgrade.signing_descriptor(
+                            old.secrets["runtime.signing.v1:alpha"]
+                        )["key_id"],
+                    ),
+                )
+                custody = EncryptedKeystore(self.source / "custody.json").open(
+                    lambda: bytearray(PASSWORD)
+                )
+                self.assertEqual(custody.counter, 3)
+                self.assertFalse(old_slots & custody.secrets.keys())
+                for slot in old.secrets.keys() - old_slots:
+                    self.assertEqual(custody.secrets[slot], old.secrets[slot])
+                reverse = upgrade.stage_rollback(**self.publish_args())
+                self.assertEqual(
+                    (reverse["counter_before"], reverse["counter_after"]), (3, 4)
+                )
+                upgrade.publish_rollback(**self.rollback_args())
+                upgrade._validate(self.source, LEGACY, PASSWORD)
+                restored = json.loads((self.source / "runtime.json").read_bytes())
+                self.assertEqual(restored["capabilities"], self.bundle["capabilities"])
+                custody = EncryptedKeystore(self.source / "custody.json").open(
+                    lambda: bytearray(PASSWORD)
+                )
+                self.assertEqual(custody.counter, 4)
+                self.assertEqual(custody.secrets, old.secrets)
+                self.assertEqual(files(self.transaction / "checkpoint"), self.before)
+                for name, digest in self.before.items():
+                    if name not in {
+                        "custody.json",
+                        ".custody.json.highwater",
+                        "runtime.json",
+                    }:
+                        self.assertEqual(files(self.source)[name], digest)
+
+    def test_status_shape_refusals_preserve_source_before_transaction(self):
+        for case in (
+            "duplicate-status",
+            "duplicate-operator",
+            "empty-status",
+            "missing-status",
+            "missing-operator",
+            "wrong-operator-label",
+            "wrong-role",
+            "extra-method",
+            "duplicate-method",
+            "malformed-slot",
+            "malformed-descriptor",
+            "overlapping-operator-status",
+            "duplicate-overlapping-slot",
+        ):
+            with self.subTest(case=case):
+                self.setUp()
+                self.provision_legacy_status()
+                rows = self.bundle["capabilities"]
+                operator, status = rows
+                if case == "duplicate-status":
+                    rows[0] = status
+                elif case == "duplicate-operator":
+                    rows[1] = operator
+                elif case == "empty-status":
+                    status["secret_slot"] = "runtime.capability.v1:status:"
+                elif case == "missing-status":
+                    rows.pop()
+                elif case == "missing-operator":
+                    rows.pop(0)
+                elif case == "wrong-operator-label":
+                    operator["secret_slot"] = "runtime.capability.v1:other"
+                elif case == "wrong-role":
+                    status["descriptor"]["methods"] = ["runtime.status"]
+                elif case == "extra-method":
+                    status["descriptor"]["methods"].append("memory.append")
+                elif case == "duplicate-method":
+                    status["descriptor"]["methods"].append("runtime.status")
+                elif case == "malformed-slot":
+                    status["secret_slot"] = None
+                elif case in {
+                    "overlapping-operator-status",
+                    "duplicate-overlapping-slot",
+                }:
+                    self.bundle["keystore"]["signing_slot"] = (
+                        "runtime.signing.v1:status:clusterd"
+                    )
+                    operator["secret_slot"] = (
+                        "runtime.capability.v1:unrelated"
+                        if case == "overlapping-operator-status"
+                        else status["secret_slot"]
+                    )
+                else:
+                    status["descriptor"] = None
+                (self.source / "runtime.json").write_bytes(
+                    upgrade.canonical_bytes(self.bundle)
+                )
+                before = files(self.source)
+                with self.assertRaises((upgrade.UpgradeError, TypeError, KeyError)):
+                    self.stage()
+                self.assertEqual(files(self.source), before)
+                self.assertFalse(self.transaction.exists())
+
     def test_monotonic_rollback_restores_real_legacy_contract(self):
         self.stage()
         args = self.publish_args()
