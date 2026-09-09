@@ -1,6 +1,44 @@
 # DM-132 review record
 
-## Status
+## Independent legacy status-label correction — 2026-09-09
+
+The deployed legacy receiver has signing label `daimonmatrix` and a distinct
+observer slot `runtime.capability.v1:status:clusterd`. Both the pinned native
+legacy parser and actual five-method status client accept this shape. The prior
+upgrade gate incorrectly required bootstrap-default matching labels, rejecting
+before transaction creation. Production source was preserved and its original
+services resumed; no slot or descriptor was rewritten to satisfy a fixture.
+
+Independent read-only review **APPROVE**, limited to:
+
+- `src/daimon_matrix/operator_runtime_upgrade.py`, SHA-256
+  `3af58175dea9b02c40fb4774747061e0cc12721a90d368d8f44737f4d04c1719`.
+- `tests/test_operator_runtime_upgrade.py`, SHA-256
+  `12845c87e350922783d10bbdb5293c62a771045e5577d53949076fe9f6cc048d`.
+
+The sole production hunk requires two distinct slots, the original signing-label
+operator and a different independently named nonempty status slot with exactly
+the canonical observer methods. Identity derivation, source/legacy pins, native
+validation, live authorization, custody counters, publication and monotonic
+rollback remain unchanged. The reviewer ran all 39 upgrade tests plus 35
+independently recorded cases: two fresh positive journeys, the exact old failure,
+and 32 adversarial refusals. Forward/reverse preserves the old slot names and
+secrets at counters 2 -> 3 -> 4. Malformed API inputs can retain existing bounded
+TypeError/KeyError refusal; the CLI catches them without exposing private data.
+
+Parent reconciled both hashes and separately verified the new Cluster native V1
+external-sidecar forward/reverse regression against these frozen source bytes.
+That is unit integration evidence, not installed dependency provenance. Expected
+DM041 generated hash drift was regenerated without changing inventories. Declared
+mypy 2.3.0 passes all 58 source files; an initial attempt using Cluster's mypy
+1.19.1 produced unrelated diagnostics and was not used to modify source.
+
+Full-repository qualification, exact-commit CI, installed-pair qualification,
+normal integration and the actual bilateral tool journey remain separate gates.
+The bounded approval does not claim completed deployment or authorize checkpoint
+rewinds after post-activation effects.
+
+## Historical status
 
 **INCOMPLETE — not release or deployment approval.** This record preserves bounded
 review results while real receiver integration is completed. The published
