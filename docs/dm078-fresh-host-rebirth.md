@@ -1,6 +1,6 @@
 # DM-078 additional-embodiment rebirth
 
-Status: implemented V0 public-request/offline-root contracts for both an
+Status: implemented V0 public-request/separate-holder contracts for both an
 additional embodiment and recovery-quorum rebirth. Installed distinct-host,
 true relocation and disposable restore journeys remain operational gates.
 
@@ -16,13 +16,19 @@ body may ingest the same being's accepted signed history.
 
 ## Split-custody ceremony
 
-The target and offline-root halves exchange public canonical artifacts:
+The target and root-holder halves exchange public canonical artifacts.
+Offline custody is the default; [owner-authorized Source online custody](runbooks/source-online-custody.md)
+uses the same typed artifacts and separate holder packages. The online
+custodian may control both roles but gains no exception to signature checks;
+ordinary target runtimes and consumers do not receive holder custody.
+
+The ceremony is:
 
 1. The fresh target generates independent Ed25519 embodiment and transport
    keys plus an X25519 encryption key. It creates
    `dm.operator.embodiment-request/v1`, signed independently by the embodiment
    and transport keys. The request contains no private key.
-2. The offline holder verifies the exact being, control and manifest heads,
+2. The root holder verifies the exact being, control and manifest heads,
    expiry, nonce, new identifiers, partial embodiment acceptance, first
    incarnation and both proofs of possession. It never receives target
    custody.
@@ -215,8 +221,10 @@ daimon-rebirth activate-recovery \
 ```
 
 Each old recovery holder and each new root holder opens only its own package.
-The intent and both aggregators are keyless; no process or store owns a quorum
-of seeds. Target preparation happens only after the public recovery artifact
+The intent and both aggregators are keyless; each holder invocation opens one
+seed in its own package. A 1-of-1 role is itself a quorum; one custodian may
+control multiple separate packages under the selected custody policy, without
+claiming independent holders or offline isolation. Target preparation happens only after the public recovery artifact
 verifies. The activation binds the recovery artifact, old and new control
 heads, old and successor manifests, the full revocation set, and the fresh
 body's credential, incarnation and peer principal. It is signed by independent

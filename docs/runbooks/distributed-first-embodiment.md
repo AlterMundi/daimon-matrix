@@ -1,13 +1,19 @@
 # Distributed first embodiment and plural continuity
 
 This is the operational path from a threshold-separated genesis to the first
-runnable embodiment, then to additional embodiments. No process opens more than
-one root holder package, and no target host receives a root seed.
+runnable embodiment, then to additional embodiments. No holder invocation opens
+more than one root holder package, and no target runtime custody receives a
+root seed. Offline holder hosts are the default. An explicitly authorized
+Source operator may keep separate online holder custody on an authorized host,
+including a Source embodiment host, under [the online custody runbook](source-online-custody.md).
 
-The holder labels describe independent encrypted packages and process
-invocations. They do not require different people. One operator may execute all
-steps while preserving the cryptographic 2-of-3 separation, provided each
-password and package remains separately controlled.
+The holder labels describe separate encrypted packages and process invocations,
+not necessarily different people. Thresholds are explicit generic M-of-N
+policies; distinct 1-of-1 root and recovery policies are supported. One operator
+may execute all holder steps, but centralized control does not establish an
+independent quorum. The abbreviated example uses two root shares; collect the
+actual declared threshold, without changing the keyless aggregation contract.
+The `/offline/` paths illustrate the default mode, not CLI-enforced isolation.
 
 ## First embodiment
 

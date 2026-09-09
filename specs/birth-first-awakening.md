@@ -117,13 +117,19 @@ after expiry.
 Before accepting, the newborn locally generates fresh root and recovery key
 sets through the production OS CSPRNG path. It creates a self-certifying
 `daimon-genesis/v0` at recovery generation zero and sequence zero. Root material
-is placed in encrypted offline custody, and the recovery copy is restored and
-verified before first awakening in the synthetic acceptance journey.
+is placed in encrypted custody under the default offline policy or the
+explicit [owner-authorized Source policy](identity-root-v1.md#owner-authorized-source-custody).
+The recovery copy is restored and verified before first awakening in the
+synthetic acceptance journey.
 
 The parent, bootstrap transport, Cluster, Tribe Bridge, test harness, model,
-and first embodiment MUST NOT receive a newborn root or recovery private key.
-No secret enters an artifact, log, argv, ambient environment, report, wheel,
-sdist, ledger, or synchronized event.
+and first embodiment MUST NOT receive a newborn root or recovery private key
+by virtue of those roles. Only a separately owner-authorized Source custodian
+may access online holder custody under the linked policy, not through a birth
+offer, source reference or inherited parent authority. Fresh newborn keys and
+parent/newborn key disjointness remain mandatory. No secret enters an artifact,
+model context, chat, log, argv, ambient environment, report, wheel, sdist,
+ledger, or synchronized event.
 
 `dm.birth.acceptance/v1` has exactly `schema`, `acceptance_id`, `body`, and
 `signatures`. Its body contains `core` and `awakening_proof`.
@@ -256,7 +262,7 @@ event and the memory admission rules in [memory-boundaries.md](memory-boundaries
 Similarity of text is neither proof of copying nor permission to rewrite
 authorship.
 
-The offline root keystore, runtime keystore, ledger, registry, projection
+The root holder custody, runtime keystore, ledger, registry, projection
 cache, body profile, request journal, and transport state are separate logical
 objects. The DM-060 runner creates all writable objects under one fresh,
 owner-only, empty test root and reads no live profile or service state.
