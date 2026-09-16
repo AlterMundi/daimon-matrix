@@ -287,6 +287,56 @@ class ContractTests(CodexBodyFixture):
         with self.assertRaisesRegex(CodexBodyError, "invalid_codex_bootstrap"):
             validate_bootstrap(tampered)
 
+    def test_external_schema_finite_floats_use_audited_json_normalization(self) -> None:
+        root = self.root / "float-schema"
+        root.mkdir()
+        value = {"minimum": 0.0, "maximum": 1.5, "title": "café", "nested": [2.0]}
+        (root / "one.json").write_text(json.dumps(value), encoding="utf-8")
+        expected = hashlib.sha256(
+            b"one.json\x00"
+            + json.dumps(
+                value,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            + b"\x00"
+        ).hexdigest()
+        self.assertEqual(normalized_schema_bundle_digest(root), (1, expected))
+        # External schema parsing must NOT relax Matrix's signed-artifact parser.
+        from daimon_matrix.codex_body import _json_load
+
+        with self.assertRaises(CodexBodyError):
+            _json_load(b'{"minimum":0.0}', "matrix_float_rejected")
+
+    def test_external_schema_rejects_duplicate_nonfinite_and_invalid_json(self) -> None:
+        root = self.root / "invalid-schema"
+        root.mkdir()
+        for raw in (
+            b'{"a":1,"a":2}',
+            b'{"nested":{"a":1,"a":2}}',
+            b'{"minimum":NaN}',
+            b'{"minimum":Infinity}',
+            b'{"minimum":-Infinity}',
+            b'{"minimum":1e999}',
+            b"{invalid}",
+            br'{"title":"\ud800"}',
+        ):
+            (root / "one.json").write_bytes(raw)
+            with self.subTest(raw=raw), self.assertRaises(CodexBodyError):
+                normalized_schema_bundle_digest(root)
+
+    @unittest.skipUnless(
+        os.environ.get("CODEX_GENERATED_SCHEMA_ROOT"),
+        "optional read-only genuine vendor schema bundle",
+    )
+    def test_genuine_generated_schema_matches_existing_pin(self) -> None:
+        root = Path(os.environ["CODEX_GENERATED_SCHEMA_ROOT"])
+        self.assertEqual(
+            normalized_schema_bundle_digest(root), (275, APP_SERVER_SCHEMA_DIGEST)
+        )
+
     def test_generated_schema_digest_canonicalizes_unstable_definition_order(
         self,
     ) -> None:
