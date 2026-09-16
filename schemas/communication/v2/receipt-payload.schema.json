@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/communication/v2/receipt-payload.schema.json",
   "title": "Recipient-authored foreign-reference receipt V2",
   "type": "object",
   "additionalProperties": false,

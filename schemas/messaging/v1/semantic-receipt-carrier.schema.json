@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/messaging/v1/semantic-receipt-carrier.schema.json",
   "title": "V2 application's reply body carrying a complete signed recipient receipt",
   "type": "object",
   "additionalProperties": false,
