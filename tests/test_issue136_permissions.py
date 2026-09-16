@@ -2,12 +2,15 @@
 
 import contextlib
 import copy
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 
 from daimon_matrix import identity, local_api, relationships
-from daimon_matrix.synthetic_relationships import _Journey
+from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.relationship_store import RelationshipStore
+from daimon_matrix.synthetic_relationships import _event_ref, _Journey
 from tests.test_dm021_identity import NOW, IdentityFixture, seed
 
 
@@ -104,6 +107,517 @@ class V2Journey(_Journey):
     def prepare(self):
         with contextlib.suppress(FixtureComplete):
             self.run()
+
+
+class CurrentAuthorityReviewTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="independent136-")
+        self.addCleanup(self.tmp.cleanup)
+        self.j = V2Journey(Path(self.tmp.name))
+        self.j.prepare()
+        events = self.j.store.events()
+        self.grant = next(e for e in events if e["kind"] == "matrix/relationship-grant")
+        self.acceptance = next(
+            e for e in events if e["kind"] == "matrix/relationship-grant-acceptance"
+        )
+        self.gid = self.grant["payload"]["grant_id"]
+
+    def state(self, at=NOW + 200):
+        reopened = RelationshipStore(
+            self.j.store.path, authority_resolver=self.j.store.authority_resolver
+        )
+        with reopened.authorization_view(
+            at_ms=at, card_verifier=self.j.card_verifier
+        ) as view:
+            return view.grants[self.gid]["state"]
+
+    def revoke(self):
+        return _Journey.append(
+            self.j,
+            "founder",
+            "matrix/relationship-grant-revocation",
+            {
+                "schema": "dm.relationship.grant-revocation/v2",
+                "grant_id": self.gid,
+                "grant_ref": _event_ref(self.grant),
+                "acceptance_ref": _event_ref(self.acceptance),
+                "actor_being_ref": self.grant["being_ref"],
+                "action": "revoke",
+                "reason": "manual",
+                "revoked_at_ms": NOW + 100,
+            },
+            at_ms=NOW + 100,
+        )
+
+    def signed_variant(self, event):
+        changed = copy.deepcopy(event)
+        changed["payload"]["reason"] = "independently signed conflicting reason"
+        core = {
+            k: v for k, v in changed.items() if k not in {"content_hash", "signature"}
+        }
+        changed["content_hash"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
+        changed["signature"] = self.j.identities["founder"].signer.signature(
+            changed["content_hash"]
+        )
+        return changed
+
+    def test_control_revocation_restart_clock_rollback_failed_effect(self):
+        self.assertEqual(self.state(), "active")
+        self.revoke()
+        with (
+            self.assertRaisesRegex(RuntimeError, "failed effect"),
+            self.j.store.authorization_view(
+                at_ms=NOW + 200, card_verifier=self.j.card_verifier
+            ) as view,
+        ):
+            self.assertEqual(view.grants[self.gid]["state"], "revoked")
+            raise RuntimeError("failed effect")
+        self.assertEqual(self.state(NOW + 10), "revoked")
+
+    def test_observed_revocation_must_survive_later_signed_fork(self):
+        self.assertEqual(self.state(), "active")
+        revocation = self.revoke()
+        self.assertEqual(self.state(), "revoked")
+        self.j.store.ingest(self.signed_variant(revocation))
+        # Both signed records are durably retained; fork must not restore permission.
+        self.assertIn(revocation, self.j.store.events())
+        self.assertNotEqual(
+            self.state(), "active", "signed fork erased an observed terminal revocation"
+        )
+
+    def test_withdrawal_must_survive_later_signed_fork(self):
+        card = next(
+            e
+            for e in self.j.store.events()
+            if e["kind"] == "matrix/relationship-card"
+            and e["being_ref"] == self.grant["being_ref"]
+        )
+        p = {
+            **card["payload"],
+            "sequence": 1,
+            "previous_card_event_id": card["event_id"],
+            "status": "withdrawn",
+            "issued_at_ms": NOW + 100,
+            "validity": {"mode": "until-revoked", "not_before_ms": NOW + 100},
+        }
+        withdrawn = _Journey.append(
+            self.j, "founder", "matrix/relationship-card", p, at_ms=NOW + 100
+        )
+        self.assertNotEqual(self.state(), "active")
+        changed = copy.deepcopy(withdrawn)
+        changed["payload"]["status"] = "active"
+        core = {
+            k: v for k, v in changed.items() if k not in {"content_hash", "signature"}
+        }
+        changed["content_hash"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
+        changed["signature"] = self.j.identities["founder"].signer.signature(
+            changed["content_hash"]
+        )
+        self.j.store.ingest(changed)
+        self.assertNotEqual(
+            self.state(),
+            "active",
+            "fork removed withdrawal and restored predecessor card",
+        )
+
+    def test_current_snapshot_does_not_activate_future_membership(self):
+        membership = next(
+            e
+            for e in self.j.store.events()
+            if e["kind"] == "matrix/tribe-membership-acceptance"
+        )
+        tribe = membership["payload"]["tribe_ref"]
+        member = membership["being_ref"]
+        joined = membership["payload"]["accepted_at_ms"]
+        with self.j.store.authorization_view(
+            at_ms=joined, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertIn(
+                member,
+                [row["principal_id"] for row in view.snapshot(tribe).value["members"]],
+            )
+        with self.j.store.authorization_view(
+            at_ms=joined - 1, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertNotIn(
+                member,
+                [row["principal_id"] for row in view.snapshot(tribe).value["members"]],
+                "current snapshot exposes membership before acceptance time",
+            )
+
+    def test_founding_clock_boundary(self):
+        declaration = next(
+            e for e in self.j.store.events() if e["kind"] == "matrix/tribe-declaration"
+        )
+        tribe = declaration["payload"]["tribe_ref"]
+        created = declaration["payload"]["declaration"]["created_at_ms"]
+        founder = declaration["payload"]["declaration"]["founder_principal_id"]
+        # Use only founding evidence: future grants/memberships cannot mask it.
+        store = RelationshipStore(
+            Path(self.tmp.name) / "founding.sqlite",
+            authority_resolver=self.j.store.authority_resolver,
+        )
+        for event in self.j.store.events():
+            if event["kind"] in {
+                "matrix/relationship-card",
+                "matrix/tribe-declaration",
+            }:
+                store.ingest(event)
+        with store.authorization_view(
+            at_ms=created, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertEqual(view.tribes[tribe]["state"], "active")
+            self.assertEqual(
+                view.tribes[tribe]["memberships"][founder]["state"], "active"
+            )
+        with store.authorization_view(
+            at_ms=created - 1, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertNotEqual(view.tribes[tribe]["state"], "active")
+            self.assertNotEqual(
+                view.tribes[tribe]["memberships"][founder]["state"], "active"
+            )
+
+    def test_future_founder_transfer_never_reactivates_retired_epoch(self):
+        from daimon_matrix.canonical import b64url
+        from daimon_matrix.synthetic_relationships import _seed
+
+        membership = next(
+            e
+            for e in self.j.store.events()
+            if e["kind"] == "matrix/tribe-membership-acceptance"
+        )
+        tribe = membership["payload"]["tribe_ref"]
+        member = membership["being_ref"]
+        nonce = b64url(_seed("review-future-founder"))
+        identifier = relationships.founder_transfer_id(
+            tribe=tribe, from_epoch=0, successor_being_ref=member, nonce=nonce
+        )
+        transfer = _Journey.append(
+            self.j,
+            "founder",
+            "matrix/tribe-founder-transfer",
+            {
+                "schema": relationships.FOUNDER_TRANSFER_SCHEMA,
+                "tribe_ref": tribe,
+                "transfer_id": identifier,
+                "from_epoch": 0,
+                "to_epoch": 1,
+                "old_founder_being_ref": self.grant["being_ref"],
+                "successor_being_ref": member,
+                "nonce": nonce,
+                "issued_at_ms": NOW + 100,
+            },
+            at_ms=NOW + 100,
+        )
+        # An unaccepted proposal does not retire epoch zero.
+        with self.j.store.authorization_view(
+            at_ms=NOW + 100, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertEqual(view.tribes[tribe]["state"], "active")
+            self.assertEqual(view.tribes[tribe]["founder_epoch"], 0)
+        _Journey.append(
+            self.j,
+            "member",
+            "matrix/tribe-founder-acceptance",
+            {
+                "schema": relationships.FOUNDER_ACCEPTANCE_SCHEMA,
+                "tribe_ref": tribe,
+                "transfer_id": identifier,
+                "transfer_ref": _event_ref(transfer),
+                "from_epoch": 0,
+                "to_epoch": 1,
+                "successor_being_ref": member,
+                "accepted_at_ms": NOW + 101,
+            },
+            at_ms=NOW + 101,
+        )
+        for at in (NOW + 101, NOW + 100, NOW + 10):
+            reopened = RelationshipStore(
+                self.j.store.path, authority_resolver=self.j.store.authority_resolver
+            )
+            with reopened.authorization_view(
+                at_ms=at, card_verifier=self.j.card_verifier
+            ) as view:
+                self.assertEqual(view.tribes[tribe]["founder_epoch"], 1)
+                self.assertEqual(view.tribes[tribe]["founder_being_ref"], member)
+                if at == NOW + 101:
+                    self.assertEqual(view.tribes[tribe]["state"], "active")
+                    self.assertEqual(view.snapshot(tribe).value["founder_epoch"], 1)
+                else:
+                    self.assertNotEqual(view.tribes[tribe]["state"], "active")
+                    self.assertNotEqual(view.grants[self.gid]["state"], "active")
+                    from daimon_matrix.relationship_store import RelationshipStoreError
+
+                    with self.assertRaises(RelationshipStoreError):
+                        view.snapshot(tribe)
+        historical = self.j.store.view(
+            at_ms=NOW + 100, card_verifier=self.j.card_verifier
+        )
+        self.assertEqual(historical.tribes[tribe]["founder_epoch"], 0)
+        self.assertEqual(historical.tribes[tribe]["state"], "active")
+
+    def terminal(self, lane):
+        events = self.j.store.events()
+        founder = self.grant["payload"]["grantor_being_ref"]
+        member = self.grant["payload"]["subject_being_ref"]
+        membership = next(
+            e for e in events if e["kind"] == "matrix/tribe-membership-acceptance"
+        )
+        if lane in {"revoke", "relinquish"}:
+            label = "founder" if lane == "revoke" else "member"
+            kind = "matrix/relationship-grant-revocation"
+            payload = {
+                "schema": "dm.relationship.grant-revocation/v2",
+                "grant_id": self.gid,
+                "grant_ref": _event_ref(self.grant),
+                "acceptance_ref": _event_ref(self.acceptance),
+                "actor_being_ref": founder if lane == "revoke" else member,
+                "action": lane,
+                "reason": "manual",
+                "revoked_at_ms": NOW + 100,
+            }
+        elif lane == "withdrawal":
+            label = "founder"
+            kind = "matrix/relationship-card"
+            card = next(
+                e for e in events if e["kind"] == kind and e["being_ref"] == founder
+            )
+            payload = {
+                **card["payload"],
+                "sequence": 1,
+                "previous_card_event_id": card["event_id"],
+                "status": "withdrawn",
+                "issued_at_ms": NOW + 100,
+                "validity": {"mode": "until-revoked", "not_before_ms": NOW + 100},
+            }
+        elif lane == "close":
+            label = "founder"
+            kind = "matrix/relationship-close"
+            offer = next(e for e in events if e["kind"] == "matrix/relationship-offer")
+            acceptance = next(
+                e for e in events if e["kind"] == "matrix/relationship-acceptance"
+            )
+            payload = {
+                "schema": "dm.relationship.close/v2",
+                "relationship_id": offer["payload"]["relationship_id"],
+                "offer_ref": _event_ref(offer),
+                "acceptance_ref": _event_ref(acceptance),
+                "closer_being_ref": founder,
+                "reason": "manual",
+                "closed_at_ms": NOW + 100,
+            }
+        else:
+            label = "member" if lane == "leave" else "founder"
+            kind = "matrix/tribe-membership-" + lane
+            payload = {
+                "schema": "dm.tribe.membership-" + lane + "/v1",
+                "tribe_ref": membership["payload"]["tribe_ref"],
+                "founder_epoch": 0,
+                "member_being_ref": member,
+                "membership_acceptance_ref": _event_ref(membership),
+                "reason": "manual",
+                "terminated_at_ms": NOW + 100,
+            }
+            if lane == "expulsion":
+                payload["founder_being_ref"] = founder
+        event = _Journey.append(self.j, label, kind, payload, at_ms=NOW + 100)
+        variant = copy.deepcopy(event)
+        if lane == "withdrawal":
+            variant["payload"]["status"] = "active"
+        else:
+            variant["payload"]["reason"] = "conflicting signed reason"
+        return event, self.resign(variant, label)
+
+    def resign(self, event, label):
+        core = {
+            k: v for k, v in event.items() if k not in {"content_hash", "signature"}
+        }
+        event["content_hash"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
+        event["signature"] = self.j.identities[label].signer.signature(
+            event["content_hash"]
+        )
+        return event
+
+    def test_terminal_lanes_both_orders_restart_rollback_and_failed_effect(self):
+        self.check_terminal_lanes(different_event_id=False)
+
+    def test_terminal_position_forks_both_orders_restart_and_rollback(self):
+        self.check_terminal_lanes(different_event_id=True)
+
+    def check_terminal_lanes(self, *, different_event_id):
+        baseline = self.j.store.events()
+        original_store = self.j.store
+        for lane in (
+            "revoke",
+            "relinquish",
+            "close",
+            "leave",
+            "expulsion",
+            "withdrawal",
+        ):
+            # Independent signed journey state for each lane: no cross-lane denials.
+            self.j.store = RelationshipStore(
+                Path(self.tmp.name) / (lane + "-source.sqlite"),
+                authority_resolver=original_store.authority_resolver,
+            )
+            for event in baseline:
+                self.j.store.ingest(event)
+            self.assertEqual(self.state(), "active")
+            terminal, variant = self.terminal(lane)
+            if different_event_id:
+                variant["event_id"] = "12345678-1234-4234-8234-123456789099"
+                label = next(
+                    label
+                    for label, identity in self.j.identities.items()
+                    if identity.state.being_ref == variant["being_ref"]
+                )
+                variant = self.resign(variant, label)
+            self.assertNotEqual(self.state(), "active")
+            for reverse in (False, True):
+                with self.subTest(lane=lane, reverse=reverse):
+                    path = Path(self.tmp.name) / f"{lane}-{reverse}.sqlite"
+                    store = RelationshipStore(
+                        path, authority_resolver=original_store.authority_resolver
+                    )
+                    for event in baseline:
+                        store.ingest(event)
+                    for event in (
+                        (variant, terminal) if reverse else (terminal, variant)
+                    ):
+                        store.ingest(event)
+                    retained = store.events()
+                    self.assertIn(terminal, retained)
+                    self.assertIn(variant, retained)
+                    for at in (NOW + 200, NOW + 10):
+                        reopened = RelationshipStore(
+                            path, authority_resolver=original_store.authority_resolver
+                        )
+                        with (
+                            self.assertRaisesRegex(RuntimeError, "failed effect"),
+                            reopened.authorization_view(
+                                at_ms=at, card_verifier=self.j.card_verifier
+                            ) as view,
+                        ):
+                            self.assertNotEqual(
+                                view.grants[self.gid]["state"], "active"
+                            )
+                            if lane in {"leave", "expulsion"}:
+                                tribe = terminal["payload"]["tribe_ref"]
+                                member = terminal["payload"]["member_being_ref"]
+                                self.assertNotEqual(
+                                    view.tribes[tribe]["memberships"][member]["state"],
+                                    "active",
+                                )
+                                self.assertNotIn(
+                                    member,
+                                    [
+                                        r["principal_id"]
+                                        for r in view.snapshot(tribe).value["members"]
+                                    ],
+                                )
+                            raise RuntimeError("failed effect")
+                        self.assertEqual(reopened.events(), retained)
+                        with reopened.authorization_view(
+                            at_ms=at, card_verifier=self.j.card_verifier
+                        ) as view:
+                            self.assertNotEqual(
+                                view.grants[self.gid]["state"], "active"
+                            )
+                    # Historical projection keeps the original time-filtered behavior.
+                    historical = store.view(
+                        at_ms=NOW + 10, card_verifier=self.j.card_verifier
+                    )
+                    self.assertEqual(historical.grants[self.gid]["state"], "active")
+        self.j.store = original_store
+
+    def test_forked_unauthorized_terminal_does_not_poison_another_grant(self):
+        # Authenticated outsider, not this grant's grantor: signing is not authority.
+        payload = {
+            "schema": "dm.relationship.grant-revocation/v2",
+            "grant_id": self.gid,
+            "grant_ref": _event_ref(self.grant),
+            "acceptance_ref": _event_ref(self.acceptance),
+            "actor_being_ref": self.j.identities["delegate"].state.being_ref,
+            "action": "revoke",
+            "reason": "unauthorized",
+            "revoked_at_ms": NOW + 100,
+        }
+        event = _Journey.append(
+            self.j,
+            "delegate",
+            "matrix/relationship-grant-revocation",
+            payload,
+            at_ms=NOW + 100,
+        )
+        variant = copy.deepcopy(event)
+        variant["payload"]["reason"] = "equivocation"
+        self.j.store.ingest(self.resign(variant, "delegate"))
+        self.assertEqual(self.state(), "active")
+
+    def test_real_concurrent_ingester_waits_until_authorization_exits(self):
+        import concurrent.futures
+        import threading
+
+        revocation = self.revoke()
+        # Independent empty replica of the pre-revocation store, real ingest API.
+        replica = RelationshipStore(
+            Path(self.tmp.name) / "replica.sqlite",
+            authority_resolver=self.j.store.authority_resolver,
+        )
+        for event in self.j.store.events():
+            if event != revocation:
+                replica.ingest(event)
+        started = threading.Event()
+
+        def writer():
+            started.set()
+            replica.ingest(revocation)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            with replica.authorization_view(
+                at_ms=NOW + 200, card_verifier=self.j.card_verifier
+            ) as view:
+                self.assertEqual(view.grants[self.gid]["state"], "active")
+                future = pool.submit(writer)
+                self.assertTrue(started.wait(1))
+                with self.assertRaises(concurrent.futures.TimeoutError):
+                    future.result(timeout=0.2)
+            future.result(timeout=5)
+        with replica.authorization_view(
+            at_ms=NOW + 10, card_verifier=self.j.card_verifier
+        ) as view:
+            self.assertEqual(view.grants[self.gid]["state"], "revoked")
+
+    def test_malformed_signed_validity_does_not_mutate_store(self):
+        from daimon_matrix.relationship_store import RelationshipStoreError
+
+        before = self.j.store.events()
+        for bad in [
+            None,
+            [],
+            {"mode": "until-revoked", "not_before_ms": True},
+            {"mode": "until-revoked", "not_before_ms": NOW, "not_after_ms": None},
+            {"mode": "finite", "not_before_ms": NOW, "not_after_ms": NOW},
+        ]:
+            with self.subTest(validity=bad):
+                changed = copy.deepcopy(self.grant)
+                changed["payload"]["validity"] = bad
+                core = {
+                    k: v
+                    for k, v in changed.items()
+                    if k not in {"content_hash", "signature"}
+                }
+                changed["content_hash"] = hashlib.sha256(
+                    canonical_bytes(core)
+                ).hexdigest()
+                changed["signature"] = self.j.identities["founder"].signer.signature(
+                    changed["content_hash"]
+                )
+                with self.assertRaises(RelationshipStoreError):
+                    self.j.store.ingest(changed)
+                self.assertEqual(self.j.store.events(), before)
+        self.assertEqual(self.state(), "active")
 
 
 class PermissionTests(unittest.TestCase):
@@ -438,8 +952,18 @@ class PermissionTests(unittest.TestCase):
                 accepted,
                 at_ms=NOW + 102,
             )
+            for at in (NOW + 101, NOW + 10):
+                with journey.store.authorization_view(
+                    at_ms=at, card_verifier=journey.card_verifier
+                ) as view:
+                    self.assertNotEqual(
+                        view.tribes[invited["tribe_ref"]]["memberships"][
+                            membership["being_ref"]
+                        ]["state"],
+                        "active",
+                    )
             with journey.store.authorization_view(
-                at_ms=NOW + 103, card_verifier=journey.card_verifier
+                at_ms=NOW + 102, card_verifier=journey.card_verifier
             ) as view:
                 self.assertEqual(
                     view.tribes[invited["tribe_ref"]]["memberships"][

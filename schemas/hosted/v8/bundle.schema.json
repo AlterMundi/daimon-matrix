@@ -552,7 +552,14 @@
                     "minItems": 1,
                     "maxItems": 256,
                     "items": {
-                      "$ref": "#/$defs/artifact"
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/artifact"
+                        },
+                        {
+                          "$ref": "#/$defs/credentialV2"
+                        }
+                      ]
                     }
                   },
                   "incarnations": {

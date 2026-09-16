@@ -511,6 +511,7 @@ class RelationshipView:
         if not isinstance(at_ms, int) or isinstance(at_ms, bool) or at_ms < 0:
             raise RelationshipStoreError("invalid_relationship_time")
         self.at_ms = at_ms
+        self.current = current
         self.card_verifier = card_verifier
         self.all_events = [copy.deepcopy(dict(event)) for event in events]
         effective_events = [
@@ -576,6 +577,25 @@ class RelationshipView:
         self.kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in self.complete:
             self.kind[event["kind"]].append(event)
+        if current:
+            # Fork filtering is safe for positive evidence, but MUST NOT erase
+            # an authenticated denial and expose its permissive predecessor.
+            # Keep all terminal variants for the normal lane-specific actor,
+            # reference and temporal checks below. These rows can only deny;
+            # they do not enter `complete` or become positive dependencies.
+            for event in effective_events:
+                if event["event_id"] not in self.forked_event_ids:
+                    continue
+                if event["kind"] in {
+                    "matrix/relationship-grant-revocation",
+                    "matrix/relationship-close",
+                    "matrix/tribe-membership-leave",
+                    "matrix/tribe-membership-expulsion",
+                } or (
+                    event["kind"] == "matrix/relationship-card"
+                    and event["payload"].get("status") == "withdrawn"
+                ):
+                    self.kind[event["kind"]].append(event)
         self.cards = self._cards()
         self.relationships = self._relationships()
         self.tribes = self._tribes()
@@ -848,7 +868,11 @@ class RelationshipView:
 
             memberships: dict[str, dict[str, Any]] = {
                 founder: {
-                    "state": "active",
+                    "state": (
+                        "not-yet-valid"
+                        if self.current and epoch_started_at[0] > self.at_ms
+                        else "active"
+                    ),
                     "membership_event": declaration,
                     "terminal_event": None,
                     "episodes": [],
@@ -971,7 +995,11 @@ class RelationshipView:
                     if len(terminals) > 1:
                         lane_forked = True
                         break
-                    terminal_state = "active"
+                    terminal_state = (
+                        "not-yet-valid"
+                        if self.current and accepted_at > self.at_ms
+                        else "active"
+                    )
                     terminal: dict[str, Any] | None = None
                     if terminals:
                         terminal_state, terminal = terminals[0]
@@ -1038,6 +1066,14 @@ class RelationshipView:
                 or memberships[current_founder]["state"] != "active"
             ):
                 state = "forked"
+            if (
+                state == "active"
+                and self.current
+                and epoch_started_at[epoch] > self.at_ms
+            ):
+                # Observe succession permanently, but do not activate the future
+                # epoch (or resurrect its retired predecessor) on clock rollback.
+                state = "not-yet-valid"
             result[tribe] = {
                 "state": state,
                 "declaration": declaration,

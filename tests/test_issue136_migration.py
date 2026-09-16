@@ -1,6 +1,8 @@
 """Signed same-embodiment succession and genuine hosted startup."""
 
 import copy
+import tempfile
+from pathlib import Path
 
 from daimon_matrix import authority_epochs, identity, local_api, runtime
 from daimon_matrix.canonical import canonical_bytes, unb64url
@@ -123,6 +125,371 @@ class MigratedSealedTests(SealedFixture):
         self.assertEqual(open_event(raw, at_ms=far + 1, **kwargs), event)
         with self.assertRaises(SealedDeliveryError):
             open_event(raw, at_ms=far + 30_001, **kwargs)
+
+
+class IndependentSuccessionTests(RuntimeFixture):
+    def test_dual_consent_wrong_root_unknown_fields_replay_missing_predecessor(self):
+        from tests.test_dm021_identity import seed
+
+        active, transition = successor(self)
+        origin = self.origins["legion"]
+        kwargs = dict(
+            embodiment_id=origin["embodiment_id"],
+            incarnation_id=origin["incarnation_id"],
+            migration_id="independent-negative",
+            issued_at_ms=NOW + 10,
+            root_seeds=self.root_seeds,
+            signing_seed=self.signing_seeds["legion"],
+        )
+        authority_epochs.RootHistoryAuthority(active, [self.authority], [transition])
+        for overrides in [
+            {"root_seeds": [seed("unrelated-root")]},
+            {"root_seeds": self.root_seeds[:1]},
+            {"signing_seed": seed("unrelated-embodiment")},
+        ]:
+            with self.subTest(overrides=list(overrides)), self.assertRaises(ValueError):
+                authority_epochs.create_credential_succession(
+                    self.authority, active, **{**kwargs, **overrides}
+                )
+        with self.assertRaises(ValueError):
+            authority_epochs.verify_credential_succession(
+                {**transition, "unknown": True}, self.authority, active
+            )
+        with self.assertRaises(ValueError):
+            authority_epochs.RootHistoryAuthority(
+                active, [self.authority, active], [transition, transition]
+            )
+        with self.assertRaises(ValueError):
+            authority_epochs.RootHistoryAuthority(active, [], [transition])
+        # Missing historical credential must not be recreated or silently skipped.
+        with self.assertRaises((ValueError, KeyError)):
+            incomplete = RootAuthority(
+                self.authority.manifest,
+                self.authority.state,
+                {},
+                self.authority.incarnations,
+            )
+            authority_epochs.verify_credential_succession(
+                transition, incomplete, active
+            )
+
+    def test_revoked_predecessor_cannot_receive_succession(self):
+        successor(self)
+        old = self.authority
+        origin = self.origins["legion"]
+        revocation = identity.create_revocation(
+            self.state,
+            self.root_seeds,
+            embodiment_id=origin["embodiment_id"],
+            cutoff_incarnation_sequence=0,
+            revocation_generation=1,
+        )
+        revoked = identity.verify_successor(revocation, self.state)
+        with self.assertRaises(ValueError):
+            self.authority = RootAuthority(
+                BeingManifest.from_value(
+                    {**old.manifest.value, "control_head": revoked.head}
+                ),
+                revoked,
+                old.credentials,
+                old.incarnations,
+            )
+            successor(self)
+
+    def test_rotated_root_requires_current_threshold(self):
+        from tests.test_dm021_identity import seed
+
+        old = self.authority
+        old_roots = self.root_seeds
+        new_roots = [
+            seed("independent-rotated-root-0"),
+            seed("independent-rotated-root-1"),
+        ]
+        rotation = identity.create_root_rotation(
+            self.state,
+            old_roots,
+            new_roots,
+            2,
+            carry_forward_credentials=list(old.credentials),
+        )
+        state = identity.verify_successor(rotation, self.state)
+        self.authority = RootAuthority(
+            BeingManifest.from_value(
+                {**old.manifest.value, "control_head": state.head}
+            ),
+            state,
+            old.credentials,
+            old.incarnations,
+        )
+        self.root_seeds = new_roots
+        active, transition = successor(self)
+        authority_epochs.verify_credential_succession(
+            transition, self.authority, active
+        )
+        origin = self.origins["legion"]
+        with self.assertRaises(ValueError):
+            authority_epochs.create_credential_succession(
+                self.authority,
+                active,
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                migration_id="stale-root",
+                issued_at_ms=NOW + 10,
+                root_seeds=old_roots,
+                signing_seed=self.signing_seeds["legion"],
+            )
+
+    def migrated_bundle(self):
+        root, bundle, cap = self.make_bundle()
+        active, transition = successor(self)
+        bundle.update(
+            schema="dm.runtime.bundle/v8",
+            manifest=active.manifest.value,
+            credentials=list(active.credentials.values()),
+            incarnations=list(active.incarnations.values()),
+            authority_history=[
+                {"manifest": self.manifest.value, "successor": transition}
+            ],
+        )
+        return root, bundle, cap, active
+
+    def test_v8_expired_admin_request_rejected_by_server_not_just_builder(self):
+        root, bundle, cap, _active = self.migrated_bundle()
+        far = NOW + 10**12
+        req = local_api.create_request(
+            cap,
+            request_id="12345678-1234-4234-8234-123456789019",
+            issued_at_ms=NOW,
+            method="runtime.status",
+            params={},
+        )
+        # Builder at valid time is a positive control; expiry still applies
+        # even when request freshness is waived.
+        local_api.authenticate_request(req, cap, now_ms=NOW)
+        with self.assertRaises(local_api.LocalApiError):
+            local_api.authenticate_request(req, cap, now_ms=far, allow_stale=True)
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        loaded = runtime.load_runtime(
+            root,
+            "runtime.json",
+            password_reader=lambda: bytearray(PASSWORD),
+            clock=lambda: far,
+        )
+        with self.assertRaisesRegex(local_api.LocalApiError, "authentication_failed"):
+            loaded.service.handle(req)
+
+    def test_established_runtime_rejects_missing_succession_history(self):
+        root, bundle, _cap = self.make_bundle()
+        runtime.load_runtime(
+            root,
+            "runtime.json",
+            password_reader=lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+        )
+        active, transition = successor(self)
+        bundle.update(
+            schema="dm.runtime.bundle/v8",
+            manifest=active.manifest.value,
+            credentials=list(active.credentials.values()),
+            incarnations=list(active.incarnations.values()),
+        )
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        from daimon_matrix.ledger import LedgerStateError
+
+        with self.assertRaisesRegex(LedgerStateError, "ledger_metadata_mismatch"):
+            runtime.load_runtime(
+                root,
+                "runtime.json",
+                password_reader=lambda: bytearray(PASSWORD),
+                clock=lambda: NOW + 10,
+            )
+        bundle["authority_history"] = [
+            {"manifest": self.manifest.value, "successor": transition}
+        ]
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        loaded = runtime.load_runtime(
+            root,
+            "runtime.json",
+            password_reader=lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 10,
+        )
+        self.assertEqual(
+            loaded.service.ledger.authority.manifest.digest, active.manifest.digest
+        )
+
+    def test_v8_known_peer_mixed_historical_chain_schema_runtime_parity(self):
+        import json
+        from types import SimpleNamespace
+
+        from jsonschema import Draft202012Validator
+
+        from daimon_matrix.synthetic_relationships import _identity, _seed
+
+        root, bundle, _cap, _active = self.migrated_bundle()
+        old = _identity("founder")
+        peer, transition = successor(
+            SimpleNamespace(
+                authority=old.authority,
+                origins={"legion": old.origin},
+                root_seeds=[_seed(f"founder:root:{i}") for i in range(3)],
+                signing_seeds={"legion": _seed("founder:signing")},
+            )
+        )
+        genesis = identity.create_synthetic_genesis_in_process(
+            [_seed(f"founder:root:{i}") for i in range(3)],
+            2,
+            [_seed(f"founder:recovery:{i}") for i in range(3)],
+            2,
+            created_at_ms=0,
+            nonce=_seed("founder:being"),
+        )
+        peer_bundle = {
+            "authority_history": [
+                {"manifest": old.authority.manifest.value, "successor": transition}
+            ],
+            "control_artifacts": [genesis],
+            "control_head": peer.state.head,
+            "credentials": list(peer.credentials.values()),
+            "incarnations": list(peer.incarnations.values()),
+            "ledger_filename": "peer-ledger.sqlite",
+            "manifest": peer.manifest.value,
+        }
+        bundle["sources"] = {
+            "cas_filename": "source-cas.sqlite",
+            "known_beings": [peer_bundle],
+        }
+        bundle["relationships"] = {
+            "known_being_refs": [peer.state.being_ref],
+            "store_filename": "rels.sqlite",
+        }
+        validator = Draft202012Validator(
+            json.loads(
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "schemas/hosted/v8/bundle.schema.json"
+                ).read_text()
+            )
+        )
+        validator.validate(bundle)
+        self.assertEqual(
+            {c["schema"] for c in peer_bundle["credentials"]},
+            {"dm.identity.artifact/v1", "dm.identity.artifact/v2"},
+        )
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        loaded = runtime.load_runtime(
+            root,
+            "runtime.json",
+            password_reader=lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 10,
+        )
+        context = loaded.service.relationships
+        assert context is not None and context.authority_resolver is not None
+        self.assertEqual(context.authority_resolver(peer.state.being_ref), peer)
+        assert context.store.authority_resolver is not None
+        history = context.store.authority_resolver(peer.state.being_ref)
+        assert isinstance(history, authority_epochs.RootHistoryAuthority)
+        historical = history.select({"manifest_hash": old.authority.manifest.digest})
+        self.assertEqual(historical.manifest, old.authority.manifest)
+        self.assertEqual(historical.state, old.authority.state)
+        self.assertEqual(
+            historical.credentials[old.credential["artifact_id"]], old.credential
+        )
+        credential = next(
+            c
+            for c in peer_bundle["credentials"]
+            if c["schema"] == "dm.identity.artifact/v2"
+        )
+        for field in ("control_artifacts", "incarnations"):
+            with self.subTest(field=field):
+                invalid = copy.deepcopy(bundle)
+                invalid["sources"]["known_beings"][0][field] = [credential]
+                self.assertFalse(validator.is_valid(invalid))
+        for change in ({"unknown": True}, {"schema": "dm.identity.credential/v3"}):
+            with self.subTest(change=change):
+                invalid = copy.deepcopy(bundle)
+                invalid["sources"]["known_beings"][0]["credentials"] = [
+                    {**credential, **change}
+                ]
+                self.assertFalse(validator.is_valid(invalid))
+
+    def test_v8_schema_accepts_actual_v2_known_peer(self):
+        import json
+
+        from jsonschema import Draft202012Validator
+
+        from daimon_matrix.synthetic_relationships import _seed
+        from tests.test_issue136_permissions import V2Journey
+
+        root, bundle, _cap, _active = self.migrated_bundle()
+        schema = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "schemas/hosted/v8/bundle.schema.json"
+            ).read_text()
+        )
+        Draft202012Validator(schema).validate(bundle)  # local-only V8 positive control
+        with tempfile.TemporaryDirectory(prefix="independent136-peer-") as tmp:
+            journey = V2Journey(Path(tmp))
+            peer = journey.identities["founder"].authority
+            genesis = identity.create_synthetic_genesis_in_process(
+                [_seed(f"founder:root:{i}") for i in range(3)],
+                2,
+                [_seed(f"founder:recovery:{i}") for i in range(3)],
+                2,
+                created_at_ms=0,
+                nonce=_seed("founder:being"),
+            )
+            self.assertEqual(genesis["artifact_id"], peer.state.head)
+            bundle["sources"] = {
+                "cas_filename": "source-cas.sqlite",
+                "known_beings": [
+                    {
+                        "authority_history": [],
+                        "control_artifacts": [genesis],
+                        "control_head": peer.state.head,
+                        "credentials": list(peer.credentials.values()),
+                        "incarnations": list(peer.incarnations.values()),
+                        "ledger_filename": "peer-ledger.sqlite",
+                        "manifest": peer.manifest.value,
+                    }
+                ],
+            }
+            bundle["relationships"] = {
+                "known_being_refs": [peer.state.being_ref],
+                "store_filename": "rels.sqlite",
+            }
+            (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+            loaded = runtime.load_runtime(
+                root,
+                "runtime.json",
+                password_reader=lambda: bytearray(PASSWORD),
+                clock=lambda: NOW + 10,
+            )
+            self.assertEqual(
+                loaded.service.relationships.authority_resolver(peer.state.being_ref),
+                peer,
+            )
+            schema = json.loads(
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "schemas/hosted/v8/bundle.schema.json"
+                ).read_text()
+            )
+            errors = list(Draft202012Validator(schema).iter_errors(bundle))
+
+            def leaf_paths(error):
+                if not error.context:
+                    return [
+                        "/".join(map(str, error.absolute_path)) + ": " + error.validator
+                    ]
+                return [path for child in error.context for path in leaf_paths(child)]
+
+            self.assertEqual(
+                len(errors),
+                0,
+                "runtime accepted V2 peer but published V8 schema rejects it: "
+                + "; ".join(path for error in errors for path in leaf_paths(error)),
+            )
 
 
 class MigrationTests(RuntimeFixture):
