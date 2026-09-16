@@ -333,5 +333,224 @@ class MirrorTests(unittest.TestCase):
         verifier.assert_not_called()
 
 
+class MandatoryPlainTests(unittest.TestCase):
+    def test_explicit_bot_api_rejection_is_not_ambiguous_acceptance(self):
+        import json
+
+        request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+        for code in (400, 401, 403, 404, 409, 429):
+            raw = json.dumps(
+                {
+                    "ok": False,
+                    "error_code": code,
+                    "description": "synthetic rejection",
+                    "parameters": {"retry_after": 2},
+                }
+            ).encode()
+            self.assertEqual(
+                mirror.classify_plain_response(raw, request, bot_id=123),
+                ("rejected", 2),
+            )
+        for raw in (
+            b'{"ok":false,"error_code":500,"description":"uncertain"}',
+            b'{"ok":false,"error_code":429,"description":"x","parameters":{"retry_after":true}}',
+            b'{"ok":false,"error_code":429,"description":"x","parameters":{"migrate_to_chat_id":-999}}',
+        ):
+            with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+                mirror.classify_plain_response(raw, request, bot_id=123)
+
+    def test_transport_rejects_boolean_aliases_before_network(self):
+        transport = mirror.PlainTelegramTransport(
+            token="123:TEST_ONLY", bot_id=123, chat_id=1, topic_id=1
+        )
+        request = mirror.plain_request("hello", chat_id=1, topic_id=1)
+        for malformed in (
+            {**request, "chat_id": True},
+            {**request, "message_thread_id": True},
+            {**request, "link_preview_options": {"is_disabled": 1}},
+        ):
+            with patch("urllib.request.OpenerDirector.open") as opened:
+                with self.assertRaisesRegex(ValueError, "^echo_request_invalid$"):
+                    transport.send(malformed)
+                opened.assert_not_called()
+
+    def test_invalid_evidence_is_closed_and_duplicate_keys_rejected(self) -> None:
+        import copy
+        import json
+
+        request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+        value = {
+            "ok": True,
+            "result": {
+                "message_id": 9,
+                "from": {"id": 123, "is_bot": True},
+                "chat": {"id": -123},
+                "text": "hello",
+            },
+        }
+        mutations = [
+            ("text", "other"),
+            ("message_id", True),
+            ("message_thread_id", None),
+            ("message_thread_id", 7),
+            ("is_topic_message", True),
+            ("from", {"id": 123, "is_bot": False}),
+            ("from", {"id": 999, "is_bot": True}),
+            ("chat", {"id": -999}),
+            (
+                "entities",
+                [
+                    {
+                        "type": "text_link",
+                        "offset": 0,
+                        "length": 5,
+                        "url": "https://example.org",
+                    }
+                ],
+            ),
+        ]
+        for field, bad in mutations:
+            altered = copy.deepcopy(value)
+            altered["result"][field] = bad
+            with (
+                self.subTest(field=field, bad=bad),
+                self.assertRaisesRegex(ValueError, "^echo_response_invalid$"),
+            ):
+                mirror.validate_plain_response(
+                    json.dumps(altered).encode(), request, bot_id=123
+                )
+        raw = (
+            json.dumps(value).replace('"ok": true', '"ok": false, "ok": true').encode()
+        )
+        with self.assertRaisesRegex(ValueError, "^echo_response_invalid$"):
+            mirror.validate_plain_response(raw, request, bot_id=123)
+
+    def test_real_http_transport_retains_response_and_sanitizes_truncation(
+        self,
+    ) -> None:
+        import json
+        import threading
+        import urllib.request
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        seen = []
+        truncate = [False]
+        reject = [False]
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                payload = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                seen.append(payload)
+                raw = json.dumps(
+                    {
+                        "ok": True,
+                        "result": {
+                            "message_id": 9,
+                            "from": {"id": 123, "is_bot": True},
+                            "chat": {"id": -123},
+                            "text": payload["text"],
+                        },
+                    }
+                ).encode()
+                if reject[0]:
+                    raw = (
+                        b'{"ok":false,"error_code":429,"description":"synthetic busy",'
+                        b'"parameters":{"retry_after":2}}'
+                    )
+                self.send_response(429 if reject[0] else 200)
+                self.send_header(
+                    "Content-Length", str(len(raw) + (100 if truncate[0] else 0))
+                )
+                self.end_headers()
+                self.wfile.write(raw)
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        original = urllib.request.OpenerDirector.open
+
+        def local_open(opener, request, *args, **kwargs):
+            self.assertEqual(
+                request.full_url,
+                "https://api.telegram.org/bot123:TEST_ONLY/sendMessage",
+            )
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/sendMessage",
+                data=request.data,
+                headers=dict(request.headers),
+                method=request.method,
+            )
+            return original(opener, request, *args, **kwargs)
+
+        try:
+            with patch("urllib.request.OpenerDirector.open", local_open):
+                transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+                raw = transport.send(request)
+                self.assertEqual(
+                    mirror.validate_plain_response(raw, request, bot_id=123)["result"][
+                        "text"
+                    ],
+                    "hello",
+                )
+                truncate[0] = True
+                with self.assertRaisesRegex(ValueError, "^echo_transport_ambiguous$"):
+                    transport.send(request)
+                with self.assertRaisesRegex(ValueError, "^echo_request_invalid$"):
+                    transport.send({**request, "chat_id": -999})
+                self.assertEqual(len(seen), 2)
+                truncate[0] = False
+                reject[0] = True
+                negative = transport.send(request)
+                self.assertEqual(
+                    mirror.classify_plain_response(negative, request, bot_id=123),
+                    ("rejected", 2),
+                )
+                self.assertEqual(len(seen), 3)
+                self.assertNotIn("TEST_ONLY", repr(transport))
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_complete_plaintext_parts_and_verified_response(self) -> None:
+        import json
+
+        document = "<&😀\n" * 1600
+        parts = mirror.render_plain_parts(document)
+        self.assertGreater(len(parts), 1)
+        self.assertEqual("".join(p.split("\n", 1)[1] for p in parts), document)
+        self.assertTrue(all(len(p.encode("utf-16-le")) // 2 <= 4096 for p in parts))
+        request = mirror.plain_request(parts[0], chat_id=-123, topic_id=7)
+        self.assertNotIn("parse_mode", request)
+        raw = json.dumps(
+            {
+                "ok": True,
+                "result": {
+                    "message_id": 9,
+                    "from": {"id": 123, "is_bot": True},
+                    "chat": {"id": -123},
+                    "message_thread_id": 7,
+                    "is_topic_message": True,
+                    "text": parts[0],
+                },
+            }
+        ).encode()
+        self.assertEqual(
+            mirror.validate_plain_response(raw, request, bot_id=123)["result"][
+                "message_id"
+            ],
+            9,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

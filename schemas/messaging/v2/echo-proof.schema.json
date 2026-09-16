@@ -1,0 +1,546 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "catalog_id",
+    "revision",
+    "binding",
+    "binding_digest",
+    "parts",
+    "authentication"
+  ],
+  "properties": {
+    "schema": {
+      "const": "daimon-echo-proof/v2"
+    },
+    "catalog_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "policy",
+        "projection"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "policy": {
+          "$ref": "https://schemas.daimon-matrix.org/messaging/v2/visibility-policy.schema.json"
+        },
+        "projection": {
+          "$ref": "#/$defs/projection"
+        }
+      }
+    },
+    "binding_digest": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "parts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "attempts"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "attempts": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "attempt_id",
+                "request_digest",
+                "response",
+                "at_ms",
+                "response_at_ms",
+                "retry_authorization"
+              ],
+              "properties": {
+                "attempt_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                  "minLength": 36,
+                  "maxLength": 36
+                },
+                "request_digest": {
+                  "type": "string",
+                  "minLength": 64,
+                  "maxLength": 64,
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "response": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 65536
+                    }
+                  ]
+                },
+                "at_ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4503599627370495
+                },
+                "response_at_ms": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4503599627370495
+                    }
+                  ]
+                },
+                "retry_authorization": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "decision",
+                        "evidence"
+                      ],
+                      "properties": {
+                        "decision": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "authorization_id",
+                            "actor",
+                            "operation_id",
+                            "binding_digest",
+                            "attempt_id",
+                            "approved_at_ms",
+                            "expires_at_ms",
+                            "risk"
+                          ],
+                          "properties": {
+                            "authorization_id": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "minLength": 36,
+                              "maxLength": 36
+                            },
+                            "actor": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            },
+                            "operation_id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            },
+                            "binding_digest": {
+                              "type": "string",
+                              "minLength": 64,
+                              "maxLength": 64,
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            "attempt_id": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                              "minLength": 36,
+                              "maxLength": 36
+                            },
+                            "approved_at_ms": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4503599627370495
+                            },
+                            "expires_at_ms": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 4503599627370495
+                            },
+                            "risk": {
+                              "const": "duplicate-platform-post-accepted"
+                            }
+                          }
+                        },
+                        "evidence": {
+                          "type": "string",
+                          "minLength": 4,
+                          "maxLength": 10924,
+                          "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "authentication": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.daimon-matrix.org/messaging/v2/echo-proof.schema.json",
+  "title": "Runtime-authenticated retained echo journal/proof V2",
+  "$defs": {
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_digest",
+        "sender",
+        "recipients",
+        "thread_id",
+        "reply_to",
+        "kind",
+        "content"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "event_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sender": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recipients": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "thread_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reply_to": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "event_id",
+                "event_digest"
+              ],
+              "properties": {
+                "event_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "event_digest": {
+                  "type": "string",
+                  "minLength": 64,
+                  "maxLength": 64,
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "message",
+            "reply",
+            "semantic-receipt",
+            "transport-result",
+            "authorization-control"
+          ]
+        },
+        "content": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "message"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "reply"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "event_id",
+                  "event_digest"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "event_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "semantic-receipt"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "enum": [
+                      "received",
+                      "accepted",
+                      "rejected"
+                    ]
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "event_id",
+                  "event_digest"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "event_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "transport-result"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "stage",
+                  "outcome"
+                ],
+                "properties": {
+                  "stage": {
+                    "enum": [
+                      "evidence",
+                      "message"
+                    ]
+                  },
+                  "outcome": {
+                    "enum": [
+                      "accepted",
+                      "refused"
+                    ]
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "event_id",
+                  "event_digest"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "event_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "authorization-control"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "stage"
+                ],
+                "properties": {
+                  "stage": {
+                    "const": "evidence-before-message"
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "event_id",
+                  "event_digest"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "event_digest": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$comment": "Shape is not confirmation or authentication. Runtime rechecks HMAC, canonical encoding, exact binding/transcript and current authority. Responses retain exact bounded UTF-8 Bot API evidence: positive acceptance or explicit rejected admission. Unknown responses stay unresolved. Automatic retry requires retained explicit rejection and elapsed bounded backoff. Ambiguous retry requires a verified exact owner decision and shared runtime execution guard. Every attempt and decision is retained; maximum four attempts per part. Array positions bind part order and count. Native release requires every part confirmed."
+}

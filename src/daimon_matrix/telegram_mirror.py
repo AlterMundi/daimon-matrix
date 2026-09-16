@@ -29,6 +29,7 @@ import os
 import re
 import sqlite3
 import stat
+import urllib.error
 import urllib.request
 from bisect import bisect_right
 from collections.abc import Callable, Iterator
@@ -187,6 +188,246 @@ def _state(path: str | os.PathLike[str]) -> Iterator[sqlite3.Connection]:
         if fd is not None:
             os.close(fd)
         os.close(parent)
+
+
+# V2 primitives are intentionally separate: V1 remains selective and is NOT a gate.
+def render_plain_parts(document: str) -> list[str]:
+    """Complete, unnormalized plaintext; no markup interpretation or truncation."""
+    if (
+        type(document) is not str
+        or not document
+        or len(document.encode("utf-8")) > 98304
+    ):
+        raise ValueError("echo_projection_invalid")
+    chunks, chunk, units = [], "", 0
+    for char in document:
+        size = len(char.encode("utf-16-le")) // 2
+        if units + size > 3000:
+            chunks.append(chunk)
+            chunk, units = "", 0
+        chunk += char
+        units += size
+    chunks.append(chunk)
+    if len(chunks) > MAX_PARTS:
+        raise ValueError("echo_projection_invalid")
+    return [
+        f"Daimon Matrix visibility v2 · part {i}/{len(chunks)}\n{c}"
+        for i, c in enumerate(chunks, 1)
+    ]
+
+
+def plain_request(text: str, *, chat_id: int, topic_id: int | None) -> dict[str, Any]:
+    if (
+        type(chat_id) is not int
+        or not 0 < abs(chat_id) < 2**52
+        or (
+            topic_id is not None
+            and (type(topic_id) is not int or not 0 < topic_id < 2**31)
+        )
+        or type(text) is not str
+        or not text
+        or len(text.encode("utf-16-le")) // 2 > 4096
+    ):
+        raise ValueError("echo_request_invalid")
+    value: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "link_preview_options": {"is_disabled": True},
+    }
+    if topic_id is not None:
+        value["message_thread_id"] = topic_id
+    return value
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_key")
+        result[key] = value
+    return result
+
+
+def validate_plain_response(
+    raw: bytes, request: dict[str, Any], *, bot_id: int
+) -> dict[str, Any]:
+    """Validate retained Bot API evidence; exact text, numeric bot/chat/topic pins."""
+    try:
+        if type(raw) is not bytes or len(raw) > 65536:
+            raise ValueError
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        result = value["result"]
+        topic = request.get("message_thread_id")
+        if type(bot_id) is not int or not 0 < bot_id < 2**52:
+            raise ValueError
+        if topic is None:
+            if (
+                "message_thread_id" in result
+                or result.get("is_topic_message", False) is not False
+            ):
+                raise ValueError
+        elif (
+            type(result.get("message_thread_id")) is not int
+            or result.get("is_topic_message") is not True
+        ):
+            raise ValueError
+        entities = result.get("entities", [])
+        if type(entities) is not list or len(entities) > 4096:
+            raise ValueError
+        for entity in entities:
+            if (
+                type(entity) is not dict
+                or set(entity) != {"type", "offset", "length"}
+                or entity["type"]
+                not in {
+                    "mention",
+                    "hashtag",
+                    "cashtag",
+                    "bot_command",
+                    "url",
+                    "email",
+                    "phone_number",
+                }
+                or type(entity["offset"]) is not int
+                or entity["offset"] < 0
+                or type(entity["length"]) is not int
+                or entity["length"] <= 0
+                or entity["offset"] + entity["length"]
+                > len(request["text"].encode("utf-16-le")) // 2
+            ):
+                raise ValueError
+        if (
+            value.get("ok") is not True
+            or type(result["message_id"]) is not int
+            or not 0 < result["message_id"] < 2**52
+            or type(result["chat"]["id"]) is not int
+            or result["chat"]["id"] != request["chat_id"]
+            or type(result["from"]["id"]) is not int
+            or result["from"]["id"] != bot_id
+            or result["from"].get("is_bot") is not True
+            or result.get("text") != request["text"]
+            or result.get("message_thread_id") != request.get("message_thread_id")
+        ):
+            raise ValueError
+        return dict(value)
+    except Exception:
+        raise ValueError("echo_response_invalid") from None
+
+
+def classify_plain_response(
+    raw: bytes, request: dict[str, Any], *, bot_id: int
+) -> tuple[str, int]:
+    """Platform acceptance or explicit Bot API rejection; never infer from timeout.
+
+    Unknown/malformed/5xx results are ambiguous. A valid negative response retains
+    its full evidence but cannot satisfy confirmation. Retry delay is bounded.
+    """
+    try:
+        if type(raw) is not bytes or len(raw) > 65536:
+            raise ValueError
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        if value.get("ok") is True:
+            validate_plain_response(raw, request, bot_id=bot_id)
+            return "confirmed", 0
+        if (
+            type(value) is not dict
+            or set(value)
+            not in (
+                {"ok", "error_code", "description"},
+                {"ok", "error_code", "description", "parameters"},
+            )
+            or value["ok"] is not False
+            or type(value["error_code"]) is not int
+            or value["error_code"] not in (400, 401, 403, 404, 409, 429)
+            or type(value["description"]) is not str
+            or not 0 < len(value["description"]) <= 4096
+        ):
+            raise ValueError
+        delay = 30
+        if "parameters" in value:
+            parameters = value["parameters"]
+            if type(parameters) is not dict or set(parameters) != {"retry_after"}:
+                raise ValueError
+            delay = parameters["retry_after"]
+            if type(delay) is not int or not 1 <= delay <= 86400:
+                raise ValueError
+        return "rejected", delay
+    except Exception:
+        raise ValueError("echo_response_invalid") from None
+
+
+class PlainTelegramTransport:
+    """V2 runtime-only transport. No network on construction, retry or redirects.
+
+    Credential availability/getMe enrollment is the composing runtime's duty.
+    A send failure always has an ambiguous outcome; it is never a retry grant.
+    """
+
+    def __init__(
+        self, *, token: str, bot_id: int, chat_id: int, topic_id: int | None
+    ) -> None:
+        if (
+            type(token) is not str
+            or not re.fullmatch(r"[0-9]{1,20}:[A-Za-z0-9_-]{1,128}", token)
+            or type(bot_id) is not int
+            or not 0 < bot_id < 2**52
+            or int(token.split(":", 1)[0]) != bot_id
+        ):
+            raise ValueError("echo_transport_config_invalid")
+        plain_request("validate", chat_id=chat_id, topic_id=topic_id)
+        self._token, self._bot_id = token, bot_id
+        self._chat_id, self._topic_id = chat_id, topic_id
+
+    def send(self, request: dict[str, Any]) -> bytes:
+        try:
+            # Snapshot input once; Python equality alone aliases True and 1.
+            serialized = json.dumps(request, sort_keys=True, allow_nan=False)
+            request = json.loads(serialized)
+            expected = plain_request(
+                request["text"], chat_id=self._chat_id, topic_id=self._topic_id
+            )
+            if serialized != json.dumps(expected, sort_keys=True, allow_nan=False):
+                raise ValueError
+        except Exception:
+            raise ValueError("echo_request_invalid") from None
+        try:
+            wire = urllib.request.Request(
+                f"https://api.telegram.org/bot{self._token}/sendMessage",
+                data=json.dumps(request, ensure_ascii=False, allow_nan=False).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}), _NoRedirect()
+            )
+            try:
+                response = opener.open(wire, timeout=10)
+            except urllib.error.HTTPError as negative:
+                response = negative
+            with response:
+                status = response.status
+                raw = response.read(65537)
+                # A bounded read can return early on a truncated Content-Length.
+                remaining = getattr(response, "length", None)
+                if remaining not in (None, 0):
+                    raise ValueError
+            verdict, _ = classify_plain_response(raw, request, bot_id=self._bot_id)
+            expected_status = (
+                200 if verdict == "confirmed" else json.loads(raw)["error_code"]
+            )
+            if status != expected_status:
+                raise ValueError
+            return bytes(raw)
+        except Exception:
+            raise ValueError("echo_transport_ambiguous") from None
 
 
 class TelegramMirror:
