@@ -734,6 +734,90 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "codex_registration": {
+      "title": "Separately human-approved Codex execution registration (NOT DM-040 V1 profile)",
+      "description": "ApprovalVerifier approve proof covers this whole distinct schema object. External existing-body/provider ownership verification is mandatory. Fresh ephemeral review threads, single request, no tools, finite registration; no schedule or auth material.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "store_id",
+        "being",
+        "embodiment",
+        "runner",
+        "session",
+        "provider",
+        "model",
+        "schema",
+        "endpoint",
+        "profile",
+        "catalog_sha256",
+        "expires",
+        "mode",
+        "max_response_bytes"
+      ],
+      "properties": {
+        "principal": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "store_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "being": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "embodiment": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "runner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "session": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "schema": {
+          "const": "execution/v1/codex-registration"
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^(https://[^/?#@]+|http://127\\.0\\.0\\.1:[0-9]+)/[^?#]*responses$"
+        },
+        "profile": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "catalog_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expires": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "const": "ephemeral-review"
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        }
+      }
     }
   }
 }

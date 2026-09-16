@@ -171,3 +171,30 @@ class RunnerTests(unittest.TestCase):
             controller.run_due_once("review-1", 1, self.task)
         self.clock.now = 120
         self.assertIsNone(controller.run_due_once("review-1", 1, self.task))
+
+    def test_deferred_provider_admission_is_once_and_rechecks_cancellation(self):
+        controller = self.controller()
+        self.prepare()
+        context = controller.run_due_once("review-1", 1, self.task)
+        sent = []
+        context.inference(lambda: sent.append("request"))
+        with self.assertRaises(ExecutionDenied):
+            context.inference(lambda: sent.append("retry"))
+        self.assertEqual(sent, ["request"])
+        self.setUp()
+        controller = self.controller()
+        self.prepare()
+        context = controller.run_due_once("review-1", 1, self.task)
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "cancel",
+            ),
+        )
+        with self.assertRaises(ExecutionDenied):
+            context.inference(lambda: sent.append("cancelled"))
+        self.assertEqual(sent, ["request"])

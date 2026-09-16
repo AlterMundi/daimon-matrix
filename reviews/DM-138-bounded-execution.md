@@ -1,6 +1,7 @@
 # DM-138 — bounded execution core implementation review record
 
-Status: **implementer self-review and test evidence; independent review pending**.
+Status: **historical core self-review below; corrected core + Codex adapter delta
+recorded in the final section; independent delta review pending**.
 This record does not close #138 or certify installed Codex/Hermes integration.
 
 ## Scope and provenance
@@ -119,3 +120,81 @@ No compatibility successor or new pin is needed **for this parser defect**.
 A review-runner/profile successor remains separate work. Exact follow-up
 repository and public generated-schema paths are listed in
 `docs/bounded-human-execution.md`.
+
+
+## Follow-up: core findings and executable Codex slice (uncommitted delta)
+
+Base for this follow-up is the parent's immutable core commit
+`ffdce0090579aaa8b92afbe1e0cf8ab3f3cb4b90`. The independent reviewer found F1
+(clock observations rolled back with rejected authority) and F2 (journal failure
+preventing interruption). The original no-runner statements above describe that
+older slice, not the new adapter. No independent approval is claimed here.
+
+### Core corrections
+
+- Savepoint rollback retains only observed high-water/fault metadata, never failed
+  approval events or authority mutations. `observe_clock()` safely joins the
+  currently held transaction for checkpoints; other reentrant journal calls are
+  rejected. Context expiry/fault is irreversible.
+- Enforcement always attempts retained exact-cycle interruption after durable
+  validation fails. It reports persistence failures without recreating a journal
+  or inventing a terminal receipt. Corrupt SQLite opening also closes its handle.
+- Actual asynchronous provider submission has its own one-request `provider`
+  intent through `CycleContext.inference`, rechecking current authority under the
+  cancellation serialization lock. Startup remains a separate `inference` intent.
+
+### Adapter delivered
+
+`codex_review.py` implements the typed binding/start/interrupt seam against the
+real SHA-pinned Codex 0.146.0 App Server. It uses separately signed explicit
+`execution/v1/codex-registration`, owner-only runtime correlation journal and
+lock, fresh authorized ephemeral threads, startup-only restricted catalog,
+cleared private profile, guarded single Responses request, conservative byte
+ceilings plus real upstream output-token cap, bounded chunked/Content-Length
+response parsing, hidden-tool suppression before the Codex router, scoped inbox
+prefetch and one closed native-action proposal. NativeBroker remains the only
+native effect route. There is no tool/schedule administration, auth copying,
+new-body enrollment, default job, startup-on-arrival, automatic retry or ambiguous
+cycle recovery. Linux GNU timeout supplies an independent process deadline;
+exact interruption and process-group reaping handle active local cancellation.
+
+No ordinary provider/model/auth config or old DM-040 profile/contracts/provenance
+was changed. The no-copy auth seam uses the existing host provider broker's header
+only on its registered upstream connection; no credential reaches Codex. The
+actual installed account/OAuth integration, human/body verifier and OS isolation
+are **not deployed/qualified**. Remote inference is explicitly unresolved when a
+completed provider response is absent; closing its socket is not a stop receipt.
+See `docs/bounded-human-execution.md` for the complete supported slice and gates.
+
+### Verified follow-up evidence
+
+Using the read-only shared test venv, exact pinned native binary and public
+text-only fixture catalog from `/home/debian/dm-milestone2-codex-probe`:
+
+- Combined Codex adapter, instruction, store, passive-core and DM-040 suite:
+  **77 tests, OK, 2 existing private/live smokes skipped**. The real-binary adapter
+  tests and genuine schema bundle test ran. Final run emitted no resource warnings.
+- Original unmodified independent probe script against the new source:
+  **11 tests, all assertions passed**, including all four former failures.
+- Existing native messaging suite: **48 tests, OK**. The first attempt hit its
+  60-second command timeout; rerunning with a 240-second bound completed in
+  approximately 176 seconds. This is regression evidence, not new passive real
+  harness/mirror integration evidence.
+- Focused Ruff and strict mypy for the changed three source modules, plus
+  `git diff --check`, pass. No full repository/wheel/inventory claim is made.
+
+Tests demonstrate actual App Server turns with loopback synthetic Responses,
+scoped mocked-broker inbox/reply, denied builtin tool outputs (including patch,
+image, shell, delegation, web and messaging bypass), budget enforcement, wrong
+body/model, no requests with inactive/cancelled/expired authority, startup config
+drift, denial of provider retry, chunked responses, reasoning suppression,
+interruption, blocked-journal OS deadline, and restart uncertainty. They use no
+paid inference, production credentials or real messages. The fake gpt-5.4 catalog
+is not a real configured model selection.
+
+Remaining gates: independent delta review; installed authenticated human and
+existing-body registration frontend; real provider/auth/tokenizer qualification;
+local principal/network isolation; production NativeBroker integration; Hermes
+and passive intake/MCP/mirror composition; parent-owned generated inventories,
+wheel qualification and separately authorized live acceptance. Full #138 remains
+open. This lane makes no commits, pushes, GitHub writes or service deployments.

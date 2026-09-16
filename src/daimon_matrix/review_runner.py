@@ -84,18 +84,32 @@ class CycleContext:
         self._monotonic_deadline = monotonic_deadline
         self._last_monotonic = monotonic_deadline - instruction.max_cycle_seconds
         self._clock_fault = False
+        self._last_wall = float("-inf")
+        self._fenced = False
 
     def remaining(self) -> float:
+        if self._fenced:
+            raise ExecutionDenied("cycle context irreversibly fenced")
         now = self._monotonic()
         if self._clock_fault or not math.isfinite(now) or now < self._last_monotonic:
             self._clock_fault = True
             raise ExecutionDenied("monotonic clock fault")
         self._last_monotonic = now
+        try:
+            wall = self._store.observe_clock()
+        except Exception:
+            self._fenced = True
+            raise
+        if not math.isfinite(wall) or wall < self._last_wall:
+            self._fenced = True
+            raise ExecutionDenied("wall clock fault")
+        self._last_wall = wall
         remaining = min(
             self._monotonic_deadline - now,
-            self.cycle.deadline - self._store.clock(),
+            self.cycle.deadline - wall,
         )
         if not math.isfinite(remaining) or remaining <= 0:
+            self._fenced = True
             raise ExecutionDenied("cycle deadline reached")
         return remaining
 
@@ -103,8 +117,25 @@ class CycleContext:
         self.remaining()
 
     def check(self) -> None:
-        self._checkpoint()
-        self._store.check(self.cycle)
+        try:
+            # Persist the observation even on rejected absolute-deadline checks.
+            self._store.check(self.cycle)
+            self._checkpoint()
+        except Exception:
+            self._fenced = True
+            raise
+
+    def inference(self, submit: Callable[[], object]) -> object:
+        """One actual provider request after asynchronous startup, no retries.
+
+        submit must only enqueue bounded transport bytes, not wait for a model;
+        like native submission it may not reenter the store. This additional
+        durable gate closes the queue-to-provider cancellation race.
+        """
+        self.check()
+        return self._store.dispatch(
+            self.cycle, "provider", None, self._checkpoint, submit
+        )
 
     def native(self, scope: Scope, payload: Mapping[str, Any]) -> object:
         self.check()
@@ -178,17 +209,29 @@ class ReviewController:
         This is not a background watchdog; an adapter without independent bounded
         supervision is not a supported runner. Ambiguity is never timeout-reclaimed.
         """
-        if self.store.cycle_status(context.cycle.cycle_id)["state"] in {
-            "completed",
-            "stopped",
-        }:
-            return
+        persistence_error = None
         try:
+            if self.store.cycle_status(context.cycle.cycle_id)["state"] in {
+                "completed",
+                "stopped",
+            }:
+                return
             context.check()
+            return
         except ExecutionDenied:
+            pass
+        except Exception as exc:
+            persistence_error = exc
+        context._fenced = True
+        try:
             self.store.mark_ambiguous(context.cycle)
-            result = self.runner.interrupt(
-                context.cycle.cycle_id, context.instruction.cleanup_seconds
-            )
-            if result == "stopped":
-                self.store.finish(context.cycle, "stopped")
+        except Exception as exc:
+            persistence_error = persistence_error or exc
+        # A lost/corrupt journal must never prevent stopping the known runtime.
+        result = self.runner.interrupt(
+            context.cycle.cycle_id, context.instruction.cleanup_seconds
+        )
+        if persistence_error is not None:
+            raise persistence_error  # no replacement journal or invented receipt
+        if result == "stopped":
+            self.store.finish(context.cycle, "stopped")

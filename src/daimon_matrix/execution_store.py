@@ -7,6 +7,7 @@ import math
 import os
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
@@ -48,6 +49,7 @@ class ExecutionStore:
         self.path = Path(path)
         self.verifier = verifier
         self.clock = clock
+        self._local = threading.local()
         if not self.path.is_file():
             raise ExecutionDenied(
                 "execution store missing; explicit provisioning required"
@@ -108,29 +110,66 @@ class ExecutionStore:
             timeout=10,
             isolation_level=None,
         )
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA synchronous=FULL")
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        if getattr(self._local, "db", None) is not None:
+            raise ExecutionDenied("submission callbacks must not reenter journal")
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            yield db
+            db.execute("SAVEPOINT authority")
+            self._local.db = db
+            try:
+                yield db
+            except BaseException:
+                # Clock observations survive rejected admissions, but NO proposed
+                # instruction/event/operation mutation is committed on failure.
+                observed = db.execute(
+                    "SELECT high_water,clock_fault FROM metadata"
+                ).fetchone()
+                db.execute("ROLLBACK TO authority")
+                if observed is not None:
+                    db.execute(
+                        "UPDATE metadata SET high_water=max(high_water,?), "
+                        "clock_fault=max(clock_fault,?)",
+                        tuple(observed),
+                    )
+                db.commit()
+                raise
+            db.execute("RELEASE authority")
             db.commit()
         except BaseException:
             db.rollback()
             raise
         finally:
+            self._local.db = None
             db.close()
+
+    def observe_clock(self) -> float:
+        """Persist every observation, including bounded checkpoints under dispatch.
+
+        This is the sole deliberately reentrant operation; it never authorizes
+        work. It joins the active transaction/savepoint without another lock.
+        """
+        active = getattr(self._local, "db", None)
+        if active is not None:
+            return self._now(active)
+        with self._transaction() as db:
+            return self._now(db)
 
     def _now(self, db: sqlite3.Connection) -> float:
         now = self.clock()
         meta = db.execute("SELECT * FROM metadata").fetchone()
         if not math.isfinite(now) or now < meta["high_water"] or meta["clock_fault"]:
             db.execute("UPDATE metadata SET clock_fault=1")
-            db.commit()  # persist the fault even though admission raises
             raise ExecutionDenied("clock rollback/untrusted clock; journal fenced")
         db.execute("UPDATE metadata SET high_water=?", (now,))
         return now
@@ -451,7 +490,7 @@ class ExecutionStore:
         bounded transport submission with cancellation. Exceptions leave a durable
         unknown outcome, never an automatic retry. Callbacks must not reenter DB.
         """
-        if kind not in {"inference", "native"}:
+        if kind not in {"inference", "provider", "native"}:
             raise ExecutionDenied("unsupported dispatch")
         operation_id = str(uuid.uuid4())
         with self._transaction() as db:
@@ -459,13 +498,13 @@ class ExecutionStore:
             checkpoint()
             if kind == "native" and scope not in instruction.scope:
                 raise ExecutionDenied("outside approved scope")
-            if kind == "inference" and scope is not None:
+            if kind in {"inference", "provider"} and scope is not None:
                 raise ExecutionDenied("invalid inference scope")
             count = db.execute(
                 "SELECT count(*) FROM operations WHERE cycle_id=? AND kind=?",
                 (cycle.cycle_id, kind),
             ).fetchone()[0]
-            limit = 1 if kind == "inference" else instruction.max_effects
+            limit = 1 if kind in {"inference", "provider"} else instruction.max_effects
             if count >= limit:
                 raise ExecutionDenied("cycle resource budget exhausted")
             db.execute(

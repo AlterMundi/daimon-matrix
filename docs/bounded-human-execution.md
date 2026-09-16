@@ -1,19 +1,21 @@
-# Bounded human execution — shared core (issue #138)
+# Bounded human execution — shared core and Codex adapter (issue #138)
 
 ## Delivery boundary
 
 This implements the **shared instruction, SQLite journal, operator control API,
-and typed runner/controller contract**, not installed Codex/Hermes execution.
+typed runner/controller contract and a single-inference Codex App Server adapter**.
+The adapter is exercised with the exact pinned binary and a loopback synthetic
+provider, not installed/paid execution. See the separate registration below.
 There is no default review job, background scheduler, message-arrival callback,
-model client, new embodiment, service installer, or credential-copy path.
+default model client, new embodiment, service installer, or credential-copy path.
 `tests/test_passive_messaging_execution.py` tests a **bounded fake runner** and
 core dispatch counters only. Despite its reserved filename, it does not prove
 passive real inbox/MCP/mirror composition or real Codex/Hermes dispatch.
 
 The separately included Codex generated-schema parser fix accepts finite numbers
 in vendor JSON Schema without changing Matrix signed-artifact canonicalization,
-the Codex version, schema pin, profile policy, or tool inventory. It does not
-implement a Codex review runner.
+the Codex version, schema pin, profile policy, or tool inventory. The separate
+`codex_review.py` runner does not reinterpret that old profile as its registration.
 
 ## Authority and deployment prerequisites
 
@@ -215,3 +217,142 @@ replay/tamper, renewal tombstones, exact scope/grant gates and fake invocation
 counters. The optional genuine-bundle test skips when its environment variable
 is absent; it was explicitly enabled in this delivery. Installed acceptance,
 real Codex/Hermes model loops and independent security review remain outstanding.
+
+
+## Explicit Codex review registration (separate from DM-040 V1)
+
+`codex_review.CodexReviewRunner(payload, proof, verifier, existing_body=...,
+ binary=..., catalog=..., authorization=...)` is an operator-only Python API.
+It launches **nothing** during construction and installs no scheduler. Only an
+admitted `ReviewController.run_due_once` starts work. The owned registration
+profile must already be an isolated, empty mode-0700 directory; this API does
+not enroll a body, take over a TUI, mint credentials, or copy an existing home.
+
+The closed public shape is `$defs/codex_registration` in the execution schema:
+`schema=execution/v1/codex-registration`, human principal, execution store UUID,
+existing being/embodiment/runner/session, exact provider/model/upstream Responses
+endpoint, owned profile, SHA-256 of the reviewed single-model text-only catalog,
+finite expiry, `mode=ephemeral-review`, and response byte ceiling. The ordinary
+human-frontend `execution/v1/approve` proof signs this **distinct entire object**.
+It is not an instruction and cannot pass instruction approval. Registration
+alone never admits a cycle. Its digest is pinned in the separate runtime journal;
+no implicit registration migration, renewal, stale-state recovery or replay into
+a different execution store is provided.
+
+`existing_body` must independently validate the current Matrix/Cluster binding,
+exclusive ownership of this execution session, the actual existing provider and
+model selection, and approval for fresh ephemeral review threads **within that
+same body**. Returning a model-supplied boolean is not an implementation. It is
+rechecked during supervision. All host callbacks must be bounded; the callback
+and public trust root must be unreachable by the model. The tests use synthetic
+verifiers/keys and do not establish an installed human frontend or body binding.
+
+### Implemented request/action slice
+
+1. `start` validates signed registration, exact instruction binding, task hash,
+   model/provider/window, pinned native binary, catalog digest and owned-profile
+   inventory. It durably records cycle intent and returns without calling the
+   context reentrantly under the controller's dispatch lock.
+2. A supervised worker rechecks current authority and reads each explicitly
+   approved inbox scope through `CycleContext.native`. Results are untrusted
+   context; there is no workspace, predecessor history or context-volume sharing.
+3. The pinned App Server runs with a private ephemeral HOME/CODEX_HOME, cleared
+   environment, never/read-only, startup-only text/no-patch/no-shell catalog,
+   disabled shell/apps/browser/computer/plugins/hooks/memories/multi-agent/goals,
+   no MCP configuration, and no provider credentials. The named provider/model
+   selection is retained; its transport is explicitly redirected to a host gate.
+4. Supported `initialize`, `thread/start`, `turn/start`, completion and
+   `turn/interrupt` messages are used. Cycle, process, thread and turn IDs are
+   durably correlated. The registration explicitly permits ephemeral review
+   threads; this is not attachment to a previously interactive Codex thread.
+5. The host gate admits only one Responses request. Immediately before enqueuing
+   upstream bytes, `CycleContext.inference` performs a **second durable provider
+   admission** serialized against cancellation. Controller startup remains the
+   `inference` intent; actual upstream dispatch is the separately bounded
+   `provider` operation. Neither kind permits retries/continuations. This closes
+   the asynchronous startup-to-provider race without holding SQLite over a turn.
+6. The complete request has a conservative canonical-UTF8-byte input ceiling,
+   `tools=[]`, `tool_choice=none`, and an actual provider `max_output_tokens` cap.
+   Returned usage is validated; output text also has a conservative byte ceiling.
+   These bounds require qualification of a byte-BPE Responses model and provider
+   enforcement of `max_output_tokens`; they are not a universal tokenizer claim.
+   Bodies are bounded before parsing, including chunked HTTP responses. Redirects,
+   WebSockets, compression, ambiguous framing, trailers and model-selected routes
+   are not supported. No retry follows rejection or uncertain dispatch.
+7. Provider events are fully buffered, checked and reconstructed before reaching
+   Codex. Hidden/unadvertised function/custom tools, images and other effect
+   output never reach its router. Inert reasoning is stripped (its tokens still
+   count). Every App Server request for tools/approval/elicitation is denied.
+8. The final text must be exactly a JSON no-op (`{"action":"none"}`) or one
+   scope-indexed proposal: `{"scope":0}` for an inbox or
+   `{"scope":1,"text":"..."}` for send/reply. No destination/action/tool override
+   fields are accepted. The exact approved Scope goes through `context.native`;
+   the host NativeBroker supplies daemon authorization, fixed reply target,
+   native send UUID/idempotency and technical receipt. There is no second model
+   request after that result. All inbox reads and the optional action consume
+   the same approved native-operation budget.
+
+### No-copy provider authentication and supervision
+
+The supported local `base_url`/`requires_openai_auth=false` configuration applies
+**only to the local gate**. `authorization()` is an existing host provider broker
+callback supplying its current Authorization header for the approved upstream
+endpoint. That header never enters Codex, its environment, profile, model input
+or public registration. The adapter neither logs in nor reads/copies `auth.json`,
+issues tokens, refreshes OAuth, or changes the ordinary body's config. Native
+messaging credentials similarly remain solely in the NativeBroker. This is a
+no-copy integration seam, not a claim that the target's existing ChatGPT/OAuth
+account and its refresh/extra-header requirements are already integrated.
+
+Async supervision closes provider streams, sends exact turn interruption and
+kills/reaps only the owned process group. Linux `/usr/bin/timeout --signal=KILL`
+provides an independent finite process deadline even if Python is blocked on a
+journal lock or the parent dies; this is an explicit trusted host dependency,
+not model-selected shell execution. Native/provider-auth/body-verifier callbacks
+remain trusted bounded host primitives; a Python API does not sandbox a malicious
+or unbounded broker. Socket closure does **not** prove a remote provider stopped:
+if its completed response was not reconciled, interrupt returns `unknown` and
+both journals retain ambiguity. No restart reissues such a cycle or kills a PID
+from historical evidence. Known successful completion is recorded only after
+runtime reaping and native receipt reconciliation.
+
+### Qualification boundary and executable offline tests
+
+This is a concrete, tested adapter slice, **not full #138 acceptance**. Pending:
+installed authenticated human frontend and existing-body/lifecycle binding;
+qualified real provider/auth/model/tokenizer integration (including OAuth if
+applicable); OS/user isolation of brokers, registration and loopback gate from
+other local principals; installed wheel and generated inventories owned by the
+parent; live separately authorized invocation; Hermes and passive native intake/
+MCP/mirror composition. Do not enable production periodic execution before those
+requirements are satisfied. Same-UID arbitrary code is outside this boundary.
+
+```sh
+PYTHONPATH=src \
+CODEX_REVIEW_BINARY=/path/to/exact/0.146.0/native/codex \
+CODEX_REVIEW_CATALOG=/path/to/reviewed/text-only-catalog.json \
+python -m unittest tests.test_codex_review -v
+```
+
+These tests use the real SHA-pinned native binary with a localhost fake provider
+and a mocked native broker. `gpt-5.4` is only their public vendor-catalog fixture,
+not a change to the real configured provider/model/auth. They cover actual thread/
+turn completion, scoped inbox context and reply, hidden tools, token ceilings,
+wrong bindings, inactive/cancelled/expired instructions, config drift, finite
+process deadline with a blocked journal, cancellation, and restart ambiguity.
+
+## Independent core findings corrected after ffdce00
+
+F1: transaction savepoints separate authority mutations from clock observations.
+On failed admission, only high-water/fault metadata survives rollback. Context
+wall-clock observations use `observe_clock`, which joins an already-held bounded
+dispatch transaction without reentrant SQLite; observed deadline/fault fences are
+irreversible in the context. Failing an approval never commits its event/authority.
+
+F2: `ReviewController.enforce` fences a retained context and attempts its exact
+bounded interrupt even if status/check/ambiguity writes fail. Persistence errors
+are propagated after the stop attempt; no journal is recreated and no terminal
+receipt is fabricated. The original independent probes and new unavailable,
+corrupt, missing-row, rollback-atomicity and direct-context-clock cases are now
+standard unittest regressions. These are implementer fixes, pending independent
+re-review of the new delta.

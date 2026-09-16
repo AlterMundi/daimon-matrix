@@ -1,14 +1,21 @@
 """Real SQLite + synthetic signing authority; no services or models."""
 
+import hashlib
 import multiprocessing
+import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
+from threading import Barrier
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from daimon_matrix import execution_store
 from daimon_matrix.execution_instruction import ExecutionDenied, Instruction
+from daimon_matrix.execution_store import ExecutionStore
+from daimon_matrix.review_runner import ReviewController
 from tests.test_execution_instruction import proof, request, verifier
 
 
@@ -388,3 +395,284 @@ class StoreTests(unittest.TestCase):
         self.clock.now = 101
         with self.assertRaises(ExecutionDenied):
             self.reopen().reserve("review-1", 1, self.instruction.binding)
+
+
+class ReviewClock:
+    now = 100.0
+    mono = 10.0
+
+    def __call__(self):
+        return self.now
+
+
+class ProbeRunner:
+    binding = ("being:test", "body:test", "runner:test", "session:test")
+
+    def __init__(self):
+        self.starts = []
+        self.interrupts = []
+
+    def start(self, request, context, timeout):
+        self.starts.append((request, context, timeout))
+
+    def interrupt(self, cycle_id, timeout):
+        self.interrupts.append((cycle_id, timeout))
+        return "stopped"
+
+
+class ProbeBroker:
+    def __init__(self):
+        self.calls = []
+
+    def authorize(self, scope):
+        return True
+
+    def submit(self, scope, payload, timeout):
+        self.calls.append((scope, dict(payload), timeout))
+        return "submitted"
+
+
+class IndependentReviewRegressions(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="issue138-independent-")
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "journal.sqlite"
+        self.clock = ReviewClock()
+        self.key = Ed25519PrivateKey.generate()
+        self.trust = verifier(self.key)
+        self.store = ExecutionStore.create(self.path, self.trust, clock=self.clock)
+        self.task = "Review exactly the approved thread."
+        self.i = self.instruction()
+        self.approve(self.i)
+        self.runner, self.broker = ProbeRunner(), ProbeBroker()
+        self.controller = ReviewController(
+            self.store, self.runner, self.broker, monotonic=lambda: self.clock.mono
+        )
+
+    def instruction(self, **changes):
+        return Instruction.from_dict(
+            request(
+                **(
+                    dict(
+                        store_id=self.store.store_id,
+                        task_sha256=hashlib.sha256(self.task.encode()).hexdigest(),
+                    )
+                    | changes
+                )
+            )
+        )
+
+    def approve(self, i, event="approval-1"):
+        self.store.approve(i, proof(self.key, "approve", i.to_dict(), event))
+
+    def start(self):
+        context = self.controller.run_due_once("review-1", 1, self.task)
+        self.assertIsNotNone(context)
+        self.assertEqual(len(self.runner.starts), 1)
+        return context
+
+    def metadata(self):
+        with closing(sqlite3.connect(self.path)) as db:
+            return db.execute("SELECT high_water,clock_fault FROM metadata").fetchone()
+
+    def test_invariant_store_denial_must_preserve_observed_high_water(self):
+        cycle = self.store.reserve("review-1", 1, self.i.binding)
+        self.assertEqual(cycle.deadline, 108)
+        self.store.check(cycle)  # positive control
+        self.clock.now = 108
+        with self.assertRaises(ExecutionDenied):
+            self.store.check(cycle)
+        print("STORE_EXPIRED_CHECK_METADATA", self.metadata())
+        self.clock.now = 107
+        reopened = ExecutionStore(self.path, self.trust, clock=self.clock)
+        with self.assertRaises(ExecutionDenied):
+            reopened.check(cycle)
+
+    def test_invariant_context_cannot_revive_after_observed_absolute_end(self):
+        c = self.start()
+        self.clock.now = 200  # instruction end; monotonic deadline not yet elapsed
+        with self.assertRaises(ExecutionDenied):
+            c.native(self.i.scope[0], {})
+        self.assertEqual(self.broker.calls, [])
+        print("CONTEXT_EXPIRED_METADATA", self.metadata())
+        self.clock.now = 107
+        self.clock.mono = 11
+        denied = False
+        try:
+            c.native(self.i.scope[0], {"probe": "after-observed-end"})
+        except ExecutionDenied:
+            denied = True
+        print("AFTER_ROLLBACK_NATIVE_CALLS", len(self.broker.calls), "DENIED", denied)
+        self.assertTrue(
+            denied, "Observed end must fence, including after wall rollback"
+        )
+        self.assertEqual(self.broker.calls, [])
+
+    def test_invariant_missing_journal_must_not_prevent_exact_cycle_interrupt(self):
+        c = self.start()
+        self.path.unlink()  # only our disposable DB; no recovery or replacement
+        self.clock.now = 108
+        failure = None
+        try:
+            self.controller.enforce(c)
+        except Exception as exc:
+            failure = type(exc).__name__
+        print("MISSING_JOURNAL_ENFORCE", failure, "INTERRUPTS", self.runner.interrupts)
+        self.assertFalse(self.path.exists(), "Must not recreate journal")
+        self.assertEqual(self.runner.interrupts, [(c.cycle.cycle_id, 2)])
+
+    def test_positive_deadline_interrupt_and_terminal_no_repeat(self):
+        c = self.start()
+        self.clock.now = 108
+        self.controller.enforce(c)
+        self.controller.enforce(c)
+        self.assertEqual(self.runner.interrupts, [(c.cycle.cycle_id, 2)])
+        self.assertEqual(self.store.cycle_status(c.cycle.cycle_id)["state"], "stopped")
+        with self.assertRaises(ExecutionDenied):
+            c.native(self.i.scope[0], {})
+
+    def test_positive_successful_time_observation_latches_later_rollback(self):
+        c = self.start()
+        self.clock.now = 105
+        c.check()
+        self.assertEqual(self.metadata(), (105.0, 0))
+        self.clock.now = 104
+        with self.assertRaises(ExecutionDenied):
+            c.native(self.i.scope[0], {})
+        self.assertEqual(self.metadata(), (105.0, 1))
+        self.clock.now = 106
+        with self.assertRaises(ExecutionDenied):
+            ExecutionStore(self.path, self.trust, clock=self.clock).check(c.cycle)
+        self.assertEqual(self.broker.calls, [])
+
+    def test_cancellation_between_context_check_and_native_dispatch(self):
+        c = self.start()
+        cancel_proof = proof(
+            self.key,
+            "cancel",
+            self.store.cancellation_payload("review-1", 1),
+            "cancel-1",
+        )
+
+        def authorize(scope):
+            self.store.cancel("review-1", 1, cancel_proof)
+            return True
+
+        self.broker.authorize = authorize  # external policy seam, not admission
+        with self.assertRaises(ExecutionDenied):
+            c.native(self.i.scope[0], {})
+        self.assertEqual(self.broker.calls, [])
+        self.assertEqual(self.store.status("review-1", 1)["state"], "cancelled")
+
+    def test_real_sqlite_concurrent_native_budget(self):
+        c = self.start()
+        barrier = Barrier(4)
+
+        def attempt(n):
+            barrier.wait(timeout=5)
+            try:
+                c.native(self.i.scope[0], {"n": n})
+                return True
+            except ExecutionDenied:
+                return False
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            accepted = list(pool.map(attempt, range(4)))
+        self.assertEqual(sum(accepted), 2)
+        self.assertEqual(len(self.broker.calls), 2)
+        self.assertEqual(
+            len(self.store.cycle_status(c.cycle.cycle_id)["operations"]), 3
+        )
+
+    def test_real_sqlite_cross_instruction_single_flight(self):
+        manual = self.instruction(
+            instruction_id="manual", mode="manual", interval=None, max_cycles=1
+        )
+        self.approve(manual, "manual-approval")
+        barrier = Barrier(2)
+
+        def reserve(i):
+            reopened = ExecutionStore(self.path, self.trust, clock=self.clock)
+            barrier.wait(timeout=5)
+            return reopened.reserve(i.instruction_id, 1, i.binding)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(reserve, (self.i, manual)))
+        self.assertEqual(sum(c is not None for c in results), 1)
+        other = self.instruction(instruction_id="other", session="session:other")
+        self.approve(other, "other-approval")
+        self.assertIsNotNone(self.store.reserve("other", 1, other.binding))
+
+    def test_proof_tamper_does_not_consume_event_then_replay_and_new_store_denied(self):
+        successor = self.instruction(revision=2, predecessor=self.i.sha256, end=210)
+        attestation = proof(self.key, "approve", successor.to_dict(), "successor")
+        changed = self.instruction(revision=2, predecessor=self.i.sha256, end=211)
+        with self.assertRaises(ExecutionDenied):
+            self.store.approve(changed, attestation)
+        self.store.approve(successor, attestation)
+        with self.assertRaises(ExecutionDenied):
+            self.store.approve(successor, attestation)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM events").fetchone()[0], 2)
+        other = ExecutionStore.create(
+            Path(self.tmp.name) / "new.sqlite", self.trust, clock=self.clock
+        )
+        with self.assertRaises(ExecutionDenied):
+            other.approve(successor, attestation)
+        self.assertEqual(other.statuses(), [])
+
+    def test_expired_approval_denial_must_not_allow_time_rollback_readmission(self):
+        # Same class as the failed _guard high-water probe, before any cycle exists.
+        self.clock.now = 200
+        fresh = self.instruction(instruction_id="fresh")
+        attestation = proof(self.key, "approve", fresh.to_dict(), "fresh-event")
+        with self.assertRaises(ExecutionDenied):
+            self.store.approve(fresh, attestation)
+        self.clock.now = 199
+        with self.assertRaises(ExecutionDenied):
+            self.store.approve(fresh, attestation)
+
+    def test_unavailable_corrupt_and_missing_cycle_still_interrupt(self):
+        for damage in ("unavailable", "corrupt", "missing-row"):
+            with self.subTest(damage=damage):
+                self.setUp()
+                c = self.start()
+                if damage == "unavailable":
+                    self.path.unlink()
+                    self.path.mkdir()
+                elif damage == "corrupt":
+                    self.path.write_bytes(b"not a sqlite database")
+                else:
+                    with closing(sqlite3.connect(self.path)) as db:
+                        db.execute("DELETE FROM cycles")
+                        db.commit()
+                with self.assertRaises((ExecutionDenied, sqlite3.Error, OSError)):
+                    self.controller.enforce(c)
+                self.assertEqual(self.runner.interrupts, [(c.cycle.cycle_id, 2)])
+                with self.assertRaises((ExecutionDenied, sqlite3.Error, OSError)):
+                    c.native(self.i.scope[0], {})
+                self.assertEqual(self.broker.calls, [])
+
+    def test_failed_authority_mutation_keeps_time_but_not_event(self):
+        # _event runs before immutable-revision rejection. Only the clock may commit.
+        self.clock.now = 150
+        with self.assertRaises(ExecutionDenied):
+            self.approve(self.i, "must-not-consume")
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM events").fetchone()[0], 1)
+        self.assertEqual(self.metadata(), (150.0, 0))
+        self.clock.now = 149
+        with self.assertRaises(ExecutionDenied):
+            self.store.check(self.store.reserve("review-1", 1, self.i.binding))
+        self.assertEqual(self.metadata(), (150.0, 1))
+
+    def test_context_checkpoint_time_observation_is_also_durable(self):
+        c = self.start()
+        self.clock.now = 200
+        with self.assertRaises(ExecutionDenied):
+            c.remaining()
+        self.assertEqual(self.metadata(), (200.0, 0))
+        self.clock.now = 199
+        with self.assertRaises(ExecutionDenied):
+            self.approve(self.instruction(instruction_id="fresh"), "fresh")
+        self.assertEqual(self.metadata(), (200.0, 1))
