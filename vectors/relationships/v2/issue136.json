@@ -1,0 +1,553 @@
+{
+  "events": [
+    {
+      "being_ref": "dm:being:v1:DM9AecCjbNpB6yiILlXsSfBpi7w_4AVRJfqRciByVg4",
+      "causal_parents": [],
+      "content_hash": "1d26392e0806bd233f53b1bbe69fa742007a0286dbea9e901bb5e93ece0fc7cf",
+      "event_id": "9faf0039-847c-5c66-a08f-29d2deca8810",
+      "kind": "matrix/relationship-card",
+      "manifest_hash": "7f757b696d582d7d453cb90c9ec5c5f6f21e99771f4778a9f2f915ea7c0ff063",
+      "occurred_at_ms": 1800000000000,
+      "origin": {
+        "body_ref": "cluster:synthetic:delegate",
+        "embodiment_id": "embodiment:synthetic:delegate",
+        "incarnation_id": "incarnation:synthetic:delegate:0",
+        "principal_id": "synthetic-delegate@loopback"
+      },
+      "payload": {
+        "being_ref": "dm:being:v1:DM9AecCjbNpB6yiILlXsSfBpi7w_4AVRJfqRciByVg4",
+        "capability_refs": [
+          "dm:capability:v1:relationship-v1"
+        ],
+        "card_series_id": "dm:relationship-card-series:v1:EyAj5HCkUwqu1v79d-okDJe6cEz0CZCRplYsd5EOcx4",
+        "control_position": {
+          "embodiment_id": "embodiment:synthetic:delegate",
+          "incarnation_id": "incarnation:synthetic:delegate:0",
+          "manifest_hash": "7f757b696d582d7d453cb90c9ec5c5f6f21e99771f4778a9f2f915ea7c0ff063"
+        },
+        "encryption_key": {
+          "algorithm": "X25519",
+          "key_id": "dm:key:v1:gBIeVyZ2TUV5pQ99sYmU1XRuY3rrWLFHaU2tcVsHAuY",
+          "public": "b9X2W1W4_AB5PTVOvTz-1-faHHzEwhFJYTUdU66dhgA"
+        },
+        "issued_at_ms": 1800000000000,
+        "previous_card_event_id": null,
+        "resources": [],
+        "route_refs": [
+          "dm:route:v1:delegate"
+        ],
+        "schema": "dm.relationship.card/v2",
+        "sequence": 0,
+        "status": "active",
+        "validity": {
+          "mode": "until-revoked",
+          "not_before_ms": 1800000000000
+        }
+      },
+      "previous_event_id": null,
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 1,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:xYloeV92hDzrPZXhiVWKfsDBFTUPoq_gUHPjCAFzXZI",
+        "value": "4otAcftDRaioaA2tXqFc8Lh_iPvJ70Zzf46KnZhsIm-tlQr7pLBVdwMxJPuxOcW4c9KxJrQa8o9h9pY5px2_Cw"
+      },
+      "subject": "dm:relationship-card-series:v1:EyAj5HCkUwqu1v79d-okDJe6cEz0CZCRplYsd5EOcx4",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "causal_parents": [],
+      "content_hash": "59cc1d34965186b1e1893a856f3f58fd79bbbbf723b41774950a2845825ab9b2",
+      "event_id": "ea9aa1a3-3f4a-5901-b64e-e66c8970dcb1",
+      "kind": "matrix/relationship-card",
+      "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c",
+      "occurred_at_ms": 1800000000000,
+      "origin": {
+        "body_ref": "cluster:synthetic:founder",
+        "embodiment_id": "embodiment:synthetic:founder",
+        "incarnation_id": "incarnation:synthetic:founder:0",
+        "principal_id": "synthetic-founder@loopback"
+      },
+      "payload": {
+        "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "capability_refs": [
+          "dm:capability:v1:relationship-v1"
+        ],
+        "card_series_id": "dm:relationship-card-series:v1:IQ0EpmmMnuq-eDvtr_Xn0MjGgADusW_cXXEJlcg-D20",
+        "control_position": {
+          "embodiment_id": "embodiment:synthetic:founder",
+          "incarnation_id": "incarnation:synthetic:founder:0",
+          "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c"
+        },
+        "encryption_key": {
+          "algorithm": "X25519",
+          "key_id": "dm:key:v1:LY5YDa1CvV21yK_Bb49JHW4ktep9RcbmassKQkPKItc",
+          "public": "7V8KSblZoNlRaDEmenpYEMZ5--ntnEVHXDw_hfttdSk"
+        },
+        "issued_at_ms": 1800000000000,
+        "previous_card_event_id": null,
+        "resources": [
+          {
+            "descriptor": {
+              "classification": "shareable",
+              "controller_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+              "descriptor_ref": "dm:content:v1:synthetic-knowledge",
+              "kind": "knowledge",
+              "operations": [
+                "messaging.read"
+              ],
+              "resource_nonce": "LGzXnrHIiSwGlz1d2wNoh2jmHxahYro1QC9zxT6Rnvs",
+              "schema": "dm.relationship.resource/v1"
+            },
+            "resource_ref": "dm:relationship-resource:v1:Zfr-NTn48FAf1HCnR1-lRWEdcpaEijs8UEGgz_SPnUc"
+          }
+        ],
+        "route_refs": [
+          "dm:route:v1:founder"
+        ],
+        "schema": "dm.relationship.card/v2",
+        "sequence": 0,
+        "status": "active",
+        "validity": {
+          "mode": "until-revoked",
+          "not_before_ms": 1800000000000
+        }
+      },
+      "previous_event_id": null,
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 1,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "value": "LokRygcqQY-FBpP5l7PFHZfReMAadfwa_A_7GZO0ApILG-4dLAKLFhK9AAx5NnSR2hWpeOgGpZqD1DFjzs90BQ"
+      },
+      "subject": "dm:relationship-card-series:v1:IQ0EpmmMnuq-eDvtr_Xn0MjGgADusW_cXXEJlcg-D20",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "causal_parents": [],
+      "content_hash": "eacf895eb1822ad44f3305915a4adc2653c441223fc2d70057243cc9bb02e738",
+      "event_id": "c34af93d-c152-55b6-87d4-20905ee0109d",
+      "kind": "matrix/relationship-offer",
+      "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c",
+      "occurred_at_ms": 1800000000001,
+      "origin": {
+        "body_ref": "cluster:synthetic:founder",
+        "embodiment_id": "embodiment:synthetic:founder",
+        "incarnation_id": "incarnation:synthetic:founder:0",
+        "principal_id": "synthetic-founder@loopback"
+      },
+      "payload": {
+        "expires_at_ms": 1800000010000,
+        "initiator_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "initiator_card_ref": {
+          "event_hash": "59cc1d34965186b1e1893a856f3f58fd79bbbbf723b41774950a2845825ab9b2",
+          "event_id": "ea9aa1a3-3f4a-5901-b64e-e66c8970dcb1"
+        },
+        "issued_at_ms": 1800000000001,
+        "nonce": "3Vcgr5KUGM5Atkdej2FDhWugPHClQfrB_YpUxkOoFoU",
+        "proposed_grants": [
+          {
+            "grantor_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+            "permissions": [
+              {
+                "classification": "shareable",
+                "delegable": true,
+                "operations": [
+                  "messaging.read"
+                ],
+                "remaining_delegation_depth": 1,
+                "resource_ref": "dm:relationship-resource:v1:Zfr-NTn48FAf1HCnR1-lRWEdcpaEijs8UEGgz_SPnUc"
+              }
+            ],
+            "subject_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+            "validity": {
+              "mode": "until-revoked",
+              "not_before_ms": 1800000000000
+            }
+          }
+        ],
+        "relationship_id": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+        "responder_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "responder_card_ref": {
+          "event_hash": "3c1bc655a9a6033beaaa24744a45fcd38605aa0b5489d30881a83a02550778e4",
+          "event_id": "c11f0989-b522-5d26-8f06-1d786e3b314b"
+        },
+        "roles": [
+          "peer"
+        ],
+        "schema": "dm.relationship.offer/v2",
+        "terms_ref": "dm:terms:v1:synthetic-mutual-consent"
+      },
+      "previous_event_id": "ea9aa1a3-3f4a-5901-b64e-e66c8970dcb1",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 2,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "value": "lpxtBddPiUq2Eya5TGx6QjbRWadDBN1FKB3wM2KoEL_f-bG2XxH3WbqvxXe0ysraqC8YFrRWw-UQO2AojGcbBA"
+      },
+      "subject": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "causal_parents": [],
+      "content_hash": "9f7adc1cdff8a0f43211706d5166c7d0de513b03ed303d97ec25a55519a2d1cb",
+      "event_id": "46fb6abd-cb8c-5ab6-acf1-a45a05e1a69d",
+      "kind": "matrix/tribe-declaration",
+      "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c",
+      "occurred_at_ms": 1800000000003,
+      "origin": {
+        "body_ref": "cluster:synthetic:founder",
+        "embodiment_id": "embodiment:synthetic:founder",
+        "incarnation_id": "incarnation:synthetic:founder:0",
+        "principal_id": "synthetic-founder@loopback"
+      },
+      "payload": {
+        "declaration": {
+          "created_at_ms": 1800000000003,
+          "founder_principal_id": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+          "nonce": "Xn1-E1cG2Xz61QfFNmtQRNuaXP3HFEGo9rOZhOsEAJY",
+          "policy_ref": "dm:tribe-policy:v1:synthetic"
+        },
+        "schema": "dm.tribe.declaration/v1",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc"
+      },
+      "previous_event_id": "c34af93d-c152-55b6-87d4-20905ee0109d",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 3,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "value": "zyGOf7r-tACJLSNR07vX-lMGU9xFeEx917mDQ-xH17kGf3kt-K8vUCin6dqkNXGutPPx20yjIEKVcfCMqdRzBg"
+      },
+      "subject": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "causal_parents": [],
+      "content_hash": "4b15bb7f63caf06435ffdf9eb30c791140c2a855ec23f52502f33ca602d4b438",
+      "event_id": "1eeb37dc-fed8-5a1c-9607-a53e86ef1c52",
+      "kind": "matrix/tribe-invitation",
+      "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c",
+      "occurred_at_ms": 1800000000004,
+      "origin": {
+        "body_ref": "cluster:synthetic:founder",
+        "embodiment_id": "embodiment:synthetic:founder",
+        "incarnation_id": "incarnation:synthetic:founder:0",
+        "principal_id": "synthetic-founder@loopback"
+      },
+      "payload": {
+        "expires_at_ms": 1800000010000,
+        "founder_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "founder_epoch": 0,
+        "invitation_id": "dm:tribe-invitation:v1:oZB--qYU1aDe8CweJl-ATEo-NV7w7NyNIFBjItEj15k",
+        "invitee_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "issued_at_ms": 1800000000004,
+        "nonce": "OMChwuZxeyeERe4YJXDuyr3IBGF148nnMO7Bc2385XQ",
+        "schema": "dm.tribe.invitation/v1",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc"
+      },
+      "previous_event_id": "46fb6abd-cb8c-5ab6-acf1-a45a05e1a69d",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 4,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "value": "amGLH1U-ybpqI9CyPULGRVdoC9Y42HoHdp2O9j2qbK1j9wfsEXOPX9GFA7x9MFtoDoqM4gk27H7t275rrliZDg"
+      },
+      "subject": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "causal_parents": [],
+      "content_hash": "b3b85d9887997f8b464e3a6c6114bba405e1f525636925fe04a9b04795a9b929",
+      "event_id": "cd442ee4-149f-5d0c-824e-209ff5414213",
+      "kind": "matrix/relationship-grant",
+      "manifest_hash": "8022ad7dfe0a20c5a957567e8bcb3af009741ee15f419dcf75f008c57e87827c",
+      "occurred_at_ms": 1800000000006,
+      "origin": {
+        "body_ref": "cluster:synthetic:founder",
+        "embodiment_id": "embodiment:synthetic:founder",
+        "incarnation_id": "incarnation:synthetic:founder:0",
+        "principal_id": "synthetic-founder@loopback"
+      },
+      "payload": {
+        "delegation_sequence": 0,
+        "grant_id": "dm:relationship-grant:v1:86kmt-8RjdkkRA8tq5GTEAF_QpreCC3SyZdEVjOo8zQ",
+        "grantor_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "issued_at_ms": 1800000000006,
+        "nonce": "vw775VdfEiE4RpLuYab5x36sS4LktRqfTJUyO8I-i6U",
+        "parent_grant_ref": null,
+        "permissions": [
+          {
+            "classification": "shareable",
+            "delegable": true,
+            "operations": [
+              "messaging.read"
+            ],
+            "remaining_delegation_depth": 1,
+            "resource_ref": "dm:relationship-resource:v1:Zfr-NTn48FAf1HCnR1-lRWEdcpaEijs8UEGgz_SPnUc"
+          }
+        ],
+        "previous_delegation_event_id": null,
+        "relationship_id": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+        "schema": "dm.relationship.grant/v2",
+        "subject_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+        "validity": {
+          "mode": "until-revoked",
+          "not_before_ms": 1800000000000
+        }
+      },
+      "previous_event_id": "1eeb37dc-fed8-5a1c-9607-a53e86ef1c52",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 5,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "value": "MNsEpc91m64u6vHb-1aq38llsbeD4zmz-y1UNbo1Fnd0D7FuLWs0AmHhj4lFV-ZjchaMRe4OZsPAuWDCcj6NBg"
+      },
+      "subject": "dm:relationship-grant:v1:86kmt-8RjdkkRA8tq5GTEAF_QpreCC3SyZdEVjOo8zQ",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+      "causal_parents": [],
+      "content_hash": "3c1bc655a9a6033beaaa24744a45fcd38605aa0b5489d30881a83a02550778e4",
+      "event_id": "c11f0989-b522-5d26-8f06-1d786e3b314b",
+      "kind": "matrix/relationship-card",
+      "manifest_hash": "17aa2bf5c5c577151950b34fc04644a685988f130adbb5b403ac4802db0f1171",
+      "occurred_at_ms": 1800000000000,
+      "origin": {
+        "body_ref": "cluster:synthetic:member",
+        "embodiment_id": "embodiment:synthetic:member",
+        "incarnation_id": "incarnation:synthetic:member:0",
+        "principal_id": "synthetic-member@loopback"
+      },
+      "payload": {
+        "being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "capability_refs": [
+          "dm:capability:v1:relationship-v1"
+        ],
+        "card_series_id": "dm:relationship-card-series:v1:1VibJBJXFjwDVBH8kcJRTfTpvoqFvIIMVmCajQT8ZUA",
+        "control_position": {
+          "embodiment_id": "embodiment:synthetic:member",
+          "incarnation_id": "incarnation:synthetic:member:0",
+          "manifest_hash": "17aa2bf5c5c577151950b34fc04644a685988f130adbb5b403ac4802db0f1171"
+        },
+        "encryption_key": {
+          "algorithm": "X25519",
+          "key_id": "dm:key:v1:cco4Kgg6xQa1SywzpwOglTQ0oMmbaj3bqPfaLrpRoCQ",
+          "public": "y8iRCB-pJr5njWJTO3IkZ9wiUR-znqp35szlte2jG0A"
+        },
+        "issued_at_ms": 1800000000000,
+        "previous_card_event_id": null,
+        "resources": [],
+        "route_refs": [
+          "dm:route:v1:member"
+        ],
+        "schema": "dm.relationship.card/v2",
+        "sequence": 0,
+        "status": "active",
+        "validity": {
+          "mode": "until-revoked",
+          "not_before_ms": 1800000000000
+        }
+      },
+      "previous_event_id": null,
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 1,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:OntKAJbXz6FhKiesj5Oq3M6KzWW3zMtkEuFddZ_g3lk",
+        "value": "MG4mDz-QokNy5_-oCFdQNVi9MCIL6ktW9TwQQF_MosRx6fI06VYDNjOxVfd_WLadVHVNzs_woIkvnYXRlhN9Dw"
+      },
+      "subject": "dm:relationship-card-series:v1:1VibJBJXFjwDVBH8kcJRTfTpvoqFvIIMVmCajQT8ZUA",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+      "causal_parents": [],
+      "content_hash": "d14ed8a33a939726704882c7ab2a25300abd1396d969f90d7847fafe451afa22",
+      "event_id": "8147bf6d-ec50-540d-a422-fb275fea8daa",
+      "kind": "matrix/relationship-acceptance",
+      "manifest_hash": "17aa2bf5c5c577151950b34fc04644a685988f130adbb5b403ac4802db0f1171",
+      "occurred_at_ms": 1800000000002,
+      "origin": {
+        "body_ref": "cluster:synthetic:member",
+        "embodiment_id": "embodiment:synthetic:member",
+        "incarnation_id": "incarnation:synthetic:member:0",
+        "principal_id": "synthetic-member@loopback"
+      },
+      "payload": {
+        "accepted_at_ms": 1800000000002,
+        "initiator_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "initiator_card_ref": {
+          "event_hash": "59cc1d34965186b1e1893a856f3f58fd79bbbbf723b41774950a2845825ab9b2",
+          "event_id": "ea9aa1a3-3f4a-5901-b64e-e66c8970dcb1"
+        },
+        "offer_ref": {
+          "event_hash": "eacf895eb1822ad44f3305915a4adc2653c441223fc2d70057243cc9bb02e738",
+          "event_id": "c34af93d-c152-55b6-87d4-20905ee0109d"
+        },
+        "relationship_id": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+        "responder_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "responder_card_ref": {
+          "event_hash": "3c1bc655a9a6033beaaa24744a45fcd38605aa0b5489d30881a83a02550778e4",
+          "event_id": "c11f0989-b522-5d26-8f06-1d786e3b314b"
+        },
+        "schema": "dm.relationship.acceptance/v2"
+      },
+      "previous_event_id": "c11f0989-b522-5d26-8f06-1d786e3b314b",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 2,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:OntKAJbXz6FhKiesj5Oq3M6KzWW3zMtkEuFddZ_g3lk",
+        "value": "kUTSyiu4GHiL1XzuaBE-6S5cgg5NQRr9tjZ0ChQQTsqTgOp3Sl5BV65NCK5sWFmGIIKEN_GU72Y0T8rO6cnBBg"
+      },
+      "subject": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+      "causal_parents": [],
+      "content_hash": "054af843c131d7b5314dba656cdbb9abb3fce0166fe87347a448368ff3873140",
+      "event_id": "068a6bf6-5a75-5d1d-a53a-0fd1e0aa3465",
+      "kind": "matrix/tribe-membership-acceptance",
+      "manifest_hash": "17aa2bf5c5c577151950b34fc04644a685988f130adbb5b403ac4802db0f1171",
+      "occurred_at_ms": 1800000000005,
+      "origin": {
+        "body_ref": "cluster:synthetic:member",
+        "embodiment_id": "embodiment:synthetic:member",
+        "incarnation_id": "incarnation:synthetic:member:0",
+        "principal_id": "synthetic-member@loopback"
+      },
+      "payload": {
+        "accepted_at_ms": 1800000000005,
+        "founder_epoch": 0,
+        "invitation_ref": {
+          "event_hash": "4b15bb7f63caf06435ffdf9eb30c791140c2a855ec23f52502f33ca602d4b438",
+          "event_id": "1eeb37dc-fed8-5a1c-9607-a53e86ef1c52"
+        },
+        "invitee_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "membership_sequence": 0,
+        "previous_membership_terminal_ref": null,
+        "schema": "dm.tribe.membership-acceptance/v1",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc"
+      },
+      "previous_event_id": "8147bf6d-ec50-540d-a422-fb275fea8daa",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 3,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:OntKAJbXz6FhKiesj5Oq3M6KzWW3zMtkEuFddZ_g3lk",
+        "value": "HOJEOwhKpGJCtYvWV42ZzLAIyVcM9Uwg1XqJkGCPqewKL8nt-sGNFUrc6ynAy6k30Kt8Ev4ytaHoOn-efIbICQ"
+      },
+      "subject": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+      "supersedes": null
+    },
+    {
+      "being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+      "causal_parents": [],
+      "content_hash": "ab552c45a39b0dee2883e84651753444f539f48ad2642c224d7b048bbd7aa354",
+      "event_id": "c9cb63ce-5461-5b92-b2eb-65756ecb3d1f",
+      "kind": "matrix/relationship-grant-acceptance",
+      "manifest_hash": "17aa2bf5c5c577151950b34fc04644a685988f130adbb5b403ac4802db0f1171",
+      "occurred_at_ms": 1800000000007,
+      "origin": {
+        "body_ref": "cluster:synthetic:member",
+        "embodiment_id": "embodiment:synthetic:member",
+        "incarnation_id": "incarnation:synthetic:member:0",
+        "principal_id": "synthetic-member@loopback"
+      },
+      "payload": {
+        "accepted_at_ms": 1800000000007,
+        "grant_id": "dm:relationship-grant:v1:86kmt-8RjdkkRA8tq5GTEAF_QpreCC3SyZdEVjOo8zQ",
+        "grant_ref": {
+          "event_hash": "b3b85d9887997f8b464e3a6c6114bba405e1f525636925fe04a9b04795a9b929",
+          "event_id": "cd442ee4-149f-5d0c-824e-209ff5414213"
+        },
+        "grantor_being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "relationship_id": "dm:relationship:v1:la9H9s2XvXSIpX7AM0Em7DsSCcYH67SAddjXth3Scl0",
+        "schema": "dm.relationship.grant-acceptance/v2",
+        "subject_being_ref": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY"
+      },
+      "previous_event_id": "068a6bf6-5a75-5d1d-a53a-0fd1e0aa3465",
+      "protocol": "dm.we.v1",
+      "sensitivity": "shareable",
+      "sequence": 4,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:OntKAJbXz6FhKiesj5Oq3M6KzWW3zMtkEuFddZ_g3lk",
+        "value": "JWaYsd2u5fQS9zB9ThLDD-BY6U4tfPEH6ME1duUxb8hiS0Xg87zB6Kk9CktAnOy2lfqeQyDjbMA9u_hYVTisAg"
+      },
+      "subject": "dm:relationship-grant:v1:86kmt-8RjdkkRA8tq5GTEAF_QpreCC3SyZdEVjOo8zQ",
+      "supersedes": null
+    }
+  ],
+  "schema": "dm.issue136.relationship-vector/v2",
+  "snapshot": {
+    "declaration": {
+      "created_at_ms": 1800000000003,
+      "founder_principal_id": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "nonce": "Xn1-E1cG2Xz61QfFNmtQRNuaXP3HFEGo9rOZhOsEAJY",
+      "policy_ref": "dm:tribe-policy:v1:synthetic"
+    },
+    "founder_epoch": 0,
+    "founder_principal_id": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+    "grants": [
+      {
+        "controller_principal_id": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "grant_ref": "dm:relationship-grant:v1:86kmt-8RjdkkRA8tq5GTEAF_QpreCC3SyZdEVjOo8zQ:0",
+        "grantee_principal_id": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "operations": [
+          "messaging.read"
+        ],
+        "parent_grant_ref": null,
+        "resource_ref": "dm:relationship-resource:v1:Zfr-NTn48FAf1HCnR1-lRWEdcpaEijs8UEGgz_SPnUc",
+        "revoked": false,
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+        "validity": {
+          "mode": "until-revoked",
+          "not_before_ms": 1800000000000
+        }
+      }
+    ],
+    "lineage_head_ref": "dm:tribe-lineage:v1:fJIa7C6AkX77R0slmGw2RzzfRS1dq59WLhLgqDIrMdU",
+    "members": [
+      {
+        "embodiment_id": "embodiment:synthetic:founder",
+        "membership_ref": "46fb6abd-cb8c-5ab6-acf1-a45a05e1a69d",
+        "principal_id": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+        "state": "active",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc"
+      },
+      {
+        "embodiment_id": "embodiment:synthetic:member",
+        "membership_ref": "068a6bf6-5a75-5d1d-a53a-0fd1e0aa3465",
+        "principal_id": "dm:being:v1:sbkmsGShfM_HCrspDcpaCr71fLj9iH2Caw-ng_ELfnY",
+        "state": "active",
+        "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc"
+      }
+    ],
+    "schema": "dm.tribe-snapshot/v2",
+    "tribe_ref": "dm:tribe:v1:kGbse4ViawzeqrYI-Z8KzabrrximWsrcg5pDwG__BIc",
+    "verified_at_ms": 2800000000000
+  }
+}

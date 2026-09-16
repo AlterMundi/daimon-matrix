@@ -4,10 +4,12 @@
   "title": "Daimon Matrix owner-local authenticated API V1",
   "oneOf": [
     {"$ref": "#/$defs/capability"},
+    {"$ref": "#/$defs/capabilityV2"},
     {"$ref": "#/$defs/request"},
     {"$ref": "#/$defs/response"}
   ],
   "$defs": {
+    "capabilityV2": {"type": "object", "additionalProperties": false, "required": ["schema", "capability_id", "client_id", "key_id", "methods", "status", "validity"], "properties": {"schema": {"const": "dm.local.capability/v2"}, "capability_id": {"type": "string", "pattern": "^dm:local-capability:v2:[A-Za-z0-9_-]{43}$"}, "client_id": {"type": "string", "pattern": "^[A-Za-z0-9._@:-]{1,128}$"}, "key_id": {"type": "string", "pattern": "^dm:local-key:v1:[A-Za-z0-9_-]{43}$"}, "methods": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["messaging.send", "messaging.inbox", "messaging.reply", "messaging.delivery"]}}, "status": {"enum": ["active", "revoked"]}, "validity": {"type": "object", "additionalProperties": false, "required": ["mode", "not_before_ms"], "properties": {"mode": {"const": "until-revoked"}, "not_before_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}}}},
     "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "auth": {

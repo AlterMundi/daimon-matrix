@@ -37,7 +37,7 @@
       ],
       "properties": {
         "body_ref": {"type": "string", "minLength": 1, "maxLength": 256},
-        "embodiment_credential_id": {"$ref": "#/$defs/artifactId"},
+        "embodiment_credential_id": {"type": "string", "pattern": "^dm:identity:v[12]:[A-Za-z0-9_-]{43}$"},
         "embodiment_id": {"type": "string", "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$"},
         "incarnation_authorization_id": {"$ref": "#/$defs/artifactId"},
         "incarnation_id": {"type": "string", "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$"},

@@ -1977,7 +1977,7 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
         "relationships",
     }
     bundle = _closed(value, fields, "invalid_rebirth_runtime_bundle")
-    if bundle["schema"] != "dm.runtime.bundle/v7":
+    if bundle["schema"] not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}:
         raise RebirthError("unsupported_rebirth_runtime_bundle")
     if any(
         bundle[field] is not None

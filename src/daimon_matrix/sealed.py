@@ -34,7 +34,11 @@ from cryptography.hazmat.primitives.hpke import AEAD, KDF, KEM, Suite
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, _message_payload, _resolution_payload
-from .identity import VerificationError, verify_embodiment_credential
+from .identity import (
+    VerificationError,
+    credential_covers_deadline,
+    verify_embodiment_credential,
+)
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .weave import RootAuthority, WeaveProtocolError, verify_event
 
@@ -888,8 +892,11 @@ def seal_event(
             or not issued_at_ms < expires_at_ms <= auth["expires_at_ms"]
             or expires_at_ms - issued_at_ms > MAX_TTL_MS
             or event["occurred_at_ms"] > issued_at_ms
-            or expires_at_ms > sender_body["valid_until_ms"]
-            or any(expires_at_ms > body["valid_until_ms"] for body in recipient_bodies)
+            or not credential_covers_deadline(sender_body, expires_at_ms)
+            or any(
+                not credential_covers_deadline(body, expires_at_ms)
+                for body in recipient_bodies
+            )
         ):
             raise _reject()
         base: dict[str, Any] = {

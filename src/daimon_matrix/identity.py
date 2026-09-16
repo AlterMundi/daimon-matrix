@@ -30,6 +30,7 @@ HistoryVerifier = Callable[[Mapping[str, Any]], bool]
 
 MAX_KEYS: Final = 32
 MAX_SIGNATURES: Final = 128
+CREDENTIAL_V2_DOMAIN: Final = "dm.identity.embodiment-credential/v2"
 
 DOMAINS: Final[dict[str, str]] = {
     "genesis": "dm.identity.genesis/v1",
@@ -228,14 +229,18 @@ def _signatures(seeds: SeedMap, role: str, preimage: bytes) -> list[dict[str, st
 
 
 def _artifact(
-    kind: str, body: Mapping[str, Any], signatures: list[dict[str, str]]
+    kind: str,
+    body: Mapping[str, Any],
+    signatures: list[dict[str, str]],
+    *,
+    version: int = 1,
 ) -> Artifact:
-    domain = DOMAINS[kind]
+    domain = CREDENTIAL_V2_DOMAIN if version == 2 else DOMAINS[kind]
     artifact_hash = digest(domain, body)
     return {
-        "schema": "dm.identity.artifact/v1",
+        "schema": f"dm.identity.artifact/v{version}",
         "kind": kind,
-        "artifact_id": "dm:identity:v1:" + b64url(artifact_hash),
+        "artifact_id": f"dm:identity:v{version}:" + b64url(artifact_hash),
         "body": copy.deepcopy(dict(body)),
         "signatures": sorted(
             signatures, key=lambda item: (item["key_id"], item["role"])
@@ -244,20 +249,24 @@ def _artifact(
 
 
 def _verify_wrapper(
-    artifact: Mapping[str, Any], kind: str
+    artifact: Mapping[str, Any], kind: str, *, version: int = 1
 ) -> tuple[Mapping[str, Any], bytes]:
     _closed(
         artifact,
         {"schema", "kind", "artifact_id", "body", "signatures"},
         "identity artifact",
     )
-    if artifact["schema"] != "dm.identity.artifact/v1" or artifact["kind"] != kind:
+    if (
+        artifact["schema"] != f"dm.identity.artifact/v{version}"
+        or artifact["kind"] != kind
+    ):
         raise VerificationError("identity artifact kind/schema mismatch")
     body = artifact["body"]
     if not isinstance(body, Mapping):
         raise VerificationError("artifact body must be an object")
-    raw_hash = digest(DOMAINS[kind], body)
-    if artifact["artifact_id"] != "dm:identity:v1:" + b64url(raw_hash):
+    domain = CREDENTIAL_V2_DOMAIN if version == 2 else DOMAINS[kind]
+    raw_hash = digest(domain, body)
+    if artifact["artifact_id"] != f"dm:identity:v{version}:" + b64url(raw_hash):
         raise VerificationError("artifact ID mismatch")
     signatures = artifact["signatures"]
     if not isinstance(signatures, list) or len(signatures) > MAX_SIGNATURES:
@@ -1104,6 +1113,114 @@ class ControlChain:
         return state
 
 
+def validate_validity(value: Any) -> dict[str, Any]:
+    """Closed V2 half-open validity algebra; absence of an end is explicit."""
+    if not isinstance(value, Mapping):
+        raise VerificationError("invalid validity")
+    mode = value.get("mode")
+    fields = {"mode", "not_before_ms"}
+    if mode == "finite":
+        fields.add("not_after_ms")
+    elif mode != "until-revoked":
+        raise VerificationError("invalid validity mode")
+    _closed(value, fields, "validity")
+    for field in fields - {"mode"}:
+        instant = value[field]
+        if (
+            isinstance(instant, bool)
+            or not isinstance(instant, int)
+            or not 0 <= instant < 2**53
+        ):
+            raise VerificationError("invalid validity instant")
+    if mode == "finite" and value["not_after_ms"] <= value["not_before_ms"]:
+        raise VerificationError("invalid validity interval")
+    return copy.deepcopy(dict(value))
+
+
+def validity_contains(value: Mapping[str, Any], at_ms: int) -> bool:
+    validity = validate_validity(value)
+    if isinstance(at_ms, bool) or not isinstance(at_ms, int) or not 0 <= at_ms < 2**53:
+        raise VerificationError("invalid validity time")
+    return bool(
+        validity["not_before_ms"] <= at_ms
+        and (validity["mode"] == "until-revoked" or at_ms < validity["not_after_ms"])
+    )
+
+
+def validity_attenuates(child: Mapping[str, Any], parent: Mapping[str, Any]) -> bool:
+    child, parent = validate_validity(child), validate_validity(parent)
+    return bool(
+        child["not_before_ms"] >= parent["not_before_ms"]
+        and (
+            parent["mode"] == "until-revoked"
+            or (
+                child["mode"] == "finite"
+                and child["not_after_ms"] <= parent["not_after_ms"]
+            )
+        )
+    )
+
+
+def credential_covers_deadline(body: Mapping[str, Any], deadline_ms: int) -> bool:
+    """Bound a finite envelope end using a previously verified credential body."""
+    if "validity" not in body:
+        return bool(deadline_ms <= body["valid_until_ms"])
+    validity = validate_validity(body["validity"])
+    return bool(
+        validity["mode"] == "until-revoked" or deadline_ms <= validity["not_after_ms"]
+    )
+
+
+def create_embodiment_credential_v2(
+    state: ControlState,
+    root_seeds: Sequence[bytes],
+    embodiment_signing_seed: bytes,
+    embodiment_encryption_public: bytes,
+    *,
+    embodiment_id: str,
+    body_ref: str,
+    purposes: Sequence[str],
+    validity: Mapping[str, Any],
+    revocation_generation: int = 0,
+    transport_principals: Sequence[Mapping[str, Any]] = (),
+) -> Artifact:
+    """Explicit root-authorized dependency credential, accepted by the same key.
+
+    This builder grants no manifest succession or runtime activation authority.
+    """
+    body: dict[str, Any] = {
+        "being_ref": state.being_ref,
+        "body_ref": body_ref,
+        "control_head": state.head,
+        "embodiment_id": embodiment_id,
+        "encryption_key": key_descriptor("X25519", embodiment_encryption_public),
+        "purposes": sorted(set(purposes)),
+        "revocation_generation": revocation_generation,
+        "signing_key": signing_descriptor(embodiment_signing_seed),
+        "transport_principals": sorted(
+            (copy.deepcopy(dict(row)) for row in transport_principals),
+            key=lambda row: (row["scheme"], row["principal_id"]),
+        ),
+        "validity": validate_validity(validity),
+    }
+    domain = CREDENTIAL_V2_DOMAIN
+    signatures = _signatures(
+        _seed_map(root_seeds), "root-authorization", domain_bytes(domain, body)
+    )
+    signatures.append(
+        _signature(
+            embodiment_signing_seed,
+            "embodiment-acceptance",
+            domain.encode("ascii") + b"/acceptance\x00" + digest(domain, body),
+        )
+    )
+    artifact = _artifact("embodiment-credential", body, signatures, version=2)
+    verify_embodiment_credential(
+        artifact, state, at_ms=body["validity"]["not_before_ms"]
+    )
+    return artifact
+
+
 def create_embodiment_credential(
     state: ControlState,
     root_seeds: Sequence[bytes],
@@ -1122,7 +1239,7 @@ def create_embodiment_credential(
         (copy.deepcopy(dict(principal)) for principal in transport_principals),
         key=lambda principal: (principal["scheme"], principal["principal_id"]),
     )
-    body = {
+    body: dict[str, Any] = {
         "being_ref": state.being_ref,
         "body_ref": body_ref,
         "control_head": state.head,
@@ -1157,7 +1274,11 @@ def verify_embodiment_credential(
     at_ms: int,
     allow_revoked_history: bool = False,
 ) -> Mapping[str, Any]:
-    body, raw_hash = _verify_wrapper(credential, "embodiment-credential")
+    version = 2 if credential.get("schema") == "dm.identity.artifact/v2" else 1
+    domain = CREDENTIAL_V2_DOMAIN if version == 2 else DOMAINS["embodiment-credential"]
+    body, raw_hash = _verify_wrapper(
+        credential, "embodiment-credential", version=version
+    )
     _closed(
         body,
         {
@@ -1170,8 +1291,7 @@ def verify_embodiment_credential(
             "revocation_generation",
             "signing_key",
             "transport_principals",
-            "valid_from_ms",
-            "valid_until_ms",
+            *({"validity"} if version == 2 else {"valid_from_ms", "valid_until_ms"}),
         },
         "embodiment credential body",
     )
@@ -1184,10 +1304,20 @@ def verify_embodiment_credential(
         )
     if authority_policy is None:
         raise VerificationError("credential was not explicitly carried forward")
-    if not body["valid_from_ms"] <= at_ms <= body["valid_until_ms"]:
+    if not (
+        validity_contains(body["validity"], at_ms)
+        if version == 2
+        else body["valid_from_ms"] <= at_ms <= body["valid_until_ms"]
+    ):
         raise VerificationError("credential is outside its validity interval")
     if body["purposes"] != sorted(set(body["purposes"])) or not body["purposes"]:
         raise VerificationError("credential purposes must be sorted and non-empty")
+    if (
+        version == 2
+        and body["validity"]["mode"] == "until-revoked"
+        and "messages" not in body["purposes"]
+    ):
+        raise VerificationError("indefinite credential requires messaging purpose")
     encryption_public = _descriptor_public(body["encryption_key"], "X25519")
     signing_public = _descriptor_public(body["signing_key"], "Ed25519")
     forbidden_publics = _policy_publics(authority_policy) | _policy_publics(
@@ -1221,7 +1351,7 @@ def verify_embodiment_credential(
         credential,
         authority_policy,
         "root-authorization",
-        domain_bytes(DOMAINS["embodiment-credential"], body),
+        domain_bytes(domain, body),
     )
     from .canonical import unb64url
 
@@ -1235,9 +1365,7 @@ def verify_embodiment_credential(
     try:
         Ed25519PublicKey.from_public_bytes(signing_public).verify(
             unb64url(acceptance[0]["value"], length=64),
-            DOMAINS["embodiment-credential"].encode("ascii")
-            + b"/acceptance\x00"
-            + raw_hash,
+            domain.encode("ascii") + b"/acceptance\x00" + raw_hash,
         )
     except InvalidSignature as error:
         raise VerificationError("invalid embodiment acceptance") from error

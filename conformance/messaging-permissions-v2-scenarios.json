@@ -1,0 +1,56 @@
+{
+  "schema": "dm.messaging-permissions-scenarios/v2",
+  "scope": "library slice only; messaging integration and migration publication remain pending",
+  "rows": [
+    {
+      "id": "indefinite-relationships",
+      "evidence": [
+        "tests/test_issue136_permissions.py::PermissionTests::test_signed_v2_relationship_survives_large_clock_advance"
+      ]
+    },
+    {
+      "id": "mixed-validity",
+      "evidence": [
+        "tests/test_issue136_permissions.py::PermissionTests::test_actual_mixed_grants_attenuate_and_parent_revocation_cascades"
+      ]
+    },
+    {
+      "id": "manual-revocation",
+      "evidence": [
+        "tests/test_issue136_permissions.py::PermissionTests::test_current_authority_revoke_survives_restart_and_clock_rollback",
+        "tests/test_issue136_permissions.py::PermissionTests::test_v2_card_withdrawal_never_falls_back"
+      ]
+    },
+    {
+      "id": "membership-episode",
+      "evidence": [
+        "tests/test_issue136_permissions.py::PermissionTests::test_membership_reentry_does_not_revive_old_v2_grant"
+      ]
+    },
+    {
+      "id": "malformed-finite-limits",
+      "evidence": [
+        "tests/test_issue136_permissions.py::PermissionTests::test_v2_malformed_operations_and_finite_limits_fail_closed",
+        "tests/test_issue136_permissions.py::PermissionTests::test_authenticated_malformed_grants_leave_store_unchanged"
+      ]
+    },
+    {
+      "id": "credential-succession",
+      "evidence": [
+        "tests/test_issue136_migration.py::MigrationTests::test_same_incarnation_successor_and_history_tamper"
+      ]
+    },
+    {
+      "id": "v8-startup",
+      "evidence": [
+        "tests/test_issue136_migration.py::MigrationTests::test_v8_restart_after_capability_and_old_credential_expiry"
+      ]
+    },
+    {
+      "id": "finite-envelope",
+      "evidence": [
+        "tests/test_issue136_migration.py::MigratedSealedTests::test_v2_envelope_keeps_finite_transport_deadline"
+      ]
+    }
+  ]
+}

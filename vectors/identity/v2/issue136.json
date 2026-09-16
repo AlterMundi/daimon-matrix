@@ -1,0 +1,70 @@
+{
+  "credential": {
+    "artifact_id": "dm:identity:v2:vQOVevcXI4cQt2IjI5_w4fQl0wMcRVMCyyrD--q1okM",
+    "body": {
+      "being_ref": "dm:being:v1:LcLM6ZanhCpu51yB_uog0D9XrvvxYpNs9T-2GpLiNXM",
+      "body_ref": "cluster:synthetic:founder",
+      "control_head": "dm:identity:v1:rpMToFHSmyYTMI4sLWFRiQT1VwNFJP9XL412e7tg0QQ",
+      "embodiment_id": "embodiment:synthetic:founder",
+      "encryption_key": {
+        "algorithm": "X25519",
+        "key_id": "dm:key:v1:LY5YDa1CvV21yK_Bb49JHW4ktep9RcbmassKQkPKItc",
+        "public": "7V8KSblZoNlRaDEmenpYEMZ5--ntnEVHXDw_hfttdSk"
+      },
+      "purposes": [
+        "dm.we",
+        "messages"
+      ],
+      "revocation_generation": 0,
+      "signing_key": {
+        "algorithm": "Ed25519",
+        "key_id": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "public": "HnaL7Irpn2YjhqOjSrV1DyDg6ulkQOjcu5K40cR-zsc"
+      },
+      "transport_principals": [
+        {
+          "key": {
+            "algorithm": "Ed25519",
+            "key_id": "dm:key:v1:UXOj1HlLaII2CcgFXQs30piod-uXM5UJOp9oGzfJFqA",
+            "public": "2LcezPltExF1Zo8NgNjONlkdSwRD-UT_-iJs6I9_FYM"
+          },
+          "principal_id": "synthetic-founder@loopback",
+          "scheme": "synthetic-loopback"
+        }
+      ],
+      "validity": {
+        "mode": "until-revoked",
+        "not_before_ms": 0
+      }
+    },
+    "kind": "embodiment-credential",
+    "schema": "dm.identity.artifact/v2",
+    "signatures": [
+      {
+        "algorithm": "Ed25519",
+        "key_id": "dm:key:v1:G7F8ynzn7Trb8LiBo7B-hhe8tp7SEDd9RzTdX-m6n7I",
+        "role": "root-authorization",
+        "value": "YjL4_pXakkUXWAMiqMCFN3OiC_aocg9-582UhE5JnytC_P3jrjDhtENMjX6EnkcRHe_Ew-LKXIDxzfVwR6q9AA"
+      },
+      {
+        "algorithm": "Ed25519",
+        "key_id": "dm:key:v1:XmQBtXmbYb-oztrIBofazVOsRqYAssOae29wsvX6ibs",
+        "role": "embodiment-acceptance",
+        "value": "noVFna8X5vhXnT8dKxgHK6_I9MTkCZB-fINAMtOfVtlqoMx9zRhQ3rD_T79AVeU68Muga-Dtyqe2Oxhag0RZDw"
+      },
+      {
+        "algorithm": "Ed25519",
+        "key_id": "dm:key:v1:k_wowfZc2ICZa89wrevUoAsebc9bhQV75nbZPtpfAk4",
+        "role": "root-authorization",
+        "value": "bvF6wCT3JToPlKbD5qISJYFrwE1FHubrleUZGu_F7dfSEQxC6lpHlxARuoaW35co3FEE557_QdDg5jQ2wm52Dg"
+      },
+      {
+        "algorithm": "Ed25519",
+        "key_id": "dm:key:v1:xXqk3CD55XOFeOdsQPhhW5Kjg3uoTUtCNamG2trgOps",
+        "role": "root-authorization",
+        "value": "rWNUv1komwtGwOWtAuKUMJQZpI8d86CY6O-EHQj3yFunTRERs2ja7QtW_g1m1CkUrrXp3W5v3j2hG_xtPUZcCg"
+      }
+    ]
+  },
+  "schema": "dm.issue136.identity-vector/v2"
+}
