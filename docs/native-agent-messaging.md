@@ -1,5 +1,82 @@
 # Native agent messaging: foreign inbox foundation
 
+## Explicit semantic-receipt successor (application V2)
+
+`dm.messaging.application/v2` adds **reply-triggered authenticated durable-intake
+receipts**. It is not an automatic acknowledgement service. Reading an inbox,
+inspecting delivery, a transport HMAC response, or text saying “delivered” does
+not author a receipt. Neither `delivered` nor a reply claims consumption, memory
+adoption, execution, or task completion. The historical implementation/gap notes
+below describe the V1 predecessor; V1 applications retain those semantics.
+
+A new V2 send signs `body.recipient_being_ref` from its owner-selected target,
+materializes its local DM-052 leg, and otherwise uses the existing V1 message,
+resolution, evidence, HPKE envelopes and two transport phases. The recipient's
+explicit `messaging.reply` signs one `dm.communication.receipt/v2` event in its
+own Ledger. Foreign message and resolution ID/hash references are payload data,
+not causal parents. The ordinary reverse message carries the complete event in
+`body.semantic_receipt`, preserves `response_context`, and keeps `reply: null`.
+No raw receipt fields, new signer RPC, transport phase or HTTP endpoint is exposed.
+
+The recipient's receipt operation is keyed by the original signed references,
+recipient and outcome, not by the reply UUID. Its immutable observation time is
+reserved in the existing outbox under the disjoint owner namespace
+`dm.communication.receipt/v2:<being>`. This reuses the closed V1 outbox catalog;
+it does not add a table or reinterpret a transport-stage row. Exact Ledger
+idempotency recovers signing lost returns. Two replies may be distinct messages
+but reuse one receipt. A timestamp is a recipient-authored claim, not a trusted
+cross-host clock.
+
+The sender verifies the nested signature using independently enrolled authority,
+the original signed recipient **being**, the resolution's selected embodiment,
+both original hashes, membership, thread and outer response correlation.
+Checking a current reverse channel or matching embodiment label alone is not
+sufficient. The foreign event remains outside `Ledger.events`. Valid competing
+terminal events are retained and quarantine the leg, including V1/V2 conflicts.
+`messaging.delivery.semantic` is separate from all unchanged transport fields.
+It returns the DM-052 terminal vector; proof is reverified before reporting it.
+
+Authenticated inbox retention precedes terminal reduction. Exact repeated intake
+or trusted `MessagingChannel.reconcile_receipts()` replays the retained carrier;
+application load invokes that reconciliation. Ordinary reads do not invoke it,
+sign, or transmit. Current V1 grants/credentials/disclosure windows are still
+required. This successor does not implement #136 indefinite permissions.
+
+### Offline migration and recovery
+
+Stop the daemon and hold the existing runtime lock. The trusted operator Python
+entry point is `operator_messaging.upgrade_semantic_receipts(runtime, app_directory,
+expected_application_sha256=<exact V1 digest>)`. It is deliberately not a model
+RPC or a new CLI subcommand. Keep the same runtime custody, stores and keys.
+Finish any unexpired V1 reserved-but-unprepared sends first
+(`messaging_semantic_migration_drain_required`). Expired reservations remain
+unchanged and nonrenewable; they do not block the migration.
+Already prepared V1 transport requests retain their bytes/config digest; they
+remain `legacy-untracked` semantically. Legacy original messages do not acquire
+retrospective receipts. Use new V2 sends for the qualified journey.
+
+The operator validates the predecessor, stages a signed exact successor and client
+metadata, atomically upgrades only the communication projection schema to 2, then
+selects the signed publication. Schema-only migration keeps generation, counter
+and anchor unchanged. Retry the same predecessor digest after interruption.
+A genuine fresh runtime recognizes the already migrated projection before app
+attachment; an old V1 publication rejects it until exact migration continuation.
+Old binaries reject schema 2. Do not downgrade by deleting tables or restoring
+an old database, and do not recreate missing published state from enrollment.
+
+V2 projection mutations use a protected, atomic `.communication-anchor.json.pending`
+journal binding the complete before/after projection hashes and counters. Recovery
+accepts only an exact precommit or postcommit snapshot, repairs its anchor and
+removes/fsyncs the journal. Missing/conflicting evidence remains an error, not a
+receipt. This adds O(projection-size) hashing per mutation; large-store performance
+has not been qualified. Preserve database, anchor and pending journal together
+for diagnosis; never hand-edit them to bypass rollback detection.
+
+This is synthetic software evidence only. No participant activation, external
+custody access, production restart, #40 completion or autonomous receipt delivery
+is claimed. Publication, full packaging and independent review remain separate.
+
+
 Status: implementation candidate for #132. **Not an installed send/read/reply
 client, not a deployment, and not completion of the real collaborator journey.**
 

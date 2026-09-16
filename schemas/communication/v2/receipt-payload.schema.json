@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recipient-authored foreign-reference receipt V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "message_being_ref",
+    "message_ref",
+    "resolution_ref",
+    "thread_id",
+    "recipient_type",
+    "recipient_id",
+    "outcome",
+    "observed_at_ms"
+  ],
+  "properties": {
+    "schema": {
+      "const": "dm.communication.receipt/v2"
+    },
+    "message_being_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_hash"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "resolution_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_hash"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "thread_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "recipient_type": {
+      "const": "relationship"
+    },
+    "recipient_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "outcome": {
+      "const": "delivered"
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    }
+  }
+}

@@ -1,5 +1,40 @@
 # DM-052 logical communication
 
+## V2 foreign-reference receipt successor
+
+The V1 receipt payload and canonical-parent requirement below remain unchanged.
+`dm.communication.receipt/v2` is a distinct, closed payload for recipient-authored
+`delivered` (durable application intake only). It uses `message_being_ref`, exact
+`message_ref` and `resolution_ref` ID/hash pairs, thread, relationship recipient,
+outcome and observation time. The event timestamp MUST equal the observation
+and MUST NOT predate the original message. Foreign references MUST NOT appear in
+its local causal parents. Only its author's Ledger allocates its sequence.
+
+A V2 application message signs its expected recipient being in the body. The
+foreign reducer MUST bind that being in addition to the signed resolution's
+membership and receipt embodiment. It MUST independently verify the complete
+receipt signature, all references, thread and outcome. A passed-in being or a
+matching embodiment label is not original-leg authority. The application carrier
+also binds outer response context and origin to the receipt. V1 messages lacking
+this original signed being binding remain explicitly untracked after migration.
+
+The explicit projection-schema successor keeps `communication_receipts` and its
+local-event foreign key intact. Foreign proofs live in
+`communication_foreign_receipts`, never in `events`. Event-ID and foreign origin
+position collisions and distinct terminal evidence quarantine the leg with full
+signed evidence. V1 and V2 reducers consult both receipt tables under the same
+writer transaction. Result reads reverify foreign proof and terminal bindings;
+missing/tampered evidence cannot become success. Local Ledger replay alone is
+not sufficient to reconstruct foreign proofs.
+
+Schema migration is explicit and preserves generation/counter/cursors. V2
+mutations add a protected before/after snapshot journal around DB/anchor commit,
+so exact crash pre/post states recover without accepting unrelated rollback.
+V1 mutation behavior is unchanged. See [native application successor and operator
+migration](native-agent-messaging.md#explicit-semantic-receipt-successor-application-v2)
+for the reply-only trigger, cross-store reconciliation and qualification limits.
+
+
 Status: implemented behind the authenticated local daemon boundary; no live
 carrier is enabled.
 

@@ -1659,8 +1659,15 @@ class NativeSendRpcTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
 
+    def test_v2_reply_returns_sender_semantic_terminal_over_local_api(self):
+        self.semantic_http = True
+        self.test_application_response_uses_exact_received_context_and_reverse_grant(
+            semantic_v2=True
+        )
+
     def test_application_response_uses_exact_received_context_and_reverse_grant(
         self,
+        semantic_v2=False,
     ) -> None:
         from types import SimpleNamespace
 
@@ -1676,8 +1683,14 @@ class NativeSendRpcTests(unittest.TestCase):
         )
         from daimon_matrix.service import HostedWeave, MessagingServiceContext
 
-        pair, forward_host, _, _ = self.setup_sender()
+        pair, forward_host, forward_delivery, _ = self.setup_sender()
         reverse_receiver = self.reverse_channel(pair)
+        if semantic_v2:
+            store = forward_host.communication
+            store.upgrade_receipts_v2()
+            store.foreign_authority_resolver = lambda ref: pair.public[ref]
+            forward_delivery.sender.communication = store
+            reverse_receiver.communication = store
         forward = self.invoke(forward_host, self.request(pair))
         self.assertTrue(forward["ok"], forward)
         received = pair.receiver.page(after=0, limit=1)[0]["message"]
@@ -1699,6 +1712,16 @@ class NativeSendRpcTests(unittest.TestCase):
             outbox=MessagingOutboxStore(self.root / "receiver/replies-outbox.sqlite3"),
             clock=lambda: pair.now,
         )
+        if semantic_v2:
+            from daimon_matrix.communication import CommunicationStore
+
+            back_store = CommunicationStore(
+                pair.local_ledger,
+                clock=lambda: pair.now,
+                foreign_authority_resolver=lambda ref: pair.public[ref],
+            )
+            back_store.upgrade_receipts_v2()
+            sender.communication = back_store
         self.send_id = _uuid("application-response")
         reverse_pair = SimpleNamespace(
             receiver=reverse_receiver,
@@ -1764,6 +1787,11 @@ class NativeSendRpcTests(unittest.TestCase):
         )
         response = self.invoke(hosted, request)
         self.assertTrue(response["ok"], response)
+        if semantic_v2:
+            result = forward_delivery.inspect(
+                client_id="client:native-send", send_id=_uuid("native-rpc-send")
+            )
+            self.assertTrue(result["semantic"]["terminal"])
         reply = reverse_receiver.page(after=0, limit=1)[0]["message"]
         self.assertIsNone(
             reply["payload"]["reply"], "must not forge canonical direct reply"
@@ -1951,6 +1979,8 @@ class NativeMessagingTests(unittest.TestCase):
 
         calls: list[tuple[str, bytes]] = []
         providers = []
+        ingresses = {}
+        transport = {}
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
             ("message", pair.receiver.receive_message),
@@ -1993,8 +2023,25 @@ class NativeMessagingTests(unittest.TestCase):
                 if phase == "message":
                     self.assertEqual(stages["evidence"][1], "recipient-intake")
                 calls.append((phase, raw))
+                if getattr(self, "semantic_http", False):
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1", transport["port"], timeout=5
+                    )
+                    try:
+                        connection.request(
+                            "POST",
+                            "/dm-messaging/v1/" + phase,
+                            body=raw,
+                            headers={"Content-Type": "application/daimon+jcs"},
+                        )
+                        response = connection.getresponse()
+                        self.assertEqual(response.status, 200)
+                        return response.read()
+                    finally:
+                        connection.close()
                 return bytes(ingress.handle(raw))
 
+            ingresses[phase] = ingress
             providers.append(
                 AuthenticatedProvider(
                     provider_ref="provider:" + phase,
@@ -2008,6 +2055,23 @@ class NativeMessagingTests(unittest.TestCase):
                     round_trip=exchange,
                 )
             )
+        if getattr(self, "semantic_http", False):
+            server = daemon.create_messaging_http_server(
+                ("127.0.0.1", 0),
+                evidence_ingress=ingresses["evidence"],
+                message_ingress=ingresses["message"],
+            )
+            transport["port"] = server.server_port
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+
+            def stop():
+                server.shutdown()
+                worker.join(timeout=5)
+                server.server_close()
+                self.assertFalse(worker.is_alive())
+
+            self.addCleanup(stop)
         return providers[0], providers[1], calls
 
     def test_loaded_runtime_delivery_custody_uses_one_password_read(self) -> None:

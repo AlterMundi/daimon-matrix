@@ -1,6 +1,7 @@
 """Grant-gated encrypted evidence and sparse foreign inbox admission.
 
-This application seam does not import events into a Ledger or issue receipts.
+Foreign events never enter a Ledger. Explicit application V2 replies author
+recipient-local receipts and carry sparse signed proof to the original sender.
 Configuration, authority resolution and custody are trusted owner-local inputs;
 only canonical DM-051 envelope bytes enter the receive methods.
 """
@@ -18,6 +19,8 @@ from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
     RESOLUTION_PAYLOAD_SCHEMA,
     CommunicationError,
+    CommunicationStore,
+    _foreign_receipt_payload,
     _message_payload,
     _resolution_payload,
 )
@@ -93,6 +96,7 @@ class MessagingSender:
         outbox: MessagingOutboxStore,
         clock: Callable[[], int],
     ) -> None:
+        self.communication: CommunicationStore | None = None
         self.context = context
         self.ledger = ledger
         self.signer = signer
@@ -125,6 +129,66 @@ class MessagingSender:
         except (ValueError, KeyError, TypeError):
             raise ValueError("messaging_sender_binding") from None
 
+    def _receipt(
+        self,
+        channel: MessagingChannel,
+        message: Mapping[str, Any],
+        now: int,
+        *,
+        observed_at_ms: int,
+    ) -> dict[str, Any]:
+        # page/message reads do not invoke this purpose-limited authoring path.
+        row = channel.inbox._message(message["event_id"], channel._policy_hash(now))
+        channel._validate_rows([row], now)
+        resolution = row["evidence"]["payload"]["resolution_event"]
+        payload = {
+            "schema": "dm.communication.receipt/v2",
+            "message_being_ref": message["being_ref"],
+            "message_ref": {
+                "event_id": message["event_id"],
+                "event_hash": message["content_hash"],
+            },
+            "resolution_ref": {
+                "event_id": resolution["event_id"],
+                "event_hash": resolution["content_hash"],
+            },
+            "thread_id": message["payload"]["intent"]["thread_id"],
+            "recipient_type": "relationship",
+            "recipient_id": channel.policy.membership_ref,
+            "outcome": "delivered",
+        }
+        digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
+        operation_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, "dm.communication.receipt/v2:" + digest)
+        )
+        plan = self.outbox._reserve(
+            "dm.communication.receipt/v2:" + channel.local_being_ref,
+            operation_id,
+            {
+                "client_id": "dm.communication.receipt/v2",
+                "request_hash": digest,
+                "policy_hash": channel._policy_hash(now),
+                "origin": dict(self.ledger.local_origin),
+                "issued_at_ms": observed_at_ms,
+            },
+        )
+        observed = plan["issued_at_ms"]
+        if observed < message["occurred_at_ms"] or observed > now:
+            raise ValueError("receipt_observation_time_invalid")
+        payload["observed_at_ms"] = observed
+        return self.ledger.append_local_idempotent(
+            client_id="dm.communication.receipt/v2",
+            request_id=operation_id,
+            request_hash=hashlib.sha256(canonical_bytes(payload)).hexdigest(),
+            kind="experience.observed",
+            subject="communication-receipt",
+            payload=payload,
+            signer=self.signer,
+            sensitivity=self.context.policy.classification,
+            occurred_at_ms=observed,
+            causal_parents=(),
+        )
+
     def prepare(
         self,
         *,
@@ -154,6 +218,19 @@ class MessagingSender:
             },
             "reply": None,
         }
+        if self.communication is not None:
+            cached_pair = self.outbox._prepared(owner, send_id)
+            if cached_pair is None:
+                payload["body"]["recipient_being_ref"] = context.local_being_ref
+            else:
+                previous_message = self.ledger.event(_parse(cached_pair[1])["event_id"])
+                if previous_message is None:
+                    raise ValueError("messaging_outbox_missing")
+                previous_body = verify_event(previous_message, self.ledger.authority)[
+                    "payload"
+                ]["body"]
+                if "recipient_being_ref" in previous_body:
+                    payload["body"]["recipient_being_ref"] = context.local_being_ref
         if response_to is not None:
             channel, message_id = response_to
             received = channel.message(message_id)
@@ -175,6 +252,12 @@ class MessagingSender:
                 "sender_embodiment_id": received["origin"]["embodiment_id"],
                 "thread_id": thread_id,
             }
+        semantic_reply = (
+            response_to is not None
+            and self.communication is not None
+            and "recipient_being_ref" in payload["body"]
+            and received["payload"]["body"].get("recipient_being_ref") == owner
+        )
         _message_payload(
             {
                 "kind": "experience.observed",
@@ -182,7 +265,12 @@ class MessagingSender:
                 "payload": payload,
             }
         )
-        request_hash = hashlib.sha256(canonical_bytes(payload)).hexdigest()
+        request_document = (
+            {"payload": payload, "receipt_schema": "dm.communication.receipt/v2"}
+            if semantic_reply
+            else payload
+        )
+        request_hash = hashlib.sha256(canonical_bytes(request_document)).hexdigest()
         _text(client_id, maximum=128)
         _uuid(send_id)
         plan = self.outbox._reserve(
@@ -207,6 +295,13 @@ class MessagingSender:
         cached = self.outbox._prepared(owner, send_id)
         if cached is not None:
             return cached
+        if semantic_reply:
+            payload["body"]["semantic_receipt"] = self._receipt(
+                channel, received, now, observed_at_ms=issued
+            )
+            # A concurrent later reply may have established the one receipt first.
+            # Keep the original expiry; only event chronology follows that proof.
+            issued = max(issued, payload["body"]["semantic_receipt"]["occurred_at_ms"])
 
         def append(
             subject: str, body: Mapping[str, Any], parents: tuple[str, ...] = ()
@@ -260,6 +355,11 @@ class MessagingSender:
             },
             (message["event_id"],),
         )
+        if self.communication is not None:
+            self.communication.accept(
+                message_event_id=message["event_id"],
+                resolution_event_id=resolution["event_id"],
+            )
         authorization = DisclosureAuthorization.from_relationship_resolution_event(
             event=message,
             resolution_event=resolution,
@@ -332,6 +432,24 @@ class MessagingDelivery:
         self.sender = sender
         self.providers = (evidence_provider, message_provider)
         self.config_digest = config_digest
+
+    def _semantic(self, message_id: str) -> dict[str, Any]:
+        event = self.sender.ledger.event(message_id)
+        if event is None:
+            raise ValueError("messaging_outbox_missing")
+        if (
+            "recipient_being_ref"
+            not in _message_payload(verify_event(event, self.sender.ledger.authority))[
+                "body"
+            ]
+        ):
+            return {
+                "status": "legacy-untracked",
+                "terminal": False,
+                "message_id": message_id,
+            }
+        assert self.sender.communication is not None
+        return self.sender.communication.result(message_id)
 
     def inspect(
         self,
@@ -524,6 +642,11 @@ class MessagingDelivery:
         if authorize is not None:
             authorize()
         return {
+            **(
+                {"semantic": self._semantic(_parse(envelopes[1])["event_id"])}
+                if self.sender.communication is not None
+                else {}
+            ),
             "send_id": send_id,
             "phase": phase,
             "transport_status": status,
@@ -555,6 +678,7 @@ class MessagingChannel:
         inbox: MessagingInboxStore,
         clock: Callable[[], int],
     ) -> None:
+        self.communication: CommunicationStore | None = None
         self.policy = policy
         self.local_being_ref = local_being_ref
         self.local_credential_id = local_credential_id
@@ -824,9 +948,64 @@ class MessagingChannel:
         authorization = self._message_authorization(evidence, now)
         message = self._open(raw, authorization, now)
         self._validate_message(message, evidence, authorization, now)
-        return self.inbox._retain_message(
+        result = self.inbox._retain_message(
             message, evidence, raw, self._policy_hash(now)
         )
+        self._reduce_receipt(message)
+        return result
+
+    def _semantic_receipt(self, message: Mapping[str, Any]) -> dict[str, Any] | None:
+        body = message["payload"]["body"]
+        if "semantic_receipt" not in body or self.communication is None:
+            return None
+        receipt = self._verify_retained(body["semantic_receipt"])
+        payload = _foreign_receipt_payload(receipt)
+        original = self.communication.ledger.event(payload["message_ref"]["event_id"])
+        expected = {
+            "schema": "dm.messaging.application-response/v1",
+            "message_id": payload["message_ref"]["event_id"],
+            "message_hash": payload["message_ref"]["event_hash"],
+            "sender_being_ref": payload["message_being_ref"],
+            "sender_embodiment_id": None
+            if original is None
+            else original["origin"]["embodiment_id"],
+            "thread_id": payload["thread_id"],
+        }
+        if (
+            body.get("response_context") != expected
+            or receipt["being_ref"] != message["being_ref"]
+            or receipt["origin"] != message["origin"]
+            or payload["thread_id"] != message["payload"]["intent"]["thread_id"]
+            or receipt["occurred_at_ms"] > message["occurred_at_ms"]
+        ):
+            raise MessagingInboxError("messaging_semantic_receipt_mismatch")
+        with self.communication._database() as database:
+            self.communication._validate_foreign_receipt(
+                database, receipt, self.policy.peer_being_ref
+            )
+        return receipt
+
+    def _reduce_receipt(self, message: Mapping[str, Any]) -> None:
+        receipt = self._semantic_receipt(message)
+        if receipt is not None:
+            assert self.communication is not None
+            self.communication.record_foreign_receipt(
+                receipt, recipient_being_ref=self.policy.peer_being_ref
+            )
+
+    def reconcile_receipts(self) -> None:
+        """Explicit current-authorized cross-store recovery; no signing or I/O.
+
+        Startup/repeated intake, not page/inspection, reduces retained carriers.
+        """
+        after = 0
+        while True:
+            rows = self.page(after=after, limit=100)
+            if not rows:
+                return
+            for row in rows:
+                self._reduce_receipt(row["message"])
+                after = row["inbox_sequence"]
 
     def _validate_message(
         self,
@@ -840,6 +1019,10 @@ class MessagingChannel:
             payload["intent"]["operation"] != self.policy.operation
             or payload["intent"]["scope"] != "/tribe"
             or payload["body"].get("resource_ref") != self.policy.resource_ref
+            or (
+                "recipient_being_ref" in payload["body"]
+                and payload["body"]["recipient_being_ref"] != self.local_being_ref
+            )
         ):
             raise SealedDeliveryError()
         expected = DisclosureAuthorization.from_relationship_resolution_event(
@@ -853,6 +1036,7 @@ class MessagingChannel:
         )
         if expected.value != authorization.value:
             raise SealedDeliveryError()
+        self._semantic_receipt(message)
 
     def _verify_retained(self, event: Any) -> dict[str, Any]:
         try:

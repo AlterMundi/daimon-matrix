@@ -98,6 +98,144 @@ def _publication(
     return canonical_bytes({"body": body, "binding": create_binding(runtime, body)})
 
 
+def upgrade_semantic_receipts(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    *,
+    expected_application_sha256: str,
+) -> dict[str, Any]:
+    """Offline, runtime-lock-held V1 -> V2 successor; never a model RPC.
+
+    Metadata staging precedes the irreversible schema transition. Exact retry
+    selects the same signed successor after interruption. No store/key is copied.
+    A communication anchor mismatch remains a recovery error, not permission to
+    reconstruct history. The V1 binding domain already signs the application hash.
+    """
+    import fcntl
+
+    from .messaging_config import APPLICATION_SCHEMA_V2
+
+    root = _directory(app_directory)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        previous, metadata = read_publication(runtime, root)
+        publication = read_document(root / "publication.json")
+        if previous["schema"] == APPLICATION_SCHEMA_V2:
+            if publication["body"]["predecessor_sha256"] != expected_application_sha256:
+                raise MessagingConfigError("messaging_semantic_migration_conflict")
+            load_application(runtime, root)
+            _sync(root)
+            return {
+                "status": "semantic-v2",
+                "application_sha256": config_digest(previous),
+                "predecessor_sha256": expected_application_sha256,
+            }
+        if config_digest(previous) != expected_application_sha256:
+            raise MessagingConfigError("messaging_semantic_migration_conflict")
+        communication = runtime.service.communication
+        assert communication is not None
+        application = {**previous, "schema": APPLICATION_SCHEMA_V2}
+        validate_shape(application)
+        digest = config_digest(application)
+        generation = "generation-" + digest[:32]
+        destination = root / generation
+        # An already staged exact generation is continuation evidence, not new
+        # admission. Always reverify its signature and exact predecessor bytes.
+        if destination.exists():
+            if read_document(
+                destination / "application.json"
+            ) != application or protected_read(
+                destination / "client.json"
+            ) != protected_read(metadata / "client.json"):
+                raise MessagingConfigError("messaging_semantic_migration_conflict")
+            verify_binding(
+                runtime, application, read_document(destination / "binding.json")
+            )
+            staged_publication = read_document(destination / "successor.json")
+            verify_binding(
+                runtime, staged_publication["body"], staged_publication["binding"]
+            )
+            if staged_publication["body"] != {
+                "schema": "dm.messaging.publication/v1",
+                "generation": generation,
+                "application_sha256": digest,
+                "predecessor_sha256": expected_application_sha256,
+            }:
+                raise MessagingConfigError("messaging_semantic_migration_conflict")
+        else:
+            if communication.receipts_v2:
+                raise MessagingConfigError(
+                    "messaging_semantic_migration_evidence_missing"
+                )
+            load_application(
+                runtime, root
+            )  # complete predecessor/current authority validation
+            # Finish V1 reserved authoring before switching producer request hashes.
+            import sqlite3
+            from contextlib import closing
+
+            with closing(
+                sqlite3.connect(
+                    (root / previous["stores"]["outbox"]).as_uri() + "?mode=ro",
+                    uri=True,
+                )
+            ) as database:
+                for (raw_plan,) in database.execute(
+                    "SELECT plan FROM messaging_outbox WHERE evidence IS NULL"
+                ):
+                    deadline = json.loads(raw_plan).get("expires_at_ms")
+                    # Expired reservations remain byte-identical and nonrenewable;
+                    # they cannot prevent migration forever or authorize new work.
+                    if type(deadline) is not int or deadline > runtime.service.clock():
+                        raise MessagingConfigError(
+                            "messaging_semantic_migration_drain_required"
+                        )
+            staging = Path(tempfile.mkdtemp(prefix="semantic-stage-", dir=root))
+            _write(staging, "application.json", canonical_bytes(application))
+            _write(
+                staging,
+                "binding.json",
+                canonical_bytes(create_binding(runtime, application)),
+            )
+            _write(staging, "client.json", protected_read(metadata / "client.json"))
+            _write(
+                staging,
+                "successor.json",
+                _publication(
+                    runtime, application, generation, expected_application_sha256
+                ),
+            )
+            _sync(staging)
+            _publish(staging, destination)
+            _sync(root)
+        if not communication.receipts_v2:
+            communication.upgrade_receipts_v2()
+        # Catalogs, current grants, and exact client material before selection.
+        _compose(runtime, root, application, metadata_root=destination)
+        temporary = "publication-" + secrets.token_hex(16) + ".json"
+        _write(root, temporary, protected_read(destination / "successor.json"))
+        _sync(root)
+        current, _ = read_publication(runtime, root)
+        if config_digest(current) != expected_application_sha256:
+            raise MessagingConfigError("messaging_semantic_migration_conflict")
+        os.replace(root / temporary, root / "publication.json")
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        load_application(runtime, root)
+        return {
+            "status": "semantic-v2",
+            "application_sha256": digest,
+            "predecessor_sha256": expected_application_sha256,
+        }
+    finally:
+        os.close(fd)
+
+
 def renew(
     runtime: HostedRuntime,
     app_directory: Path | str,

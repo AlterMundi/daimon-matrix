@@ -15,6 +15,130 @@ from tests.test_messaging_runtime import application_fixture
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_v2_migration_requires_finishing_v1_authoring(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import config_digest, read_publication
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, spec, sources, _ = application_fixture(self)
+        spec["outgoing"]["policy"]["max_ttl_ms"] = 1
+        target = self.root / "app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        application = load_application(runtime, target)
+        sender = application.service.messaging.deliveries["peer-out"].sender
+        with (
+            patch.object(
+                sender.ledger,
+                "append_local_idempotent",
+                side_effect=OSError("interrupted authoring"),
+            ),
+            self.assertRaises(OSError),
+        ):
+            sender.prepare(
+                client_id="client:operator-messaging",
+                send_id=_uuid("pre-migration"),
+                thread_id=_uuid("migration-thread"),
+                text="reserved",
+            )
+        previous, _ = read_publication(runtime, target)
+        with self.assertRaisesRegex(
+            ValueError, "messaging_semantic_migration_drain_required"
+        ):
+            operator.upgrade_semantic_receipts(
+                runtime, target, expected_application_sha256=config_digest(previous)
+            )
+        self.assertFalse(runtime.service.communication.receipts_v2)
+        self.pair.now += sender.context.policy.max_ttl_ms
+        operator.upgrade_semantic_receipts(
+            runtime, target, expected_application_sha256=config_digest(previous)
+        )
+        with self.assertRaisesRegex(ValueError, "messaging_authorization_expired"):
+            sender.prepare(
+                client_id="client:operator-messaging",
+                send_id=_uuid("pre-migration"),
+                thread_id=_uuid("migration-thread"),
+                text="reserved",
+            )
+
+    def test_v2_migration_restart_before_publication_selection(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import config_digest, read_publication
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_dm024_runtime import PASSWORD
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        previous, _ = read_publication(runtime, target)
+        digest = config_digest(previous)
+        anchor = runtime.service.communication.anchor_path.read_bytes()
+        original = operator._compose
+
+        def crash(*args, **kwargs):
+            if args[2]["schema"] == "dm.messaging.application/v2":
+                raise OSError("crash before selection")
+            return original(*args, **kwargs)
+
+        with (
+            patch.object(operator, "_compose", side_effect=crash),
+            self.assertRaises(OSError),
+        ):
+            operator.upgrade_semantic_receipts(
+                runtime, target, expected_application_sha256=digest
+            )
+        self.assertEqual(anchor, runtime.service.communication.anchor_path.read_bytes())
+        restarted = load_runtime(
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: self.pair.now,
+        )
+        self.assertTrue(restarted.service.communication.receipts_v2)
+        with self.assertRaises(ValueError):
+            load_application(restarted, target)
+        operator.upgrade_semantic_receipts(
+            restarted, target, expected_application_sha256=digest
+        )
+        again = load_runtime(
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: self.pair.now,
+        )
+        self.assertIsNotNone(load_application(again, target).service.messaging)
+
+    def test_explicit_v2_successor_preserves_stores_and_retries(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import config_digest, read_publication
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        previous, _ = read_publication(runtime, target)
+        before = {
+            name: (target / name).read_bytes() for name in spec["stores"].values()
+        }
+        result = operator.upgrade_semantic_receipts(
+            runtime, target, expected_application_sha256=config_digest(previous)
+        )
+        loaded = load_application(runtime, target)
+        self.assertIsNotNone(
+            loaded.service.messaging.deliveries["peer-out"].sender.communication
+        )
+        self.assertEqual(
+            before, {name: (target / name).read_bytes() for name in before}
+        )
+        self.assertEqual(
+            result,
+            operator.upgrade_semantic_receipts(
+                runtime, target, expected_application_sha256=config_digest(previous)
+            ),
+        )
+        with self.assertRaises(ValueError):
+            operator.upgrade_semantic_receipts(
+                runtime, target, expected_application_sha256="0" * 64
+            )
+
     def test_split_relationship_authority_is_rejected_without_mutation(self):
         from dataclasses import replace
 

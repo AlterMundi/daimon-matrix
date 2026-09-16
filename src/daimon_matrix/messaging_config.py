@@ -20,6 +20,7 @@ from .runtime import HostedRuntime
 from .weave import RootAuthority
 
 APPLICATION_SCHEMA = "dm.messaging.application/v1"
+APPLICATION_SCHEMA_V2 = "dm.messaging.application/v2"
 BINDING_SCHEMA = "dm.messaging.operator-binding/v1"
 BINDING_DOMAIN = b"daimon/messaging-operator-binding/v1\x00"
 
@@ -328,10 +329,17 @@ def _shape(value: Any, schema: dict[str, Any]) -> None:
 
 def validate_shape(application: Any, *, specification: bool = False) -> None:
     try:
-        _shape(
-            application,
-            SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA,
+        import copy
+
+        shape = copy.deepcopy(
+            SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA
         )
+        if (
+            isinstance(application, dict)
+            and application.get("schema") == APPLICATION_SCHEMA_V2
+        ):
+            shape["properties"]["schema"] = {"const": APPLICATION_SCHEMA_V2}
+        _shape(application, shape)
         # Numeric addresses only: no resolver changes to listener binding.
         import ipaddress
         from urllib.parse import urlsplit
@@ -829,6 +837,17 @@ def _compose(
         clock=service.clock,
     )
     sender._bind(service.clock())
+    communication = service.communication
+    assert communication is not None
+    if application["schema"] == APPLICATION_SCHEMA_V2:
+        if not communication.receipts_v2:
+            raise MessagingConfigError("messaging_semantic_migration_required")
+        communication.foreign_authority_resolver = resolve_authority
+        sender.communication = communication
+        receiver.communication = communication
+        receiver.reconcile_receipts()
+    elif communication.receipts_v2:
+        raise MessagingConfigError("messaging_semantic_migration_required")
     providers, ingresses = {}, {}
     for phase in ("evidence", "message"):
         row = outgoing["routes"][phase]
@@ -857,7 +876,10 @@ def _compose(
         message_provider=providers["message"],
         # Client lease renewal does not change transport replay bindings.
         config_digest=config_digest(
-            {k: v for k, v in application.items() if k != "client"}
+            {
+                **{k: v for k, v in application.items() if k != "client"},
+                "schema": APPLICATION_SCHEMA,
+            }
         ),
     )
     messaging = MessagingServiceContext(
