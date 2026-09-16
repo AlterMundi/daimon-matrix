@@ -882,10 +882,7 @@ class CommunicationStore:
         if self.receipts_v2:
             # Cursor/compaction mutations must not turn a forged terminal flag
             # into consumed progress. Revalidate proofs before arming any commit.
-            for (message_id,) in database.execute(
-                "SELECT DISTINCT message_id FROM communication_legs"
-            ):
-                self._result(database, message_id)
+            self._validate_store(database)
             previous = sqlite3.connect(self.ledger.path.as_uri() + "?mode=ro", uri=True)
             try:
                 before_hash = self._projection_hash(previous)
@@ -940,6 +937,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 message = _event(
                     self._known_event(database, message_event_id),
                     self.ledger.authority,
@@ -1088,9 +1086,253 @@ class CommunicationStore:
                 database.rollback()
                 raise
 
+    def _validate_vector(
+        self, database: sqlite3.Connection, stored: sqlite3.Row, rows: list[sqlite3.Row]
+    ) -> None:
+        """Validate the complete projection, not just legs retaining a receipt.
+
+        Use the caller's transaction: Ledger/public store entrypoints would open
+        another SQLite connection and can deadlock a write transaction.
+        """
+        message = _event(
+            self._known_event(database, stored["message_id"]), self.ledger.authority
+        )
+        payload = _message_payload(message)
+        resolution = _event(
+            self._known_event(database, stored["resolution_event_id"]),
+            self.ledger.authority,
+        )
+        _, targets = _resolution_payload(
+            resolution, message_id=message["event_id"], scope=payload["intent"]["scope"]
+        )
+        projection = MessageProjection(
+            message["event_id"],
+            message["content_hash"],
+            payload["intent"]["thread_id"],
+            message["origin"],
+            payload["intent"],
+            resolution["event_id"],
+            resolution["content_hash"],
+        )
+        if (
+            stored["message_id"] != message["event_id"]
+            or stored["thread_id"] != projection.thread_id
+            or stored["event_hash"] != message["content_hash"]
+            or stored["resolution_event_id"] != resolution["event_id"]
+            or stored["resolution_hash"] != resolution["content_hash"]
+            or bytes(stored["author_json"]) != canonical_bytes(message["origin"])
+            or bytes(stored["intent_json"]) != canonical_bytes(payload["intent"])
+            or bytes(stored["message_json"]) != canonical_bytes(projection.as_dict())
+        ):
+            raise CommunicationError("message_projection_corrupt")
+        expected = {}
+        for target in targets:
+            identifier = _leg_id(
+                message["event_id"], target["recipient_type"], target["recipient_id"]
+            )
+            expected[identifier] = {
+                "message_id": message["event_id"],
+                "thread_id": projection.thread_id,
+                "recipient_type": target["recipient_type"],
+                "recipient_id": target["recipient_id"],
+                "receipt_origin_embodiment_id": target["receipt_origin_embodiment_id"],
+                "resolution_event_id": resolution["event_id"],
+                "resolution_hash": resolution["content_hash"],
+                "evidence_cursor": target["evidence_cursor"],
+            }
+        if len(rows) != len(expected) or {row["leg_id"] for row in rows} != set(
+            expected
+        ):
+            raise CommunicationError("semantic_vector_corrupt")
+        for row in rows:
+            immutable = expected[row["leg_id"]]
+            if (
+                any(row[key] != value for key, value in immutable.items())
+                or row["immutable_hash"]
+                != hashlib.sha256(canonical_bytes(immutable)).hexdigest()
+            ):
+                raise CommunicationError("foreign_receipt_binding_mismatch")
+
+    @staticmethod
+    def _bind_local_receipt(receipt: Event, leg: sqlite3.Row) -> Mapping[str, Any]:
+        """Apply the same V1 applicability rules on admission and V2 replay."""
+        payload = _receipt_payload(receipt)
+        if any(
+            payload[key] != leg[key]
+            for key in ("message_id", "thread_id", "recipient_type", "recipient_id")
+        ):
+            raise CommunicationError("receipt_binding_mismatch")
+        if (
+            payload["outcome"] == "delivered"
+            and receipt["origin"]["embodiment_id"]
+            != leg["receipt_origin_embodiment_id"]
+        ):
+            raise CommunicationError("receipt_origin_mismatch")
+        return payload
+
+    def _validate_store(self, database: sqlite3.Connection) -> None:
+        if self.receipts_v2:
+            for (message_id,) in database.execute(
+                "SELECT message_id FROM communication_messages UNION "
+                "SELECT message_id FROM communication_legs"
+            ).fetchall():
+                self._result(database, message_id)
+            for row in database.execute(
+                "SELECT * FROM communication_attempts"
+            ).fetchall():
+                raw = bytes(row["attempt_json"])
+                attempt = self._attempt_document(json.loads(raw))
+                if (
+                    canonical_bytes(attempt) != raw
+                    or hashlib.sha256(raw).hexdigest() != row["attempt_hash"]
+                    or any(
+                        row[key] != value
+                        for key, value in attempt.items()
+                        if key != "schema"
+                    )
+                    or row["state"] not in ATTEMPT_STATES
+                    or (row["state"] == "accepted") != (row["ack_hash"] is None)
+                ):
+                    raise CommunicationError("route_attempt_store_corrupt")
+                if row["ack_hash"] is not None:
+                    _hash(row["ack_hash"], "route_attempt_store_corrupt")
+
+    def _validate_snapshot(
+        self,
+        database: sqlite3.Connection,
+        result: dict[str, Any],
+        request: Mapping[str, Any],
+        *,
+        claim: bool = False,
+    ) -> None:
+        """Keep historical state, but never synthesize evidence from cached JSON.
+
+        Accepted snapshots remain accepted after delivery or compaction. A
+        terminal snapshot must still name the retained, reverified receipt;
+        replay does not renew a claim or authorize another route attempt.
+        """
+        if not self.receipts_v2:
+            return
+        error = "claim_state_corrupt" if claim else "page_state_corrupt"
+        fields = (
+            {
+                "schema",
+                "claim_id",
+                "recipient_id",
+                "consumer_id",
+                "lease_until_ms",
+                "items",
+            }
+            if claim
+            else {
+                "schema",
+                "recipient_id",
+                "consumer_id",
+                "generation",
+                "snapshot_highwater",
+                "items",
+                "next_cursor",
+            }
+        )
+        _closed(result, fields, error)
+        binding = (
+            ("recipient_id", "consumer_id", "claim_id", "lease_until_ms")
+            if claim
+            else ("recipient_id", "consumer_id")
+        )
+        if any(result[key] != request[key] for key in binding) or result["schema"] != (
+            "dm.communication.claim/v1" if claim else PAGE_SCHEMA
+        ):
+            raise CommunicationError(error)
+        items = result["items"]
+        if not isinstance(items, list) or len(items) > request["limit"]:
+            raise CommunicationError(error)
+        generation, _, highwater = self._meta(database)
+        last = 0
+        cutoff = highwater
+        if not claim:
+            cutoff = _uint(result["snapshot_highwater"], error)
+            if result["generation"] != generation or cutoff > highwater:
+                raise CommunicationError(error)
+            if request["cursor"] is not None:
+                token = database.execute(
+                    "SELECT * FROM communication_page_cursors WHERE token_hash=?",
+                    (hashlib.sha256(request["cursor"].encode("ascii")).hexdigest(),),
+                ).fetchone()
+                if (
+                    token is None
+                    or any(
+                        token[key] != result[key]
+                        for key in ("recipient_id", "consumer_id", "generation")
+                    )
+                    or token["cutoff_sequence"] != cutoff
+                ):
+                    raise CommunicationError(error)
+                last = _uint(token["last_sequence"], error)
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("leg_id"), str):
+                raise CommunicationError(error)
+            row = database.execute(
+                "SELECT * FROM communication_legs WHERE leg_id=?", (item["leg_id"],)
+            ).fetchone()
+            if row is None:
+                raise CommunicationError(error)
+            current = _row_document(row)
+            _closed(item, set(current), error)
+            mutable = {"state", "terminal_receipt_event_id", "terminal_receipt_hash"}
+            if (
+                any(
+                    item[key] != value
+                    for key, value in current.items()
+                    if key not in mutable
+                )
+                or item["recipient_id"] != request["recipient_id"]
+                or not last < _uint(item["sequence"], error) <= cutoff
+            ):
+                raise CommunicationError(error)
+            last = item["sequence"]
+            if item["state"] == "accepted":
+                if any(item[key] is not None for key in mutable - {"state"}):
+                    raise CommunicationError(error)
+            elif claim or item["state"] not in LEG_STATES:
+                raise CommunicationError(error)
+            elif item["state"] == "quarantined":
+                if any(item[key] != current[key] for key in mutable):
+                    raise CommunicationError(error)
+            else:
+                # Current state may have advanced from terminal to quarantine.
+                if any(item[key] != current[key] for key in mutable - {"state"}):
+                    raise CommunicationError(error)
+                proof = database.execute(
+                    "SELECT outcome FROM communication_receipts WHERE leg_id=? "
+                    "UNION ALL "
+                    "SELECT outcome FROM communication_foreign_receipts WHERE leg_id=?",
+                    (item["leg_id"], item["leg_id"]),
+                ).fetchall()
+                if len(proof) != 1 or proof[0]["outcome"] != item["state"]:
+                    raise CommunicationError(error)
+        if not claim and result["next_cursor"] is not None:
+            token_text = self._cursor_token(result["next_cursor"])
+            token = database.execute(
+                "SELECT * FROM communication_page_cursors WHERE token_hash=?",
+                (hashlib.sha256(token_text.encode("ascii")).hexdigest(),),
+            ).fetchone()
+            if (
+                token is None
+                or not items
+                or len(items) != request["limit"]
+                or any(
+                    token[key] != result[key]
+                    for key in ("recipient_id", "consumer_id", "generation")
+                )
+                or token["cutoff_sequence"] != cutoff
+                or token["last_sequence"] != last
+            ):
+                raise CommunicationError(error)
+
     def _result(self, database: sqlite3.Connection, message_id: str) -> dict[str, Any]:
         message = database.execute(
-            "SELECT thread_id FROM communication_messages WHERE message_id=?",
+            "SELECT * FROM communication_messages WHERE message_id=?",
             (message_id,),
         ).fetchone()
         if message is None:
@@ -1101,6 +1343,7 @@ class CommunicationStore:
             (message_id,),
         ).fetchall()
         if self.receipts_v2:
+            self._validate_vector(database, message, rows)
             for row in rows:
                 proof = database.execute(
                     "SELECT * FROM communication_foreign_receipts WHERE leg_id=?",
@@ -1125,23 +1368,39 @@ class CommunicationStore:
                         or row["state"] not in {"delivered", "quarantined"}
                     ):
                         raise CommunicationError("foreign_receipt_store_corrupt")
-                elif row["state"] in TERMINAL_OUTCOMES:
-                    local = database.execute(
-                        "SELECT * FROM communication_receipts WHERE leg_id=?",
-                        (row["leg_id"],),
-                    ).fetchone()
-                    if local is None:
-                        raise CommunicationError("foreign_receipt_evidence_missing")
+                local = database.execute(
+                    "SELECT * FROM communication_receipts WHERE leg_id=?",
+                    (row["leg_id"],),
+                ).fetchone()
+                if local is not None:
                     event = _event(
                         self._known_event(database, local["receipt_event_id"]),
                         self.ledger.authority,
                     )
+                    payload = self._bind_local_receipt(event, row)
+                    projection = {
+                        "schema": SEMANTIC_RECEIPT_SCHEMA,
+                        "leg_id": row["leg_id"],
+                        "receipt_event_id": event["event_id"],
+                        "receipt_hash": event["content_hash"],
+                        "outcome": payload["outcome"],
+                    }
                     if (
-                        event["content_hash"] != row["terminal_receipt_hash"]
+                        proof is not None
+                        or local["receipt_hash"] != event["content_hash"]
+                        or local["outcome"] != payload["outcome"]
+                        or bytes(local["receipt_json"]) != canonical_bytes(projection)
+                        or event["content_hash"] != row["terminal_receipt_hash"]
                         or event["event_id"] != row["terminal_receipt_event_id"]
-                        or _receipt_payload(event)["outcome"] != row["state"]
+                        or row["state"] not in {payload["outcome"], "quarantined"}
                     ):
                         raise CommunicationError("foreign_receipt_store_corrupt")
+                elif proof is None and (
+                    row["state"] in TERMINAL_OUTCOMES
+                    or row["terminal_receipt_event_id"] is not None
+                    or row["terminal_receipt_hash"] is not None
+                ):
+                    raise CommunicationError("foreign_receipt_evidence_missing")
         legs = [_row_document(row) for row in rows]
         return {
             "schema": RESULT_SCHEMA,
@@ -1158,6 +1417,7 @@ class CommunicationStore:
         _uuid(message_id, "invalid_message_id")
         self.initialize()
         with self._database() as database:
+            database.execute("BEGIN")
             result = self._result(database, message_id)
         if require_terminal and not result["terminal"]:
             raise CommunicationError("terminal_result_incomplete", retryable=True)
@@ -1166,11 +1426,12 @@ class CommunicationStore:
     def rebuild_plan(self, message_id: str) -> dict[str, Any]:
         """Return canonical event/evidence plus stable legs, never old ciphertext."""
 
-        if self.receipts_v2:
-            self.result(message_id)  # Foreign proof is not rebuildable local history.
         _uuid(message_id, "invalid_message_id")
         self.initialize()
         with self._database() as database:
+            database.execute("BEGIN")
+            if self.receipts_v2:
+                self._result(database, message_id)
             row = database.execute(
                 "SELECT m.message_id, m.resolution_event_id, m.message_json, "
                 "e.event_json, "
@@ -1202,11 +1463,14 @@ class CommunicationStore:
         _text(leg_id, "invalid_leg_id", maximum=256)
         self.initialize()
         with self._database() as database:
+            database.execute("BEGIN")
             row = database.execute(
                 "SELECT * FROM communication_legs WHERE leg_id=?", (leg_id,)
             ).fetchone()
             if row is None:
                 raise CommunicationError("semantic_leg_not_known")
+            if self.receipts_v2:
+                self._result(database, row["message_id"])
             return _row_document(row)
 
     @staticmethod
@@ -1247,6 +1511,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 leg = database.execute(
                     "SELECT state FROM communication_legs WHERE leg_id=?",
                     (attempt["leg_id"],),
@@ -1307,6 +1572,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 attempt = database.execute(
                     "SELECT leg_id FROM communication_attempts WHERE attempt_id=?",
                     (attempt_id,),
@@ -1382,6 +1648,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 row = database.execute(
                     "SELECT state, ack_hash FROM communication_attempts "
                     "WHERE attempt_id=?",
@@ -1559,6 +1826,7 @@ class CommunicationStore:
         self.initialize()
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
+            self._validate_store(database)
             event, leg = self._validate_foreign_receipt(
                 database, receipt, recipient_being_ref
             )
@@ -1633,6 +1901,7 @@ class CommunicationStore:
             database.execute("BEGIN IMMEDIATE")
             committed_conflict = False
             try:
+                self._validate_store(database)
                 receipt = _event(
                     self._known_event(database, receipt_event_id),
                     self.ledger.authority,
@@ -1651,12 +1920,7 @@ class CommunicationStore:
                     raise CommunicationError("semantic_leg_not_known")
                 if leg["thread_id"] != payload["thread_id"]:
                     raise CommunicationError("receipt_thread_mismatch")
-                if (
-                    payload["outcome"] == "delivered"
-                    and receipt["origin"]["embodiment_id"]
-                    != leg["receipt_origin_embodiment_id"]
-                ):
-                    raise CommunicationError("receipt_origin_mismatch")
+                self._bind_local_receipt(receipt, leg)
                 if self.receipts_v2:
                     foreign = database.execute(
                         "SELECT receipt_json FROM communication_foreign_receipts "
@@ -1790,6 +2054,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 existing = database.execute(
                     "SELECT request_hash, response_json "
                     "FROM communication_page_requests "
@@ -1802,6 +2067,7 @@ class CommunicationStore:
                     result = json.loads(bytes(existing["response_json"]))
                     if not isinstance(result, dict):
                         raise CommunicationError("page_state_corrupt")
+                    self._validate_snapshot(database, result, request, claim=False)
                     database.commit()
                     return result
                 generation, _counter, highwater = self._meta(database)
@@ -1862,6 +2128,7 @@ class CommunicationStore:
                     "items": [_row_document(row) for row in selected],
                     "next_cursor": next_cursor,
                 }
+                self._validate_snapshot(database, result, request, claim=False)
                 database.execute(
                     "INSERT INTO communication_page_requests VALUES (?, ?, ?, ?)",
                     (consumer_id, request_id, request_hash, canonical_bytes(result)),
@@ -1882,6 +2149,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 generation, _counter, highwater = self._meta(database)
                 if sequence > highwater:
                     raise CommunicationError("cursor_beyond_highwater")
@@ -1972,6 +2240,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 existing = database.execute(
                     "SELECT request_hash, response_json "
                     "FROM communication_claim_batches WHERE claim_id=?",
@@ -1983,6 +2252,7 @@ class CommunicationStore:
                     result = json.loads(bytes(existing["response_json"]))
                     if not isinstance(result, dict):
                         raise CommunicationError("claim_state_corrupt")
+                    self._validate_snapshot(database, result, request, claim=True)
                     database.commit()
                     return result
                 rows = database.execute(
@@ -2003,6 +2273,7 @@ class CommunicationStore:
                     "lease_until_ms": lease_until_ms,
                     "items": [_row_document(row) for row in rows],
                 }
+                self._validate_snapshot(database, result, request, claim=True)
                 database.execute(
                     "INSERT INTO communication_claim_batches VALUES (?, ?, ?)",
                     (claim_id, request_hash, canonical_bytes(result)),
@@ -2039,6 +2310,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
+                self._validate_store(database)
                 cursors = database.execute(
                     "SELECT sequence FROM communication_consumers WHERE recipient_id=?",
                     (recipient_id,),

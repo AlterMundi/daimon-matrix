@@ -23,9 +23,25 @@ local-event foreign key intact. Foreign proofs live in
 `communication_foreign_receipts`, never in `events`. Event-ID and foreign origin
 position collisions and distinct terminal evidence quarantine the leg with full
 signed evidence. V1 and V2 reducers consult both receipt tables under the same
-writer transaction. Result reads reverify foreign proof and terminal bindings;
-missing/tampered evidence cannot become success. Local Ledger replay alone is
-not sufficient to reconstruct foreign proofs.
+writer transaction. V2 projection reads and mutations MUST derive the complete
+recipient-key set from the verified canonical message/resolution and check every
+leg's immutable binding, even without a receipt. Missing or extra legs MUST NOT
+turn a partial vector into a terminal result. Retained local receipts MUST match
+the exact message, thread, recipient and outcome-specific origin rules used at
+admission, including their stored projection bytes and terminal columns. Foreign
+proofs MUST be reverified before returning semantic state, including direct leg
+reads and cached page, claim, attempt and consumer-progress paths. Missing or
+tampered evidence cannot become success. Local Ledger replay alone is not
+sufficient to reconstruct foreign proofs.
+
+A cached page or claim remains a historical snapshot, not current delivery or
+lease authority. Its request/cursor bindings and immutable item fields MUST
+remain valid; any historical terminal claim MUST still match the retained,
+verified receipt. Replaying a pre-delivery accepted snapshot after delivery or
+compaction does not change that snapshot to terminal. Replaying a delivered
+snapshot after later quarantine does not undo quarantine or renew authorization.
+Validation and return use the same SQLite transaction without authoring receipts
+or performing network effects.
 
 Schema migration is explicit and preserves generation/counter/cursors. V2
 mutations add a protected before/after snapshot journal around DB/anchor commit,

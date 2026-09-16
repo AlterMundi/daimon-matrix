@@ -4,6 +4,7 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from daimon_matrix.communication import CommunicationStore
 from daimon_matrix.synthetic_relationships import _uuid
@@ -544,3 +545,728 @@ class ForeignReceiptTests(unittest.TestCase):
                 receipt, recipient_being_ref=self.pair.recipient.state.being_ref
             ),
         )
+
+
+# Original independent #132 regression probes, including positive controls.
+class ReviewProbes(unittest.TestCase):
+    def setUp(self):
+        self.f = ForeignReceiptTests()
+        self.f.setUp()
+        self.addCleanup(self.f.doCleanups)
+        self.root = self.f.root
+        self.s = self.f.store()
+        self.mid = self.f.message["event_id"]
+        self.rec = self.f.pair.recipient.state.being_ref
+        self.rid = self.f.pair.policy.membership_ref
+
+    def deliver(self):
+        return self.s.record_foreign_receipt(
+            self.f.receipt(), recipient_being_ref=self.rec
+        )
+
+    def test_positive_signature_and_restart(self):
+        bad = copy.deepcopy(self.f.receipt())
+        bad["payload"]["thread_id"] = _uuid("tampered-no-resign")
+        with self.assertRaises(ValueError):
+            self.s.record_foreign_receipt(bad, recipient_being_ref=self.rec)
+        self.assertFalse(self.s.result(self.mid)["terminal"])
+        self.assertTrue(self.deliver()["terminal"])
+        restarted = CommunicationStore(
+            self.f.sender.ledger,
+            receipts_v2=True,
+            foreign_authority_resolver=lambda ref: self.f.pair.public[ref],
+        )
+        self.assertTrue(restarted.result(self.mid)["terminal"])
+        self.assertIsNone(self.f.sender.ledger.event(self.f.receipt()["event_id"]))
+
+    def test_signed_carrier_context_mutations_rejected(self):
+        from daimon_matrix.weave import create_event, verify_event
+        from tests.test_native_messaging import NativeSendRpcTests
+
+        channel = NativeSendRpcTests.reverse_channel(self, self.f.pair)
+        channel.communication = self.s
+        receipt = self.f.receipt()
+        payload = {
+            "schema": "dm.communication.message/v1",
+            "intent": copy.deepcopy(self.f.message["payload"]["intent"]),
+            "reply": None,
+            "body": {
+                "text": "review reply",
+                "resource_ref": channel.policy.resource_ref,
+                "recipient_being_ref": self.f.message["being_ref"],
+                "semantic_receipt": receipt,
+                "response_context": {
+                    "schema": "dm.messaging.application-response/v1",
+                    "message_id": self.mid,
+                    "message_hash": self.f.message["content_hash"],
+                    "sender_being_ref": self.f.message["being_ref"],
+                    "sender_embodiment_id": self.f.message["origin"]["embodiment_id"],
+                    "thread_id": receipt["payload"]["thread_id"],
+                },
+            },
+        }
+
+        def sign(body):
+            return create_event(
+                authority=self.f.pair.recipient.authority,
+                origin=self.f.pair.recipient.origin,
+                signer=self.f.pair.recipient.signer,
+                event_id=_uuid("review-carrier"),
+                sequence=2,
+                previous_event_id=receipt["event_id"],
+                causal_parents=[],
+                kind="experience.observed",
+                subject="communication",
+                payload=body,
+                sensitivity="shareable",
+                occurred_at_ms=self.f.pair.now,
+            )
+
+        good = sign(payload)
+        self.assertEqual(channel._semantic_receipt(good), receipt)
+        for field, value in [
+            ("message_id", _uuid("different-original")),
+            ("message_hash", "0" * 64),
+            ("sender_being_ref", self.rec),
+            ("sender_embodiment_id", "other-embodiment"),
+            ("thread_id", _uuid("different-thread")),
+        ]:
+            with self.subTest(field=field):
+                changed = copy.deepcopy(payload)
+                changed["body"]["response_context"][field] = value
+                carrier = sign(changed)
+                verify_event(carrier, self.f.pair.recipient.authority)
+                with self.assertRaises(ValueError):
+                    channel._reduce_receipt(carrier)
+                self.assertFalse(self.s.result(self.mid)["terminal"])
+        channel._reduce_receipt(good)
+        channel._reduce_receipt(good)
+        self.assertTrue(self.s.result(self.mid)["terminal"])
+        self.assertIsNone(self.f.sender.ledger.event(receipt["event_id"]))
+
+    def test_cached_page_and_leg_reject_corrupt_proof(self):
+        self.deliver()
+        args = dict(
+            recipient_id=self.rid,
+            consumer_id="review",
+            request_id=_uuid("review-page"),
+            cursor=None,
+        )
+        page = self.s.page(**args)
+        leg_id = page["items"][0]["leg_id"]
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_foreign_receipts SET receipt_hash=?", ("0" * 64,)
+            )
+        with self.assertRaises(ValueError):
+            self.s.result(self.mid)
+        with self.subTest(path="cached-page"), self.assertRaises(ValueError):
+            self.s.page(**args)
+        with self.subTest(path="leg"), self.assertRaises(ValueError):
+            self.s.leg(leg_id)
+
+    def test_pending_projection_binding_is_reverified(self):
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_legs SET recipient_id='wrong-recipient', "
+                "evidence_cursor='forged'"
+            )
+        with self.assertRaises(ValueError):
+            self.s.result(self.mid)
+
+    def test_missing_pending_leg_cannot_make_whole_vector_terminal(self):
+        from daimon_matrix.weave import create_event
+
+        ledger = self.f.sender.ledger
+        message = ledger.append_local(
+            kind="experience.observed",
+            subject="communication",
+            signer=self.f.pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+            payload=copy.deepcopy(self.f.message["payload"]),
+        )
+        targets = copy.deepcopy(self.f.resolution["payload"]["targets"])
+        targets.append({**targets[0], "recipient_id": "review-other-membership"})
+        targets.sort(key=lambda t: (t["recipient_type"], t["recipient_id"]))
+        resolution = ledger.append_local(
+            kind="experience.observed",
+            subject="communication-resolution",
+            signer=self.f.pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+            causal_parents=(message["event_id"],),
+            payload={
+                **self.f.resolution["payload"],
+                "message_id": message["event_id"],
+                "targets": targets,
+            },
+        )
+        self.s.accept(
+            message_event_id=message["event_id"],
+            resolution_event_id=resolution["event_id"],
+        )
+        payload = copy.deepcopy(self.f.receipt()["payload"])
+        payload["message_ref"] = {
+            "event_id": message["event_id"],
+            "event_hash": message["content_hash"],
+        }
+        payload["resolution_ref"] = {
+            "event_id": resolution["event_id"],
+            "event_hash": resolution["content_hash"],
+        }
+        receipt = create_event(
+            authority=self.f.pair.recipient.authority,
+            origin=self.f.pair.recipient.origin,
+            signer=self.f.pair.recipient.signer,
+            event_id=_uuid("review-multi-receipt"),
+            sequence=1,
+            previous_event_id=None,
+            causal_parents=[],
+            kind="experience.observed",
+            subject="communication-receipt",
+            payload=payload,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+        )
+        before = self.s.record_foreign_receipt(receipt, recipient_being_ref=self.rec)
+        self.assertFalse(before["terminal"])
+        self.assertEqual(len(before["legs"]), 2)
+        with self.s._database() as db:
+            leg = db.execute(
+                "SELECT leg_id FROM communication_legs WHERE message_id=? "
+                "AND state='accepted'",
+                (message["event_id"],),
+            ).fetchone()[0]
+            db.execute("DELETE FROM communication_queue WHERE leg_id=?", (leg,))
+            db.execute("DELETE FROM communication_legs WHERE leg_id=?", (leg,))
+        with self.assertRaises(ValueError):
+            self.s.result(message["event_id"], require_terminal=True)
+
+    def test_foreign_proof_compaction_positive_and_negative(self):
+        self.deliver()
+        self.s.advance_consumer(recipient_id=self.rid, consumer_id="review", sequence=1)
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_foreign_receipts SET receipt_hash=?", ("0" * 64,)
+            )
+        with self.assertRaises(ValueError):
+            self.s.compact(recipient_id=self.rid, through_sequence=1)
+        with self.s._database() as db:
+            self.assertEqual(
+                1, db.execute("SELECT COUNT(*) FROM communication_queue").fetchone()[0]
+            )
+
+    def test_local_receipt_transplant_does_not_close_unsent_leg(self):
+        # Produce a genuine local failure receipt for an unrelated signed message.
+        self.f.sender.prepare(
+            client_id="owner",
+            send_id=_uuid("other-send"),
+            thread_id=_uuid("other-thread"),
+            text="other",
+        )
+        other = next(
+            e
+            for e in self.f.sender.ledger.events()
+            if e["subject"] == "communication" and e["event_id"] != self.mid
+        )
+        receipt = self.f.sender.ledger.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            signer=self.f.pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+            causal_parents=(other["event_id"],),
+            payload={
+                "schema": "dm.communication.receipt/v1",
+                "message_id": other["event_id"],
+                "thread_id": other["payload"]["intent"]["thread_id"],
+                "recipient_type": "relationship",
+                "recipient_id": self.rid,
+                "outcome": "failed:transport",
+                "observed_at_ms": self.f.pair.now,
+                "evidence_ref": None,
+            },
+        )
+        self.s.record_receipt(receipt["event_id"])
+        with self.s._database() as db:
+            target = db.execute(
+                "SELECT leg_id FROM communication_legs WHERE message_id=?", (self.mid,)
+            ).fetchone()[0]
+            columns = [
+                r[1] for r in db.execute("PRAGMA table_info(communication_receipts)")
+            ]
+            old = dict(db.execute("SELECT * FROM communication_receipts").fetchone())
+            old["leg_id"] = target
+            # Move the projection receipt, preserving its genuine signed event.
+            db.execute("DELETE FROM communication_receipts")
+            db.execute(
+                "INSERT INTO communication_receipts VALUES ("
+                + ",".join("?" for _ in columns)
+                + ")",
+                [old[k] for k in columns],
+            )
+            db.execute(
+                "UPDATE communication_legs SET state='failed:transport', "
+                "terminal_receipt_event_id=?,terminal_receipt_hash=? WHERE leg_id=?",
+                (receipt["event_id"], receipt["content_hash"], target),
+            )
+        with self.assertRaises(ValueError):
+            self.s.result(self.mid, require_terminal=True)
+
+    def test_all_pending_immutable_fields_and_vector_cardinality(self):
+        import hashlib
+
+        from daimon_matrix.canonical import canonical_bytes
+
+        leg = self.s.result(self.mid)["legs"][0]
+        with self.s._database() as db:
+            original = dict(db.execute("SELECT * FROM communication_legs").fetchone())
+        fields = (
+            "thread_id",
+            "recipient_type",
+            "recipient_id",
+            "receipt_origin_embodiment_id",
+            "resolution_event_id",
+            "resolution_hash",
+            "evidence_cursor",
+            "leg_id",
+        )
+        for field in fields:
+            with self.subTest(field=field):
+                with self.s._database() as db:
+                    db.execute("DELETE FROM communication_queue")
+                    value = "embodiment" if field == "recipient_type" else "forged"
+                    db.execute(f"UPDATE communication_legs SET {field}=?", (value,))
+                with self.assertRaises(ValueError):
+                    self.s.result(self.mid)
+                with self.s._database() as db:
+                    db.execute(
+                        f"UPDATE communication_legs SET {field}=?", (original[field],)
+                    )
+        # Even a self-consistent extra row cannot add a signed recipient.
+        extra = dict(original)
+        extra["leg_id"] = "extra-leg"
+        extra["recipient_id"] = "extra-recipient"
+        extra["sequence"] += 1
+        immutable = {
+            key: extra[key]
+            for key in (
+                "message_id",
+                "thread_id",
+                "recipient_type",
+                "recipient_id",
+                "receipt_origin_embodiment_id",
+                "resolution_event_id",
+                "resolution_hash",
+                "evidence_cursor",
+            )
+        }
+        extra["immutable_hash"] = hashlib.sha256(canonical_bytes(immutable)).hexdigest()
+        with self.s._database() as db:
+            db.execute(
+                "INSERT INTO communication_legs VALUES ("
+                + ",".join("?" for _ in extra)
+                + ")",
+                list(extra.values()),
+            )
+        with self.assertRaises(ValueError):
+            self.s.result(self.mid)
+        with self.s._database() as db:
+            db.execute("DELETE FROM communication_legs")
+        for call in [
+            lambda: self.s.result(self.mid),
+            lambda: self.s.advance_consumer(
+                recipient_id=self.rid, consumer_id="empty", sequence=0
+            ),
+        ]:
+            with self.assertRaises(ValueError):
+                call()
+        with self.s._database() as db:
+            db.execute(
+                "INSERT INTO communication_legs VALUES ("
+                + ",".join("?" for _ in original)
+                + ")",
+                list(original.values()),
+            )
+        self.assertEqual(leg, self.s.result(self.mid)["legs"][0])
+
+    def test_local_receipt_projection_bytes_columns_and_origin_are_reverified(self):
+        from daimon_matrix.canonical import canonical_bytes
+
+        receipt = self.f.sender.ledger.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            signer=self.f.pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+            causal_parents=(self.mid,),
+            payload={
+                "schema": "dm.communication.receipt/v1",
+                "message_id": self.mid,
+                "thread_id": self.f.message["payload"]["intent"]["thread_id"],
+                "recipient_type": "relationship",
+                "recipient_id": self.rid,
+                "outcome": "failed:transport",
+                "observed_at_ms": self.f.pair.now,
+                "evidence_ref": None,
+            },
+        )
+        self.assertTrue(self.s.record_receipt(receipt["event_id"])["terminal"])
+        with self.s._database() as db:
+            original = dict(
+                db.execute("SELECT * FROM communication_receipts").fetchone()
+            )
+        for field, value in [
+            ("receipt_hash", "0" * 64),
+            ("outcome", "delivered"),
+            ("receipt_json", b"{}"),
+        ]:
+            with self.subTest(field=field):
+                with self.s._database() as db:
+                    db.execute(f"UPDATE communication_receipts SET {field}=?", (value,))
+                with self.assertRaises(ValueError):
+                    self.s.result(self.mid)
+                with self.s._database() as db:
+                    db.execute(
+                        f"UPDATE communication_receipts SET {field}=?",
+                        (original[field],),
+                    )
+        # A signed local delivered receipt from the sender is not recipient proof.
+        bad = self.f.sender.ledger.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            signer=self.f.pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+            causal_parents=(self.mid,),
+            payload={**receipt["payload"], "outcome": "delivered"},
+        )
+        with self.assertRaisesRegex(ValueError, "receipt_origin_mismatch"):
+            self.s.record_receipt(bad["event_id"])
+        projection = dict(
+            schema="dm.semantic-receipt/v1",
+            leg_id=original["leg_id"],
+            receipt_event_id=bad["event_id"],
+            receipt_hash=bad["content_hash"],
+            outcome="delivered",
+        )
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_receipts SET receipt_event_id=?, "
+                "receipt_hash=?, outcome=?, receipt_json=?",
+                (
+                    bad["event_id"],
+                    bad["content_hash"],
+                    "delivered",
+                    canonical_bytes(projection),
+                ),
+            )
+            db.execute(
+                "UPDATE communication_legs SET state='delivered', "
+                "terminal_receipt_event_id=?, terminal_receipt_hash=?",
+                (bad["event_id"], bad["content_hash"]),
+            )
+        with self.assertRaisesRegex(ValueError, "receipt_origin_mismatch"):
+            self.s.result(self.mid)
+
+    def test_cached_neighbors_revalidate_proof_and_preserve_history(self):
+        leg = self.s.result(self.mid)["legs"][0]
+        page_args = dict(
+            recipient_id=self.rid,
+            consumer_id="history",
+            request_id=_uuid("history-page"),
+            cursor=None,
+        )
+        claim_args = dict(
+            recipient_id=self.rid,
+            consumer_id="history",
+            claim_id=_uuid("history-claim"),
+            limit=1,
+            lease_until_ms=self.f.pair.now + 10000,
+        )
+        attempt = dict(
+            schema="dm.route-attempt/v1",
+            attempt_id=_uuid("history-attempt"),
+            leg_id=leg["leg_id"],
+            body_ref="body",
+            credential_ref="credential",
+            provider_ref="provider",
+            route_ref="route",
+            deadline_ms=self.f.pair.now + 10000,
+        )
+        # Both snapshots are genuinely accepted, not current terminal proof.
+        page = self.s.page(**page_args)
+        claim = self.s.claim(**claim_args)
+        self.s.record_attempt(attempt)
+        delivery_args = dict(
+            attempt_id=attempt["attempt_id"],
+            delivery_id=_uuid("history-delivery"),
+            envelope_hash="1" * 64,
+        )
+        self.s.record_delivery(**delivery_args)
+        ack_args = dict(attempt_id=attempt["attempt_id"], ack={"ack": True})
+        ack = self.s.record_route_ack(**ack_args)
+        self.deliver()
+        cursor_args = dict(
+            recipient_id=self.rid, consumer_id="history", sequence=leg["sequence"]
+        )
+        progress = self.s.advance_consumer(**cursor_args)
+        self.assertEqual(
+            1,
+            self.s.compact(recipient_id=self.rid, through_sequence=leg["sequence"])[
+                "removed"
+            ],
+        )
+        self.assertEqual(page, self.s.page(**page_args))
+        self.assertEqual(claim, self.s.claim(**claim_args))
+        self.assertEqual(ack, self.s.record_route_ack(**ack_args))
+        self.assertEqual(progress, self.s.advance_consumer(**cursor_args))
+        self.assertEqual("route-acked", self.s.record_attempt(attempt)["state"])
+        self.assertTrue(self.s.record_delivery(**delivery_args)["replayed"])
+        with self.s._database() as db:
+            raw_attempt = db.execute(
+                "SELECT attempt_json FROM communication_attempts"
+            ).fetchone()[0]
+            db.execute("UPDATE communication_attempts SET attempt_json=?", (b"{}",))
+        with self.assertRaises(ValueError):
+            self.s.record_attempt(attempt)
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_attempts SET attempt_json=?", (raw_attempt,)
+            )
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_foreign_receipts SET receipt_hash=?", ("0" * 64,)
+            )
+        for name, call in [
+            ("page", lambda: self.s.page(**page_args)),
+            ("claim", lambda: self.s.claim(**claim_args)),
+            ("attempt", lambda: self.s.record_attempt(attempt)),
+            ("delivery", lambda: self.s.record_delivery(**delivery_args)),
+            ("ack", lambda: self.s.record_route_ack(**ack_args)),
+            ("cursor", lambda: self.s.advance_consumer(**cursor_args)),
+        ]:
+            with self.subTest(path=name), self.assertRaises(ValueError):
+                call()
+
+    def test_cached_snapshot_fields_cannot_claim_unproved_terminal_state(self):
+        from daimon_matrix.canonical import canonical_bytes
+
+        args = dict(
+            recipient_id=self.rid,
+            consumer_id="snapshot",
+            request_id=_uuid("snapshot"),
+            cursor=None,
+        )
+        good = self.s.page(**args)
+        for field, value in [
+            ("recipient_id", "wrong"),
+            ("state", "delivered"),
+            ("terminal_receipt_hash", "0" * 64),
+        ]:
+            with self.subTest(field=field):
+                bad = copy.deepcopy(good)
+                bad["items"][0][field] = value
+                with self.s._database() as db:
+                    db.execute(
+                        "UPDATE communication_page_requests SET response_json=?",
+                        (canonical_bytes(bad),),
+                    )
+                with self.assertRaises(ValueError):
+                    self.s.page(**args)
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_page_requests SET response_json=?",
+                (canonical_bytes(good),),
+            )
+        self.assertEqual(good, self.s.page(**args))
+
+    def test_cached_claim_bindings_and_items_are_checked(self):
+        from daimon_matrix.canonical import canonical_bytes
+
+        args = dict(
+            recipient_id=self.rid,
+            consumer_id="cached-claim",
+            claim_id=_uuid("cached-claim"),
+            limit=1,
+            lease_until_ms=self.f.pair.now + 10000,
+        )
+        good = self.s.claim(**args)
+        for field, value in [
+            ("consumer_id", "wrong"),
+            ("claim_id", _uuid("wrong")),
+            ("lease_until_ms", self.f.pair.now + 20000),
+        ]:
+            with self.subTest(field=field):
+                bad = {**good, field: value}
+                with self.s._database() as db:
+                    db.execute(
+                        "UPDATE communication_claim_batches SET response_json=?",
+                        (canonical_bytes(bad),),
+                    )
+                with self.assertRaises(ValueError):
+                    self.s.claim(**args)
+        bad = copy.deepcopy(good)
+        bad["items"][0]["state"] = "delivered"
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_claim_batches SET response_json=?",
+                (canonical_bytes(bad),),
+            )
+        with self.assertRaises(ValueError):
+            self.s.claim(**args)
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_claim_batches SET response_json=?",
+                (canonical_bytes(good),),
+            )
+        self.assertEqual(good, self.s.claim(**args))
+
+    def test_cached_pagination_and_terminal_history(self):
+        self.f.sender.prepare(
+            client_id="owner",
+            send_id=_uuid("pagination-other"),
+            thread_id=_uuid("pagination-thread"),
+            text="other",
+        )
+        args = dict(
+            recipient_id=self.rid,
+            consumer_id="pagination",
+            request_id=_uuid("pagination-first"),
+            cursor=None,
+            limit=1,
+        )
+        self.deliver()
+        first = self.s.page(**args)
+        self.assertIsNotNone(first["next_cursor"])
+        next_args = {
+            **args,
+            "request_id": _uuid("pagination-next"),
+            "cursor": first["next_cursor"],
+        }
+        second = self.s.page(**next_args)
+        self.assertEqual("delivered", first["items"][0]["state"])
+        self.assertEqual("accepted", second["items"][0]["state"])
+        self.assertEqual(second, self.s.page(**next_args))
+        with self.s._database() as db:
+            db.execute("UPDATE communication_page_cursors SET consumer_id='wrong'")
+        for call in [lambda: self.s.page(**args), lambda: self.s.page(**next_args)]:
+            with self.assertRaises(ValueError):
+                call()
+        with self.s._database() as db:
+            db.execute("UPDATE communication_page_cursors SET consumer_id='pagination'")
+        conflicting = create_event(
+            authority=self.f.pair.recipient.authority,
+            origin=self.f.pair.recipient.origin,
+            signer=self.f.pair.recipient.signer,
+            sequence=1,
+            previous_event_id=None,
+            causal_parents=[],
+            event_id=_uuid("pagination-conflict"),
+            kind="experience.observed",
+            subject="communication-receipt",
+            payload=self.f.receipt()["payload"],
+            sensitivity="shareable",
+            occurred_at_ms=self.f.pair.now,
+        )
+        with self.assertRaisesRegex(ValueError, "terminal_receipt_conflict"):
+            self.s.record_foreign_receipt(conflicting, recipient_being_ref=self.rec)
+        self.assertEqual("quarantined", self.s.result(self.mid)["legs"][0]["state"])
+        self.assertEqual(first, self.s.page(**args))
+        self.assertEqual(second, self.s.page(**next_args))
+        with self.s._database() as db:
+            db.execute(
+                "UPDATE communication_foreign_receipts SET receipt_hash=?", ("0" * 64,)
+            )
+        with self.assertRaises(ValueError):
+            self.s.page(**next_args)
+
+
+class MigrationReviewProbes(unittest.TestCase):
+    def test_real_runtime_migration_crash_publication_boundaries_preserve_unsent(self):
+        import json
+
+        from daimon_matrix import operator_messaging as op
+        from daimon_matrix.messaging_config import (
+            config_digest,
+            load_application,
+            read_publication,
+        )
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_dm024_runtime import PASSWORD
+        from tests.test_messaging_runtime import application_fixture
+
+        for boundary in ("generation-published", "publication-selected"):
+            with self.subTest(boundary=boundary):
+                runtime, spec, sources, _ = application_fixture(self)
+                target = self.root / "review-app"
+                op.prepare(runtime, target, spec, secret_sources=sources)
+                app = load_application(runtime, target)
+                delivery = app.service.messaging.deliveries["peer-out"]
+                args = dict(
+                    client_id="client:operator-messaging",
+                    send_id=_uuid("review-unsent"),
+                    thread_id=_uuid("review-unsent-thread"),
+                    text="never sent",
+                )
+                envelopes = delivery.sender.prepare(**args)
+                message_id = json.loads(envelopes[1])["event_id"]
+                previous, _ = read_publication(runtime, target)
+                predecessor = config_digest(previous)
+                if boundary == "generation-published":
+                    original = op._publish
+
+                    def crash(*args, original=original, **kwargs):
+                        value = original(*args, **kwargs)
+                        if args[1].name.startswith("generation-"):
+                            raise OSError("after-generation-publish")
+                        return value
+
+                    fault = patch.object(op, "_publish", side_effect=crash)
+                else:
+                    original = op.os.replace
+
+                    def crash(*args, original=original, **kwargs):
+                        value = original(*args, **kwargs)
+                        if args[1].name == "publication.json":
+                            raise OSError("after-publication-select")
+                        return value
+
+                    fault = patch.object(op.os, "replace", side_effect=crash)
+                with fault, self.assertRaises(OSError):
+                    op.upgrade_semantic_receipts(
+                        runtime, target, expected_application_sha256=predecessor
+                    )
+                restarted = load_runtime(
+                    runtime.state_root,
+                    "runtime.json",
+                    lambda: bytearray(PASSWORD),
+                    clock=lambda: self.pair.now,
+                )
+                result = op.upgrade_semantic_receipts(
+                    restarted, target, expected_application_sha256=predecessor
+                )
+                self.assertEqual(result["status"], "semantic-v2")
+                after = load_application(
+                    restarted, target
+                ).service.messaging.deliveries["peer-out"]
+                self.assertEqual(envelopes, after.sender.prepare(**args))
+                self.assertEqual(
+                    after._semantic(message_id)["status"], "legacy-untracked"
+                )
+                self.assertFalse(after._semantic(message_id)["terminal"])
+                fresh = after.sender.prepare(
+                    **{**args, "send_id": _uuid("review-fresh-v2")}
+                )
+                new_id = json.loads(fresh[1])["event_id"]
+                self.assertFalse(after._semantic(new_id)["terminal"])
+                self.assertEqual(
+                    after._semantic(new_id)["legs"][0]["state"], "accepted"
+                )
+                self.assertEqual(
+                    result,
+                    op.upgrade_semantic_receipts(
+                        restarted, target, expected_application_sha256=predecessor
+                    ),
+                )
