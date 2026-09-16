@@ -24,11 +24,15 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import html
+import http.client
 import json
 import os
 import re
 import sqlite3
 import stat
+import subprocess
+import sys
+import time
 import urllib.error
 import urllib.request
 from bisect import bisect_right
@@ -364,6 +368,124 @@ def classify_plain_response(
         raise ValueError("echo_response_invalid") from None
 
 
+_PLAIN_HTTP_SECONDS = 10.0
+
+
+def _plain_http_exchange(url: str, payload: bytes) -> tuple[int, bytes]:
+    """One isolated local executor, killed/reaped on EVERY interrupted exit.
+
+    The monotonic budget includes interpreter startup, DNS, connect/TLS, HTTP
+    headers/framing/body and IPC. Never release a caller's guard with a live
+    executor. Reaping may take OS scheduling time; remote cancellation is NOT
+    implied. No token in argv, environment, stderr or an on-disk job file.
+    """
+    deadline = time.monotonic() + _PLAIN_HTTP_SECONDS
+    data = json.dumps([os.getpid(), url, payload.decode("utf-8")]).encode()
+    with subprocess.Popen(
+        [sys.executable, "-I", str(Path(__file__).resolve())],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        env={},
+    ) as child:
+        try:
+            output, _ = child.communicate(
+                data, timeout=max(0, deadline - time.monotonic())
+            )
+            if child.returncode != 0 or time.monotonic() >= deadline:
+                raise ValueError
+            status, raw = output.split(b"\n", 1)
+            if len(status) != 3 or len(raw) > 65536:
+                raise ValueError
+            return int(status), raw
+        finally:
+            # Includes KeyboardInterrupt/SystemExit and unexpected IPC failures.
+            # kill + wait, not an abandoned thread/future or a daemon task.
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+
+
+class _PlainBoundedReader:
+    """Bound cumulative raw HTTP bytes, including headers/chunks/trailers."""
+
+    def __init__(self, reader: Any) -> None:
+        self._reader = reader
+        self._remaining = 262144
+
+    def _read(self, size: int, *, line: bool) -> bytes:
+        limit = self._remaining + 1
+        size = limit if size < 0 else min(size, limit)
+        raw = self._reader.readline(size) if line else self._reader.read(size)
+        self._remaining -= len(raw)
+        if self._remaining < 0:
+            raise ValueError("echo_http_framing_limit")
+        return bytes(raw)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._read(size, line=False)
+
+    def readline(self, size: int = -1) -> bytes:
+        return self._read(size, line=True)
+
+    def close(self) -> None:
+        self._reader.close()
+
+
+class _PlainBoundedResponse(http.client.HTTPResponse):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.fp = _PlainBoundedReader(self.fp)  # type: ignore[assignment]
+
+
+def _plain_http_child() -> None:
+    """Private stdlib-only executor entry; no runtime, journal or lock handles."""
+    try:
+        # These process-local bounds cannot change the V1 transport in the parent.
+        http.client.HTTPConnection.response_class = _PlainBoundedResponse
+        http.client.HTTPSConnection.response_class = _PlainBoundedResponse
+        data = sys.stdin.buffer.read(131073)
+        if len(data) > 131072:
+            raise ValueError
+        parent_pid, url, payload = json.loads(data)
+        # Linux executor death coupling: after a hard parent crash there must
+        # not be an orphan HTTP sender continuing after its guard disappears.
+        # Check AFTER installing PDEATHSIG to close the startup/death race.
+        if sys.platform != "linux":
+            raise ValueError
+        import ctypes
+        import signal
+
+        if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
+            raise ValueError
+        if type(parent_pid) is not int or os.getppid() != parent_pid:
+            raise ValueError
+        wire = urllib.request.Request(
+            url,
+            data=payload.encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect()
+        )
+        try:
+            response = opener.open(wire, timeout=10)
+        except urllib.error.HTTPError as negative:
+            response = negative
+        with response:
+            status = response.status
+            raw = response.read(65537)
+            if len(raw) > 65536 or getattr(response, "length", None) not in (None, 0):
+                raise ValueError
+        sys.stdout.buffer.write(str(status).encode() + b"\n" + raw)
+        sys.stdout.buffer.flush()
+    except Exception:
+        # No exception URL, credential, body or traceback crosses this boundary.
+        raise SystemExit(1) from None
+
+
 class PlainTelegramTransport:
     """V2 runtime-only transport. No network on construction, retry or redirects.
 
@@ -399,26 +521,10 @@ class PlainTelegramTransport:
         except Exception:
             raise ValueError("echo_request_invalid") from None
         try:
-            wire = urllib.request.Request(
+            status, raw = _plain_http_exchange(
                 f"https://api.telegram.org/bot{self._token}/sendMessage",
-                data=json.dumps(request, ensure_ascii=False, allow_nan=False).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
+                json.dumps(request, ensure_ascii=False, allow_nan=False).encode(),
             )
-            opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({}), _NoRedirect()
-            )
-            try:
-                response = opener.open(wire, timeout=10)
-            except urllib.error.HTTPError as negative:
-                response = negative
-            with response:
-                status = response.status
-                raw = response.read(65537)
-                # A bounded read can return early on a truncated Content-Length.
-                remaining = getattr(response, "length", None)
-                if remaining not in (None, 0):
-                    raise ValueError
             verdict, _ = classify_plain_response(raw, request, bot_id=self._bot_id)
             expected_status = (
                 200 if verdict == "confirmed" else json.loads(raw)["error_code"]
@@ -628,3 +734,7 @@ class TelegramMirror:
                 )
                 db.commit()
         return {"status": "delivered-to-platform", "confirmed_parts": len(parts)}
+
+
+if __name__ == "__main__":
+    _plain_http_child()

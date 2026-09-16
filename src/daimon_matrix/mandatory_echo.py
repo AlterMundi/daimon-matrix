@@ -513,6 +513,8 @@ class EchoJournal:
         if not self.db.in_transaction:
             raise EchoError("echo_transaction_required")
         record["authentication"] = self._authenticate(record)
+        # Never persist a candidate that our authenticated loader would reject.
+        validate_proof_shape(record)
         raw = _json(record)
         size = len(raw.encode())
         if size > MAX_RECORD_BYTES:
@@ -749,6 +751,11 @@ class MandatoryEcho:
                     if type(decision) is not RetryDecision:
                         raise ValueError
                     approval = {"decision": asdict(decision), "evidence": evidence}
+                    observed = self._clock()
+                    _millis(observed)
+                    if observed < now or observed < part["attempts"][-1]["at_ms"]:
+                        raise ValueError
+                    now = observed
                     _validate_retry(approval, record["binding"], previous_id, now)
                 except Exception:
                     raise EchoError("echo_retry_unauthorized") from None

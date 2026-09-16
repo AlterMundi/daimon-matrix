@@ -567,6 +567,316 @@ worker.advance("synthetic-op", sys.argv[2])
         self.assertIn('"ok":false', proof["parts"][0]["attempts"][0]["response"])
         self.assertEqual(len(self.transport.calls), 2)
 
+    def test_http_deadline_reaps_executor_before_guard_release(self):
+        import subprocess
+        import threading
+        import time
+        from contextlib import contextmanager
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from unittest.mock import patch
+
+        from daimon_matrix import telegram_mirror as mirror
+
+        binding = self.admit()
+        received = threading.Event()
+        waiting = threading.Event()
+        released = threading.Event()
+        lock = threading.Lock()
+        children, results, errors, posts = [], [], [], []
+        mode = ["slow"]
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                request = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                posts.append(request)
+                received.set()
+                raw = Transport().send(request)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                try:
+                    if mode[0] == "slow":
+                        for byte in raw:
+                            self.wfile.write(bytes([byte]))
+                            self.wfile.flush()
+                            time.sleep(0.04)
+                    else:
+                        self.wfile.write(raw)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        original_exchange, original_popen = (
+            mirror._plain_http_exchange,
+            subprocess.Popen,
+        )
+
+        def local_exchange(url, payload):
+            self.assertEqual(
+                url, "https://api.telegram.org/bot123:TEST_ONLY/sendMessage"
+            )
+            return original_exchange(
+                f"http://127.0.0.1:{server.server_port}/sendMessage", payload
+            )
+
+        def capture(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        @contextmanager
+        def guard():
+            with lock:
+                try:
+                    yield
+                finally:
+                    self.assertTrue(all(c.poll() is not None for c in children))
+                    released.set()
+
+        def run():
+            db = self.connect()
+            try:
+                worker = echo.MandatoryEcho(
+                    self.reopen(db),
+                    transport=mirror.PlainTelegramTransport(
+                        token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                    ),
+                    resolve=lambda _: self.source,
+                    authorize=lambda _: True,
+                    execution_guard=guard,
+                )
+                results.append(worker.advance("synthetic-op", binding))
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                db.close()
+
+        def contender():
+            waiting.set()
+            try:
+                with lock:
+                    self.assertTrue(released.is_set())
+                    self.assertTrue(all(c.poll() is not None for c in children))
+            except BaseException as exc:
+                errors.append(exc)
+
+        try:
+            with (
+                patch.object(mirror, "_plain_http_exchange", local_exchange),
+                patch.object(mirror, "_PLAIN_HTTP_SECONDS", 0.6),
+                patch.object(subprocess, "Popen", capture),
+            ):
+                worker_thread = threading.Thread(target=run)
+                worker_thread.start()
+                self.assertTrue(received.wait(3))
+                contender_thread = threading.Thread(target=contender)
+                contender_thread.start()
+                self.assertTrue(waiting.wait(3))
+                self.assertFalse(released.is_set())
+                worker_thread.join(3)
+                contender_thread.join(3)
+                self.assertFalse(worker_thread.is_alive())
+                self.assertFalse(contender_thread.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(results[0]["state"], "ambiguous")
+                self.assertEqual(len(posts), 1)
+                self.assertEqual(children[0].returncode, -9)
+                self.assertEqual(
+                    self.worker.advance("synthetic-op", binding)["state"], "ambiguous"
+                )
+                self.assertEqual(len(posts), 1)
+                # A different operation makes progress after quiescence.
+                mode[0] = "success"
+                second = self.admit("second")
+                self.worker._transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                self.worker._execution_guard = guard
+                self.assertEqual(
+                    self.worker.advance("second", second)["state"], "confirmed"
+                )
+                self.assertEqual(len(posts), 2)
+                self.assertTrue(all(c.poll() is not None for c in children))
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_duplicate_retry_id_rejected_before_write_and_effect(self):
+        import threading
+        from dataclasses import asdict
+
+        binding = self.admit()
+        self.worker._clock = lambda: 1000
+        original = self.transport.send
+
+        def lost(request):
+            self.transport.calls.append(request)
+            raise TimeoutError()
+
+        self.transport.send = lost
+        self.worker.advance("synthetic-op", binding)
+        self.worker._execution_guard = threading.Lock
+        self.worker._verify_retry = lambda raw, *_: echo.RetryDecision(
+            **json.loads(raw)
+        )
+
+        def command(ident):
+            record = self.journal._load("synthetic-op", binding)
+            return echo._json(
+                asdict(
+                    echo.RetryDecision(
+                        ident,
+                        "synthetic-owner",
+                        "synthetic-op",
+                        binding,
+                        record["parts"][0]["attempts"][-1]["attempt_id"],
+                        1000,
+                        2000,
+                        "duplicate-platform-post-accepted",
+                    )
+                )
+            ).encode()
+
+        ident = "00000000-0000-4000-8000-000000000001"
+        admitted = command(ident)
+        self.worker.retry_ambiguous("synthetic-op", binding, admitted)
+        before = self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0]
+        with self.assertRaises(echo.EchoError):
+            self.worker.retry_ambiguous("synthetic-op", binding, command(ident))
+        self.assertEqual(
+            self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0],
+            before,
+        )
+        self.assertEqual(len(self.transport.calls), 2)
+        self.assertEqual(
+            self.worker.inspect("synthetic-op", binding)["state"], "ambiguous"
+        )
+        self.worker._clock = lambda: 3000
+        self.assertEqual(
+            self.worker.retry_ambiguous("synthetic-op", binding, admitted)["state"],
+            "ambiguous",
+        )
+        self.worker._clock = lambda: 1500
+        self.transport.send = original
+        self.assertEqual(
+            self.worker.retry_ambiguous(
+                "synthetic-op", binding, command("00000000-0000-4000-8000-000000000002")
+            )["state"],
+            "confirmed",
+        )
+        self.assertEqual(len(self.transport.calls), 3)
+
+    def test_candidate_transcript_validated_before_storage(self):
+        binding = self.admit()
+        before = self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0]
+        record = json.loads(before)
+        record["revision"] += 1
+        with (
+            self.assertRaisesRegex(echo.EchoError, "echo_proof_invalid"),
+            self.journal._transaction(),
+        ):
+            self.journal._write(record)
+        self.assertEqual(
+            self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0],
+            before,
+        )
+        self.assertEqual(
+            self.worker.advance("synthetic-op", binding)["state"], "confirmed"
+        )
+
+    def test_retry_freshness_after_verification_and_guard_wait(self):
+        import threading
+        from contextlib import contextmanager
+
+        binding = self.admit()
+        now = [1000]
+        self.worker._clock = lambda: now[0]
+        original = self.transport.send
+        self.transport.send = lambda _: (_ for _ in ()).throw(TimeoutError())
+        self.worker.advance("synthetic-op", binding)
+        before = self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0]
+        prior = json.loads(before)["parts"][0]["attempts"][0]["attempt_id"]
+        self.transport.send = original
+        lock = threading.Lock()
+        waiting = threading.Event()
+
+        @contextmanager
+        def guard():
+            waiting.set()
+            with lock:
+                yield
+
+        def verify(*args):
+            now[0] = verify.observed
+            return echo.RetryDecision(
+                "00000000-0000-4000-8000-000000000001",
+                "synthetic-owner",
+                "synthetic-op",
+                binding,
+                prior,
+                1000,
+                2000,
+                "duplicate-platform-post-accepted",
+            )
+
+        self.worker._verify_retry = verify
+        self.worker._execution_guard = guard
+        for observed in (2000, 3000, 999):
+            verify.observed = observed
+            now[0] = 1000
+            with self.subTest(observed=observed):
+                with self.assertRaisesRegex(echo.EchoError, "echo_retry_unauthorized"):
+                    self.worker.retry_ambiguous("synthetic-op", binding, b"synthetic")
+                self.assertEqual(
+                    self.db.execute(
+                        "SELECT record FROM echo_v2_obligations"
+                    ).fetchone()[0],
+                    before,
+                )
+                self.assertEqual(self.transport.calls, [])
+
+        # Real contention: the command expires while waiting for the shared guard.
+        now[0] = 1000
+        verify.observed = 2000
+        waiting.clear()
+        lock.acquire()
+
+        def release():
+            waiting.wait(3)
+            now[0] = 2000
+            lock.release()
+
+        thread = threading.Thread(target=release)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(echo.EchoError, "echo_retry_unauthorized"):
+                self.worker.retry_ambiguous("synthetic-op", binding, b"synthetic")
+        finally:
+            thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(self.transport.calls, [])
+        verify.observed = 1999
+        now[0] = 1999
+        self.assertEqual(
+            self.worker.retry_ambiguous("synthetic-op", binding, b"synthetic")["state"],
+            "confirmed",
+        )
+        self.assertEqual(
+            self.worker.require_confirmed("synthetic-op", binding)["parts"][0][
+                "attempts"
+            ][-1]["at_ms"],
+            1999,
+        )
+
     def test_owner_verified_ambiguous_retry_retains_decision_and_is_idempotent(self):
         import hashlib
         import hmac

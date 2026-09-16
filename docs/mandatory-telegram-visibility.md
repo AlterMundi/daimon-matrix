@@ -129,12 +129,36 @@ not interpreted as authority or included in the public projection.
 
 `PlainTelegramTransport(token=..., bot_id=..., chat_id=..., topic_id=...)` uses
 TLS-validating urllib to the fixed `https://api.telegram.org/.../sendMessage`
-origin, no redirects, no ambient proxies, a 10-second socket timeout and a
-65,536-byte response limit. Explicit negative HTTP/Bot API responses are returned
-only after their exact rejection shape and matching HTTP status are validated. Construction does no network; fixed `getMe`/access
-verification belongs to authorized parent setup. Request/response exceptions
-are sanitized. It returns only a locally validated raw response, not a signed
-Telegram receipt. Socket timeout is not a proof that the remote operation stopped.
+origin, no redirects or ambient proxies, and a **10-second monotonic total HTTP
+budget**, in addition to the 10-second socket inactivity timeout. A private,
+stdlib-only subprocess performs DNS, connection/TLS, request, headers/framing and
+body reading. The parent includes startup and IPC in the total budget and kills
+and reaps the executor before returning on timeout or interruption. This is not
+an abandoned-thread/future timeout. OS process creation/reaping and scheduling
+can add latency; if quiescence stalls, the execution guard stays held rather than
+silently releasing it. Linux `PR_SET_PDEATHSIG(SIGKILL)` plus a post-install
+parent-PID check prevents a hard-crash orphan from continuing HTTP; unsupported
+platforms or unavailable death coupling fail closed before network. Forced
+process/host loss still requires the parent's runtime recovery/quiescence policy,
+not treating lock availability as remote cancellation.
+
+The decoded response limit is 65,536 bytes; cumulative consumed plaintext HTTP
+bytes, including headers, chunk extensions and trailers, are capped at 262,144.
+The child receives only the bounded request and URL through a private pipe, not
+argv/environment or a job file. It inherits no journal/guard descriptors or
+ambient environment and emits no exception diagnostics. The composing installation
+must provide a trusted executable `sys.executable`, immutable real-file module
+path and Linux subprocess/death-signal support; zipped/frozen distributions and
+other platforms are not qualified by this slice. No new public configuration,
+model capability or transport destination selector is introduced.
+
+Explicit negative HTTP/Bot API responses are returned only after their exact
+rejection shape and matching HTTP status are validated. Construction does no
+network; fixed `getMe`/access verification belongs to authorized parent setup.
+Request/response exceptions are sanitized. It returns only a locally validated
+raw response, not a signed Telegram receipt. Neither local executor termination
+nor a timeout proves the remote operation stopped. Timeout leaves durable
+ambiguity and never grants an automatic retry.
 
 A retained authenticated result proves what the trusted runtime observed over
 its trusted transport. It establishes **platform acceptance**, not human reading,
@@ -308,7 +332,14 @@ supply BOTH:
   worker tests without recovery can rely on durable single-flight intent alone.
 
 The core revalidates exact content/audience/current authority, verifies the owner
-command while fenced, and records the full decision plus base64-encoded command
+command while fenced, then samples trusted time again after verification. Expired
+(including boundary equality) or backwards-time decisions fail without a new
+attempt or HTTP. The fresh sample is the admitted attempt timestamp. Every
+candidate transcript is structurally validated before persistence; reuse of an
+already-retained decision ID cannot poison the journal or reach HTTP. Exact
+admitted-command replay remains a no-I/O historical return.
+
+The core records the full decision plus base64-encoded command
 in `retry_authorization` on the new attempt **before HTTP**. Old ambiguous and
 completed attempts stay intact. The entire trail is runtime-authenticated. The
 core does not expose a raw signer or decide owner authority from the command
@@ -405,7 +436,7 @@ The primitive tests do not call native provider/service functions. Whole-runtime
 egress completeness, installed provenance, live visibility, human consent,
 independent review and deployment therefore remain parent acceptance gates.
 
-### Frozen author-run validation
+### Historical initial slice author-run validation (before independent review)
 
 Worktree: `/home/debian/dm-milestone2-issue137`; branch
 `issue-137-mandatory-telegram-echo`; unchanged HEAD
@@ -439,3 +470,113 @@ The full-suite process was `proc_623a4a1a611c` (exited 1). Its build fixture use
 an isolated temporary build environment; no shared parent-venv packages were
 changed. This is author verification, not independent review or installation
 qualification. Source and schema writers are frozen for parent handoff.
+
+### Corrective freeze after independent findings R1–R3
+
+This is **author fix verification**, not independent approval. Uncommitted delta
+on unchanged HEAD `6b34a9121a7b0c90af6e259665a72b9711189336` in the same issue-137
+worktree. Parent-supplied accepted claim
+`13fe3ecd-4a25-4b35-bc41-75c8bfde933b` covers the exact seven primitive paths;
+this correction changes only this document, both primitive modules and their
+two test files. Neither schema changed. No credentials/session key, GitHub,
+services, shared inventories, native integration, commits or pushes were used.
+The shared test interpreter was used read-only.
+
+Independent source evidence (left unchanged):
+`/home/debian/dm132-live-exchange/ISSUE137-CORE-INDEPENDENT-REVIEW.md` and
+`/home/debian/dm132-live-exchange/review137_independent_probes.py`.
+The original probes were executed before edits: **8 tests, 3 failures, exit 1**,
+15.961 seconds. Observations: stale approval caused a second POST and stored
+1000 ms while current time was 3000; reused authorization ID caused three POSTs
+and three retained attempts; slow body confirmed after 12.031886 seconds.
+
+Corrections and regressions:
+
+- **R1:** fresh trusted time after verification while inside the execution guard;
+  expired equality, expiry during verification, backwards time, actual threaded
+  guard contention and last-valid-millisecond acceptance are covered. Rejected
+  commands leave byte-identical state and no transport calls.
+- **R2:** every `_write` validates the complete candidate transcript before any
+  SQL mutation. Duplicate decision IDs are rejected before HTTP, with unchanged
+  valid state; exact admitted evidence replay after expiry and a new-ID recovery
+  still work. Complete authenticated response/history validation remains intact.
+- **R3:** isolated kill-and-reap HTTP executor, total monotonic deadline, bounded
+  raw framing as well as body, and Linux parent-death coupling. Tests use real
+  loopback HTTP for slow headers, body and chunk-extension framing, excessive
+  chunk trailers, content-length and chunked success, truncation and rejection.
+  A deliberately stalled resolver in the real child proves pre-open coverage.
+  Thread contention verifies the child has exited before guard release and a
+  different operation progresses afterward. Interrupt and actual parent SIGKILL
+  probes check local executor cleanup; the parent-death probe was first observed
+  failing before adding death coupling. No timeout grants retry authority.
+
+Frozen verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src` with the shared interpreter,
+  `-W error -m unittest tests.test_mandatory_echo tests.test_telegram_mirror -q`:
+  **43 tests passed**, 10.304 seconds, exit 0, no warnings.
+- Scoped Ruff check and format check: passed; `git diff --check`: passed.
+- `MYPYPATH=src python -m mypy src`: passed across 59 source files.
+- Original eight independent assertions, replayed with only their loopback URL
+  interception moved to the subprocess boundary: **8 passed**, 15.938 seconds,
+  exit 0. Stale command: one POST/one retained attempt. Duplicate ID: two POSTs,
+  two attempts, unchanged valid record. Default-budget drip: **10.018438 seconds,
+  ambiguous**, one POST. The original server logs an expected `BrokenPipeError`
+  because its drip handler does not catch client disconnect; this was not hidden
+  or counted as pristine output. The maintained regressions catch that expected
+  server-side disconnect. V1 AST equality and authenticated recovery, tamper,
+  revocation, reopen and cross-process guard controls also passed.
+
+The original probes' assertions and server were not edited. Reproduction adapter
+(run from this worktree using the same interpreter and environment):
+
+```python
+import runpy
+import unittest
+from unittest.mock import patch
+from daimon_matrix import telegram_mirror as t
+
+m = runpy.run_path(
+    "/home/debian/dm132-live-exchange/review137_independent_probes.py"
+)
+C = m["Probe"]
+setup, exchange = C.setUp, t._plain_http_exchange
+
+def wrapped(self):
+    setup(self)
+    self.intercept.stop()
+    def local(url, payload):
+        self.assertEqual(url,
+            "https://api.telegram.org/bot123:SYNTHETIC_ONLY/sendMessage")
+        return exchange(
+            f"http://127.0.0.1:{self.server.server_port}/sendMessage", payload)
+    p = patch.object(t, "_plain_http_exchange", local)
+    p.start()
+    self.addCleanup(p.stop)
+
+C.setUp = wrapped
+r = unittest.TextTestRunner(verbosity=2).run(
+    unittest.defaultTestLoader.loadTestsFromTestCase(C))
+raise SystemExit(not r.wasSuccessful())
+```
+
+Frozen source/test SHA-256 (this document is deliberately not self-hashed):
+
+| Path | SHA-256 |
+|---|---|
+| `src/daimon_matrix/mandatory_echo.py` | `6c48fbbb672228744ae487335ce415204ae7967611a345800ff8adebc61da189` |
+| `src/daimon_matrix/telegram_mirror.py` | `035fefa0608ece7e0f907680b4a5b488aa957ac2165d57421bc3cfcf36a6d88f` |
+| `tests/test_mandatory_echo.py` | `f31896738c21860dc1027ce230df0b44a85d98b7c0521a88783ed9274d12ea8f` |
+| `tests/test_telegram_mirror.py` | `4b39b354409d7dab93c13341a518a5ac2f09c480df5d0af887817337691cb915` |
+
+**Integration caveats remain blocking:** verified durable queue, no native egress
+until full echo confirmation; complete authenticated proof and retained history;
+owner/runtime-only ambiguous recovery; no native integration is supplied here.
+The shared paths listed in section 5 lack this claim's coverage and were not
+edited. Full suite, packaging/inventory generation, installed wheel/pair and live
+Telegram were not rerun in this corrective slice; the historical full-suite
+failures remain unresolved, not waived. Qualify isolated-child execution, Linux
+death coupling, immutable module/interpreter provenance and supervisor hard-kill
+quiescence in the actual installed runtime. Total deadlines stop local work, not
+already accepted remote work. Independent re-review of this exact delta is still
+required before treating any finding as independently closed.

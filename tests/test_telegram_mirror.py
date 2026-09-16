@@ -430,7 +430,6 @@ class MandatoryPlainTests(unittest.TestCase):
     ) -> None:
         import json
         import threading
-        import urllib.request
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
         seen = []
@@ -473,23 +472,18 @@ class MandatoryPlainTests(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
-        original = urllib.request.OpenerDirector.open
+        original = mirror._plain_http_exchange
 
-        def local_open(opener, request, *args, **kwargs):
+        def local_exchange(url, payload):
             self.assertEqual(
-                request.full_url,
-                "https://api.telegram.org/bot123:TEST_ONLY/sendMessage",
+                url, "https://api.telegram.org/bot123:TEST_ONLY/sendMessage"
             )
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{server.server_port}/sendMessage",
-                data=request.data,
-                headers=dict(request.headers),
-                method=request.method,
+            return original(
+                f"http://127.0.0.1:{server.server_port}/sendMessage", payload
             )
-            return original(opener, request, *args, **kwargs)
 
         try:
-            with patch("urllib.request.OpenerDirector.open", local_open):
+            with patch.object(mirror, "_plain_http_exchange", local_exchange):
                 transport = mirror.PlainTelegramTransport(
                     token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
                 )
@@ -516,6 +510,260 @@ class MandatoryPlainTests(unittest.TestCase):
                 )
                 self.assertEqual(len(seen), 3)
                 self.assertNotIn("TEST_ONLY", repr(transport))
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_parent_death_stops_local_http_executor(self):
+        import os
+        import signal
+        import subprocess
+        import sys
+        import threading
+        from contextlib import suppress
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        received, disconnected = threading.Event(), threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                received.set()
+                self.connection.settimeout(3)
+                try:
+                    if self.rfile.read(1) == b"":
+                        disconnected.set()
+                except TimeoutError:
+                    pass
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        code = """
+import subprocess
+from daimon_matrix import telegram_mirror as t
+original = subprocess.Popen
+def capture(*a, **kw):
+    child = original(*a, **kw)
+    print(child.pid, flush=True)
+    return child
+subprocess.Popen = capture
+t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
+""".replace("PORT", str(server.server_port))
+        pidfd = None
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ) as parent:
+                try:
+                    self.assertTrue(received.wait(3))
+                    pidfd = os.pidfd_open(int(parent.stdout.readline()))
+                    parent.kill()
+                    parent.wait()
+                    self.assertTrue(
+                        disconnected.wait(1), "orphan executor outlived its guard owner"
+                    )
+                finally:
+                    if pidfd is not None:
+                        with suppress(ProcessLookupError):
+                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    if parent.poll() is None:
+                        parent.kill()
+                    parent.wait()
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_deadline_covers_dns_and_interruption_reaps_child(self):
+        import subprocess
+        import time
+
+        original = subprocess.Popen
+        children, partial = [], []
+
+        def launch(*args, **kwargs):
+            argv = args[0]
+            # Delay the real executor's resolver before any socket is opened.
+            code = (
+                "import runpy,socket,sys,time; "
+                "socket.getaddrinfo=lambda *a,**k: "
+                "(print('resolver-entered',flush=True),time.sleep(30))[1]; "
+                "runpy.run_path(sys.argv[1],run_name='__main__')"
+            )
+            child = original([argv[0], "-I", "-c", code, argv[2]], **kwargs)
+            children.append(child)
+            communicate = child.communicate
+
+            def observed(*a, **k):
+                try:
+                    return communicate(*a, **k)
+                except subprocess.TimeoutExpired as exc:
+                    partial.append(exc.output)
+                    raise
+
+            child.communicate = observed
+            return child
+
+        with (
+            patch.object(mirror, "_PLAIN_HTTP_SECONDS", 0.4),
+            patch.object(subprocess, "Popen", launch),
+        ):
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                mirror._plain_http_exchange("http://127.0.0.1:1/", b"{}")
+            self.assertLess(time.monotonic() - started, 1.0)
+        self.assertIn(b"resolver-entered", partial[0])
+        self.assertEqual(children[0].returncode, -9)
+        self.assertTrue(children[0].stdin.closed)
+        self.assertTrue(children[0].stdout.closed)
+
+        def interrupt(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+
+            def stop(*a, **k):
+                raise KeyboardInterrupt
+
+            child.communicate = stop
+            return child
+
+        with (
+            patch.object(subprocess, "Popen", interrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            mirror._plain_http_exchange("http://127.0.0.1:1/", b"{}")
+        self.assertEqual(children[-1].returncode, -9)
+        self.assertTrue(children[-1].stdin.closed)
+        self.assertTrue(children[-1].stdout.closed)
+
+    def test_total_deadline_slow_headers_body_and_chunk_framing(self):
+        import json
+        import threading
+        import time
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        mode = ["headers"]
+        seen = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                request = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                seen.append(request)
+                raw = json.dumps(
+                    {
+                        "ok": True,
+                        "result": {
+                            "message_id": 1,
+                            "from": {"id": 123, "is_bot": True},
+                            "chat": {"id": -123},
+                            "text": request["text"],
+                        },
+                    }
+                ).encode()
+                try:
+                    if mode[0] == "headers":
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        for _ in range(20):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.06)
+                        self.wfile.write(
+                            b"\r\nContent-Length: "
+                            + str(len(raw)).encode()
+                            + b"\r\n\r\n"
+                            + raw
+                        )
+                    elif mode[0] == "chunks":
+                        self.wfile.write(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;"
+                        )
+                        for _ in range(20):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.06)
+                        self.wfile.write(b"\r\nx\r\n0\r\n\r\n")
+                    elif mode[0] in ("framing", "chunk-success"):
+                        self.wfile.write(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        )
+                        self.wfile.write(
+                            hex(len(raw))[2:].encode() + b"\r\n" + raw + b"\r\n0\r\n"
+                        )
+                        self.wfile.write(
+                            (b"X-Trailer: " + b"a" * 1000 + b"\r\n")
+                            * (300 if mode[0] == "framing" else 1)
+                            + b"\r\n"
+                        )
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        if mode[0] == "body":
+                            for byte in raw[:20]:
+                                self.wfile.write(bytes([byte]))
+                                self.wfile.flush()
+                                time.sleep(0.06)
+                            raw = raw[20:]
+                        self.wfile.write(raw)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # Expected: the local executor is killed, not abandoned.
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        original = mirror._plain_http_exchange
+
+        def local_exchange(url, payload):
+            self.assertEqual(
+                url, "https://api.telegram.org/bot123:TEST_ONLY/sendMessage"
+            )
+            return original(
+                f"http://127.0.0.1:{server.server_port}/sendMessage", payload
+            )
+
+        try:
+            with (
+                patch.object(mirror, "_plain_http_exchange", local_exchange),
+                patch.object(mirror, "_PLAIN_HTTP_SECONDS", 0.4),
+            ):
+                transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                request = mirror.plain_request("deadline", chat_id=-123, topic_id=None)
+                for value in ("headers", "body", "chunks", "framing"):
+                    mode[0] = value
+                    with self.subTest(mode=value):
+                        start = time.monotonic()
+                        with self.assertRaisesRegex(
+                            ValueError, "echo_transport_ambiguous"
+                        ):
+                            transport.send(request)
+                        self.assertLess(time.monotonic() - start, 1.0)
+                for value in ("success", "chunk-success"):
+                    mode[0] = value
+                    self.assertEqual(
+                        mirror.classify_plain_response(
+                            transport.send(request), request, bot_id=123
+                        )[0],
+                        "confirmed",
+                    )
+                self.assertEqual(len(seen), 6)
         finally:
             server.shutdown()
             thread.join()
