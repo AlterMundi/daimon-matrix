@@ -4,7 +4,13 @@ import copy
 import tempfile
 from pathlib import Path
 
-from daimon_matrix import authority_epochs, identity, local_api, runtime
+from daimon_matrix import (
+    authority_epochs,
+    identity,
+    local_api,
+    operator_rebirth,
+    runtime,
+)
 from daimon_matrix.canonical import canonical_bytes, unb64url
 from daimon_matrix.operator_rebirth import authority_from_runtime_bundle
 from daimon_matrix.sealed import (
@@ -493,6 +499,1257 @@ class IndependentSuccessionTests(RuntimeFixture):
 
 
 class MigrationTests(RuntimeFixture):
+    def messaging_migration(
+        self,
+        *,
+        migration_id="12345678-1234-4234-8234-123456789136",
+        output_generation=2,
+    ):
+        state_root, old_bundle, _cap = self.make_bundle()
+        active, transition = successor(self)
+        new_bundle = copy.deepcopy(old_bundle)
+        new_bundle.update(
+            schema="dm.runtime.bundle/v8",
+            manifest=active.manifest.value,
+            credentials=list(active.credentials.values()),
+            incarnations=list(active.incarnations.values()),
+            authority_history=[
+                {"manifest": self.manifest.value, "successor": transition}
+            ],
+        )
+        preserved = {
+            "inbox": "messaging-inbox.sqlite",
+            "outbox": "messaging-outbox.sqlite",
+            "rpc": "messaging-rpc.sqlite",
+        }
+        for role, name in preserved.items():
+            path = state_root / name
+            path.write_bytes((role + "-original").encode())
+            path.chmod(0o600)
+        journal_key = b"issue136-migration-journal-key!!"
+        heads = {
+            "old_policy_head": "1" * 64,
+            "new_policy_head": "2" * 64,
+            "old_relationship_head": "3" * 64,
+            "new_relationship_head": "4" * 64,
+        }
+        approval = operator_rebirth.create_messaging_permissions_migration_approval(
+            old_bundle,
+            new_bundle,
+            state_root=state_root,
+            migration_id=migration_id,
+            output_generation=output_generation,
+            capability_journal_identity="dm:capability-journal:v1:issue136",
+            journal_key=journal_key,
+            preserved_references=preserved,
+            owner_signing_seed=self.signing_seeds["legion"],
+            **heads,
+        )
+        return state_root, old_bundle, new_bundle, approval, journal_key, heads
+
+    def assert_migration_not_committed(self, state_root, old_bundle):
+        import json
+
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(old_bundle)
+        )
+        self.assertFalse(
+            (state_root / ".runtime.json.messaging-v2-generation.json").exists()
+        )
+        journal = json.loads(
+            (state_root / ".runtime.json.messaging-v2-migration.json").read_bytes()
+        )
+        self.assertEqual(journal["state"], "prepared")
+
+    def assert_final_publication_races_reject_before_install_and_retry(self, artifact):
+        import json
+        import os
+        import shutil
+
+        last_state_root = None
+        for subject in ("runtime", "inbox", "outbox", "rpc"):
+            for mode in ("mutation", "replacement"):
+                with self.subTest(artifact=artifact, subject=subject, mode=mode):
+                    if last_state_root is not None:
+                        shutil.rmtree(last_state_root, ignore_errors=True)
+                    (
+                        state_root,
+                        _old_bundle,
+                        new_bundle,
+                        approval,
+                        journal_key,
+                        heads,
+                    ) = self.messaging_migration()
+                    last_state_root = state_root
+                    self.addCleanup(shutil.rmtree, state_root, ignore_errors=True)
+                    operator_rebirth.prepare_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        new_bundle,
+                        approval,
+                        journal_key=journal_key,
+                        current_policy_head=heads["old_policy_head"],
+                        current_relationship_head=heads["old_relationship_head"],
+                    )
+                    journal_path = (
+                        state_root / ".runtime.json.messaging-v2-migration.json"
+                    )
+                    floor_path = (
+                        state_root / ".runtime.json.messaging-v2-generation.json"
+                    )
+                    target = state_root / (
+                        "runtime.json"
+                        if subject == "runtime"
+                        else f"messaging-{subject}.sqlite"
+                    )
+                    approved = (
+                        canonical_bytes(new_bundle)
+                        if subject == "runtime"
+                        else target.read_bytes()
+                    )
+                    prepared_bytes = journal_path.read_bytes()
+                    raced = False
+
+                    def race(
+                        stage,
+                        *,
+                        bundle=new_bundle,
+                        subject_name=subject,
+                        change_mode=mode,
+                        target_path=target,
+                        root_path=state_root,
+                    ):
+                        nonlocal raced
+                        if (
+                            stage != f"{artifact}:after_file_fsync_before_install"
+                            or raced
+                        ):
+                            return
+                        raced = True
+                        changed = (
+                            canonical_bytes(
+                                {**bundle, "runtime_label": "unapproved-runtime"}
+                            )
+                            if subject_name == "runtime"
+                            else f"changed-before-{artifact}-install".encode()
+                        )
+                        if change_mode == "mutation":
+                            target_path.write_bytes(changed)
+                            target_path.chmod(0o600)
+                        else:
+                            replacement = root_path / f".attacker-{subject_name}"
+                            replacement.write_bytes(changed)
+                            replacement.chmod(0o600)
+                            os.replace(replacement, target_path)
+
+                    error = (
+                        "messaging_migration_installed_runtime_rejected"
+                        if subject == "runtime"
+                        else "messaging_migration_preserved_reference_changed"
+                    )
+                    with self.assertRaisesRegex(operator_rebirth.RebirthError, error):
+                        operator_rebirth.resume_messaging_permissions_migration(
+                            state_root,
+                            "runtime.json",
+                            journal_key=journal_key,
+                            current_policy_head=heads["old_policy_head"],
+                            current_relationship_head=heads["old_relationship_head"],
+                            fault_hook=race,
+                        )
+                    self.assertTrue(raced)
+                    self.assertEqual(floor_path.exists(), artifact == "completion")
+                    self.assertEqual(journal_path.read_bytes(), prepared_bytes)
+                    self.assertEqual(json.loads(prepared_bytes)["state"], "prepared")
+
+                    target.write_bytes(approved)
+                    target.chmod(0o600)
+                    result = operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["new_policy_head"],
+                        current_relationship_head=heads["new_relationship_head"],
+                    )
+                    self.assertEqual(result["state"], "completed")
+                    authoritative = (
+                        state_root / "runtime.json",
+                        floor_path,
+                        journal_path,
+                        state_root / "messaging-inbox.sqlite",
+                        state_root / "messaging-outbox.sqlite",
+                        state_root / "messaging-rpc.sqlite",
+                    )
+                    completed_bytes = tuple(path.read_bytes() for path in authoritative)
+                    result = operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["new_policy_head"],
+                        current_relationship_head=heads["new_relationship_head"],
+                    )
+                    self.assertEqual(result["state"], "completed")
+                    self.assertEqual(
+                        tuple(path.read_bytes() for path in authoritative),
+                        completed_bytes,
+                    )
+                    self.assertFalse(
+                        any(".staging" in path.name for path in state_root.iterdir())
+                    )
+                    shutil.rmtree(state_root)
+
+    def test_floor_final_publication_races_reject_before_install_and_retry(self):
+        self.assert_final_publication_races_reject_before_install_and_retry("floor")
+
+    def test_completion_final_publication_races_reject_before_install_and_retry(self):
+        self.assert_final_publication_races_reject_before_install_and_retry(
+            "completion"
+        )
+
+    def test_precommit_substitution_mutation_and_root_swaps_reject_then_retry(self):
+        import json
+        import os
+        import shutil
+
+        # The checked candidate inode, not a later resolution of its name, is the
+        # only object authorized for installation.
+        state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def substitute_candidate(stage):
+            if stage == "after_candidate_durable":
+                candidate = state_root / ".runtime.json.messaging-v2-candidate"
+                replacement = state_root / ".attacker-candidate"
+                tampered = copy.deepcopy(new_bundle)
+                tampered["runtime_label"] = "unapproved-substitute"
+                replacement.write_bytes(canonical_bytes(tampered))
+                replacement.chmod(0o600)
+                os.replace(replacement, candidate)
+
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_candidate_changed"
+        ):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=substitute_candidate,
+            )
+        self.assert_migration_not_committed(state_root, old_bundle)
+        result = operator_rebirth.resume_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(new_bundle)
+        )
+        shutil.rmtree(state_root)
+
+        # Each approved preserved role stays descriptor-bound through commit.
+        for role in ("inbox", "outbox", "rpc"):
+            with self.subTest(preserved_role=role):
+                state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+                    self.messaging_migration()
+                )
+                operator_rebirth.prepare_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    new_bundle,
+                    approval,
+                    journal_key=journal_key,
+                    current_policy_head=heads["old_policy_head"],
+                    current_relationship_head=heads["old_relationship_head"],
+                )
+                path = state_root / f"messaging-{role}.sqlite"
+                original = path.read_bytes()
+
+                def mutate_reference(
+                    stage,
+                    *,
+                    target=path,
+                    root_path=state_root,
+                    role_name=role,
+                ):
+                    if stage == "after_candidate_durable":
+                        replacement = root_path / f".attacker-{role_name}"
+                        replacement.write_bytes(b"changed-after-check")
+                        replacement.chmod(0o600)
+                        os.replace(replacement, target)
+
+                with self.assertRaisesRegex(
+                    operator_rebirth.RebirthError,
+                    "messaging_migration_preserved_reference_changed",
+                ):
+                    operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["old_policy_head"],
+                        current_relationship_head=heads["old_relationship_head"],
+                        fault_hook=mutate_reference,
+                    )
+                self.assert_migration_not_committed(state_root, old_bundle)
+                path.write_bytes(original)
+                path.chmod(0o600)
+                result = operator_rebirth.resume_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    journal_key=journal_key,
+                    current_policy_head=heads["old_policy_head"],
+                    current_relationship_head=heads["old_relationship_head"],
+                )
+                self.assertEqual(result["state"], "completed")
+                shutil.rmtree(state_root)
+
+        # Replacing the selected root through any pre-floor boundary is detected
+        # against the retained directory descriptor.  Repairing the original
+        # pathname permits the exact authenticated transaction to converge.
+        for boundary in (
+            "after_candidate_durable",
+            "before_runtime_install",
+            "before_generation_floor_install",
+        ):
+            with self.subTest(root_swap_boundary=boundary):
+                state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+                    self.messaging_migration()
+                )
+                operator_rebirth.prepare_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    new_bundle,
+                    approval,
+                    journal_key=journal_key,
+                    current_policy_head=heads["old_policy_head"],
+                    current_relationship_head=heads["old_relationship_head"],
+                )
+                moved = state_root.with_name(state_root.name + "-moved")
+
+                def swap_root(
+                    stage,
+                    *,
+                    target_boundary=boundary,
+                    root_path=state_root,
+                    moved_path=moved,
+                ):
+                    if stage == target_boundary:
+                        os.rename(root_path, moved_path)
+                        root_path.mkdir(mode=0o700)
+
+                with self.assertRaisesRegex(
+                    operator_rebirth.RebirthError,
+                    "messaging_migration_state_root_changed",
+                ):
+                    operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["old_policy_head"],
+                        current_relationship_head=heads["old_relationship_head"],
+                        fault_hook=swap_root,
+                    )
+                self.assertFalse(
+                    (moved / ".runtime.json.messaging-v2-generation.json").exists()
+                )
+                self.assertEqual(
+                    json.loads(
+                        (
+                            moved / ".runtime.json.messaging-v2-migration.json"
+                        ).read_bytes()
+                    )["state"],
+                    "prepared",
+                )
+                state_root.rmdir()
+                os.rename(moved, state_root)
+                runtime_bytes = (state_root / "runtime.json").read_bytes()
+                if runtime_bytes == canonical_bytes(old_bundle):
+                    policy_head = heads["old_policy_head"]
+                    relationship_head = heads["old_relationship_head"]
+                else:
+                    self.assertEqual(runtime_bytes, canonical_bytes(new_bundle))
+                    policy_head = heads["new_policy_head"]
+                    relationship_head = heads["new_relationship_head"]
+                result = operator_rebirth.resume_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    journal_key=journal_key,
+                    current_policy_head=policy_head,
+                    current_relationship_head=relationship_head,
+                )
+                self.assertEqual(result["state"], "completed")
+                shutil.rmtree(state_root)
+
+    def test_ancestor_swaps_at_each_precommit_boundary_reject_then_retry(self):
+        import json
+        import os
+        import shutil
+
+        for boundary in (
+            "after_candidate_durable",
+            "before_runtime_install",
+            "before_generation_floor_install",
+        ):
+            with self.subTest(ancestor_swap_boundary=boundary):
+                state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+                    self.messaging_migration()
+                )
+                operator_rebirth.prepare_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    new_bundle,
+                    approval,
+                    journal_key=journal_key,
+                    current_policy_head=heads["old_policy_head"],
+                    current_relationship_head=heads["old_relationship_head"],
+                )
+                ancestor = state_root.parent
+                moved_ancestor = ancestor.with_name(ancestor.name + "-moved")
+                moved_root = moved_ancestor / state_root.name
+
+                def swap_ancestor(
+                    stage,
+                    *,
+                    target_boundary=boundary,
+                    ancestor_path=ancestor,
+                    moved_path=moved_ancestor,
+                    root_path=state_root,
+                ):
+                    if stage == target_boundary:
+                        os.rename(ancestor_path, moved_path)
+                        ancestor_path.mkdir(mode=0o700)
+                        root_path.mkdir(mode=0o700)
+
+                with self.assertRaisesRegex(
+                    operator_rebirth.RebirthError,
+                    "messaging_migration_state_root_changed",
+                ):
+                    operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["old_policy_head"],
+                        current_relationship_head=heads["old_relationship_head"],
+                        fault_hook=swap_ancestor,
+                    )
+                self.assertFalse(
+                    (moved_root / ".runtime.json.messaging-v2-generation.json").exists()
+                )
+                self.assertEqual(
+                    json.loads(
+                        (
+                            moved_root / ".runtime.json.messaging-v2-migration.json"
+                        ).read_bytes()
+                    )["state"],
+                    "prepared",
+                )
+                shutil.rmtree(ancestor)
+                os.rename(moved_ancestor, ancestor)
+                runtime_bytes = (state_root / "runtime.json").read_bytes()
+                if runtime_bytes == canonical_bytes(old_bundle):
+                    policy_head = heads["old_policy_head"]
+                    relationship_head = heads["old_relationship_head"]
+                else:
+                    self.assertEqual(runtime_bytes, canonical_bytes(new_bundle))
+                    policy_head = heads["new_policy_head"]
+                    relationship_head = heads["new_relationship_head"]
+                result = operator_rebirth.resume_messaging_permissions_migration(
+                    state_root,
+                    "runtime.json",
+                    journal_key=journal_key,
+                    current_policy_head=policy_head,
+                    current_relationship_head=relationship_head,
+                )
+                self.assertEqual(result["state"], "completed")
+                shutil.rmtree(state_root)
+
+    def test_interrupted_atomic_publication_cleans_owned_residue_and_converges(self):
+        import json
+        import shutil
+
+        artifacts = ("initial_journal", "candidate", "floor", "completion")
+        boundaries = (
+            "after_first_byte",
+            "after_full_write_before_fsync",
+            "after_file_fsync_before_install",
+            "after_install_before_directory_fsync",
+        )
+        last_state_root = None
+        for artifact in artifacts:
+            for boundary in boundaries:
+                with self.subTest(artifact=artifact, boundary=boundary):
+                    if last_state_root is not None:
+                        shutil.rmtree(last_state_root, ignore_errors=True)
+                    state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+                        self.messaging_migration()
+                    )
+                    last_state_root = state_root
+                    target = f"{artifact}:{boundary}"
+
+                    def interrupt(stage, *, target_stage=target):
+                        if stage == target_stage:
+                            raise OSError(
+                                5, f"synthetic interruption at {target_stage}"
+                            )
+
+                    if artifact != "initial_journal":
+                        operator_rebirth.prepare_messaging_permissions_migration(
+                            state_root,
+                            "runtime.json",
+                            new_bundle,
+                            approval,
+                            journal_key=journal_key,
+                            current_policy_head=heads["old_policy_head"],
+                            current_relationship_head=heads["old_relationship_head"],
+                        )
+                    with self.assertRaisesRegex(OSError, "synthetic interruption"):
+                        if artifact == "initial_journal":
+                            operator_rebirth.prepare_messaging_permissions_migration(
+                                state_root,
+                                "runtime.json",
+                                new_bundle,
+                                approval,
+                                journal_key=journal_key,
+                                current_policy_head=heads["old_policy_head"],
+                                current_relationship_head=heads[
+                                    "old_relationship_head"
+                                ],
+                                fault_hook=interrupt,
+                            )
+                        else:
+                            operator_rebirth.resume_messaging_permissions_migration(
+                                state_root,
+                                "runtime.json",
+                                journal_key=journal_key,
+                                current_policy_head=heads["old_policy_head"],
+                                current_relationship_head=heads[
+                                    "old_relationship_head"
+                                ],
+                                fault_hook=interrupt,
+                            )
+
+                    runtime_raw = (state_root / "runtime.json").read_bytes()
+                    self.assertIn(
+                        runtime_raw,
+                        {canonical_bytes(old_bundle), canonical_bytes(new_bundle)},
+                    )
+                    journal_path = (
+                        state_root / ".runtime.json.messaging-v2-migration.json"
+                    )
+                    if journal_path.exists():
+                        journal_raw = journal_path.read_bytes()
+                        journal = json.loads(journal_raw)
+                        self.assertEqual(canonical_bytes(journal), journal_raw)
+                        self.assertIn(journal["state"], {"prepared", "completed"})
+                    floor_path = (
+                        state_root / ".runtime.json.messaging-v2-generation.json"
+                    )
+                    if floor_path.exists():
+                        floor_raw = floor_path.read_bytes()
+                        self.assertEqual(
+                            canonical_bytes(json.loads(floor_raw)), floor_raw
+                        )
+                    candidate_path = state_root / ".runtime.json.messaging-v2-candidate"
+                    if candidate_path.exists():
+                        self.assertEqual(
+                            candidate_path.read_bytes(), canonical_bytes(new_bundle)
+                        )
+                    if artifact in {"initial_journal", "candidate"}:
+                        self.assertFalse(floor_path.exists())
+                        if journal_path.exists():
+                            self.assertEqual(
+                                json.loads(journal_path.read_bytes())["state"],
+                                "prepared",
+                            )
+
+                    if artifact == "initial_journal":
+                        operator_rebirth.prepare_messaging_permissions_migration(
+                            state_root,
+                            "runtime.json",
+                            new_bundle,
+                            approval,
+                            journal_key=journal_key,
+                            current_policy_head=heads["old_policy_head"],
+                            current_relationship_head=heads["old_relationship_head"],
+                        )
+                    if (state_root / "runtime.json").read_bytes() == canonical_bytes(
+                        old_bundle
+                    ):
+                        policy_head = heads["old_policy_head"]
+                        relationship_head = heads["old_relationship_head"]
+                    else:
+                        policy_head = heads["new_policy_head"]
+                        relationship_head = heads["new_relationship_head"]
+                    result = operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=policy_head,
+                        current_relationship_head=relationship_head,
+                    )
+                    self.assertEqual(result["state"], "completed")
+                    authoritative = (
+                        state_root / "runtime.json",
+                        floor_path,
+                        journal_path,
+                    )
+                    final_bytes = tuple(path.read_bytes() for path in authoritative)
+                    result = operator_rebirth.resume_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        journal_key=journal_key,
+                        current_policy_head=heads["new_policy_head"],
+                        current_relationship_head=heads["new_relationship_head"],
+                    )
+                    self.assertEqual(result["state"], "completed")
+                    self.assertEqual(
+                        tuple(path.read_bytes() for path in authoritative), final_bytes
+                    )
+                    self.assertFalse(
+                        any(".staging" in path.name for path in state_root.iterdir())
+                    )
+                    shutil.rmtree(state_root)
+
+    def test_sensitive_migration_files_reject_hardlinks_promptly(self):
+        import os
+        import shutil
+
+        last_state_root = None
+
+        def fresh():
+            nonlocal last_state_root
+            if last_state_root is not None:
+                shutil.rmtree(last_state_root, ignore_errors=True)
+            fixture = self.messaging_migration()
+            last_state_root = fixture[0]
+            return fixture
+
+        # CLI journal-key custody uses the same pre/post-open single-link rule.
+        state_root, _old, _new, _approval, journal_key, _heads = fresh()
+        key_path = state_root / "migration.key"
+        key_path.write_bytes(journal_key)
+        key_path.chmod(0o600)
+        os.link(key_path, state_root / "migration-key-alias")
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_journal_key_rejected"
+        ):
+            operator_rebirth._messaging_migration_journal_key(key_path)
+
+        for role in ("runtime", "inbox", "outbox", "rpc"):
+            with self.subTest(role=role):
+                state_root, _old, new_bundle, approval, journal_key, heads = fresh()
+                name = (
+                    "runtime.json" if role == "runtime" else f"messaging-{role}.sqlite"
+                )
+                os.link(state_root / name, state_root / f"{name}.alias")
+                with self.assertRaises(operator_rebirth.RebirthError):
+                    operator_rebirth.prepare_messaging_permissions_migration(
+                        state_root,
+                        "runtime.json",
+                        new_bundle,
+                        approval,
+                        journal_key=journal_key,
+                        current_policy_head=heads["old_policy_head"],
+                        current_relationship_head=heads["old_relationship_head"],
+                    )
+
+        state_root, _old, new_bundle, approval, journal_key, heads = fresh()
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        journal_path = state_root / ".runtime.json.messaging-v2-migration.json"
+        os.link(journal_path, state_root / ".journal-alias")
+        with self.assertRaises(operator_rebirth.RebirthError):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
+        state_root, _old, new_bundle, approval, journal_key, heads = fresh()
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def stop_at_candidate(stage):
+            if stage == "after_candidate_durable":
+                raise RuntimeError("candidate retained")
+
+        with self.assertRaisesRegex(RuntimeError, "candidate retained"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=stop_at_candidate,
+            )
+        candidate_path = state_root / ".runtime.json.messaging-v2-candidate"
+        os.link(candidate_path, state_root / ".candidate-alias")
+        with self.assertRaises(operator_rebirth.RebirthError):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
+        state_root, _old, new_bundle, approval, journal_key, heads = fresh()
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def stop_at_floor(stage):
+            if stage == "after_generation_floor_durable":
+                raise RuntimeError("floor retained")
+
+        with self.assertRaisesRegex(RuntimeError, "floor retained"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=stop_at_floor,
+            )
+        floor_path = state_root / ".runtime.json.messaging-v2-generation.json"
+        os.link(floor_path, state_root / ".floor-alias")
+        with self.assertRaises(operator_rebirth.RebirthError):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["new_policy_head"],
+                current_relationship_head=heads["new_relationship_head"],
+            )
+
+    def test_prepare_journal_is_authenticated_exact_and_restartable_after_fault(self):
+        import json
+
+        state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+
+        def crash(stage):
+            if stage == "after_journal_durable":
+                raise RuntimeError("synthetic journal crash")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic journal crash"):
+            operator_rebirth.prepare_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                new_bundle,
+                approval,
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=crash,
+            )
+        journal_path = state_root / ".runtime.json.messaging-v2-migration.json"
+        journal_before = journal_path.read_bytes()
+        journal = json.loads(journal_before)
+        self.assertEqual(journal["state"], "prepared")
+        self.assertEqual(journal["approval"], approval)
+        self.assertEqual(
+            journal["approval"]["body"]["old"]["bundle_sha256"],
+            __import__("hashlib").sha256(canonical_bytes(old_bundle)).hexdigest(),
+        )
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(old_bundle)
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        self.assertEqual(journal_path.read_bytes(), journal_before)
+        tampered = json.loads(journal_before)
+        tampered["state"] = "completed"
+        journal_path.write_bytes(canonical_bytes(tampered))
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError,
+            "messaging_migration_journal_authentication_failed",
+        ):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
+    def test_candidate_durable_fault_resumes_without_touching_old_state(self):
+        state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        preserved_before = {
+            name: (state_root / name).read_bytes()
+            for name in (
+                "messaging-inbox.sqlite",
+                "messaging-outbox.sqlite",
+                "messaging-rpc.sqlite",
+            )
+        }
+
+        def crash(stage):
+            if stage == "after_candidate_durable":
+                raise RuntimeError("synthetic candidate crash")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic candidate crash"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=crash,
+            )
+        candidate = state_root / ".runtime.json.messaging-v2-candidate"
+        self.assertEqual(candidate.read_bytes(), canonical_bytes(new_bundle))
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(old_bundle)
+        )
+        operator_rebirth.resume_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(new_bundle)
+        )
+        self.assertEqual(
+            {name: (state_root / name).read_bytes() for name in preserved_before},
+            preserved_before,
+        )
+
+    def test_output_durable_fault_restarts_from_new_heads_and_converges(self):
+        import json
+
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def crash(stage):
+            if stage == "after_output_durable":
+                raise RuntimeError("synthetic output crash")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic output crash"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=crash,
+            )
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(new_bundle)
+        )
+        journal_path = state_root / ".runtime.json.messaging-v2-migration.json"
+        self.assertEqual(json.loads(journal_path.read_bytes())["state"], "prepared")
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_head_conflict"
+        ):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+        result = operator_rebirth.resume_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            journal_key=journal_key,
+            current_policy_head=heads["new_policy_head"],
+            current_relationship_head=heads["new_relationship_head"],
+        )
+        self.assertEqual(result["state"], "completed")
+        loaded = runtime.load_runtime(
+            state_root,
+            "runtime.json",
+            password_reader=lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 10,
+        )
+        self.assertEqual(
+            loaded.service.ledger.authority.manifest.digest,
+            authority_from_runtime_bundle(new_bundle).manifest.digest,
+        )
+
+    def test_generation_floor_durable_fault_is_authenticated_and_resumable(self):
+        import json
+
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def crash(stage):
+            if stage == "after_generation_floor_durable":
+                raise RuntimeError("synthetic floor crash")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic floor crash"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=crash,
+            )
+        floor_path = state_root / ".runtime.json.messaging-v2-generation.json"
+        floor_before = floor_path.read_bytes()
+        floor = json.loads(floor_before)
+        self.assertEqual(floor["generation"], 2)
+        self.assertEqual(
+            floor["output_bundle_sha256"], approval["body"]["new"]["bundle_sha256"]
+        )
+        self.assertEqual(
+            floor["capability_journal"], approval["body"]["capability_journal"]
+        )
+        result = operator_rebirth.resume_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            journal_key=journal_key,
+            current_policy_head=heads["new_policy_head"],
+            current_relationship_head=heads["new_relationship_head"],
+        )
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(floor_path.read_bytes(), floor_before)
+
+    def test_completion_durable_fault_exact_retry_converges(self):
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+
+        def crash(stage):
+            if stage == "after_completion_durable":
+                raise RuntimeError("synthetic completion crash")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic completion crash"):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+                fault_hook=crash,
+            )
+        paths = (
+            state_root / "runtime.json",
+            state_root / ".runtime.json.messaging-v2-generation.json",
+            state_root / ".runtime.json.messaging-v2-migration.json",
+        )
+        completed_bytes = tuple(path.read_bytes() for path in paths)
+        for _ in range(2):
+            result = operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["new_policy_head"],
+                current_relationship_head=heads["new_relationship_head"],
+            )
+            self.assertEqual(result["state"], "completed")
+            self.assertEqual(
+                tuple(path.read_bytes() for path in paths), completed_bytes
+            )
+
+    def test_operator_cli_apply_and_resume_execute_the_transaction(self):
+        import io
+        from unittest import mock
+
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        candidate_path = state_root / "messaging-v2-candidate.json"
+        approval_path = state_root / "messaging-v2-approval.json"
+        key_path = state_root / "messaging-v2-journal.key"
+        for path, content in (
+            (candidate_path, canonical_bytes(new_bundle)),
+            (approval_path, canonical_bytes(approval)),
+            (key_path, journal_key),
+        ):
+            path.write_bytes(content)
+            path.chmod(0o600)
+
+        class Capture:
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, value):
+                return len(value)
+
+            def flush(self):
+                return None
+
+        capture = Capture()
+        with mock.patch.object(operator_rebirth.sys, "stdout", capture):
+            result = operator_rebirth.main(
+                [
+                    "apply-messaging-permissions-migration",
+                    "--state-root",
+                    str(state_root),
+                    "--runtime-name",
+                    "runtime.json",
+                    "--candidate",
+                    str(candidate_path),
+                    "--approval",
+                    str(approval_path),
+                    "--journal-key-file",
+                    str(key_path),
+                    "--current-policy-head",
+                    heads["old_policy_head"],
+                    "--current-relationship-head",
+                    heads["old_relationship_head"],
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            (state_root / "runtime.json").read_bytes(), canonical_bytes(new_bundle)
+        )
+        capture = Capture()
+        with mock.patch.object(operator_rebirth.sys, "stdout", capture):
+            result = operator_rebirth.main(
+                [
+                    "resume-messaging-permissions-migration",
+                    "--state-root",
+                    str(state_root),
+                    "--runtime-name",
+                    "runtime.json",
+                    "--journal-key-file",
+                    str(key_path),
+                    "--current-policy-head",
+                    heads["new_policy_head"],
+                    "--current-relationship-head",
+                    heads["new_relationship_head"],
+                ]
+            )
+        self.assertEqual(result, 0)
+
+    def test_stale_generation_conflicting_journal_and_runtime_are_rejected(self):
+        state_root, old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration(output_generation=3)
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        operator_rebirth.resume_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        (state_root / "runtime.json").write_bytes(canonical_bytes(old_bundle))
+        preserved = {
+            "inbox": "messaging-inbox.sqlite",
+            "outbox": "messaging-outbox.sqlite",
+            "rpc": "messaging-rpc.sqlite",
+        }
+        stale = operator_rebirth.create_messaging_permissions_migration_approval(
+            old_bundle,
+            new_bundle,
+            state_root=state_root,
+            migration_id="12345678-1234-4234-8234-123456789137",
+            output_generation=2,
+            capability_journal_identity="dm:capability-journal:v1:issue136",
+            journal_key=journal_key,
+            preserved_references=preserved,
+            owner_signing_seed=self.signing_seeds["legion"],
+            **heads,
+        )
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_stale_generation"
+        ):
+            operator_rebirth.prepare_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                new_bundle,
+                stale,
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+        conflicting = operator_rebirth.create_messaging_permissions_migration_approval(
+            old_bundle,
+            new_bundle,
+            state_root=state_root,
+            migration_id="12345678-1234-4234-8234-123456789138",
+            output_generation=3,
+            capability_journal_identity="dm:capability-journal:v1:issue136",
+            journal_key=journal_key,
+            preserved_references=preserved,
+            owner_signing_seed=self.signing_seeds["legion"],
+            **heads,
+        )
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_generation_conflict"
+        ):
+            operator_rebirth.prepare_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                new_bundle,
+                conflicting,
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+        (state_root / ".runtime.json.messaging-v2-generation.json").unlink()
+        (state_root / ".runtime.json.messaging-v2-migration.json").unlink()
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            stale,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        tampered_runtime = copy.deepcopy(old_bundle)
+        tampered_runtime["runtime_label"] = "conflicting-runtime"
+        (state_root / "runtime.json").write_bytes(canonical_bytes(tampered_runtime))
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "messaging_migration_runtime_conflict"
+        ):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
+    def test_preserved_inbox_outbox_rpc_reference_change_stops_resume(self):
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        operator_rebirth.prepare_messaging_permissions_migration(
+            state_root,
+            "runtime.json",
+            new_bundle,
+            approval,
+            journal_key=journal_key,
+            current_policy_head=heads["old_policy_head"],
+            current_relationship_head=heads["old_relationship_head"],
+        )
+        (state_root / "messaging-rpc.sqlite").write_bytes(b"changed")
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError,
+            "messaging_migration_preserved_reference_changed",
+        ):
+            operator_rebirth.resume_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
+    def test_owner_approval_binds_exact_capability_journal_key_identity(self):
+        state_root, _old_bundle, new_bundle, approval, journal_key, heads = (
+            self.messaging_migration()
+        )
+        malformed = copy.deepcopy(approval)
+        malformed["body"]["capability_journal"].pop("key_id")
+        malformed["signature"] = operator_rebirth._request_signature(
+            self.signing_seeds["legion"],
+            malformed["body"],
+            domain=operator_rebirth.MESSAGING_MIGRATION_APPROVAL_DOMAIN,
+        )
+        with self.assertRaisesRegex(
+            operator_rebirth.RebirthError, "invalid_messaging_migration_approval"
+        ):
+            operator_rebirth.prepare_messaging_permissions_migration(
+                state_root,
+                "runtime.json",
+                new_bundle,
+                malformed,
+                journal_key=journal_key,
+                current_policy_head=heads["old_policy_head"],
+                current_relationship_head=heads["old_relationship_head"],
+            )
+
     def test_expired_predecessor_requires_explicit_consent_without_widening(self):
         active, transition = successor(self, issued_at_ms=NOW + 10**12)
         authority_epochs.verify_credential_succession(

@@ -1,9 +1,11 @@
 # Messaging permissions V2 migration — integration handoff
 
-Status: library APIs implemented; **no operator apply command or live migration is
-provided by this slice**. Do not edit a participant bundle by hand using this
-runbook. Exact owner approval, protected publication/recovery, independent review
-and installed Matrix/Cluster qualification remain mandatory.
+Status: library APIs plus the bounded F3 operator apply/resume transaction are
+implemented. **No live participant migration is authorized or claimed.** Do not
+edit a participant bundle by hand. Exact owner approval, independent review and
+installed Matrix/Cluster qualification remain mandatory. F1/F2 production
+messaging integration is still blocked on successor claim scope for #132-owned
+files.
 
 See [the protocol](../../specs/messaging-permissions-v2.md).
 
@@ -32,6 +34,19 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
   reverified signed events, SQLite writer exclusion, current terminal-evidence
   semantics. Keep the final local operation/read release inside the context.
   `view` remains historical and is not a fresh-authorization API.
+* `operator_rebirth.create_messaging_permissions_migration_approval`: signs one
+  exact V1-to-V2 publication. It binds old/new canonical bundle hashes; control,
+  manifest, policy and relationship heads; complete authority-history values and
+  hashes; complete current-revocation values and hashes; capability-journal
+  identity/key identity; preserved inbox/outbox/RPC file references and hashes;
+  and the output generation.
+* `operator_rebirth.prepare_messaging_permissions_migration` and
+  `resume_messaging_permissions_migration`: establish and authenticate an
+  owner-only durable journal, stage/fsync/replace the exact candidate, advance an
+  authenticated monotonic generation floor, and finish an exactly retryable
+  completion record. Existing or corrupt conflicting state fails closed.
+* `daimon-rebirth apply-messaging-permissions-migration` and
+  `resume-messaging-permissions-migration`: executable wrappers for those APIs.
 
 ## Parent integration obligations (not optional)
 
@@ -61,10 +76,12 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
    unwrap/admission/read release, and on cached replies. Serialize revocation
    with final local effects. Do not hold the SQLite writer lock across unbounded
    I/O or recursively call a writer. Test opposite race interleavings.
-7. Add staged/fsynced owner-approved application publication with an exact
-   recoverable journal and monotonic generation floor. Revalidate root and
-   relationship heads at apply. Test every crash boundary and reject missing or
-   corrupt established journals instead of creating empty authorization state.
+7. The bounded F3 transaction now supplies staged/fsynced owner-approved runtime
+   publication, an exact authenticated recoverable journal, and an authenticated
+   monotonic generation floor. It revalidates the actual old/new runtime authority
+   and the stage-appropriate supplied policy/relationship heads. Fault-injection
+   tests cover every durable boundary. This does not satisfy obligations 1-6 or
+   authorize mutation of their owning modules.
 8. Qualify actual authenticated send/inbox/reply/delivery and retained reads after
    large clock advances and real process restart. Preserve all TTL, nonce, HMAC,
    ciphertext/delivery-ID, origin sequence and exact-retry checks.
@@ -76,6 +93,84 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
 10. Run exact-head independent security/persistence review, full CI, generated
     inventory checks and installed-wheel/cross-repository qualification. No partial
     closure of #136 from these library tests.
+
+## F3 apply and recovery procedure
+
+The owner approval and journal key are separate inputs. The journal key file MUST
+be an owner-only, single-link regular file containing 32-64 bytes and MUST be the
+key whose derived identity is bound by the signed approval. Runtime, candidate,
+authenticated journal/floor and preserved inbox/outbox/RPC files also MUST be
+owner-only single-link regular files; link count is checked both before and after
+open. Candidate and approval JSON MUST be canonical owner-only regular files. The
+approval is created only after the old runtime, V8 candidate, current heads, and
+exact preserved state files have been frozen and reviewed.
+
+### Required OS quiescence and privilege separation
+
+The transaction lock serializes cooperating migration invocations; it is not a
+security boundary against another process with the same UID or a privileged
+writer. Before `apply` or any `resume`, stop the runtime/model and every inbox,
+outbox, RPC, policy, relationship, backup, restore or administrative writer that
+can reach the state root. Run migration under a dedicated operator account while
+those processes cannot impersonate that account. The selected root MUST be an
+owner-only directory reached through non-symlink ancestors that ordinary runtime
+users cannot rename, replace or write. Keep this quiescence until the command
+returns and the installed runtime, floor and completed journal have been read
+back.
+
+The implementation retains and revalidates the root directory FD and a per-runtime
+`flock`, performs supported child operations relative to that FD, retains the
+runtime/journal/floor/candidate and all three preserved-reference descriptors,
+and rechecks pathname/inode identity, metadata and hashes at commit boundaries.
+After each floor/completion staging file is fully written and file-fsynced, a final
+invariant check runs while the retained root, lock, installed-runtime,
+prepared-journal and preserved-store descriptors are still open, immediately before
+the authoritative-name install. It verifies the installed runtime bytes before floor
+or completion publication. A detected candidate, reference or root race fails
+without completing; repair the exact approved filesystem state and retry. These
+checks narrow accidental races but do not make hostile same-UID mutation safe
+between all kernel syscalls; OS quiescence and privilege separation are therefore
+mandatory, not advisory.
+
+First execution establishes the journal and applies it:
+
+```bash
+daimon-rebirth apply-messaging-permissions-migration \
+  --state-root /exact/runtime/root \
+  --runtime-name runtime.json \
+  --candidate /owner-only/reviewed-v8.json \
+  --approval /owner-only/signed-migration-approval.json \
+  --journal-key-file /owner-only/capability-journal.key \
+  --current-policy-head OLD_POLICY_SHA256 \
+  --current-relationship-head OLD_RELATIONSHIP_SHA256
+```
+
+After interruption, inspect which approved head set is current. If the runtime is
+still the old exact hash, provide the old policy/relationship heads. If the exact
+new bundle has already been published, provide the new heads:
+
+```bash
+daimon-rebirth resume-messaging-permissions-migration \
+  --state-root /exact/runtime/root \
+  --runtime-name runtime.json \
+  --journal-key-file /owner-only/capability-journal.key \
+  --current-policy-head CURRENT_APPROVED_POLICY_SHA256 \
+  --current-relationship-head CURRENT_APPROVED_RELATIONSHIP_SHA256
+```
+
+The durable boundaries are: authenticated `prepared` journal, exact candidate,
+published runtime output, authenticated generation floor, and authenticated
+`completed` journal. Journal, candidate, floor and completion bytes are first
+written to transaction-unique owner-only staging names, fully written and file-
+fsynced, then atomically installed and directory-fsynced. An interrupted retry
+classifies and removes only strict transaction-owned staging residue; a partial
+write is never exposed under an authoritative name. Every authoritative file and
+containing directory is fsynced before its durable boundary is reported.
+Repeating resume after completion produces the same bytes. Unknown runtime bytes,
+changed preserved references, changed heads, a corrupt or different journal, a
+corrupt floor, a same-generation conflict, an unexpected hard link, or a
+generation below the durable floor is rejected. Never delete authoritative
+records to force a retry; repair the exact authenticated transaction forward.
 
 ## Recovery and threats
 
