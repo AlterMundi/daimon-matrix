@@ -148,3 +148,129 @@ preexisting V1 wire and replay semantics remain. Full CI, independent re-review,
 new exact-source wheel/sdist builds and installed-runtime checks remain parent
 responsibilities. Prior `0d623f2` artifact checks do not qualify these changed
 runtime bytes. No milestone, live-pilot, deployment or release completion is claimed.
+
+## 2026-09-17 F1/F2/F3 repair and migration follow-up
+
+**Author/self-review remediation record; this is not independent approval.** This
+section appends to, and does not replace or relabel, the historical failed,
+pending, superseded, and passing records above. It records the bytes frozen after
+Ruff formatting and the subsequent DM-041 regeneration. No repository-wide suite,
+hosted CI result, independent verdict, deployment, or release approval is claimed.
+
+The committed base remains `971239c2cbbdb41ec839715d01788a132ae90d9a`.
+Immediately before this Markdown append, `git diff --binary | sha256sum` was
+`ae708fbcfebb9a40166fe76291c3d7f7e0f840baafa245970dde8073f0a16bae`.
+That receipt-excluded delta included the frozen code/tests and regenerated derived
+outputs; the exact file hashes were
+`b7c2fbed7caf53b653ce5d19c3de301ab3552341cc731f797866a96ee147d456`
+for `src/daimon_matrix/communication.py` and
+`f1fc54f2cc3924caeb42e0aec1056aaee63fb87355deddd2990d9e1372603b95`
+for `tests/test_cross_being_semantic_receipts.py`. The final serialized delta hash
+cannot be embedded in this file without changing that hash; it is returned in the
+author handoff after this append and the final hygiene gates.
+
+### Current remediation boundary
+
+For the earlier repair set described by the independent report as the original
+F1/F2/F3:
+
+- **Admission/version remediation:** inbox and outgoing-context stores persist an
+  `admission_version` per retained row. Existing authenticated rows are
+  transactionally classified as version 1 before communication V2 activation;
+  admission is resolved before semantic validation and retained in the same
+  SQLite transaction as the message. Receipt-looking V1 rows remain readable and
+  inert, while only rows admitted as version 2 can reduce a semantic receipt.
+  Conflicting replay classification fails closed.
+- **Queue, compaction, and persisted-consumer remediation:** V2 validates exact
+  queue-to-leg bindings, completeness, durable compaction evidence, and every
+  persisted consumer using closed text/integer checks, generation equality,
+  high-water bounds, target ownership, and a complete terminal prefix. Equal
+  consumer replay does not bypass validation. This follow-up closes the remaining
+  independent F1 migration gap: the same `_validate_consumers()` path now runs
+  before either V2-only table is created or `schema_version` can change, and
+  legacy compaction inference additionally runs `_validate_consumer_position()`
+  for every participating consumer rather than relying on
+  `min(sequence) >= through`.
+- **Constructor-free retry remediation:** migration validates the existing inbox
+  and outgoing-context SQLite schemas by path and performs the admission upgrade
+  without constructing a store that could create a missing database. A V2 retry
+  with a missing inbox returns `messaging_required_store_invalid`; the absent path
+  remains absent. Publication order remains successor metadata publication,
+  constructor-free store validation/admission classification, communication V2
+  transaction, composition/reconciliation, and only then publication selection.
+
+The independent re-review's **F1** is addressed by the pre-DDL persisted-consumer
+validation and compaction-participant check above. Every permanent negative test
+asserts that failure leaves `communication_meta.schema_version` exactly `1`,
+`CommunicationStore.receipts_v2` false, and both
+`communication_foreign_receipts` and `communication_compactions` absent after
+rollback. The independent re-review's **F2** is addressed by this dated appended
+author record; no historical evidence was edited into a later verdict.
+
+### Strict vertical RED -> GREEN evidence
+
+All migration slices use the real `CommunicationStore`, Ledger SQLite database,
+normal sender preparation, signed synthetic identities, and real cryptographic
+code. The shared command prefix was exactly:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
+COLLECTIVE_MEMORY_CONTRACT_ROOT=/home/debian/dm-milestone2-collective-contract \
+/home/debian/dm-milestone2-test-venv/bin/python -m unittest -v
+```
+
+Each named test was added and run before its production slice:
+
+1. `...MigrationReviewProbes.test_v1_consumer_wrong_generation_cannot_commit_v2_schema`
+   RED: exit 1, one failure, `ValueError not raised`, 0.991 s. GREEN: included
+   in the cumulative two-test run, exit 0.
+2. `...MigrationReviewProbes.test_v1_consumer_beyond_highwater_cannot_commit_v2_schema`
+   RED: exit 1, one failure, `ValueError not raised`, 1.177 s. GREEN cumulative:
+   2 tests, exit 0, 2.355 s.
+3. `...MigrationReviewProbes.test_v1_consumer_malformed_type_cannot_commit_v2_schema`
+   used a SQLite-representable BLOB `consumer_id`. RED: exit 1, one failure,
+   `ValueError not raised`, 0.925 s. GREEN cumulative: 3 tests, exit 0, 3.094 s.
+4. `...MigrationReviewProbes.test_v1_consumer_unowned_target_cannot_commit_v2_schema`
+   RED: exit 1, one failure, `ValueError not raised`, 1.131 s. GREEN cumulative:
+   4 tests, exit 0, 4.107 s.
+5. `...MigrationReviewProbes.test_v1_compaction_participant_must_be_terminal_prefix`
+   RED: exit 1, one failure, `ValueError not raised`, 1.715 s. GREEN cumulative:
+   5 tests, exit 0, 5.408 s.
+6. `...MigrationReviewProbes.test_v1_consumer_nonterminal_prefix_cannot_commit_v2_schema`
+   was finalized to use a terminal target with an earlier pending leg for the same
+   recipient. RED: exit 1, one failure, `ValueError not raised`, 1.493 s. GREEN
+   cumulative: 6 tests, exit 0, 7.167 s.
+
+Positive controls were then run together: clean V1 migration and legitimate
+compacted-terminal migration, 2 tests, exit 0, 2.196 s. After Ruff formatting,
+the complete `MigrationReviewProbes` class ran 11 tests in 30.585 s, exit 0.
+
+### Frozen-byte qualification
+
+- Ruff 0.16.1 formatting changed two of the seven changed Python files; the
+  subsequent format check reported all 7 already formatted and Ruff check passed.
+- Strict mypy with `MYPYPATH=src` and a fresh cache reported
+  `Success: no issues found in 58 source files`.
+- Focused five-module cohort:
+  `tests.test_cross_being_semantic_receipts`, `tests.test_native_messaging`,
+  `tests.test_operator_messaging`, `tests.test_dm052_communication`, and
+  `tests.test_messaging_runtime`: **135 tests**, exit 0, 479.574 s, no skips
+  reported. This is a focused cohort, not the repository's full suite.
+- `tools/generate_dm041_vectors.py --check` detected exactly the four expected
+  source-derived paths: `provenance/hermes-agent-0.19.0.json`,
+  `vectors/hermes/v1/index.json`,
+  `vectors/hermes/v1/valid/launch-receipt.json`, and
+  `vectors/hermes/v1/valid/profile-manifest.json`. Only those four were
+  regenerated; the next generator check passed.
+- `tests.test_dm041_hermes_body.PublicContractTests`: 2 tests, exit 0, 0.338 s.
+
+### Current limitations
+
+Validation is an O(total persisted projection) migration/read cost and has not
+received large-store load qualification. The tests cover real SQLite transactions,
+real signatures/crypto, restart paths, and application publication boundaries,
+but not physical power loss, filesystem faults below SQLite/fsync, a separate
+multi-process deployment, hosted CI, package rebuild/install qualification, or
+arbitrary coherent replacement of all local state and trust anchors. The V1 wire
+and replay contracts remain unchanged. Independent re-review and all merge,
+release, live-pilot, and deployment decisions remain parent responsibilities.

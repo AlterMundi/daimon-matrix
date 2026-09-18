@@ -33,6 +33,7 @@ from .messaging_config import (
     MessagingConfigError,
     _compose,
     _directory,
+    _validate_store_schema,
     config_digest,
     create_binding,
     load_application,
@@ -42,6 +43,7 @@ from .messaging_config import (
     validate_shape,
     verify_binding,
 )
+from .messaging_store import MessagingInboxStore
 from .runtime import HostedRuntime
 from .service import MESSAGING_METHODS
 
@@ -116,6 +118,13 @@ def upgrade_semantic_receipts(
     from .messaging_config import APPLICATION_SCHEMA_V2
 
     root = _directory(app_directory)
+
+    def upgrade_inbox_admission(application: Mapping[str, Any]) -> None:
+        for name in ("inbox", "outgoing-context"):
+            path = root / application["stores"][name]
+            _validate_store_schema(name, path)
+            MessagingInboxStore.upgrade_admission_path(path)
+
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -124,6 +133,7 @@ def upgrade_semantic_receipts(
         if previous["schema"] == APPLICATION_SCHEMA_V2:
             if publication["body"]["predecessor_sha256"] != expected_application_sha256:
                 raise MessagingConfigError("messaging_semantic_migration_conflict")
+            upgrade_inbox_admission(previous)
             load_application(runtime, root)
             _sync(root)
             return {
@@ -209,6 +219,9 @@ def upgrade_semantic_receipts(
             _sync(staging)
             _publish(staging, destination)
             _sync(root)
+        # This is the durable V2 admission boundary. Existing authenticated rows
+        # become explicit V1 rows before the communication schema can commit V2.
+        upgrade_inbox_admission(previous)
         if not communication.receipts_v2:
             communication.upgrade_receipts_v2()
         # Catalogs, current grants, and exact client material before selection.

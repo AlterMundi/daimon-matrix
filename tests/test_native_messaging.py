@@ -11,7 +11,7 @@ import select
 import tempfile
 import threading
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
@@ -191,13 +191,19 @@ class Pair:
         )
 
     def wire(
-        self, sequence: int = 100, *, text: str = TEXT
+        self,
+        sequence: int = 100,
+        *,
+        text: str = TEXT,
+        body_extra: Mapping[str, Any] | None = None,
     ) -> tuple[bytes, bytes, dict[str, Any], dict[str, Any]]:
+        body = {"text": text, "resource_ref": self.policy.resource_ref}
+        body.update(body_extra or {})
         message = self.event(
             "communication",
             {
                 "schema": MESSAGE_PAYLOAD_SCHEMA,
-                "body": {"text": text, "resource_ref": self.policy.resource_ref},
+                "body": body,
                 "intent": {
                     "operation": "read",
                     "scope": "/tribe",

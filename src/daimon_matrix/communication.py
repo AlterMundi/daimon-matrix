@@ -557,6 +557,14 @@ class CommunicationStore:
                     ).fetchone()
                     if foreign is None:
                         raise CommunicationError("foreign_receipt_store_missing")
+                    compactions = database.execute(
+                        "SELECT sql FROM sqlite_schema "
+                        "WHERE name='communication_compactions' AND type='table'"
+                    ).fetchone()
+                    if compactions is None:
+                        raise CommunicationError(
+                            "communication_compaction_store_missing"
+                        )
                     self._recover_pending(database)
                     generation, counter, _ = self._meta(database)
                     if self._anchor() != (generation, counter):
@@ -1170,6 +1178,165 @@ class CommunicationStore:
             raise CommunicationError("receipt_origin_mismatch")
         return payload
 
+    @staticmethod
+    def _validate_consumer_position(
+        database: sqlite3.Connection,
+        *,
+        recipient_id: str,
+        sequence: int,
+    ) -> None:
+        terminal = tuple(sorted(TERMINAL_OUTCOMES))
+        target = database.execute(
+            "SELECT state FROM communication_legs WHERE recipient_id=? AND sequence=?",
+            (recipient_id, sequence),
+        ).fetchone()
+        if target is None:
+            raise CommunicationError("consumer_target_not_owned")
+        pending = database.execute(
+            "SELECT sequence FROM communication_legs "
+            "WHERE recipient_id=? AND sequence<=? "
+            f"AND state NOT IN ({','.join('?' for _ in terminal)}) "
+            "ORDER BY sequence LIMIT 1",
+            (recipient_id, sequence, *terminal),
+        ).fetchone()
+        if pending is not None:
+            raise CommunicationError("consumer_prefix_not_terminal")
+
+    def _validate_queue(self, database: sqlite3.Connection) -> None:
+        generation, _counter, highwater = self._meta(database)
+        terminal = tuple(sorted(TERMINAL_OUTCOMES))
+        compactions: dict[str, int] = {}
+        for row in database.execute(
+            "SELECT * FROM communication_compactions"
+        ).fetchall():
+            recipient_id = _text(
+                row["recipient_id"],
+                "communication_compaction_evidence_corrupt",
+                maximum=240,
+            )
+            through = _uint(
+                row["through_sequence"], "communication_compaction_evidence_corrupt"
+            )
+            if row["generation"] != generation or through > highwater:
+                raise CommunicationError("communication_compaction_evidence_corrupt")
+            pending = database.execute(
+                "SELECT 1 FROM communication_legs WHERE recipient_id=? "
+                "AND sequence<=? "
+                f"AND state NOT IN ({','.join('?' for _ in terminal)}) LIMIT 1",
+                (recipient_id, through, *terminal),
+            ).fetchone()
+            retained = database.execute(
+                "SELECT 1 FROM communication_queue WHERE recipient_id=? "
+                "AND sequence<=? LIMIT 1",
+                (recipient_id, through),
+            ).fetchone()
+            if pending is not None or retained is not None:
+                raise CommunicationError("communication_compaction_evidence_corrupt")
+            compactions[recipient_id] = through
+
+        queues: dict[str, sqlite3.Row] = {}
+        for row in database.execute("SELECT * FROM communication_queue").fetchall():
+            leg = database.execute(
+                "SELECT * FROM communication_legs WHERE leg_id=?", (row["leg_id"],)
+            ).fetchone()
+            if (
+                leg is None
+                or row["sequence"] != leg["sequence"]
+                or row["recipient_id"] != leg["recipient_id"]
+            ):
+                raise CommunicationError("communication_queue_binding_mismatch")
+            queues[str(row["leg_id"])] = row
+
+        for leg in database.execute("SELECT * FROM communication_legs").fetchall():
+            if str(leg["leg_id"]) in queues:
+                continue
+            if leg["state"] not in TERMINAL_OUTCOMES:
+                raise CommunicationError("communication_queue_incomplete")
+            if compactions.get(str(leg["recipient_id"]), -1) < int(leg["sequence"]):
+                raise CommunicationError("communication_queue_incomplete")
+
+    def _migrate_legacy_compactions(self, database: sqlite3.Connection) -> None:
+        """Infer only the contiguous V1 shape that the old compact() could create."""
+
+        missing: dict[str, int] = {}
+        for queue in database.execute("SELECT * FROM communication_queue").fetchall():
+            leg = database.execute(
+                "SELECT * FROM communication_legs WHERE leg_id=?", (queue["leg_id"],)
+            ).fetchone()
+            if (
+                leg is None
+                or queue["sequence"] != leg["sequence"]
+                or queue["recipient_id"] != leg["recipient_id"]
+            ):
+                raise CommunicationError("communication_queue_binding_mismatch")
+        for leg in database.execute("SELECT * FROM communication_legs").fetchall():
+            queue = database.execute(
+                "SELECT * FROM communication_queue WHERE leg_id=?", (leg["leg_id"],)
+            ).fetchone()
+            if queue is not None:
+                if (
+                    queue["sequence"] != leg["sequence"]
+                    or queue["recipient_id"] != leg["recipient_id"]
+                ):
+                    raise CommunicationError("communication_queue_binding_mismatch")
+                continue
+            if leg["state"] not in TERMINAL_OUTCOMES:
+                raise CommunicationError("communication_queue_incomplete")
+            recipient = str(leg["recipient_id"])
+            missing[recipient] = max(missing.get(recipient, 0), int(leg["sequence"]))
+
+        generation, _counter, _highwater = self._meta(database)
+        terminal = tuple(sorted(TERMINAL_OUTCOMES))
+        for recipient_id, through in missing.items():
+            consumers = database.execute(
+                "SELECT sequence FROM communication_consumers WHERE recipient_id=?",
+                (recipient_id,),
+            ).fetchall()
+            for consumer in consumers:
+                self._validate_consumer_position(
+                    database,
+                    recipient_id=recipient_id,
+                    sequence=_uint(consumer["sequence"], "invalid_consumer_sequence"),
+                )
+            pending = database.execute(
+                "SELECT 1 FROM communication_legs WHERE recipient_id=? "
+                "AND sequence<=? "
+                f"AND state NOT IN ({','.join('?' for _ in terminal)}) LIMIT 1",
+                (recipient_id, through, *terminal),
+            ).fetchone()
+            retained = database.execute(
+                "SELECT 1 FROM communication_queue WHERE recipient_id=? "
+                "AND sequence<=? LIMIT 1",
+                (recipient_id, through),
+            ).fetchone()
+            if (
+                not consumers
+                or min(int(row["sequence"]) for row in consumers) < through
+                or pending is not None
+                or retained is not None
+            ):
+                raise CommunicationError("communication_queue_incomplete")
+            database.execute(
+                "INSERT INTO communication_compactions VALUES (?, ?, ?)",
+                (recipient_id, generation, through),
+            )
+
+    def _validate_consumers(self, database: sqlite3.Connection) -> None:
+        generation, _counter, highwater = self._meta(database)
+        for row in database.execute("SELECT * FROM communication_consumers").fetchall():
+            recipient_id = _text(
+                row["recipient_id"], "invalid_consumer_binding", maximum=240
+            )
+            _text(row["consumer_id"], "invalid_consumer_binding", maximum=128)
+            sequence = _uint(row["sequence"], "invalid_consumer_sequence")
+            if row["generation"] != generation:
+                raise CommunicationError("consumer_generation_mismatch")
+            if sequence > highwater:
+                raise CommunicationError("cursor_beyond_highwater")
+            self._validate_consumer_position(
+                database, recipient_id=recipient_id, sequence=sequence
+            )
+
     def _validate_store(self, database: sqlite3.Connection) -> None:
         if self.receipts_v2:
             for (message_id,) in database.execute(
@@ -1196,6 +1363,8 @@ class CommunicationStore:
                     raise CommunicationError("route_attempt_store_corrupt")
                 if row["ack_hash"] is not None:
                     _hash(row["ack_hash"], "route_attempt_store_corrupt")
+            self._validate_consumers(database)
+            self._validate_queue(database)
 
     def _validate_snapshot(
         self,
@@ -1702,6 +1871,7 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             self._meta(database)
+            self._validate_consumers(database)
             database.execute("""CREATE TABLE communication_foreign_receipts (
                 leg_id TEXT PRIMARY KEY REFERENCES communication_legs(leg_id),
                 receipt_event_id TEXT NOT NULL UNIQUE,
@@ -1710,6 +1880,12 @@ class CommunicationStore:
                 incarnation_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                 UNIQUE(recipient_being_ref, incarnation_id, sequence)
             ) WITHOUT ROWID""")
+            database.execute("""CREATE TABLE communication_compactions (
+                recipient_id TEXT PRIMARY KEY,
+                generation TEXT NOT NULL,
+                through_sequence INTEGER NOT NULL
+            ) WITHOUT ROWID""")
+            self._migrate_legacy_compactions(database)
             database.execute(
                 "UPDATE communication_meta SET value='2' WHERE key='schema_version'"
             )
@@ -2163,6 +2339,9 @@ class CommunicationStore:
                     raise CommunicationError("consumer_generation_mismatch")
                 if sequence < current:
                     raise CommunicationError("consumer_cursor_regression")
+                self._validate_consumer_position(
+                    database, recipient_id=recipient_id, sequence=sequence
+                )
                 if sequence == current:
                     database.commit()
                     return {
@@ -2171,25 +2350,6 @@ class CommunicationStore:
                         "generation": generation,
                         "sequence": current,
                     }
-                terminal = tuple(sorted(TERMINAL_OUTCOMES))
-                target = database.execute(
-                    "SELECT l.state FROM communication_queue q "
-                    "JOIN communication_legs l ON l.leg_id=q.leg_id "
-                    "WHERE q.recipient_id=? AND q.sequence=?",
-                    (recipient_id, sequence),
-                ).fetchone()
-                if target is None:
-                    raise CommunicationError("consumer_target_not_owned")
-                pending = database.execute(
-                    "SELECT q.sequence FROM communication_queue q "
-                    "JOIN communication_legs l ON l.leg_id=q.leg_id "
-                    "WHERE q.recipient_id=? AND q.sequence>? AND q.sequence<=? "
-                    f"AND l.state NOT IN ({','.join('?' for _ in terminal)}) "
-                    "ORDER BY q.sequence LIMIT 1",
-                    (recipient_id, current, sequence, *terminal),
-                ).fetchone()
-                if pending is not None:
-                    raise CommunicationError("consumer_prefix_not_terminal")
                 database.execute(
                     "INSERT INTO communication_consumers VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(recipient_id, consumer_id) "
@@ -2322,10 +2482,9 @@ class CommunicationStore:
                     raise CommunicationError("compaction_cursor_not_advanced")
                 terminal = tuple(sorted(TERMINAL_OUTCOMES))
                 pending = database.execute(
-                    "SELECT q.sequence FROM communication_queue q "
-                    "JOIN communication_legs l ON l.leg_id=q.leg_id "
-                    "WHERE q.recipient_id=? AND q.sequence<=? "
-                    f"AND l.state NOT IN ({','.join('?' for _ in terminal)}) LIMIT 1",
+                    "SELECT sequence FROM communication_legs "
+                    "WHERE recipient_id=? AND sequence<=? "
+                    f"AND state NOT IN ({','.join('?' for _ in terminal)}) LIMIT 1",
                     (recipient_id, through_sequence, *terminal),
                 ).fetchone()
                 if pending is not None:
@@ -2335,6 +2494,16 @@ class CommunicationStore:
                     "AND sequence<=?",
                     (recipient_id, through_sequence),
                 ).rowcount
+                if self.receipts_v2:
+                    generation, _counter, _highwater = self._meta(database)
+                    database.execute(
+                        "INSERT INTO communication_compactions VALUES (?, ?, ?) "
+                        "ON CONFLICT(recipient_id) DO UPDATE SET "
+                        "through_sequence=max(through_sequence, "
+                        "excluded.through_sequence) "
+                        "WHERE generation=excluded.generation",
+                        (recipient_id, generation, through_sequence),
+                    )
                 self._arm_commit(database)
                 return {
                     "recipient_id": recipient_id,

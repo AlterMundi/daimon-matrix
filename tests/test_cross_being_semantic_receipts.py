@@ -3,6 +3,7 @@
 import copy
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -564,6 +565,57 @@ class ReviewProbes(unittest.TestCase):
             self.f.receipt(), recipient_being_ref=self.rec
         )
 
+    def test_v1_receipt_looking_inbox_rows_remain_inert_after_v2_admission(self):
+        pair = native.Pair(self.root / "legacy-boundary")
+        receipt_looking = pair.event(
+            "communication-receipt",
+            {
+                "schema": "dm.communication.receipt/v2",
+                "message_being_ref": pair.sender.state.being_ref,
+                "message_ref": {"event_id": _uuid("legacy"), "event_hash": "0" * 64},
+                "resolution_ref": {
+                    "event_id": _uuid("legacy-resolution"),
+                    "event_hash": "0" * 64,
+                },
+                "thread_id": _uuid("legacy-thread"),
+                "recipient_type": "relationship",
+                "recipient_id": pair.policy.membership_ref,
+                "outcome": "delivered",
+                "observed_at_ms": pair.now,
+            },
+            90,
+        )
+        expected = []
+        for sequence, semantic_receipt in (
+            (100, {"legacy": "extension-data"}),
+            (200, receipt_looking),
+        ):
+            evidence, message, event, _ = pair.wire(
+                sequence,
+                text=f"legacy-{sequence}",
+                body_extra={"semantic_receipt": semantic_receipt},
+            )
+            pair.receiver.receive_evidence(evidence)
+            pair.receiver.receive_message(message)
+            expected.append(event)
+
+        store = CommunicationStore(
+            pair.local_ledger,
+            foreign_authority_resolver=lambda ref: pair.public[ref],
+            clock=lambda: pair.now,
+        )
+        store.upgrade_receipts_v2()
+        pair.receiver.communication = store
+
+        pair.receiver.reconcile_receipts()
+        rows = pair.receiver.page(after=0, limit=10)
+        self.assertEqual([row["message"] for row in rows], expected)
+        retained = pair.store._page(
+            after=0, limit=10, policy_hash=pair.receiver._policy_hash(pair.now)
+        )
+        self.assertEqual([row["admission_version"] for row in retained], [1, 1])
+        self.assertEqual(pair.receiver.message(expected[0]["event_id"]), expected[0])
+
     def test_positive_signature_and_restart(self):
         bad = copy.deepcopy(self.f.receipt())
         bad["payload"]["thread_id"] = _uuid("tampered-no-resign")
@@ -673,6 +725,219 @@ class ReviewProbes(unittest.TestCase):
             )
         with self.assertRaises(ValueError):
             self.s.result(self.mid)
+
+    def test_missing_nonterminal_queue_row_fails_closed_on_all_v2_paths(self):
+        sequence = self.s.result(self.mid)["legs"][0]["sequence"]
+        with self.s._database() as db:
+            db.execute("DELETE FROM communication_queue")
+
+        def restarted_page():
+            restarted = CommunicationStore(
+                self.f.sender.ledger,
+                receipts_v2=True,
+                foreign_authority_resolver=lambda ref: self.f.pair.public[ref],
+                clock=lambda: self.f.pair.now,
+            )
+            return restarted.page(
+                recipient_id=self.rid,
+                consumer_id="missing-restart",
+                request_id=_uuid("missing-restart-page"),
+                cursor=None,
+            )
+
+        calls = {
+            "page": lambda: self.s.page(
+                recipient_id=self.rid,
+                consumer_id="missing-page",
+                request_id=_uuid("missing-queue-page"),
+                cursor=None,
+            ),
+            "claim": lambda: self.s.claim(
+                recipient_id=self.rid,
+                consumer_id="missing-claim",
+                claim_id=_uuid("missing-queue-claim"),
+                limit=1,
+                lease_until_ms=self.f.pair.now + 10_000,
+            ),
+            "cursor": lambda: self.s.advance_consumer(
+                recipient_id=self.rid,
+                consumer_id="missing-cursor",
+                sequence=sequence,
+            ),
+            "compaction": lambda: self.s.compact(
+                recipient_id=self.rid, through_sequence=sequence
+            ),
+            "restart": restarted_page,
+        }
+        for path, call in calls.items():
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(ValueError, "communication_queue_incomplete"),
+            ):
+                call()
+
+    def test_equal_consumer_replay_revalidates_owned_terminal_prefix(self):
+        sequence = self.s.result(self.mid)["legs"][0]["sequence"]
+        with self.assertRaisesRegex(ValueError, "consumer_prefix_not_terminal"):
+            self.s.advance_consumer(
+                recipient_id=self.rid, consumer_id="corrupt", sequence=sequence
+            )
+        with self.s._database() as db:
+            generation = db.execute(
+                "SELECT value FROM communication_meta WHERE key='generation'"
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                (self.rid, "corrupt", generation, sequence),
+            )
+        with self.assertRaisesRegex(ValueError, "consumer_prefix_not_terminal"):
+            self.s.advance_consumer(
+                recipient_id=self.rid, consumer_id="corrupt", sequence=sequence
+            )
+        with self.s._database() as db:
+            self.assertEqual(
+                tuple(
+                    db.execute(
+                        "SELECT recipient_id, consumer_id, generation, sequence "
+                        "FROM communication_consumers"
+                    ).fetchone()
+                ),
+                (self.rid, "corrupt", generation, sequence),
+            )
+
+    def test_reinserted_compacted_queue_row_is_not_legitimate_absence_evidence(self):
+        leg = self.deliver()["legs"][0]
+        sequence = leg["sequence"]
+        self.s.advance_consumer(
+            recipient_id=self.rid, consumer_id="extra", sequence=sequence
+        )
+        self.s.compact(recipient_id=self.rid, through_sequence=sequence)
+        with self.s._database() as db:
+            db.execute(
+                "INSERT INTO communication_queue VALUES (?, ?, ?)",
+                (sequence, leg["leg_id"], self.rid),
+            )
+
+        def restarted_page():
+            restarted = CommunicationStore(
+                self.f.sender.ledger,
+                receipts_v2=True,
+                foreign_authority_resolver=lambda ref: self.f.pair.public[ref],
+                clock=lambda: self.f.pair.now,
+            )
+            return restarted.page(
+                recipient_id=self.rid,
+                consumer_id="extra-restart",
+                request_id=_uuid("extra-restart-page"),
+                cursor=None,
+            )
+
+        calls = {
+            "page": lambda: self.s.page(
+                recipient_id=self.rid,
+                consumer_id="extra",
+                request_id=_uuid("extra-queue-page"),
+                cursor=None,
+            ),
+            "claim": lambda: self.s.claim(
+                recipient_id=self.rid,
+                consumer_id="extra",
+                claim_id=_uuid("extra-queue-claim"),
+                limit=1,
+                lease_until_ms=self.f.pair.now + 10_000,
+            ),
+            "cursor": lambda: self.s.advance_consumer(
+                recipient_id=self.rid, consumer_id="extra", sequence=sequence
+            ),
+            "compaction": lambda: self.s.compact(
+                recipient_id=self.rid, through_sequence=sequence
+            ),
+            "restart": restarted_page,
+        }
+        for path, call in calls.items():
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(
+                    ValueError, "communication_compaction_evidence_corrupt"
+                ),
+            ):
+                call()
+
+    def test_swapped_queue_sequences_fail_every_v2_read_path(self):
+        self.f.sender.prepare(
+            client_id="owner",
+            send_id=_uuid("swapped-queue-send"),
+            thread_id=_uuid("swapped-queue-thread"),
+            text="second",
+        )
+        with self.s._database() as db:
+            rows = db.execute(
+                "SELECT sequence, leg_id FROM communication_queue ORDER BY sequence"
+            ).fetchall()
+            self.assertEqual(len(rows), 2)
+            first, second = rows
+            db.execute(
+                "UPDATE communication_queue SET sequence=-1 WHERE leg_id=?",
+                (first["leg_id"],),
+            )
+            db.execute(
+                "UPDATE communication_queue SET sequence=-2 WHERE leg_id=?",
+                (second["leg_id"],),
+            )
+            db.execute(
+                "UPDATE communication_queue SET sequence=? WHERE leg_id=?",
+                (second["sequence"], first["leg_id"]),
+            )
+            db.execute(
+                "UPDATE communication_queue SET sequence=? WHERE leg_id=?",
+                (first["sequence"], second["leg_id"]),
+            )
+
+        def restarted_page():
+            restarted = CommunicationStore(
+                self.f.sender.ledger,
+                receipts_v2=True,
+                foreign_authority_resolver=lambda ref: self.f.pair.public[ref],
+                clock=lambda: self.f.pair.now,
+            )
+            return restarted.page(
+                recipient_id=self.rid,
+                consumer_id="swapped-restart",
+                request_id=_uuid("swapped-restart"),
+                cursor=None,
+            )
+
+        for path, call in {
+            "page": lambda: self.s.page(
+                recipient_id=self.rid,
+                consumer_id="swapped-page",
+                request_id=_uuid("swapped-page"),
+                cursor=None,
+            ),
+            "claim": lambda: self.s.claim(
+                recipient_id=self.rid,
+                consumer_id="swapped-claim",
+                claim_id=_uuid("swapped-claim"),
+                limit=1,
+                lease_until_ms=self.f.pair.now + 10_000,
+            ),
+            "cursor": lambda: self.s.advance_consumer(
+                recipient_id=self.rid,
+                consumer_id="swapped-cursor",
+                sequence=first["sequence"],
+            ),
+            "compaction": lambda: self.s.compact(
+                recipient_id=self.rid, through_sequence=second["sequence"]
+            ),
+            "restart": restarted_page,
+        }.items():
+            with (
+                self.subTest(path=path),
+                self.assertRaisesRegex(
+                    ValueError, "communication_queue_binding_mismatch"
+                ),
+            ):
+                call()
 
     def test_missing_pending_leg_cannot_make_whole_vector_terminal(self):
         from daimon_matrix.weave import create_event
@@ -1184,6 +1449,383 @@ class ReviewProbes(unittest.TestCase):
 
 
 class MigrationReviewProbes(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def v1_store(self, name):
+        root = self.root / name
+        pair = native.Pair(root)
+        case = native.NativeMessagingTests()
+        case.root = root / "sender-case"
+        sender = case.make_sender(pair)
+        store = CommunicationStore(sender.ledger, clock=lambda: pair.now)
+        sender.communication = store
+        sender.prepare(
+            client_id="migration",
+            send_id=_uuid(name + "-send"),
+            thread_id=_uuid(name + "-thread"),
+            text="one",
+        )
+        return pair, sender, store
+
+    def assert_v1_migration_rolled_back(self, store):
+        self.assertFalse(store.receipts_v2)
+        with store._database() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM communication_meta WHERE key='schema_version'"
+                ).fetchone()[0],
+                "1",
+            )
+            for table in (
+                "communication_foreign_receipts",
+                "communication_compactions",
+            ):
+                self.assertIsNone(
+                    db.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE name=? AND type='table'",
+                        (table,),
+                    ).fetchone()
+                )
+
+    @staticmethod
+    def terminalize_v1(pair, sender, store, message=None):
+        if message is None:
+            message = sender.ledger.events()[0]
+        receipt = sender.ledger.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            signer=pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=pair.now,
+            causal_parents=(message["event_id"],),
+            payload={
+                "schema": "dm.communication.receipt/v1",
+                "message_id": message["event_id"],
+                "thread_id": message["payload"]["intent"]["thread_id"],
+                "recipient_type": "relationship",
+                "recipient_id": pair.policy.membership_ref,
+                "outcome": "failed:transport",
+                "observed_at_ms": pair.now,
+                "evidence_ref": None,
+            },
+        )
+        return store.record_receipt(receipt["event_id"])
+
+    def test_v1_consumer_wrong_generation_cannot_commit_v2_schema(self):
+        pair, _sender, store = self.v1_store("consumer-wrong-generation")
+        with store._database() as db:
+            sequence = db.execute("SELECT sequence FROM communication_legs").fetchone()[
+                0
+            ]
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                (pair.policy.membership_ref, "migration", "wrong-generation", sequence),
+            )
+        with self.assertRaisesRegex(ValueError, "consumer_generation_mismatch"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_v1_consumer_beyond_highwater_cannot_commit_v2_schema(self):
+        pair, _sender, store = self.v1_store("consumer-beyond-highwater")
+        with store._database() as db:
+            generation = db.execute(
+                "SELECT value FROM communication_meta WHERE key='generation'"
+            ).fetchone()[0]
+            highwater = int(
+                db.execute(
+                    "SELECT value FROM communication_meta "
+                    "WHERE key='sequence_highwater'"
+                ).fetchone()[0]
+            )
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                (pair.policy.membership_ref, "migration", generation, highwater + 1),
+            )
+        with self.assertRaisesRegex(ValueError, "cursor_beyond_highwater"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_v1_consumer_malformed_type_cannot_commit_v2_schema(self):
+        pair, _sender, store = self.v1_store("consumer-malformed-type")
+        with store._database() as db:
+            generation = db.execute(
+                "SELECT value FROM communication_meta WHERE key='generation'"
+            ).fetchone()[0]
+            sequence = db.execute("SELECT sequence FROM communication_legs").fetchone()[
+                0
+            ]
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                (pair.policy.membership_ref, b"migration", generation, sequence),
+            )
+        with self.assertRaisesRegex(ValueError, "invalid_consumer_binding"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_v1_consumer_unowned_target_cannot_commit_v2_schema(self):
+        _pair, _sender, store = self.v1_store("consumer-unowned-target")
+        with store._database() as db:
+            generation = db.execute(
+                "SELECT value FROM communication_meta WHERE key='generation'"
+            ).fetchone()[0]
+            sequence = db.execute("SELECT sequence FROM communication_legs").fetchone()[
+                0
+            ]
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                ("unowned-recipient", "migration", generation, sequence),
+            )
+        with self.assertRaisesRegex(ValueError, "consumer_target_not_owned"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_v1_compaction_participant_must_be_terminal_prefix(self):
+        pair, sender, store = self.v1_store("compaction-participant")
+        first = self.terminalize_v1(pair, sender, store)["legs"][0]["sequence"]
+        store.advance_consumer(
+            recipient_id=pair.policy.membership_ref,
+            consumer_id="migration",
+            sequence=first,
+        )
+        store.compact(recipient_id=pair.policy.membership_ref, through_sequence=first)
+        sender.prepare(
+            client_id="migration",
+            send_id=_uuid("compaction-participant-second"),
+            thread_id=_uuid("compaction-participant-second-thread"),
+            text="pending",
+        )
+        with store._database() as db:
+            second = db.execute(
+                "SELECT max(sequence) FROM communication_legs"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE communication_consumers SET sequence=?",
+                (second,),
+            )
+        with self.assertRaisesRegex(ValueError, "consumer_prefix_not_terminal"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_v1_consumer_nonterminal_prefix_cannot_commit_v2_schema(self):
+        pair, sender, store = self.v1_store("consumer-nonterminal-prefix")
+        sender.prepare(
+            client_id="migration",
+            send_id=_uuid("consumer-nonterminal-prefix-second"),
+            thread_id=_uuid("consumer-nonterminal-prefix-second-thread"),
+            text="terminal target",
+        )
+        with store._database() as db:
+            target = db.execute(
+                "SELECT message_id, sequence FROM communication_legs "
+                "ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+        message = sender.ledger.event(target["message_id"])
+        self.assertIsNotNone(message)
+        self.terminalize_v1(pair, sender, store, message)
+        with store._database() as db:
+            generation = db.execute(
+                "SELECT value FROM communication_meta WHERE key='generation'"
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO communication_consumers VALUES (?, ?, ?, ?)",
+                (
+                    pair.policy.membership_ref,
+                    "migration",
+                    generation,
+                    target["sequence"],
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "consumer_prefix_not_terminal"):
+            store.upgrade_receipts_v2()
+        self.assert_v1_migration_rolled_back(store)
+
+    def test_clean_v1_store_migrates_to_v2(self):
+        _pair, _sender, store = self.v1_store("clean-v1")
+        store.upgrade_receipts_v2()
+        self.assertTrue(store.receipts_v2)
+        with store._database() as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM communication_meta WHERE key='schema_version'"
+                ).fetchone()[0],
+                "2",
+            )
+            for table in (
+                "communication_foreign_receipts",
+                "communication_compactions",
+            ):
+                self.assertIsNotNone(
+                    db.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE name=? AND type='table'",
+                        (table,),
+                    ).fetchone()
+                )
+
+    def test_v1_queue_corruption_cannot_commit_v2_schema(self):
+        import sqlite3
+
+        for mutation in ("missing", "extra", "swapped"):
+            with self.subTest(mutation=mutation):
+                root = self.root / ("queue-migration-" + mutation)
+                pair = native.Pair(root)
+                case = native.NativeMessagingTests()
+                case.root = root / "sender-case"
+                sender = case.make_sender(pair)
+                store = CommunicationStore(
+                    sender.ledger, clock=lambda pair=pair: pair.now
+                )
+                sender.communication = store
+                sender.prepare(
+                    client_id="migration",
+                    send_id=_uuid(mutation + "-one"),
+                    thread_id=_uuid(mutation + "-thread-one"),
+                    text="one",
+                )
+                if mutation == "swapped":
+                    sender.prepare(
+                        client_id="migration",
+                        send_id=_uuid(mutation + "-two"),
+                        thread_id=_uuid(mutation + "-thread-two"),
+                        text="two",
+                    )
+                if mutation == "missing":
+                    with store._database() as db:
+                        db.execute("DELETE FROM communication_queue")
+                elif mutation == "extra":
+                    with closing(sqlite3.connect(sender.ledger.path)) as db, db:
+                        db.execute(
+                            "INSERT INTO communication_queue VALUES (?, ?, ?)",
+                            (999, "orphan-leg", pair.policy.membership_ref),
+                        )
+                else:
+                    with store._database() as db:
+                        rows = db.execute(
+                            "SELECT sequence, leg_id FROM communication_queue "
+                            "ORDER BY sequence"
+                        ).fetchall()
+                        first, second = rows
+                        db.execute(
+                            "UPDATE communication_queue SET sequence=-1 WHERE leg_id=?",
+                            (first["leg_id"],),
+                        )
+                        db.execute(
+                            "UPDATE communication_queue SET sequence=-2 WHERE leg_id=?",
+                            (second["leg_id"],),
+                        )
+                        db.execute(
+                            "UPDATE communication_queue SET sequence=? WHERE leg_id=?",
+                            (second["sequence"], first["leg_id"]),
+                        )
+                        db.execute(
+                            "UPDATE communication_queue SET sequence=? WHERE leg_id=?",
+                            (first["sequence"], second["leg_id"]),
+                        )
+                expected = (
+                    "communication_queue_incomplete"
+                    if mutation == "missing"
+                    else "communication_queue_binding_mismatch"
+                )
+                with self.assertRaisesRegex(ValueError, expected):
+                    store.upgrade_receipts_v2()
+                with store._database() as db:
+                    self.assertEqual(
+                        db.execute(
+                            "SELECT value FROM communication_meta "
+                            "WHERE key='schema_version'"
+                        ).fetchone()[0],
+                        "1",
+                    )
+                    self.assertIsNone(
+                        db.execute(
+                            "SELECT 1 FROM sqlite_schema "
+                            "WHERE name='communication_compactions'"
+                        ).fetchone()
+                    )
+
+    def test_v1_compacted_terminal_queue_migrates_with_durable_evidence(self):
+        root = self.root / "queue-migration-compacted"
+        pair = native.Pair(root)
+        case = native.NativeMessagingTests()
+        case.root = root / "sender-case"
+        sender = case.make_sender(pair)
+        store = CommunicationStore(sender.ledger, clock=lambda: pair.now)
+        sender.communication = store
+        sender.prepare(
+            client_id="migration",
+            send_id=_uuid("compacted-one"),
+            thread_id=_uuid("compacted-thread"),
+            text="one",
+        )
+        message, _resolution = sender.ledger.events()[:2]
+        receipt = sender.ledger.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            signer=pair.sender.signer,
+            sensitivity="shareable",
+            occurred_at_ms=pair.now,
+            causal_parents=(message["event_id"],),
+            payload={
+                "schema": "dm.communication.receipt/v1",
+                "message_id": message["event_id"],
+                "thread_id": message["payload"]["intent"]["thread_id"],
+                "recipient_type": "relationship",
+                "recipient_id": pair.policy.membership_ref,
+                "outcome": "failed:transport",
+                "observed_at_ms": pair.now,
+                "evidence_ref": None,
+            },
+        )
+        result = store.record_receipt(receipt["event_id"])
+        sequence = result["legs"][0]["sequence"]
+        store.advance_consumer(
+            recipient_id=pair.policy.membership_ref,
+            consumer_id="migration",
+            sequence=sequence,
+        )
+        store.compact(
+            recipient_id=pair.policy.membership_ref, through_sequence=sequence
+        )
+        store.upgrade_receipts_v2()
+        with store._database() as db:
+            self.assertEqual(
+                tuple(db.execute("SELECT * FROM communication_compactions").fetchone()),
+                (
+                    pair.policy.membership_ref,
+                    db.execute(
+                        "SELECT value FROM communication_meta WHERE key='generation'"
+                    ).fetchone()[0],
+                    sequence,
+                ),
+            )
+        self.assertTrue(store.result(message["event_id"])["terminal"])
+
+    def test_v2_migration_retry_never_recreates_missing_inbox(self):
+        from daimon_matrix import operator_messaging as op
+        from daimon_matrix.messaging_config import (
+            config_digest,
+            read_document,
+        )
+        from tests.test_messaging_runtime import application_fixture
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "missing-v2-inbox"
+        op.prepare(runtime, target, spec, secret_sources=sources)
+        predecessor = config_digest(read_document(target / "application.json"))
+        op.upgrade_semantic_receipts(
+            runtime, target, expected_application_sha256=predecessor
+        )
+        inbox = target / spec["stores"]["inbox"]
+        saved = inbox.with_suffix(".saved")
+        inbox.rename(saved)
+        with self.assertRaisesRegex(ValueError, "messaging_required_store_invalid"):
+            op.upgrade_semantic_receipts(
+                runtime, target, expected_application_sha256=predecessor
+            )
+        self.assertFalse(inbox.exists())
+
     def test_real_runtime_migration_crash_publication_boundaries_preserve_unsent(self):
         import json
 

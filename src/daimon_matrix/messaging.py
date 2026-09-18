@@ -947,16 +947,31 @@ class MessagingChannel:
         evidence = self._verify_retained(evidence)
         authorization = self._message_authorization(evidence, now)
         message = self._open(raw, authorization, now)
-        self._validate_message(message, evidence, authorization, now)
-        result = self.inbox._retain_message(
-            message, evidence, raw, self._policy_hash(now)
+        admission_version = self.inbox._admission_version(
+            message["event_id"], 2 if self.communication is not None else 1
         )
-        self._reduce_receipt(message)
+        self._validate_message(
+            message, evidence, authorization, now, admission_version=admission_version
+        )
+        result = self.inbox._retain_message(
+            message,
+            evidence,
+            raw,
+            self._policy_hash(now),
+            admission_version=admission_version,
+        )
+        self._reduce_receipt(message, admission_version=admission_version)
         return result
 
-    def _semantic_receipt(self, message: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _semantic_receipt(
+        self, message: Mapping[str, Any], *, admission_version: int | None = None
+    ) -> dict[str, Any] | None:
         body = message["payload"]["body"]
-        if "semantic_receipt" not in body or self.communication is None:
+        if admission_version is None:
+            version = 2 if self.communication is not None else 1
+        else:
+            version = admission_version
+        if "semantic_receipt" not in body or self.communication is None or version != 2:
             return None
         receipt = self._verify_retained(body["semantic_receipt"])
         payload = _foreign_receipt_payload(receipt)
@@ -985,8 +1000,10 @@ class MessagingChannel:
             )
         return receipt
 
-    def _reduce_receipt(self, message: Mapping[str, Any]) -> None:
-        receipt = self._semantic_receipt(message)
+    def _reduce_receipt(
+        self, message: Mapping[str, Any], *, admission_version: int | None = None
+    ) -> None:
+        receipt = self._semantic_receipt(message, admission_version=admission_version)
         if receipt is not None:
             assert self.communication is not None
             self.communication.record_foreign_receipt(
@@ -1000,11 +1017,16 @@ class MessagingChannel:
         """
         after = 0
         while True:
-            rows = self.page(after=after, limit=100)
+            rows = self.inbox._page(
+                after=after, limit=100, policy_hash=self._policy_hash(self.clock())
+            )
             if not rows:
                 return
+            self._validate_rows(rows, self.clock())
             for row in rows:
-                self._reduce_receipt(row["message"])
+                self._reduce_receipt(
+                    row["message"], admission_version=row["admission_version"]
+                )
                 after = row["inbox_sequence"]
 
     def _validate_message(
@@ -1013,6 +1035,8 @@ class MessagingChannel:
         evidence: Mapping[str, Any],
         authorization: DisclosureAuthorization,
         now: int,
+        *,
+        admission_version: int | None = None,
     ) -> None:
         payload = _message_payload(message)
         if (
@@ -1036,7 +1060,7 @@ class MessagingChannel:
         )
         if expected.value != authorization.value:
             raise SealedDeliveryError()
-        self._semantic_receipt(message)
+        self._semantic_receipt(message, admission_version=admission_version)
 
     def _verify_retained(self, event: Any) -> dict[str, Any]:
         try:
@@ -1058,7 +1082,10 @@ class MessagingChannel:
             after=after, limit=limit, policy_hash=self._policy_hash(now)
         )
         self._validate_rows(rows, now)
-        return rows
+        return [
+            {key: value for key, value in row.items() if key != "admission_version"}
+            for row in rows
+        ]
 
     def _validate_rows(self, rows: list[dict[str, Any]], now: int) -> None:
         for row in rows:
@@ -1067,7 +1094,11 @@ class MessagingChannel:
             try:
                 authorization = self._message_authorization(row["evidence"], now)
                 self._validate_message(
-                    row["message"], row["evidence"], authorization, now
+                    row["message"],
+                    row["evidence"],
+                    authorization,
+                    now,
+                    admission_version=row["admission_version"],
                 )
             except (ValueError, KeyError, TypeError):
                 raise MessagingInboxError("messaging_stored_evidence_invalid") from None
