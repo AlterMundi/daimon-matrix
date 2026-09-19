@@ -1289,6 +1289,15 @@ def load_runtime(
                 raise RuntimeError("runtime_route_provider_rejected") from exception
             providers[binding.provider_ref] = instance
         router = RouteCoordinator(communication, route_profile, providers, clock=clock)
+
+    def current_tribe_provider(tribe_ref: str, at_ms: int) -> VerifiedTribeSnapshot:
+        assert relationship_context is not None
+        with relationship_context.store.authorization_view(
+            at_ms=at_ms,
+            card_verifier=relationship_context.card_verifier,
+        ) as view:
+            return view.snapshot(tribe_ref)
+
     try:
         scopes = ScopeResolver(
             ledger,
@@ -1299,12 +1308,7 @@ def load_runtime(
             tribes=tribes,
             peer_embodiments=frozenset(peer_endpoints),
             tribe_provider=(
-                None
-                if relationship_context is None
-                else lambda tribe_ref, at_ms: relationship_context.store.view(
-                    at_ms=at_ms,
-                    card_verifier=relationship_context.card_verifier,
-                ).snapshot(tribe_ref)
+                None if relationship_context is None else current_tribe_provider
             ),
         )
     except ScopeError as exception:

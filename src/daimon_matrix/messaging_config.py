@@ -23,6 +23,8 @@ APPLICATION_SCHEMA = "dm.messaging.application/v1"
 APPLICATION_SCHEMA_V2 = "dm.messaging.application/v2"
 BINDING_SCHEMA = "dm.messaging.operator-binding/v1"
 BINDING_DOMAIN = b"daimon/messaging-operator-binding/v1\x00"
+CAPABILITY_STATE_SCHEMA = "dm.messaging.capability-state/v1"
+CAPABILITY_JOURNAL_DOMAIN = b"daimon/messaging-capability-journal/v1\x00"
 
 
 class MessagingConfigError(ValueError):
@@ -162,7 +164,7 @@ _POLICY = _object(
                 "resource_ref",
             )
         },
-        "operation": {"const": "read"},
+        "operation": {"enum": ["read", "messaging.read"]},
         "classification": {"enum": ["private", "shareable", "public"]},
         "max_ttl_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
         "grant_refs": {
@@ -475,6 +477,204 @@ def read_document(path: Path | str) -> Any:
         raise MessagingConfigError("messaging_file_rejected") from None
 
 
+def capability_journal_identity(
+    runtime: HostedRuntime, descriptor: Mapping[str, Any]
+) -> str:
+    """Stable owner-local journal identity for one runtime/client lane."""
+    core = {
+        "runtime_id": runtime.service.runtime_id,
+        "client_id": descriptor["client_id"],
+    }
+    return (
+        "dm:capability-journal:v1:"
+        + hashlib.sha256(CAPABILITY_JOURNAL_DOMAIN + canonical_bytes(core)).hexdigest()
+    )
+
+
+def _capability_journal_names(
+    runtime: HostedRuntime, descriptor: Mapping[str, Any]
+) -> tuple[str, str]:
+    identity = capability_journal_identity(runtime, descriptor)
+    stem = ".messaging-capability-" + hashlib.sha256(identity.encode()).hexdigest()
+    return identity, stem
+
+
+def capability_state_record(
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+    *,
+    sequence: int,
+    predecessor_sha256: str | None,
+    action: str,
+    occurred_at_ms: int,
+) -> dict[str, Any]:
+    """Create one runtime-authenticated monotonic capability-state record."""
+    identity, _ = _capability_journal_names(runtime, descriptor)
+    body = {
+        "schema": CAPABILITY_STATE_SCHEMA,
+        "journal_identity": identity,
+        "runtime_id": runtime.service.runtime_id,
+        "sequence": sequence,
+        "predecessor_sha256": predecessor_sha256,
+        "action": action,
+        "capability_id": descriptor["capability_id"],
+        "client_id": descriptor["client_id"],
+        "key_id": descriptor["key_id"],
+        "descriptor_sha256": config_digest(descriptor),
+        "occurred_at_ms": occurred_at_ms,
+    }
+    return {"body": body, "binding": create_binding(runtime, body)}
+
+
+def _capability_state_chain(
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+) -> tuple[str, str, list[tuple[dict[str, Any], bytes]]]:
+    """Verify and return the immutable authenticated journal, ignoring write temps."""
+    import re
+
+    try:
+        identity, stem = _capability_journal_names(runtime, descriptor)
+        root = _directory(runtime.state_root)
+        pointer_temporary = re.compile(
+            rf"^{re.escape(stem)}-(?:current|floor)-[0-9a-f]{{32}}\.json$"
+        )
+        entries: list[tuple[int, Path]] = []
+        for path in root.iterdir():
+            name = path.name
+            if name in {stem + "-current.json", stem + "-floor.json"}:
+                continue
+            if pointer_temporary.fullmatch(name):
+                continue
+            if not name.startswith(stem + "-") or not name.endswith(".json"):
+                continue
+            suffix = name[len(stem) + 1 : -5]
+            if len(suffix) != 20 or not suffix.isdecimal():
+                raise ValueError()
+            entries.append((int(suffix), path))
+        entries.sort()
+        if not entries or [number for number, _ in entries] != list(
+            range(len(entries))
+        ):
+            raise ValueError()
+        previous_hash: str | None = None
+        previous_body: Mapping[str, Any] | None = None
+        chain: list[tuple[dict[str, Any], bytes]] = []
+        for expected_sequence, path in entries:
+            raw = protected_read(path)
+            record = read_document(path)
+            if not isinstance(record, Mapping) or set(record) != {"body", "binding"}:
+                raise ValueError()
+            body = record["body"]
+            if not isinstance(body, Mapping) or set(body) != {
+                "schema",
+                "journal_identity",
+                "runtime_id",
+                "sequence",
+                "predecessor_sha256",
+                "action",
+                "capability_id",
+                "client_id",
+                "key_id",
+                "descriptor_sha256",
+                "occurred_at_ms",
+            }:
+                raise ValueError()
+            verify_binding(runtime, body, record["binding"])
+            if (
+                body["schema"] != CAPABILITY_STATE_SCHEMA
+                or body["journal_identity"] != identity
+                or body["runtime_id"] != runtime.service.runtime_id
+                or body["sequence"] != expected_sequence
+                or body["predecessor_sha256"] != previous_hash
+                or body["client_id"] != descriptor["client_id"]
+                or body["key_id"] != descriptor["key_id"]
+                or type(body["occurred_at_ms"]) is not int
+                or body["occurred_at_ms"] < 0
+                or body["action"] not in {"activate", "replace", "revoke"}
+                or (expected_sequence == 0) != (body["action"] == "activate")
+                or (
+                    previous_body is not None
+                    and (
+                        body["occurred_at_ms"] < previous_body["occurred_at_ms"]
+                        or previous_body["action"] == "revoke"
+                        or (
+                            body["action"] == "revoke"
+                            and any(
+                                body[field] != previous_body[field]
+                                for field in (
+                                    "capability_id",
+                                    "client_id",
+                                    "key_id",
+                                    "descriptor_sha256",
+                                )
+                            )
+                        )
+                        or (
+                            body["action"] == "replace"
+                            and (
+                                body["capability_id"] == previous_body["capability_id"]
+                                or body["descriptor_sha256"]
+                                == previous_body["descriptor_sha256"]
+                            )
+                        )
+                    )
+                )
+            ):
+                raise ValueError()
+            copied_body = dict(body)
+            chain.append((copied_body, raw))
+            previous_hash = hashlib.sha256(raw).hexdigest()
+            previous_body = copied_body
+        return identity, stem, chain
+    except MessagingConfigError as exception:
+        if str(exception) == "messaging_capability_state_rejected":
+            raise
+        raise MessagingConfigError("messaging_capability_state_rejected") from None
+    except Exception:
+        raise MessagingConfigError("messaging_capability_state_rejected") from None
+
+
+def read_capability_state(
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+    *,
+    require_active: bool = True,
+) -> dict[str, Any]:
+    """Verify the complete retained chain and exact durable high-water record."""
+    try:
+        _identity, stem, chain = _capability_state_chain(runtime, descriptor)
+        latest_body, latest_raw = chain[-1]
+        root = _directory(runtime.state_root)
+        current = protected_read(root / (stem + "-current.json"))
+        floor = protected_read(root / (stem + "-floor.json"))
+        if current != latest_raw or floor != latest_raw:
+            raise ValueError()
+        expected = {
+            "capability_id": descriptor["capability_id"],
+            "client_id": descriptor["client_id"],
+            "key_id": descriptor["key_id"],
+            "descriptor_sha256": config_digest(descriptor),
+        }
+        if any(latest_body[field] != value for field, value in expected.items()):
+            raise MessagingConfigError("messaging_capability_stale")
+        if latest_body["action"] == "revoke":
+            if require_active:
+                raise MessagingConfigError("messaging_capability_revoked")
+        elif latest_body["action"] not in {"activate", "replace"}:
+            raise ValueError()
+        return dict(latest_body)
+    except MessagingConfigError as exception:
+        if str(exception) in {
+            "messaging_capability_revoked",
+            "messaging_capability_stale",
+        }:
+            raise
+        raise MessagingConfigError("messaging_capability_state_rejected") from None
+    except Exception:
+        raise MessagingConfigError("messaging_capability_state_rejected") from None
+
+
 def _store_path(root: Path, name: str) -> Path:
     import os
     import stat
@@ -650,6 +850,7 @@ def _compose(
     *,
     initialize: bool = False,
     metadata_root: Path | None = None,
+    capability_predecessor: Mapping[str, Any] | None = None,
 ) -> HostedRuntime:
     from dataclasses import replace
 
@@ -767,11 +968,9 @@ def _compose(
     descriptor = capability.descriptor
     if (
         set(capability.methods) != MESSAGING_METHODS
+        or descriptor["schema"] != "dm.local.capability/v2"
         or descriptor["status"] != "active"
-        or not descriptor["not_before_ms"]
-        <= service.clock()
-        < descriptor["not_after_ms"]
-        or descriptor["not_after_ms"] - descriptor["not_before_ms"] > 30 * 86400000
+        or not capability.active_at(service.clock())
         or capability.capability_id in service.capabilities
         or any(
             c.client_id == capability.client_id for c in service.capabilities.values()
@@ -787,6 +986,16 @@ def _compose(
     }
     if read_document((metadata_root or root) / "client.json") != expected_client:
         raise ValueError()
+    if capability_predecessor is None:
+        read_capability_state(runtime, descriptor)
+    else:
+        state = read_capability_state(runtime, capability_predecessor)
+        if (
+            state["capability_id"] != capability_predecessor["capability_id"]
+            or capability_predecessor["client_id"] != descriptor["client_id"]
+            or capability_predecessor["key_id"] != descriptor["key_id"]
+        ):
+            raise MessagingConfigError("messaging_capability_state_rejected")
     selected_stores = {
         name: filename
         for name, filename in application["stores"].items()
@@ -901,6 +1110,12 @@ def _compose(
             }
         ),
     )
+
+    def capability_guard(selected: LocalCapability) -> None:
+        if selected.capability_id != capability.capability_id:
+            raise ValueError()
+        read_capability_state(runtime, selected.descriptor)
+
     messaging = MessagingServiceContext(
         channels={incoming["channel_id"]: receiver},
         deliveries={outgoing["channel_id"]: delivery},
@@ -909,6 +1124,7 @@ def _compose(
                 {incoming["channel_id"], outgoing["channel_id"]}
             )
         },
+        capability_guard=capability_guard,
     )
     return replace(
         runtime,

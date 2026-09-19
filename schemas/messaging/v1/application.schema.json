@@ -96,7 +96,10 @@
               "maxLength": 256
             },
             "operation": {
-              "const": "read"
+              "enum": [
+                "read",
+                "messaging.read"
+              ]
             },
             "classification": {
               "enum": [
@@ -317,7 +320,10 @@
               "maxLength": 256
             },
             "operation": {
-              "const": "read"
+              "enum": [
+                "read",
+                "messaging.read"
+              ]
             },
             "classification": {
               "enum": [
