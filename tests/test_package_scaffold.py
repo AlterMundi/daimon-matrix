@@ -152,8 +152,21 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 58)
+        self.assertEqual(len(modules), 66)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
+        self.assertTrue(
+            {
+                "src/daimon_matrix/codex_review.py",
+                "src/daimon_matrix/execution_instruction.py",
+                "src/daimon_matrix/execution_store.py",
+                "src/daimon_matrix/hermes_review.py",
+                "src/daimon_matrix/hermes_review_worker.py",
+                "src/daimon_matrix/human_execution_frontend.py",
+                "src/daimon_matrix/operator_execution.py",
+                "src/daimon_matrix/review_runner.py",
+            }
+            <= modules
+        )
         for inventory in (
             {path.as_posix() for path in BUILD_INPUTS},
             set(SDIST_FILES),
@@ -287,6 +300,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/client.py",
                 "src/daimon_matrix/cluster.py",
                 "src/daimon_matrix/codex_body.py",
+                "src/daimon_matrix/codex_review.py",
                 "src/daimon_matrix/collective_memory.py",
                 "src/daimon_matrix/communication.py",
                 "src/daimon_matrix/conformance.py",
@@ -294,6 +308,11 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/curator_worker.py",
                 "src/daimon_matrix/curator_worker_process.py",
                 "src/daimon_matrix/daemon.py",
+                "src/daimon_matrix/execution_instruction.py",
+                "src/daimon_matrix/execution_store.py",
+                "src/daimon_matrix/hermes_review.py",
+                "src/daimon_matrix/hermes_review_worker.py",
+                "src/daimon_matrix/human_execution_frontend.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/human_review.py",
                 "src/daimon_matrix/hermes_body.py",
@@ -310,6 +329,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/telegram_mirror.py",
                 "src/daimon_matrix/operator_bootstrap.py",
                 "src/daimon_matrix/operator_capabilities.py",
+                "src/daimon_matrix/operator_execution.py",
                 "src/daimon_matrix/operator_genesis.py",
                 "src/daimon_matrix/operator_first_embodiment.py",
                 "src/daimon_matrix/operator_rebirth.py",
@@ -322,6 +342,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/py.typed",
                 "src/daimon_matrix/relationships.py",
                 "src/daimon_matrix/relationship_store.py",
+                "src/daimon_matrix/review_runner.py",
                 "src/daimon_matrix/reviewer_cli.py",
                 "src/daimon_matrix/runtime.py",
                 "src/daimon_matrix/routes.py",
@@ -351,6 +372,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/client.py",
                 "daimon_matrix/cluster.py",
                 "daimon_matrix/codex_body.py",
+                "daimon_matrix/codex_review.py",
                 "daimon_matrix/collective_memory.py",
                 "daimon_matrix/communication.py",
                 "daimon_matrix/conformance.py",
@@ -358,6 +380,11 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/curator_worker.py",
                 "daimon_matrix/curator_worker_process.py",
                 "daimon_matrix/daemon.py",
+                "daimon_matrix/execution_instruction.py",
+                "daimon_matrix/execution_store.py",
+                "daimon_matrix/hermes_review.py",
+                "daimon_matrix/hermes_review_worker.py",
+                "daimon_matrix/human_execution_frontend.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/human_review.py",
                 "daimon_matrix/hermes_body.py",
@@ -374,6 +401,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/telegram_mirror.py",
                 "daimon_matrix/operator_bootstrap.py",
                 "daimon_matrix/operator_capabilities.py",
+                "daimon_matrix/operator_execution.py",
                 "daimon_matrix/operator_genesis.py",
                 "daimon_matrix/operator_first_embodiment.py",
                 "daimon_matrix/operator_rebirth.py",
@@ -386,6 +414,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/py.typed",
                 "daimon_matrix/relationships.py",
                 "daimon_matrix/relationship_store.py",
+                "daimon_matrix/review_runner.py",
                 "daimon_matrix/reviewer_cli.py",
                 "daimon_matrix/runtime.py",
                 "daimon_matrix/routes.py",

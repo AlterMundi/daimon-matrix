@@ -411,3 +411,209 @@ covered with zero staged or DM-041/package paths; real and temporary-index diff
 hygiene passed. No commit, push, post, merge or deployment is authorized or
 claimed. DM-041/package-generated drift and all previously stated live
 isolation/provider/credential limitations remain outside this repair.
+
+## Successor qualification: DM-041/package drift over approved source
+
+This section is later author evidence for the separately claimed package and
+generated-state repair. It supersedes only earlier statements that the
+DM-041/package drift is still unresolved; it does not rewrite the historical
+source-repair evidence above and is not an independent approval.
+
+### Frozen boundary and authorization
+
+- Immutable base HEAD:
+  `ddc33c5fba0001271e5592f7215c065adb619da5` (tree
+  `83de143a1f70c8c57e51a34cdad7f1db76622531`). The worktree was clean and
+  unstaged before the RED replay.
+- Accepted successor claim:
+  `c48c9307-1c11-4d3b-81a9-00043ab0b74b`, state `in_progress`, 32 exact
+  resources, lease through `2026-09-20T06:05:40.925244Z`. Every package
+  candidate path below is claim-covered.
+- Interpreter: `/home/debian/dm-milestone2-test-venv/bin/python`, Python
+  3.13.5. No generator logic, `src/daimon_matrix/*.py`, dependency metadata,
+  service, credential, live message, paid model, or deployment state was changed.
+
+### Preserved four-test RED before edits
+
+The following exact command ran first against the clean base:
+
+```sh
+PYTHONPATH=src /home/debian/dm-milestone2-test-venv/bin/python \
+  -W error::ResourceWarning -m unittest \
+  tests.test_dm041_hermes_body.ContractAndProfileTests.test_profile_is_deterministic_exclusive_and_native_memory_free \
+  tests.test_dm041_hermes_body.PublicContractTests.test_vectors_schemas_templates_and_provenance_are_deterministic \
+  tests.test_package_scaffold.ArtifactBoundaryTests.test_closed_inventories_cover_actual_package_modules \
+  tests.test_package_scaffold.ArtifactBoundaryTests.test_real_artifacts_bind_all_package_bytes_to_source \
+  -v
+```
+
+Result: **4 tests run, 4 failures, 0 skips**, 12.991 test seconds / 14 wall
+seconds, exit 1. The exact failures were:
+
+1. profile module count: `AssertionError: 66 != 58`;
+2. deterministic generated output: first mismatch at
+   `provenance/hermes-agent-0.19.0.json`;
+3. package closed-inventory count: `AssertionError: 66 != 58`;
+4. built artifact import:
+   `ModuleNotFoundError: No module named 'daimon_matrix.codex_review'`.
+
+The complete captured RED log is `/tmp/DM-138-package-red.txt`, 5,670 bytes,
+SHA-256 `f83d1a227a560c586a9d19f37adeacea0e6e83932903940aa7418d735e62141c`.
+That temporary path is local evidence, not a durable repository artifact; the
+command and determinations are therefore recorded here.
+
+### Minimal repair and canonical generation
+
+The exact package allowlists in `tools/check_distribution.py`,
+`tools/reproducible_build.py`, and their frozen expectations in
+`tests/test_package_scaffold.py` now include only these eight already-approved
+modules:
+
+```text
+codex_review.py
+execution_instruction.py
+execution_store.py
+hermes_review.py
+hermes_review_worker.py
+human_execution_frontend.py
+operator_execution.py
+review_runner.py
+```
+
+Both exact module-count expectations changed from 58 to 66 and explicitly
+assert the eight names. Before generation,
+`tools.generate_dm041_vectors.outputs()` reported exactly four stale paths:
+
+```text
+provenance/hermes-agent-0.19.0.json
+vectors/hermes/v1/valid/profile-manifest.json
+vectors/hermes/v1/valid/launch-receipt.json
+vectors/hermes/v1/index.json
+```
+
+`PYTHONPATH=src .../python tools/generate_dm041_vectors.py` changed exactly
+those four outputs. The generator remained byte-identical at SHA-256
+`5741088d594f473401d3292e2da8a1d3b02b7974e74e90db6550b67351846345`;
+its subsequent `--check` exited 0.
+
+### RED to GREEN and complete focused suites
+
+The exact four-test command above was rerun unchanged: **4 passed, 0 skipped**,
+55.853 test seconds / 56 wall seconds, exit 0. Complete log SHA-256:
+`6e4bb8ab403d3a89e941769bee329633be9cd43deb2391ca440f34d736a42cbb`.
+
+Additional final-byte gates:
+
+- `tests.test_dm041_hermes_body`: **27 tests, 26 passed, 1 explicit skip**,
+  4.232 test seconds / 4 wall seconds, exit 0. The skip was the pre-existing
+  real Hermes 0.19.0 source-import test because
+  `DAIMON_DM041_HERMES_SOURCE` was not supplied in that invocation. The exact
+  skipped test was then run separately with a securely extracted public source
+  tarball at commit `5c8870c1625761956a56fd2b225720dbe9083e45`, the fresh
+  wheel venv, `cryptography==50.0.0`, and all exact
+  `requirements-hermes-contract.txt` dependencies: **1/1 passed, 0 skips**,
+  1.986 test seconds / 3 wall seconds. Supplemental log: 654 bytes, SHA-256
+  `c1f8cb40bb06b7cab95842449004d53780680ff331aa188396b22828dc92bde7`.
+- `tests.test_package_scaffold`: **12/12 passed, 0 skips**, 55.146 test
+  seconds / 56 wall seconds, exit 0.
+- `tools/generate_dm041_vectors.py --check`: exit 0.
+- Combined focused log: 7,993 bytes, SHA-256
+  `c29438993693752c7100d8045ee7575570de7275bb1d7501dccdba2838b95241`.
+
+### Reproducible distributions and installed-wheel proof
+
+The canonical `tools/reproducible_build.py` was invoked twice into separate
+output directories; each invocation itself performed two clean isolated builds,
+reported `builds: 2`, `byte_identical: true`, and exited 0 in 21 wall seconds.
+The two invocations produced byte-identical pairs and identical reports:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `daimon_matrix-0.1.0rc1-py3-none-any.whl` | 616,204 | `4fb80f3e3649ec18a188767f2a9293d50274c52066013d8bd0f5653d112739dd` |
+| `daimon_matrix-0.1.0rc1.tar.gz` | 565,689 | `d2b4a87076b2e4f1ff14b313f435370d46821686e97a99c0544860063b7ef8d3` |
+
+A fresh `/usr/bin/python3.13` venv installed that wheel normally (not editable),
+including declared dependencies. `pip check` reported no broken requirements.
+A `python -I` probe from `/tmp` imported the package plus all 65 submodules
+(**66 package Python files total**), explicitly found and imported all eight new
+modules, and proved every loaded module path was beneath the fresh venv. The
+installed distribution had no `direct_url.json`, consistent with a normal wheel
+install rather than an editable/VCS install.
+
+### Approved-source behavior replay
+
+No source file was edited. A path-framed digest over all 66 tracked
+`src/daimon_matrix/*.py` files was identical for HEAD and the worktree:
+`93902e65491c72aad8c0fc82a3f029062db3a25338fa8d83b408c016c7e0baf9`.
+`git diff -- src/daimon_matrix` was empty. The approved cohorts were replayed on
+these unchanged bytes:
+
+- core (`execution_instruction`, `execution_store`, `human_execution_frontend`,
+  `passive_messaging_execution`): **56/56 passed, 0 skips**, 15.082 test
+  seconds / 15 wall seconds; internal 750,000-row audit 0.315437 seconds;
+- expanded exact Codex plus complete DM-040: **46 tests, 44 passed, 2 explicit
+  private/live skips**, 58.525 test seconds / 59 wall seconds. The supplied
+  binary and catalog hashes remained respectively
+  `2e863156ed35ecc5253b1e2f907a9143077b9f7cb51942070c61996471ff6e04`
+  and `c0923563de2cceb85a56b1dd59094fc2e841d777be2b321e51579af7fcd904a5`;
+- exact Hermes archive cohort: **50/50 passed, 0 skips**, 323.901 test seconds /
+  325 wall seconds. Archive SHA-256 remained
+  `09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660`.
+
+The complete core, Codex, and Hermes log SHA-256 values are respectively
+`1431fa5170e2a101c94bc1bd3193029c1b8d8ec644243ffbd9eed4e771eb9afa`,
+`7fc1875b875d54da9f0c03cfa86f495550ec6063ca83b6ef0cc209be848972a9`,
+and `7c0c44e6ffedd13cd28d0f1f503ec1c47bfd9241cb21b26fe8111ae92df8544c`.
+
+### Static, schema, secret, scope, and diff gates
+
+All final package bytes passed:
+
+- Ruff check and Ruff format check on the four changed Python files;
+- strict mypy on those four workflow-covered Python files: no issues;
+- compileall over `src`, the package tools, generator and focused tests, with
+  cache redirected to `/tmp`;
+- Draft 2020-12 meta-schema validation for the Hermes schema, strict
+  duplicate-key JSON parsing and exact canonical-byte checks for all four
+  generated outputs, plus the canonical generator `--check`;
+- repository secret scanning over all eight package/generated candidate files
+  and both built distributions;
+- `git diff --check`, zero staged paths, zero untracked paths, and zero
+  `src/daimon_matrix` diff paths;
+- accepted-claim readback: all **8/8** pre-report package candidate paths were
+  among the claim's 30 path resources.
+
+Before appending this self-report, the exact status contained those eight paths.
+Using the same serialization convention as the independent source review:
+
+```sh
+{ git diff --binary; while IFS= read -r -d '' f; do
+    git diff --no-index --binary -- /dev/null "$f" || test $? -eq 1
+done < <(git ls-files --others --exclude-standard -z); } | sha256sum
+```
+
+its tracked-plus-untracked package candidate digest was
+`563b237b9ff16e49b5ec81815c4c8daa349f49355ecf92548793ce569ad89a33`.
+The tracked-only `git diff --binary --full-index` digest was
+`93153a3c34ee628be48bfe63fd60583c37a95a915914da41d749cded57254284`.
+This review path is itself claim-covered but necessarily excluded from those
+pre-report digests to avoid self-reference. The post-report whole-diff digest
+must therefore be frozen and reported externally after this final write.
+
+### Limitations and non-actions
+
+The focused DM-041/package suites and all three DM-138 cohorts passed, but a
+full repository-wide test discovery run was not requested or represented as
+run. The full DM-041 invocation's one source-import skip was discharged by its
+dedicated passing run above. Preparing that run exposed two environment-only
+attempts before the final green: the existing exact source location was rejected
+because group-writable ancestors violated the source trust gate, and the first
+secure-source attempt used the DM-138 fixture venv whose `cryptography==46.0.7`
+lacked HPKE. No product bytes were changed for either diagnostic; the exact
+public source plus dependency-complete wheel venv passed. The two Codex
+private/live skips remain explicit; no skip is counted as a pass. No live
+provider, human frontend, credential, real message, service, GitHub mutation,
+commit, push, merge or deployment was exercised. The installed-wheel venv,
+secure external source copy, and build/log files are disposable qualification
+evidence, not repository deliverables. This remains author qualification pending
+independent exact-byte review of the final package diff.
