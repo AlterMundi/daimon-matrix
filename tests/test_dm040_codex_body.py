@@ -321,7 +321,7 @@ class ContractTests(CodexBodyFixture):
             b'{"minimum":-Infinity}',
             b'{"minimum":1e999}',
             b"{invalid}",
-            br'{"title":"\ud800"}',
+            rb'{"title":"\ud800"}',
         ):
             (root / "one.json").write_bytes(raw)
             with self.subTest(raw=raw), self.assertRaises(CodexBodyError):
