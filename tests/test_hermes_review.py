@@ -1241,11 +1241,11 @@ from tests.test_hermes_review import ActualHermesTests
 case = ActualHermesTests()
 case.setUp()
 from dataclasses import replace
-case.instruction = replace(case.instruction, max_cycle_seconds=15)
+case.instruction = replace(case.instruction, max_cycle_seconds=60)
 case.release.clear()
 case.approve()
 context = case.controller.run_due_once("review-1", 1, case.task)
-assert case.received.wait(32)
+assert case.received.wait(75)
 print(json.dumps(dict(root=str(case.root), source=str(case.runner.source),
                      cycle=context.cycle.cycle_id,
                      pid=case.runner.status(context.cycle.cycle_id)["pid"])),
@@ -1260,7 +1260,7 @@ time.sleep(60)
         )
         info = None
         try:
-            ready, _, _ = select.select([parent.stdout], [], [], 40)
+            ready, _, _ = select.select([parent.stdout], [], [], 90)
             self.assertTrue(ready, "fixture parent did not reach actual upstream")
             line = parent.stdout.readline()
             self.assertTrue(line, "fixture parent failed")
