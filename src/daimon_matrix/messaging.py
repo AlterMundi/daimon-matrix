@@ -136,10 +136,13 @@ class MessagingSender:
         now: int,
         *,
         observed_at_ms: int,
+        authority_view: RelationshipView,
     ) -> dict[str, Any]:
         # page/message reads do not invoke this purpose-limited authoring path.
-        row = channel.inbox._message(message["event_id"], channel._policy_hash(now))
-        channel._validate_rows([row], now)
+        row = channel.inbox._message(
+            message["event_id"], channel._policy_hash(now, authority_view)
+        )
+        channel._validate_rows([row], now, authority_view=authority_view)
         resolution = row["evidence"]["payload"]["resolution_event"]
         payload = {
             "schema": "dm.communication.receipt/v2",
@@ -167,7 +170,7 @@ class MessagingSender:
             {
                 "client_id": "dm.communication.receipt/v2",
                 "request_hash": digest,
-                "policy_hash": channel._policy_hash(now),
+                "policy_hash": channel._policy_hash(now, authority_view),
                 "origin": dict(self.ledger.local_origin),
                 "issued_at_ms": observed_at_ms,
             },
@@ -197,9 +200,32 @@ class MessagingSender:
         thread_id: str,
         text: str,
         response_to: tuple[MessagingChannel, str] | None = None,
+        _authority_view: RelationshipView | None = None,
     ) -> tuple[bytes, bytes]:
         now = _uint(self.clock())
         context, policy = self.context, self.context.policy
+        if _authority_view is None:
+            # Preserve bounded request/transport error precedence before taking
+            # current-authority writer exclusion; the checks repeat inside it.
+            self._bind(now)
+            if not isinstance(text, str):
+                raise ValueError("messaging_text_required")
+            if not 0 < _uint(policy.max_ttl_ms) <= MAX_TTL_MS:
+                raise ValueError("messaging_ttl_invalid")
+            self.outbox._check_time(policy.peer_being_ref, send_id, now)
+            # Lock order: relationship writer exclusion -> outbox -> Ledger ->
+            # communication store. No provider/network I/O is performed here.
+            with context.relationships.authorization_view(
+                at_ms=now, card_verifier=context._card
+            ) as view:
+                return self.prepare(
+                    client_id=client_id,
+                    send_id=send_id,
+                    thread_id=thread_id,
+                    text=text,
+                    response_to=response_to,
+                    _authority_view=view,
+                )
         self._bind(now)
         if not isinstance(text, str):
             raise ValueError("messaging_text_required")
@@ -207,7 +233,7 @@ class MessagingSender:
             raise ValueError("messaging_ttl_invalid")
         owner = policy.peer_being_ref
         self.outbox._check_time(owner, send_id, now)
-        policy_hash = context._policy_hash(now)
+        policy_hash = context._policy_hash(now, _authority_view)
         payload: dict[str, Any] = {
             "schema": MESSAGE_PAYLOAD_SCHEMA,
             "body": {"text": text, "resource_ref": policy.resource_ref},
@@ -233,7 +259,9 @@ class MessagingSender:
                     payload["body"]["recipient_being_ref"] = context.local_being_ref
         if response_to is not None:
             channel, message_id = response_to
-            received = channel.message(message_id)
+            if channel.relationships is not context.relationships:
+                raise ValueError("messaging_response_authority_mismatch")
+            received = channel.message(message_id, _authority_view=_authority_view)
             if (
                 channel.local_being_ref != owner
                 or channel.local_credential_id != policy.peer_credential_id
@@ -297,7 +325,11 @@ class MessagingSender:
             return cached
         if semantic_reply:
             payload["body"]["semantic_receipt"] = self._receipt(
-                channel, received, now, observed_at_ms=issued
+                channel,
+                received,
+                now,
+                observed_at_ms=issued,
+                authority_view=_authority_view,
             )
             # A concurrent later reply may have established the one receipt first.
             # Keep the original expiry; only event chronology follows that proof.
@@ -365,7 +397,11 @@ class MessagingSender:
             resolution_event=resolution,
             sender_authority=context._sender(),
             recipient_targets=[target],
-            disclosures={policy.membership_ref: context._disclosure(now)},
+            disclosures={
+                policy.membership_ref: context._disclosure_from_view(
+                    _authority_view, at_ms=now
+                )
+            },
             expires_at_ms=expires,
             authorization_id=plan["message_authorization_id"],
         )
@@ -618,10 +654,19 @@ class MessagingDelivery:
             stage = stages[phase]
             status = stage["transport_status"]
             if transmit and status in {"prepared", "pending"}:
-                status = self.sender.outbox._transport_status(owner, send_id, phase)
+                now = self.sender.clock()
+                self.sender.outbox._check_time(owner, send_id, now)
+                with self.sender.context.relationships.authorization_view(
+                    at_ms=now, card_verifier=self.sender.context._card
+                ) as view:
+                    self.sender.context._disclosure_from_view(view, at_ms=now)
+                    if authorize is not None:
+                        authorize()
+                    status = self.sender.outbox._transport_status(owner, send_id, phase)
                 if status == "pending":
                     proofs: list[bytes] = []
                     try:
+                        # Deliberately outside the relationship writer exclusion.
                         result = providers[phase].send_prepared(
                             stage["request"], response_sink=proofs.append
                         )
@@ -629,13 +674,27 @@ class MessagingDelivery:
                         # No authenticated outcome: recipient may already have admitted
                         # the request. Keep the committed pending state across restart.
                         result = None
-                    if result is not None and result["status"] in {
-                        "accepted",
-                        "refused",
-                    }:
-                        status = self.sender.outbox._transport_status(
-                            owner, send_id, phase, result=result, response=proofs[0]
-                        )
+                    now = self.sender.clock()
+                    self.sender.outbox._check_time(owner, send_id, now)
+                    with self.sender.context.relationships.authorization_view(
+                        at_ms=now, card_verifier=self.sender.context._card
+                    ) as view:
+                        # Network I/O can race a signed revocation. Recheck current
+                        # authority and serialize any local result commit after it.
+                        self.sender.context._disclosure_from_view(view, at_ms=now)
+                        if authorize is not None:
+                            authorize()
+                        if result is not None and result["status"] in {
+                            "accepted",
+                            "refused",
+                        }:
+                            status = self.sender.outbox._transport_status(
+                                owner,
+                                send_id,
+                                phase,
+                                result=result,
+                                response=proofs[0],
+                            )
             stage["transport_status"] = status
             if status != "recipient-intake":
                 break
@@ -712,12 +771,9 @@ class MessagingChannel:
         ):
             raise SealedDeliveryError()
 
-    def _disclosure(self, at_ms: int) -> dict[str, Any]:
-        # Revalidate retained signatures; RelationshipView itself is only a reducer.
-        events = [
-            self.relationships._validated_event(e) for e in self.relationships.events()
-        ]
-        view = RelationshipView(events, at_ms=at_ms, card_verifier=self._card)
+    def _disclosure_from_view(
+        self, view: RelationshipView, *, at_ms: int
+    ) -> dict[str, Any]:
         policy = self.policy
         local = recipient_descriptor(self._local(), at_ms=at_ms)
         snapshot = view.snapshot(policy.tribe_ref)
@@ -759,18 +815,33 @@ class MessagingChannel:
         disclosure["authorization"]["grant_refs"] = selected
         return disclosure
 
+    def _disclosure(self, at_ms: int) -> dict[str, Any]:
+        with self.relationships.authorization_view(
+            at_ms=at_ms, card_verifier=self._card
+        ) as view:
+            return self._disclosure_from_view(view, at_ms=at_ms)
+
     def disclosure(self) -> dict[str, Any]:
         """Recompute the selected disclosure, also usable by the sender context."""
         return self._disclosure(self.clock())
 
-    def _policy_hash(self, at_ms: int) -> str:
+    def _policy_hash(
+        self, at_ms: int, authority_view: RelationshipView | None = None
+    ) -> str:
+        if authority_view is None:
+            with self.relationships.authorization_view(
+                at_ms=at_ms, card_verifier=self._card
+            ) as view:
+                return self._policy_hash(at_ms, view)
         return hashlib.sha256(
             canonical_bytes(
                 {
                     "schema": "dm.communication.bootstrap-policy/v1",
                     "policy": asdict(self.policy),
                     "recipient": recipient_descriptor(self._local(), at_ms=at_ms),
-                    "disclosure": self._disclosure(at_ms),
+                    "disclosure": self._disclosure_from_view(
+                        authority_view, at_ms=at_ms
+                    ),
                 }
             )
         ).hexdigest()
@@ -854,7 +925,13 @@ class MessagingChannel:
         self,
         evidence: Mapping[str, Any],
         at_ms: int,
+        authority_view: RelationshipView | None = None,
     ) -> DisclosureAuthorization:
+        if authority_view is None:
+            with self.relationships.authorization_view(
+                at_ms=at_ms, card_verifier=self._card
+            ) as view:
+                return self._message_authorization(evidence, at_ms, view)
         if (
             evidence["kind"] != "experience.observed"
             or evidence["subject"] != "communication-evidence"
@@ -891,7 +968,11 @@ class MessagingChannel:
             or targets[0]["receipt_origin_embodiment_id"] != local["embodiment_id"]
         ):
             raise SealedDeliveryError()
-        proof = {self.policy.membership_ref: self._disclosure(at_ms)}
+        proof = {
+            self.policy.membership_ref: self._disclosure_from_view(
+                authority_view, at_ms=at_ms
+            )
+        }
         evidence_hash = hashlib.sha256(
             canonical_bytes(
                 {
@@ -918,50 +999,66 @@ class MessagingChannel:
     def receive_evidence(self, raw: bytes) -> None:
         now = self.clock()
         envelope = self._envelope(raw, now)
-        policy_hash = self._policy_hash(now)  # Never copy envelope evidence_hash.
-        authorization = self._authorization(
-            {
-                "event_id": envelope["event_id"],
-                "content_hash": envelope["event_hash"],
-                "sensitivity": envelope["sensitivity"],
-            },
-            sender=envelope["sender"],
-            evidence_hash=policy_hash,
-            authorized_at_ms=envelope["issued_at_ms"],
-            expires_at_ms=envelope["expires_at_ms"],
-            authorization_id=envelope["authorization_id"],
-            at_ms=now,
-        )
-        evidence = self._open(raw, authorization, now)
-        self._message_authorization(evidence, now)
-        self.inbox._retain_evidence(evidence, raw, policy_hash)
+        # Lock order: relationship writer exclusion -> inbox admission. The raw
+        # transport bytes have already arrived; no network I/O occurs in this block.
+        with self.relationships.authorization_view(
+            at_ms=now, card_verifier=self._card
+        ) as view:
+            policy_hash = self._policy_hash(
+                now, view
+            )  # Never copy envelope evidence_hash.
+            authorization = self._authorization(
+                {
+                    "event_id": envelope["event_id"],
+                    "content_hash": envelope["event_hash"],
+                    "sensitivity": envelope["sensitivity"],
+                },
+                sender=envelope["sender"],
+                evidence_hash=policy_hash,
+                authorized_at_ms=envelope["issued_at_ms"],
+                expires_at_ms=envelope["expires_at_ms"],
+                authorization_id=envelope["authorization_id"],
+                at_ms=now,
+            )
+            evidence = self._open(raw, authorization, now)
+            self._message_authorization(evidence, now, view)
+            self.inbox._retain_evidence(evidence, raw, policy_hash)
 
     def receive_message(self, raw: bytes) -> dict[str, Any]:
         now = self.clock()
         envelope = self._envelope(raw, now)
-        evidence = self.inbox._evidence(
-            envelope["event_id"], envelope["authorization_id"], self._policy_hash(now)
-        )
-        if evidence is None:
-            raise CommunicationError("messaging_evidence_missing", retryable=True)
-        evidence = self._verify_retained(evidence)
-        authorization = self._message_authorization(evidence, now)
-        message = self._open(raw, authorization, now)
-        admission_version = self.inbox._admission_version(
-            message["event_id"], 2 if self.communication is not None else 1
-        )
-        self._validate_message(
-            message, evidence, authorization, now, admission_version=admission_version
-        )
-        result = self.inbox._retain_message(
-            message,
-            evidence,
-            raw,
-            self._policy_hash(now),
-            admission_version=admission_version,
-        )
-        self._reduce_receipt(message, admission_version=admission_version)
-        return result
+        with self.relationships.authorization_view(
+            at_ms=now, card_verifier=self._card
+        ) as view:
+            policy_hash = self._policy_hash(now, view)
+            evidence = self.inbox._evidence(
+                envelope["event_id"], envelope["authorization_id"], policy_hash
+            )
+            if evidence is None:
+                raise CommunicationError("messaging_evidence_missing", retryable=True)
+            evidence = self._verify_retained(evidence)
+            authorization = self._message_authorization(evidence, now, view)
+            message = self._open(raw, authorization, now)
+            admission_version = self.inbox._admission_version(
+                message["event_id"], 2 if self.communication is not None else 1
+            )
+            self._validate_message(
+                message,
+                evidence,
+                authorization,
+                now,
+                admission_version=admission_version,
+                authority_view=view,
+            )
+            result = self.inbox._retain_message(
+                message,
+                evidence,
+                raw,
+                policy_hash,
+                admission_version=admission_version,
+            )
+            self._reduce_receipt(message, admission_version=admission_version)
+            return result
 
     def _semantic_receipt(
         self, message: Mapping[str, Any], *, admission_version: int | None = None
@@ -1037,7 +1134,21 @@ class MessagingChannel:
         now: int,
         *,
         admission_version: int | None = None,
+        authority_view: RelationshipView | None = None,
     ) -> None:
+        if authority_view is None:
+            with self.relationships.authorization_view(
+                at_ms=now, card_verifier=self._card
+            ) as view:
+                self._validate_message(
+                    message,
+                    evidence,
+                    authorization,
+                    now,
+                    admission_version=admission_version,
+                    authority_view=view,
+                )
+                return
         payload = _message_payload(message)
         if (
             payload["intent"]["operation"] != self.policy.operation
@@ -1054,7 +1165,11 @@ class MessagingChannel:
             resolution_event=evidence["payload"]["resolution_event"],
             sender_authority=self._sender(),
             recipient_targets=[self._local()],
-            disclosures={self.policy.membership_ref: self._disclosure(now)},
+            disclosures={
+                self.policy.membership_ref: self._disclosure_from_view(
+                    authority_view, at_ms=now
+                )
+            },
             expires_at_ms=authorization.value["expires_at_ms"],
             authorization_id=authorization.value["authorization_id"],
         )
@@ -1068,37 +1183,62 @@ class MessagingChannel:
         except (ValueError, KeyError, TypeError):
             raise MessagingInboxError("messaging_stored_evidence_invalid") from None
 
-    def message(self, message_id: str) -> dict[str, Any]:
+    def message(
+        self,
+        message_id: str,
+        *,
+        _authority_view: RelationshipView | None = None,
+    ) -> dict[str, Any]:
         """Look up exact locally admitted evidence under current authorization."""
         now = self.clock()
-        row = self.inbox._message(_uuid(message_id), self._policy_hash(now))
-        self._validate_rows([row], now)
+        if _authority_view is None:
+            with self.relationships.authorization_view(
+                at_ms=now, card_verifier=self._card
+            ) as view:
+                return self.message(message_id, _authority_view=view)
+        row = self.inbox._message(
+            _uuid(message_id), self._policy_hash(now, _authority_view)
+        )
+        self._validate_rows([row], now, authority_view=_authority_view)
         return dict(row["message"])
 
     def page(self, *, after: int, limit: int) -> list[dict[str, Any]]:
         """Manual current-policy read, not a delivered/consumed semantic receipt."""
         now = self.clock()
-        rows = self.inbox._page(
-            after=after, limit=limit, policy_hash=self._policy_hash(now)
-        )
-        self._validate_rows(rows, now)
-        return [
-            {key: value for key, value in row.items() if key != "admission_version"}
-            for row in rows
-        ]
+        # Lock order: relationship writer exclusion -> inbox read. Never hold this
+        # context over network I/O and never call a relationship writer from it.
+        with self.relationships.authorization_view(
+            at_ms=now, card_verifier=self._card
+        ) as view:
+            rows = self.inbox._page(
+                after=after, limit=limit, policy_hash=self._policy_hash(now, view)
+            )
+            self._validate_rows(rows, now, authority_view=view)
+            return [
+                {key: value for key, value in row.items() if key != "admission_version"}
+                for row in rows
+            ]
 
-    def _validate_rows(self, rows: list[dict[str, Any]], now: int) -> None:
+    def _validate_rows(
+        self,
+        rows: list[dict[str, Any]],
+        now: int,
+        authority_view: RelationshipView | None = None,
+    ) -> None:
         for row in rows:
             row["message"] = self._verify_retained(row["message"])
             row["evidence"] = self._verify_retained(row["evidence"])
             try:
-                authorization = self._message_authorization(row["evidence"], now)
+                authorization = self._message_authorization(
+                    row["evidence"], now, authority_view
+                )
                 self._validate_message(
                     row["message"],
                     row["evidence"],
                     authorization,
                     now,
                     admission_version=row["admission_version"],
+                    authority_view=authority_view,
                 )
             except (ValueError, KeyError, TypeError):
                 raise MessagingInboxError("messaging_stored_evidence_invalid") from None

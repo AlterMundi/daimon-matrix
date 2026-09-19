@@ -14,10 +14,20 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .identity import VerificationError, validate_validity, validity_contains
 
 REQUEST_SCHEMA: Final = "dm.local.request/v1"
 RESPONSE_SCHEMA: Final = "dm.local.response/v1"
 CAPABILITY_SCHEMA: Final = "dm.local.capability/v1"
+CAPABILITY_SCHEMA_V2: Final = "dm.local.capability/v2"
+MESSAGING_CAPABILITY_METHODS: Final = frozenset(
+    {
+        "messaging.send",
+        "messaging.inbox",
+        "messaging.reply",
+        "messaging.delivery",
+    }
+)
 REQUEST_DOMAIN: Final = b"daimon/local-api/request/v1\x00"
 RESPONSE_DOMAIN: Final = b"daimon/local-api/response/v1\x00"
 CAPABILITY_DOMAIN: Final = b"daimon/local-api/capability/v1\x00"
@@ -137,8 +147,12 @@ def local_key_id(key: bytes) -> str:
 
 
 def _capability_id(core: Mapping[str, Any]) -> str:
-    return "dm:local-capability:v1:" + b64url(
-        hashlib.sha256(CAPABILITY_DOMAIN + canonical_bytes(core)).digest()
+    version = 2 if core.get("schema") == CAPABILITY_SCHEMA_V2 else 1
+    domain = (
+        b"daimon/local-api/capability/v2\x00" if version == 2 else CAPABILITY_DOMAIN
+    )
+    return f"dm:local-capability:v{version}:" + b64url(
+        hashlib.sha256(domain + canonical_bytes(core)).digest()
     )
 
 
@@ -165,8 +179,18 @@ class LocalCapability:
     def methods(self) -> tuple[str, ...]:
         return tuple(cast(Sequence[str], self.descriptor["methods"]))
 
+    def active_at(self, at_ms: int) -> bool:
+        if self.descriptor["status"] != "active":
+            return False
+        if self.descriptor["schema"] == CAPABILITY_SCHEMA_V2:
+            return validity_contains(self.descriptor["validity"], at_ms)
+        return bool(
+            self.descriptor["not_before_ms"] <= at_ms < self.descriptor["not_after_ms"]
+        )
+
     @classmethod
     def from_value(cls, value: Any, key: bytes) -> LocalCapability:
+        v2 = isinstance(value, Mapping) and value.get("schema") == CAPABILITY_SCHEMA_V2
         descriptor = _closed(
             value,
             {
@@ -174,14 +198,13 @@ class LocalCapability:
                 "client_id",
                 "key_id",
                 "methods",
-                "not_after_ms",
-                "not_before_ms",
+                *({"validity"} if v2 else {"not_after_ms", "not_before_ms"}),
                 "schema",
                 "status",
             },
             "invalid_local_capability",
         )
-        if descriptor["schema"] != CAPABILITY_SCHEMA:
+        if descriptor["schema"] not in {CAPABILITY_SCHEMA, CAPABILITY_SCHEMA_V2}:
             raise LocalApiError("unsupported_local_capability")
         client_id = descriptor["client_id"]
         if not isinstance(client_id, str) or _CLIENT_ID.fullmatch(client_id) is None:
@@ -197,9 +220,22 @@ class LocalCapability:
             )
         ):
             raise LocalApiError("invalid_local_capability")
-        before = _uint(descriptor["not_before_ms"], "invalid_local_capability")
-        after = _uint(descriptor["not_after_ms"], "invalid_local_capability")
-        if after <= before or descriptor["status"] not in {"active", "revoked"}:
+        if v2:
+            try:
+                validity = validate_validity(descriptor["validity"])
+            except VerificationError as error:
+                raise LocalApiError("invalid_local_capability") from error
+            if (
+                validity["mode"] != "until-revoked"
+                or not set(methods) <= MESSAGING_CAPABILITY_METHODS
+            ):
+                raise LocalApiError("invalid_local_capability")
+        else:
+            before = _uint(descriptor["not_before_ms"], "invalid_local_capability")
+            after = _uint(descriptor["not_after_ms"], "invalid_local_capability")
+            if after <= before:
+                raise LocalApiError("invalid_local_capability")
+        if descriptor["status"] not in {"active", "revoked"}:
             raise LocalApiError("invalid_local_capability")
         if descriptor["key_id"] != local_key_id(key):
             raise LocalApiError("capability_key_mismatch")
@@ -211,6 +247,31 @@ class LocalCapability:
         if descriptor["capability_id"] != _capability_id(core):
             raise LocalApiError("capability_id_mismatch")
         return cls(copy.deepcopy(dict(descriptor)), bytes(key))
+
+
+def create_messaging_capability(
+    key: bytes,
+    *,
+    client_id: str,
+    methods: Sequence[str],
+    not_before_ms: int,
+    status: str = "active",
+) -> LocalCapability:
+    """Create a V2 descriptor; durable revocation must be checked by the host.
+
+    Descriptor status alone is not a replay-resistant revocation journal.
+    """
+    core = {
+        "schema": CAPABILITY_SCHEMA_V2,
+        "client_id": client_id,
+        "key_id": local_key_id(key),
+        "methods": sorted(set(methods)),
+        "validity": {"mode": "until-revoked", "not_before_ms": not_before_ms},
+        "status": status,
+    }
+    return LocalCapability.from_value(
+        {**core, "capability_id": _capability_id(core)}, key
+    )
 
 
 def create_capability(
@@ -318,12 +379,8 @@ def authenticate_request(
             or _METHOD.fullmatch(method) is None
             or method not in capability.methods
             or capability.descriptor["status"] != "active"
-            or not capability.descriptor["not_before_ms"]
-            <= issued
-            < capability.descriptor["not_after_ms"]
-            or not capability.descriptor["not_before_ms"]
-            <= now_ms
-            < capability.descriptor["not_after_ms"]
+            or not capability.active_at(issued)
+            or not capability.active_at(now_ms)
             or issued - now_ms > MAX_CLOCK_SKEW_MS
             or (not allow_stale and now_ms - issued > MAX_CLOCK_SKEW_MS)
             or not isinstance(request["params"], Mapping)

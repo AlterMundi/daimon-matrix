@@ -10,8 +10,11 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .identity import VerificationError, validate_validity, validity_contains
 
 TRIBE_SNAPSHOT_SCHEMA: Final = "dm.tribe-snapshot/v1"
+TRIBE_SNAPSHOT_SCHEMA_V2: Final = "dm.tribe-snapshot/v2"
+MESSAGING_OPERATIONS: Final = frozenset({"messaging.read", "messaging.send"})
 TRIBE_REF_PREFIX: Final = "dm:tribe:v1:"
 TRIBE_DOMAIN: Final = b"daimon/tribe/declaration/v1\x00"
 MAX_MEMBERS: Final = 256
@@ -157,7 +160,7 @@ class VerifiedTribeSnapshot:
             },
             "invalid_tribe_snapshot",
         )
-        if snapshot["schema"] != TRIBE_SNAPSHOT_SCHEMA:
+        if snapshot["schema"] not in {TRIBE_SNAPSHOT_SCHEMA, TRIBE_SNAPSHOT_SCHEMA_V2}:
             raise RelationshipError("unsupported_tribe_snapshot")
         expected_ref = tribe_ref(cast(Mapping[str, Any], snapshot["declaration"]))
         if snapshot["tribe_ref"] != expected_ref:
@@ -189,7 +192,10 @@ class VerifiedTribeSnapshot:
         grants = snapshot["grants"]
         if not isinstance(grants, list) or len(grants) > MAX_GRANTS:
             raise RelationshipError("invalid_tribe_grants")
-        normalized_grants = [_grant(row, expected_ref) for row in grants]
+        normalized_grants = [
+            _grant(row, expected_ref, v2=snapshot["schema"] == TRIBE_SNAPSHOT_SCHEMA_V2)
+            for row in grants
+        ]
         if normalized_grants != sorted(
             normalized_grants, key=lambda row: row["grant_ref"]
         ) or len({row["grant_ref"] for row in normalized_grants}) != len(
@@ -229,10 +235,12 @@ class VerifiedTribeSnapshot:
             for row in cast(list[Mapping[str, Any]], self.value["grants"])
             if row["grantee_principal_id"] == principal_id
             and not row["revoked"]
-            and row["not_before_ms"] <= at_ms < row["not_after_ms"]
+            and validity_contains(permission_validity(row), at_ms)
         ]
         return {
-            "schema": "dm.tribe-resolution/v1",
+            "schema": "dm.tribe-resolution/v2"
+            if self.value["schema"] == TRIBE_SNAPSHOT_SCHEMA_V2
+            else "dm.tribe-resolution/v1",
             "tribe_ref": self.ref,
             "lineage_head_ref": self.value["lineage_head_ref"],
             "founder_epoch": self.value["founder_epoch"],
@@ -266,15 +274,14 @@ def _member(value: Any, expected_ref: str) -> dict[str, Any]:
     return copy.deepcopy(dict(row))
 
 
-def _grant(value: Any, expected_ref: str) -> dict[str, Any]:
+def _grant(value: Any, expected_ref: str, *, v2: bool = False) -> dict[str, Any]:
     row = _closed(
         value,
         {
             "controller_principal_id",
             "grant_ref",
             "grantee_principal_id",
-            "not_after_ms",
-            "not_before_ms",
+            *({"validity"} if v2 else {"not_after_ms", "not_before_ms"}),
             "operations",
             "parent_grant_ref",
             "resource_ref",
@@ -294,12 +301,27 @@ def _grant(value: Any, expected_ref: str) -> dict[str, Any]:
         _text(row[field], "invalid_tribe_grant")
     if row["parent_grant_ref"] is not None:
         _text(row["parent_grant_ref"], "invalid_tribe_grant")
-    start = _uint(row["not_before_ms"], "invalid_tribe_grant")
-    end = _uint(row["not_after_ms"], "invalid_tribe_grant")
+    if v2:
+        _sorted_texts(
+            row["operations"],
+            "invalid_tribe_grant",
+            maximum=MAX_PERMISSIONS,
+            pattern=_OPERATION,
+        )
+        validity = _v2_validity(row["validity"], "invalid_tribe_grant")
+        if (
+            validity["mode"] == "until-revoked"
+            and not set(row["operations"]) <= MESSAGING_OPERATIONS
+        ):
+            raise RelationshipError("indefinite_non_messaging_permission")
+    else:
+        start = _uint(row["not_before_ms"], "invalid_tribe_grant")
+        end = _uint(row["not_after_ms"], "invalid_tribe_grant")
+        if start >= end:
+            raise RelationshipError("invalid_tribe_grant")
     operations = row["operations"]
     if (
-        start >= end
-        or not isinstance(operations, list)
+        not isinstance(operations, list)
         or not operations
         or operations != sorted(set(operations))
         or len(operations) > 64
@@ -341,6 +363,7 @@ def _sorted_texts(
     if (
         not isinstance(value, list)
         or len(value) > maximum
+        or any(not isinstance(item, str) for item in value)
         or value != sorted(set(value))
     ):
         raise RelationshipError(code)
@@ -571,22 +594,63 @@ def _permissions(value: Any, code: str) -> list[dict[str, Any]]:
     return result
 
 
-def _proposed_grant(value: Any, code: str) -> dict[str, Any]:
+def permission_validity(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the exact interval of an already validated V1 or V2 grant/card."""
+    if "validity" in row:
+        return validate_validity(row["validity"])
+    return {
+        "mode": "finite",
+        "not_before_ms": row.get("not_before_ms", row.get("issued_at_ms")),
+        "not_after_ms": row.get("expires_at_ms", row.get("not_after_ms")),
+    }
+
+
+def _v2_validity(value: Any, code: str, permissions: Any = None) -> dict[str, Any]:
+    try:
+        validity = validate_validity(value)
+    except VerificationError as error:
+        raise RelationshipError(code) from error
+    if (
+        permissions is not None
+        and validity["mode"] == "finite"
+        and validity["not_after_ms"] - validity["not_before_ms"] > MAX_GRANT_LIFETIME_MS
+    ):
+        raise RelationshipError(code)
+    if (
+        permissions is not None
+        and validity["mode"] == "until-revoked"
+        and (
+            not permissions
+            or any(
+                not set(row["operations"]) <= MESSAGING_OPERATIONS
+                for row in _permissions(permissions, code)
+            )
+        )
+    ):
+        raise RelationshipError("indefinite_non_messaging_permission")
+    return validity
+
+
+def _proposed_grant(value: Any, code: str, *, v2: bool = False) -> dict[str, Any]:
     row = _closed(
         value,
         {
-            "expires_at_ms",
+            *({"validity"} if v2 else {"expires_at_ms", "not_before_ms"}),
             "grantor_being_ref",
-            "not_before_ms",
             "permissions",
             "subject_being_ref",
         },
         code,
     )
-    start = _uint(row["not_before_ms"], code)
-    end = _uint(row["expires_at_ms"], code)
-    if start >= end or end - start > MAX_GRANT_LIFETIME_MS:
-        raise RelationshipError(code)
+    temporal: dict[str, Any]
+    if v2:
+        temporal = {"validity": _v2_validity(row["validity"], code, row["permissions"])}
+    else:
+        start = _uint(row["not_before_ms"], code)
+        end = _uint(row["expires_at_ms"], code)
+        if start >= end or end - start > MAX_GRANT_LIFETIME_MS:
+            raise RelationshipError(code)
+        temporal = {"not_before_ms": start, "expires_at_ms": end}
     grantor = _text(row["grantor_being_ref"], code)
     subject = _text(row["subject_being_ref"], code)
     if grantor == subject:
@@ -595,13 +659,16 @@ def _proposed_grant(value: Any, code: str) -> dict[str, Any]:
         "grantor_being_ref": grantor,
         "subject_being_ref": subject,
         "permissions": _permissions(row["permissions"], code),
-        "not_before_ms": start,
-        "expires_at_ms": end,
+        **temporal,
     }
 
 
 def _card_payload(value: Any) -> dict[str, Any]:
     code = "invalid_relationship_card"
+    v2 = isinstance(value, Mapping) and value.get("schema") == CARD_SCHEMA.replace(
+        "/v1", "/v2"
+    )
+    schema = CARD_SCHEMA.replace("/v1", "/v2") if v2 else CARD_SCHEMA
     row = _closed(
         value,
         {
@@ -610,7 +677,7 @@ def _card_payload(value: Any) -> dict[str, Any]:
             "card_series_id",
             "control_position",
             "encryption_key",
-            "expires_at_ms",
+            *({"validity", "status"} if v2 else {"expires_at_ms"}),
             "issued_at_ms",
             "previous_card_event_id",
             "resources",
@@ -631,9 +698,19 @@ def _card_payload(value: Any) -> dict[str, Any]:
     else:
         _event_ref({"event_id": previous, "event_hash": "0" * 64}, code)
     issued = _uint(row["issued_at_ms"], code)
-    expires = _uint(row["expires_at_ms"], code)
-    if issued >= expires or expires - issued > MAX_CARD_LIFETIME_MS:
-        raise RelationshipError(code)
+    temporal: dict[str, Any]
+    if v2:
+        validity = _v2_validity(row["validity"], code)
+        if validity != {"mode": "until-revoked", "not_before_ms": issued} or row[
+            "status"
+        ] not in {"active", "withdrawn"}:
+            raise RelationshipError(code)
+        temporal = {"validity": validity, "status": row["status"]}
+    else:
+        expires = _uint(row["expires_at_ms"], code)
+        if issued >= expires or expires - issued > MAX_CARD_LIFETIME_MS:
+            raise RelationshipError(code)
+        temporal = {"expires_at_ms": expires}
     if not isinstance(row["resources"], list) or len(row["resources"]) > MAX_RESOURCES:
         raise RelationshipError(code)
     resources = [_resource_entry(item, code) for item in row["resources"]]
@@ -642,7 +719,7 @@ def _card_payload(value: Any) -> dict[str, Any]:
     ):
         raise RelationshipError(code)
     result = {
-        "schema": CARD_SCHEMA,
+        "schema": schema,
         "card_series_id": card_series_id(being),
         "sequence": sequence,
         "previous_card_event_id": previous,
@@ -655,18 +732,19 @@ def _card_payload(value: Any) -> dict[str, Any]:
         ),
         "resources": resources,
         "issued_at_ms": _uint(row["issued_at_ms"], code),
-        "expires_at_ms": expires,
+        **temporal,
     }
-    if (
-        row["schema"] != CARD_SCHEMA
-        or row["card_series_id"] != result["card_series_id"]
-    ):
+    if row["schema"] != schema or row["card_series_id"] != result["card_series_id"]:
         raise RelationshipError(code)
     return result
 
 
 def _offer_payload(value: Any) -> dict[str, Any]:
     code = "invalid_relationship_offer"
+    v2 = isinstance(value, Mapping) and value.get("schema") == OFFER_SCHEMA.replace(
+        "/v1", "/v2"
+    )
+    schema = OFFER_SCHEMA.replace("/v1", "/v2") if v2 else OFFER_SCHEMA
     row = _closed(
         value,
         {
@@ -695,7 +773,7 @@ def _offer_payload(value: Any) -> dict[str, Any]:
     proposed = row["proposed_grants"]
     if not isinstance(proposed, list) or len(proposed) > MAX_PROPOSED_GRANTS:
         raise RelationshipError(code)
-    normalized_proposed = [_proposed_grant(item, code) for item in proposed]
+    normalized_proposed = [_proposed_grant(item, code, v2=v2) for item in proposed]
     keys = [
         (
             item["grantor_being_ref"],
@@ -723,7 +801,7 @@ def _offer_payload(value: Any) -> dict[str, Any]:
         else _event_ref(row["responder_card_ref"], code)
     )
     result = {
-        "schema": OFFER_SCHEMA,
+        "schema": schema,
         "relationship_id": expected,
         "nonce": nonce,
         "initiator_being_ref": initiator,
@@ -736,7 +814,7 @@ def _offer_payload(value: Any) -> dict[str, Any]:
         "issued_at_ms": issued,
         "expires_at_ms": expires,
     }
-    if row["schema"] != OFFER_SCHEMA or row["relationship_id"] != expected:
+    if row["schema"] != schema or row["relationship_id"] != expected:
         raise RelationshipError(code)
     return result
 
@@ -758,7 +836,7 @@ def _acceptance_payload(value: Any) -> dict[str, Any]:
         code,
     )
     result = {
-        "schema": ACCEPTANCE_SCHEMA,
+        "schema": row["schema"],
         "relationship_id": _derived_id(
             row["relationship_id"], "dm:relationship:v1:", code
         ),
@@ -769,7 +847,10 @@ def _acceptance_payload(value: Any) -> dict[str, Any]:
         "responder_card_ref": _event_ref(row["responder_card_ref"], code),
         "accepted_at_ms": _uint(row["accepted_at_ms"], code),
     }
-    if row["schema"] != ACCEPTANCE_SCHEMA:
+    if row["schema"] not in {
+        ACCEPTANCE_SCHEMA,
+        ACCEPTANCE_SCHEMA.replace("/v1", "/v2"),
+    }:
         raise RelationshipError(code)
     return result
 
@@ -789,10 +870,10 @@ def _close_payload(value: Any) -> dict[str, Any]:
         },
         code,
     )
-    if row["schema"] != CLOSE_SCHEMA:
+    if row["schema"] not in {CLOSE_SCHEMA, CLOSE_SCHEMA.replace("/v1", "/v2")}:
         raise RelationshipError(code)
     return {
-        "schema": CLOSE_SCHEMA,
+        "schema": row["schema"],
         "relationship_id": _derived_id(
             row["relationship_id"], "dm:relationship:v1:", code
         ),
@@ -1033,16 +1114,19 @@ def _founder_acceptance_payload(value: Any) -> dict[str, Any]:
 
 def _grant_payload(value: Any) -> dict[str, Any]:
     code = "invalid_relationship_grant"
+    v2 = isinstance(value, Mapping) and value.get("schema") == GRANT_SCHEMA.replace(
+        "/v1", "/v2"
+    )
+    schema = GRANT_SCHEMA.replace("/v1", "/v2") if v2 else GRANT_SCHEMA
     row = _closed(
         value,
         {
             "delegation_sequence",
-            "expires_at_ms",
+            *({"validity"} if v2 else {"expires_at_ms", "not_before_ms"}),
             "grant_id",
             "grantor_being_ref",
             "issued_at_ms",
             "nonce",
-            "not_before_ms",
             "parent_grant_ref",
             "permissions",
             "previous_delegation_event_id",
@@ -1065,11 +1149,22 @@ def _grant_payload(value: Any) -> dict[str, Any]:
         grantor_being_ref=grantor,
         subject_being_ref=subject,
     )
-    start = _uint(row["not_before_ms"], code)
-    end = _uint(row["expires_at_ms"], code)
-    issued = _uint(row["issued_at_ms"], code)
-    if start >= end or issued >= end or end - start > MAX_GRANT_LIFETIME_MS:
-        raise RelationshipError(code)
+    temporal: dict[str, Any]
+    if v2:
+        temporal = {"validity": _v2_validity(row["validity"], code, row["permissions"])}
+        issued = _uint(row["issued_at_ms"], code)
+        if (
+            temporal["validity"]["mode"] == "finite"
+            and issued >= temporal["validity"]["not_after_ms"]
+        ):
+            raise RelationshipError(code)
+    else:
+        start = _uint(row["not_before_ms"], code)
+        end = _uint(row["expires_at_ms"], code)
+        issued = _uint(row["issued_at_ms"], code)
+        if start >= end or issued >= end or end - start > MAX_GRANT_LIFETIME_MS:
+            raise RelationshipError(code)
+        temporal = {"not_before_ms": start, "expires_at_ms": end}
     parent = (
         None
         if row["parent_grant_ref"] is None
@@ -1092,10 +1187,10 @@ def _grant_payload(value: Any) -> dict[str, Any]:
         if row["tribe_ref"] is None
         else _derived_id(row["tribe_ref"], TRIBE_REF_PREFIX, code)
     )
-    if row["schema"] != GRANT_SCHEMA or row["grant_id"] != expected:
+    if row["schema"] != schema or row["grant_id"] != expected:
         raise RelationshipError(code)
     return {
-        "schema": GRANT_SCHEMA,
+        "schema": schema,
         "grant_id": expected,
         "nonce": nonce,
         "relationship_id": relationship,
@@ -1103,8 +1198,7 @@ def _grant_payload(value: Any) -> dict[str, Any]:
         "grantor_being_ref": grantor,
         "subject_being_ref": subject,
         "permissions": _permissions(row["permissions"], code),
-        "not_before_ms": start,
-        "expires_at_ms": end,
+        **temporal,
         "issued_at_ms": issued,
         "parent_grant_ref": parent,
         "delegation_sequence": sequence,
@@ -1127,10 +1221,13 @@ def _grant_acceptance_payload(value: Any) -> dict[str, Any]:
         },
         code,
     )
-    if row["schema"] != GRANT_ACCEPTANCE_SCHEMA:
+    if row["schema"] not in {
+        GRANT_ACCEPTANCE_SCHEMA,
+        GRANT_ACCEPTANCE_SCHEMA.replace("/v1", "/v2"),
+    }:
         raise RelationshipError(code)
     return {
-        "schema": GRANT_ACCEPTANCE_SCHEMA,
+        "schema": row["schema"],
         "grant_id": _derived_id(row["grant_id"], "dm:relationship-grant:v1:", code),
         "grant_ref": _event_ref(row["grant_ref"], code),
         "relationship_id": _derived_id(
@@ -1158,13 +1255,16 @@ def _grant_revocation_payload(value: Any) -> dict[str, Any]:
         },
         code,
     )
-    if row["schema"] != GRANT_REVOCATION_SCHEMA or row["action"] not in {
+    if row["schema"] not in {
+        GRANT_REVOCATION_SCHEMA,
+        GRANT_REVOCATION_SCHEMA.replace("/v1", "/v2"),
+    } or row["action"] not in {
         "revoke",
         "relinquish",
     }:
         raise RelationshipError(code)
     return {
-        "schema": GRANT_REVOCATION_SCHEMA,
+        "schema": row["schema"],
         "grant_id": _derived_id(row["grant_id"], "dm:relationship-grant:v1:", code),
         "grant_ref": _event_ref(row["grant_ref"], code),
         "acceptance_ref": _event_ref(row["acceptance_ref"], code),

@@ -22,11 +22,14 @@ from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
 from .canonical import b64url, canonical_bytes
+from .identity import validity_attenuates, validity_contains
 from .relationships import (
     RELATIONSHIP_EVENT_KINDS,
     TRIBE_SNAPSHOT_SCHEMA,
+    TRIBE_SNAPSHOT_SCHEMA_V2,
     RelationshipError,
     VerifiedTribeSnapshot,
+    permission_validity,
     relationship_event_subject,
     validate_relationship_event_payload,
 )
@@ -451,6 +454,43 @@ class RelationshipStore:
             ),
         }
 
+    @contextmanager
+    def authorization_view(
+        self,
+        *,
+        at_ms: int,
+        card_verifier: CardVerifier | None,
+    ) -> Iterator[RelationshipView]:
+        """Current authority held against every SQLite history writer.
+
+        Retained terminal evidence dominates clock rollback. Use ``view`` only
+        for historical proof. Keep the final local effect/read release inside
+        this context; do not hold it over network I/O or call another writer.
+        Requires an already initialized store; missing state is never reset.
+        """
+        if not self.path.is_file():
+            raise RelationshipStoreError("relationship_authority_missing")
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                row = database.execute(
+                    "SELECT value FROM metadata WHERE key='schema_version'"
+                ).fetchone()
+                if row is None or row["value"] != str(SCHEMA_VERSION):
+                    raise RelationshipStoreError("relationship_schema_mismatch")
+                rows = database.execute(
+                    "SELECT event_json FROM events ORDER BY inserted_order"
+                ).fetchall()
+                events = [
+                    self._validated_event(json.loads(bytes(row["event_json"])))
+                    for row in rows
+                ]
+                yield RelationshipView(
+                    events, at_ms=at_ms, card_verifier=card_verifier, current=True
+                )
+            finally:
+                database.rollback()
+
     def view(
         self, *, at_ms: int, card_verifier: CardVerifier | None
     ) -> RelationshipView:
@@ -466,16 +506,18 @@ class RelationshipView:
         *,
         at_ms: int,
         card_verifier: CardVerifier | None,
+        current: bool = False,
     ) -> None:
         if not isinstance(at_ms, int) or isinstance(at_ms, bool) or at_ms < 0:
             raise RelationshipStoreError("invalid_relationship_time")
         self.at_ms = at_ms
+        self.current = current
         self.card_verifier = card_verifier
         self.all_events = [copy.deepcopy(dict(event)) for event in events]
         effective_events = [
             event
             for event in self.all_events
-            if cast(int, event["occurred_at_ms"]) <= at_ms
+            if current or cast(int, event["occurred_at_ms"]) <= at_ms
         ]
         self.by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self.by_position: dict[tuple[str, str, int], list[dict[str, Any]]] = (
@@ -535,6 +577,25 @@ class RelationshipView:
         self.kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in self.complete:
             self.kind[event["kind"]].append(event)
+        if current:
+            # Fork filtering is safe for positive evidence, but MUST NOT erase
+            # an authenticated denial and expose its permissive predecessor.
+            # Keep all terminal variants for the normal lane-specific actor,
+            # reference and temporal checks below. These rows can only deny;
+            # they do not enter `complete` or become positive dependencies.
+            for event in effective_events:
+                if event["event_id"] not in self.forked_event_ids:
+                    continue
+                if event["kind"] in {
+                    "matrix/relationship-grant-revocation",
+                    "matrix/relationship-close",
+                    "matrix/tribe-membership-leave",
+                    "matrix/tribe-membership-expulsion",
+                } or (
+                    event["kind"] == "matrix/relationship-card"
+                    and event["payload"].get("status") == "withdrawn"
+                ):
+                    self.kind[event["kind"]].append(event)
         self.cards = self._cards()
         self.relationships = self._relationships()
         self.tribes = self._tribes()
@@ -571,11 +632,19 @@ class RelationshipView:
             current = [
                 event
                 for event in accepted
-                if event["payload"]["issued_at_ms"]
-                <= self.at_ms
-                < event["payload"]["expires_at_ms"]
+                if validity_contains(permission_validity(event["payload"]), self.at_ms)
             ]
             active = current[-1] if current else None
+            if accepted[-1]["payload"]["schema"] == "dm.relationship.card/v2":
+                # Succession/withdrawal never falls back to a permissive predecessor.
+                active = (
+                    accepted[-1]
+                    if accepted[-1] in current
+                    and accepted[-1]["payload"]["status"] == "active"
+                    else None
+                )
+            if any(row["payload"].get("status") == "withdrawn" for row in accepted):
+                active = None
             if active is not None:
                 if self.card_verifier is None:
                     active = None
@@ -664,8 +733,17 @@ class RelationshipView:
                 )
                 for event in valid_acceptances
             )
-            cards_current = all(
-                _is_current_card(self.cards, card) for card in relationship_cards
+            cards_current = valid_acceptances[0]["payload"][
+                "accepted_at_ms"
+            ] <= self.at_ms and all(
+                (
+                    self.cards.get(card["payload"]["being_ref"], {}).get("current")
+                    is not None
+                    if payload["schema"] == "dm.relationship.offer/v2"
+                    and card["payload"]["schema"] == "dm.relationship.card/v2"
+                    else _is_current_card(self.cards, card)
+                )
+                for card in relationship_cards
             )
             result[relationship] = {
                 "state": (
@@ -685,7 +763,10 @@ class RelationshipView:
 
     def _card_valid_at(self, event: Mapping[str, Any], at_ms: int) -> bool:
         payload = event["payload"]
-        if not payload["issued_at_ms"] <= at_ms < payload["expires_at_ms"]:
+        if (
+            not validity_contains(permission_validity(payload), at_ms)
+            or payload.get("status") == "withdrawn"
+        ):
             return False
         if self.card_verifier is None:
             return False
@@ -787,7 +868,11 @@ class RelationshipView:
 
             memberships: dict[str, dict[str, Any]] = {
                 founder: {
-                    "state": "active",
+                    "state": (
+                        "not-yet-valid"
+                        if self.current and epoch_started_at[0] > self.at_ms
+                        else "active"
+                    ),
                     "membership_event": declaration,
                     "terminal_event": None,
                     "episodes": [],
@@ -910,7 +995,11 @@ class RelationshipView:
                     if len(terminals) > 1:
                         lane_forked = True
                         break
-                    terminal_state = "active"
+                    terminal_state = (
+                        "not-yet-valid"
+                        if self.current and accepted_at > self.at_ms
+                        else "active"
+                    )
                     terminal: dict[str, Any] | None = None
                     if terminals:
                         terminal_state, terminal = terminals[0]
@@ -977,6 +1066,14 @@ class RelationshipView:
                 or memberships[current_founder]["state"] != "active"
             ):
                 state = "forked"
+            if (
+                state == "active"
+                and self.current
+                and epoch_started_at[epoch] > self.at_ms
+            ):
+                # Observe succession permanently, but do not activate the future
+                # epoch (or resurrect its retired predecessor) on clock rollback.
+                state = "not-yet-valid"
             result[tribe] = {
                 "state": state,
                 "declaration": declaration,
@@ -997,8 +1094,9 @@ class RelationshipView:
             if (
                 proposed["grantor_being_ref"] == payload["grantor_being_ref"]
                 and proposed["subject_being_ref"] == payload["subject_being_ref"]
-                and proposed["not_before_ms"] <= payload["not_before_ms"]
-                and payload["expires_at_ms"] <= proposed["expires_at_ms"]
+                and validity_attenuates(
+                    permission_validity(payload), permission_validity(proposed)
+                )
             ):
                 parent_map = _permission_map(proposed)
                 if all(
@@ -1195,8 +1293,10 @@ class RelationshipView:
                     if (
                         parent_payload["subject_being_ref"]
                         != payload["grantor_being_ref"]
-                        or payload["not_before_ms"] < parent_payload["not_before_ms"]
-                        or payload["expires_at_ms"] > parent_payload["expires_at_ms"]
+                        or not validity_attenuates(
+                            permission_validity(payload),
+                            permission_validity(parent_payload),
+                        )
                         or not all(
                             key in parent_map
                             and _permission_is_attenuated(permission, parent_map[key])
@@ -1218,9 +1318,9 @@ class RelationshipView:
                     and event["payload"]["subject_being_ref"]
                     == payload["subject_being_ref"]
                     and payload["issued_at_ms"] <= event["payload"]["accepted_at_ms"]
-                    and payload["not_before_ms"]
-                    <= event["payload"]["accepted_at_ms"]
-                    < payload["expires_at_ms"]
+                    and validity_contains(
+                        permission_validity(payload), event["payload"]["accepted_at_ms"]
+                    )
                 ]
                 if not valid_acceptances:
                     state = "offered"
@@ -1266,9 +1366,15 @@ class RelationshipView:
                         state = "closed"
                     elif parent_state is not None and parent_state["state"] != "active":
                         state = parent_state["state"]
-                    elif self.at_ms < payload["not_before_ms"]:
+                    elif self.at_ms < max(
+                        permission_validity(payload)["not_before_ms"],
+                        payload["issued_at_ms"],
+                        valid_acceptances[0]["payload"]["accepted_at_ms"],
+                    ):
                         state = "not-yet-valid"
-                    elif self.at_ms >= payload["expires_at_ms"]:
+                    elif not validity_contains(
+                        permission_validity(payload), self.at_ms
+                    ):
                         state = "expired"
                     else:
                         tribe = payload["tribe_ref"]
@@ -1281,6 +1387,11 @@ class RelationshipView:
                                         "memberships"
                                     ].items()
                                     if member["state"] == "active"
+                                    and (
+                                        payload["schema"] != "dm.relationship.grant/v2"
+                                        or member["membership_event"]["occurred_at_ms"]
+                                        <= payload["issued_at_ms"]
+                                    )
                                 }
                                 if tribe_state is not None
                                 and tribe_state["state"] == "active"
@@ -1333,6 +1444,11 @@ class RelationshipView:
                 }
             )
         grants: list[dict[str, Any]] = []
+        v2 = any(
+            row.get("grant", {}).get("payload", {}).get("schema")
+            == "dm.relationship.grant/v2"
+            for row in self.grants.values()
+        )
         for identifier, state in sorted(self.grants.items()):
             if state["state"] != "active":
                 continue
@@ -1348,8 +1464,14 @@ class RelationshipView:
                         "grantee_principal_id": payload["subject_being_ref"],
                         "resource_ref": permission["resource_ref"],
                         "operations": permission["operations"],
-                        "not_before_ms": payload["not_before_ms"],
-                        "not_after_ms": payload["expires_at_ms"],
+                        **(
+                            {"validity": permission_validity(payload)}
+                            if v2
+                            else {
+                                "not_before_ms": payload["not_before_ms"],
+                                "not_after_ms": payload["expires_at_ms"],
+                            }
+                        ),
                         "parent_grant_ref": (
                             None
                             if payload["parent_grant_ref"] is None
@@ -1366,7 +1488,7 @@ class RelationshipView:
             "grants": grants,
         }
         value = {
-            "schema": TRIBE_SNAPSHOT_SCHEMA,
+            "schema": TRIBE_SNAPSHOT_SCHEMA_V2 if v2 else TRIBE_SNAPSHOT_SCHEMA,
             "tribe_ref": tribe_ref,
             "declaration": copy.deepcopy(
                 tribe["declaration"]["payload"]["declaration"]

@@ -324,7 +324,10 @@ def _root_manifest(value: Mapping[str, Any]) -> Mapping[str, Any]:
         _text(row["body_ref"], "invalid_manifest_embodiment")
         _derived_ref(
             row["embodiment_credential_id"],
-            "dm:identity:v1:",
+            "dm:identity:v2:"
+            if isinstance(row["embodiment_credential_id"], str)
+            and row["embodiment_credential_id"].startswith("dm:identity:v2:")
+            else "dm:identity:v1:",
             "invalid_manifest_embodiment",
         )
         _scoped_id(row["embodiment_id"], "embodiment:", "invalid_manifest_embodiment")

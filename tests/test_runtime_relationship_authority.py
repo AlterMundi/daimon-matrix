@@ -49,6 +49,329 @@ def shared_fixture(test, *, ingest=True):
 
 
 class RuntimeRelationshipAuthorityTests(unittest.TestCase):
+    def test_channel_rollback_uses_current_authority_after_signed_revocation(self):
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+
+        runtime, spec, sources = shared_fixture(self)
+        target = self.root / "rollback-current-authority"
+        prepare(runtime, target, spec, secret_sources=sources)
+        channel = load_application(runtime, target).service.messaging.channels[
+            "peer-in"
+        ]
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        channel.relationships.ingest(revoked)
+        self.pair.now = revoked["occurred_at_ms"] - 1
+        with self.assertRaises(ValueError):
+            channel.disclosure()
+
+    def test_ordinary_tribe_provider_uses_current_authority_after_rollback(self):
+        runtime, spec, _ = shared_fixture(self)
+        tribe_ref = spec["incoming"]["policy"]["tribe_ref"]
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        runtime.service.relationships.store.ingest(revoked)
+        self.pair.now = revoked["occurred_at_ms"] - 1
+        snapshot = runtime.service.scopes.tribe(tribe_ref=tribe_ref)
+        self.assertEqual(snapshot["grants"], [])
+
+    def test_read_release_serializes_before_relationship_revocation(self):
+        import threading
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+
+        runtime, spec, sources = shared_fixture(self)
+        target = self.root / "read-race"
+        prepare(runtime, target, spec, secret_sources=sources)
+        channel = load_application(runtime, target).service.messaging.channels[
+            "peer-in"
+        ]
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        revoked_done = threading.Event()
+        result = []
+        failures = []
+        validate = channel._validate_rows
+
+        def pause(rows, now, authority_view=None):
+            validate(rows, now, authority_view=authority_view)
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("read race release")
+
+        def read_page():
+            try:
+                result.append(channel.page(after=0, limit=1))
+            except BaseException as exception:
+                failures.append(exception)
+
+        def revoke():
+            try:
+                runtime.service.relationships.store.ingest(revoked)
+            except BaseException as exception:
+                failures.append(exception)
+            finally:
+                revoked_done.set()
+
+        with patch.object(channel, "_validate_rows", side_effect=pause):
+            reader = threading.Thread(target=read_page)
+            writer = threading.Thread(target=revoke)
+            reader.start()
+            self.assertTrue(entered.wait(5))
+            writer.start()
+            self.assertFalse(revoked_done.wait(0.2))
+            release.set()
+            reader.join(5)
+            writer.join(5)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(result, [[]])
+        self.assertTrue(revoked_done.is_set())
+
+    def test_admission_commit_serializes_before_relationship_revocation(self):
+        import threading
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging import MessagingChannel, MessagingSender
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.messaging_store import MessagingOutboxStore
+        from daimon_matrix.operator_messaging import prepare
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, spec, sources = shared_fixture(self)
+        target = self.root / "admission-race"
+        prepare(runtime, target, spec, secret_sources=sources)
+        channel = load_application(runtime, target).service.messaging.channels[
+            "peer-in"
+        ]
+        reverse = MessagingChannel(
+            policy=channel.policy,
+            local_being_ref=channel.local_being_ref,
+            local_credential_id=channel.local_credential_id,
+            authority_resolver=channel.authority_resolver,
+            relationships=self.pair.receiver_relationships,
+            custody=self.pair.receiver_custody,
+            inbox=self.pair.receiver.inbox,
+            clock=lambda: self.pair.now,
+        )
+        sender = MessagingSender(
+            context=reverse,
+            ledger=self.pair.local_ledger,
+            signer=self.pair.recipient.signer,
+            custody=self.pair.receiver_custody,
+            outbox=MessagingOutboxStore(self.root / "admission-race-outbox.sqlite"),
+            clock=lambda: self.pair.now,
+        )
+        evidence, _ = sender.prepare(
+            client_id="client:race",
+            send_id=_uuid("admission-race-send"),
+            thread_id=_uuid("admission-race-thread"),
+            text="serialized admission",
+        )
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        revoked_done = threading.Event()
+        failures = []
+        retain = channel.inbox._retain_evidence
+
+        def pause(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("admission race release")
+            return retain(*args, **kwargs)
+
+        def admit():
+            try:
+                channel.receive_evidence(evidence)
+            except BaseException as exception:
+                failures.append(exception)
+
+        def revoke():
+            try:
+                runtime.service.relationships.store.ingest(revoked)
+            except BaseException as exception:
+                failures.append(exception)
+            finally:
+                revoked_done.set()
+
+        with patch.object(channel.inbox, "_retain_evidence", side_effect=pause):
+            admission = threading.Thread(target=admit)
+            writer = threading.Thread(target=revoke)
+            admission.start()
+            self.assertTrue(entered.wait(5))
+            writer.start()
+            self.assertFalse(revoked_done.wait(0.2))
+            release.set()
+            admission.join(5)
+            writer.join(5)
+        self.assertFalse(admission.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(failures, [])
+        self.assertTrue(revoked_done.is_set())
+
+    def test_send_authoring_commit_serializes_before_relationship_revocation(self):
+        import threading
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, spec, sources = shared_fixture(self)
+        target = self.root / "send-race"
+        prepare(runtime, target, spec, secret_sources=sources)
+        sender = (
+            load_application(runtime, target)
+            .service.messaging.deliveries["peer-out"]
+            .sender
+        )
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        revoked_done = threading.Event()
+        failures = []
+        authored = []
+        reserve = sender.outbox._reserve
+
+        def pause(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("send race release")
+            return reserve(*args, **kwargs)
+
+        def author():
+            try:
+                authored.append(
+                    sender.prepare(
+                        client_id="client:send-race",
+                        send_id=_uuid("send-race-id"),
+                        thread_id=_uuid("send-race-thread"),
+                        text="serialized send",
+                    )
+                )
+            except BaseException as exception:
+                failures.append(exception)
+
+        def revoke():
+            try:
+                runtime.service.relationships.store.ingest(revoked)
+            except BaseException as exception:
+                failures.append(exception)
+            finally:
+                revoked_done.set()
+
+        with patch.object(sender.outbox, "_reserve", side_effect=pause):
+            sending = threading.Thread(target=author)
+            writer = threading.Thread(target=revoke)
+            sending.start()
+            self.assertTrue(entered.wait(5))
+            writer.start()
+            self.assertFalse(revoked_done.wait(0.2))
+            release.set()
+            sending.join(5)
+            writer.join(5)
+        self.assertFalse(sending.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(authored), 1)
+        self.assertTrue(revoked_done.is_set())
+
+    def test_network_io_releases_relationship_lock_and_rechecks_before_commit(self):
+        import threading
+        from unittest.mock import patch
+
+        from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.operator_messaging import prepare
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, spec, sources = shared_fixture(self)
+        target = self.root / "network-recheck"
+        prepare(runtime, target, spec, secret_sources=sources)
+        delivery = load_application(runtime, target).service.messaging.deliveries[
+            "peer-out"
+        ]
+        provider = delivery.providers[0]
+        send_id = _uuid("network-recheck-send")
+        entered = threading.Event()
+        release = threading.Event()
+        revoked_done = threading.Event()
+        result = []
+        failures = []
+        transmit = provider.send_prepared
+
+        def pause(*args, **kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("network release")
+            return transmit(*args, **kwargs)
+
+        def send():
+            try:
+                result.append(
+                    delivery.send(
+                        client_id="client:network-recheck",
+                        send_id=send_id,
+                        thread_id=_uuid("network-recheck-thread"),
+                        text="recheck after I/O",
+                    )
+                )
+            except BaseException as exception:
+                failures.append(exception)
+
+        revoked = next(
+            event
+            for event in self.pair.history
+            if event["kind"] == "matrix/relationship-grant-revocation"
+        )
+
+        def revoke():
+            runtime.service.relationships.store.ingest(revoked)
+            revoked_done.set()
+
+        with patch.object(provider, "send_prepared", side_effect=pause):
+            sending = threading.Thread(target=send)
+            writer = threading.Thread(target=revoke)
+            sending.start()
+            self.assertTrue(entered.wait(5))
+            writer.start()
+            self.assertTrue(revoked_done.wait(5))
+            release.set()
+            sending.join(5)
+            writer.join(5)
+        self.assertFalse(sending.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(result, [])
+        self.assertEqual(len(failures), 1)
+        owner = delivery.sender.context.policy.peer_being_ref
+        self.assertEqual(
+            delivery.sender.outbox._transport_status(owner, send_id, "evidence"),
+            "pending",
+        )
+
     def test_shared_prepare_reuses_ordinary_store_without_mutating_history(self):
         from daimon_matrix.messaging_config import load_application
         from daimon_matrix.operator_messaging import prepare

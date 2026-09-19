@@ -1,5 +1,10 @@
 # DM-079 signed authority-epoch succession
 
+> Explicit successor: [messaging permissions V2](../specs/messaging-permissions-v2.md) adds indefinite
+> messaging validity, root/body-approved credential succession and V8 startup.
+> Historical V1 signed semantics below remain unchanged. This library slice
+> does not establish messaging integration, migration or live acceptance.
+
 Status: implemented V0 contract for a same-embodiment incarnation restart.
 
 DM-021 could authorize incarnation `N+1`, but DM-022/024 originally fixed one

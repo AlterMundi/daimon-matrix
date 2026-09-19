@@ -18,26 +18,32 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
+import stat
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import Any, cast
 
 from .canonical import canonical_bytes
-from .local_api import create_capability
+from .local_api import create_messaging_capability
 from .messaging_config import (
     APPLICATION_SCHEMA,
     MessagingConfigError,
+    _capability_journal_names,
+    _capability_state_chain,
     _compose,
     _directory,
     _validate_store_schema,
+    capability_state_record,
     config_digest,
     create_binding,
     load_application,
     protected_read,
+    read_capability_state,
     read_document,
     read_publication,
     validate_shape,
@@ -70,6 +76,173 @@ def _sync(root: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+_CAPABILITY_ENTRY_STAGE_LIMIT = 8
+_CAPABILITY_ENTRY_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _cleanup_capability_entry_staging(root: Path, final_name: str) -> None:
+    """Remove only bounded, private residue for one exact journal entry."""
+    prefix = final_name + ".stage-"
+    pattern = re.compile(re.escape(prefix) + r"[0-9a-f]{32}$")
+    candidates: list[Path] = []
+    for path in root.iterdir():
+        if not path.name.startswith(prefix):
+            continue
+        candidates.append(path)
+        if len(candidates) > _CAPABILITY_ENTRY_STAGE_LIMIT:
+            raise MessagingConfigError("messaging_capability_state_rejected")
+    removed = False
+    for path in candidates:
+        if pattern.fullmatch(path.name) is None:
+            raise MessagingConfigError("messaging_capability_state_rejected")
+        try:
+            info = path.lstat()
+        except OSError as exception:
+            raise MessagingConfigError(
+                "messaging_capability_state_rejected"
+            ) from exception
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_nlink != 1
+            or info.st_size > _CAPABILITY_ENTRY_MAX_BYTES
+        ):
+            raise MessagingConfigError("messaging_capability_state_rejected")
+        path.unlink()
+        removed = True
+    if removed:
+        _sync(root)
+
+
+def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
+    """Install complete fsynced journal bytes atomically and without replacement."""
+    final_path = root / final_name
+    try:
+        final_path.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exception:
+        raise MessagingConfigError("messaging_capability_state_rejected") from exception
+    else:
+        if protected_read(final_path) != raw:
+            raise MessagingConfigError("messaging_capability_state_rejected")
+        _cleanup_capability_entry_staging(root, final_name)
+        _sync(root)
+        return
+
+    _cleanup_capability_entry_staging(root, final_name)
+    staging_name = final_name + ".stage-" + secrets.token_hex(16)
+    _write(root, staging_name, raw)
+    _publish(root / staging_name, final_path)
+    _sync(root)
+
+
+def _initialize_capability_state(
+    runtime: HostedRuntime, descriptor: Mapping[str, Any]
+) -> None:
+    """Publish the immutable authenticated genesis outside app generations."""
+    _, stem = _capability_journal_names(runtime, descriptor)
+    record = capability_state_record(
+        runtime,
+        descriptor,
+        sequence=0,
+        predecessor_sha256=None,
+        action="activate",
+        occurred_at_ms=runtime.service.clock(),
+    )
+    raw = canonical_bytes(record)
+    _publish_capability_entry(
+        runtime.state_root,
+        stem + "-00000000000000000000.json",
+        raw,
+    )
+    _write(runtime.state_root, stem + "-current.json", raw)
+    _write(runtime.state_root, stem + "-floor.json", raw)
+    _sync(runtime.state_root)
+    read_capability_state(runtime, descriptor)
+
+
+def _publish_capability_pointers(
+    runtime: HostedRuntime,
+    stem: str,
+    raw: bytes,
+) -> None:
+    temporary = stem + "-current-" + secrets.token_hex(16) + ".json"
+    floor_temporary = stem + "-floor-" + secrets.token_hex(16) + ".json"
+    _write(runtime.state_root, temporary, raw)
+    _write(runtime.state_root, floor_temporary, raw)
+    _sync(runtime.state_root)
+    os.replace(
+        runtime.state_root / floor_temporary,
+        runtime.state_root / (stem + "-floor.json"),
+    )
+    os.replace(
+        runtime.state_root / temporary,
+        runtime.state_root / (stem + "-current.json"),
+    )
+    _sync(runtime.state_root)
+
+
+def _repair_capability_pointers(
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Move interrupted pointers forward to the exact authenticated chain head."""
+    _identity, stem, chain = _capability_state_chain(runtime, descriptor)
+    latest, latest_raw = chain[-1]
+    expected = {
+        "capability_id": descriptor["capability_id"],
+        "client_id": descriptor["client_id"],
+        "key_id": descriptor["key_id"],
+        "descriptor_sha256": config_digest(descriptor),
+    }
+    if any(latest[field] != value for field, value in expected.items()):
+        raise MessagingConfigError("messaging_capability_stale")
+    retained = {raw for _body, raw in chain}
+    for suffix in ("current", "floor"):
+        pointer = protected_read(runtime.state_root / f"{stem}-{suffix}.json")
+        if pointer not in retained:
+            raise MessagingConfigError("messaging_capability_state_rejected")
+    _publish_capability_pointers(runtime, stem, latest_raw)
+    return read_capability_state(runtime, descriptor, require_active=False)
+
+
+def _replace_capability_state(
+    runtime: HostedRuntime,
+    previous_descriptor: Mapping[str, Any],
+    descriptor: Mapping[str, Any],
+) -> None:
+    """Append the authenticated successor and durably move both high-water pointers."""
+    state = read_capability_state(runtime, previous_descriptor)
+    old_identity, stem = _capability_journal_names(runtime, previous_descriptor)
+    new_identity, new_stem = _capability_journal_names(runtime, descriptor)
+    if (
+        old_identity != new_identity
+        or stem != new_stem
+        or previous_descriptor["client_id"] != descriptor["client_id"]
+        or previous_descriptor["key_id"] != descriptor["key_id"]
+    ):
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    current = protected_read(runtime.state_root / (stem + "-current.json"))
+    record = capability_state_record(
+        runtime,
+        descriptor,
+        sequence=state["sequence"] + 1,
+        predecessor_sha256=hashlib.sha256(current).hexdigest(),
+        action="replace",
+        occurred_at_ms=max(runtime.service.clock(), state["occurred_at_ms"]),
+    )
+    raw = canonical_bytes(record)
+    _publish_capability_entry(
+        runtime.state_root,
+        stem + f"-{state['sequence'] + 1:020d}.json",
+        raw,
+    )
+    _publish_capability_pointers(runtime, stem, raw)
+    read_capability_state(runtime, descriptor)
 
 
 def _publish(staging: Path, target: Path) -> None:
@@ -288,16 +461,15 @@ def renew(
         ):
             raise MessagingConfigError("messaging_renewal_conflict")
         now = runtime.service.clock()
-        cap = create_capability(
+        cap = create_messaging_capability(
             key,
             client_id=previous["client"]["descriptor"]["client_id"],
             methods=sorted(MESSAGING_METHODS),
             not_before_ms=now,
-            not_after_ms=now + 30 * 86400000,
         )
         if (
-            cap.descriptor["not_after_ms"]
-            <= previous["client"]["descriptor"]["not_after_ms"]
+            previous["client"]["descriptor"]["schema"] == "dm.local.capability/v2"
+            and now <= previous["client"]["descriptor"]["validity"]["not_before_ms"]
         ):
             raise MessagingConfigError("messaging_renewal_conflict")
         application["client"]["descriptor"] = cap.descriptor
@@ -325,7 +497,13 @@ def renew(
                 }
             ),
         )
-        _compose(runtime, root, application, metadata_root=destination)
+        _compose(
+            runtime,
+            root,
+            application,
+            metadata_root=destination,
+            capability_predecessor=previous["client"]["descriptor"],
+        )
         _sync(destination)
         temporary = "publication-" + secrets.token_hex(16) + ".json"
         _write(
@@ -339,6 +517,9 @@ def renew(
         if config_digest(current) != expected_application_sha256:
             raise MessagingConfigError("messaging_renewal_conflict")
         os.replace(root / temporary, root / "publication.json")
+        _replace_capability_state(
+            runtime, previous["client"]["descriptor"], cap.descriptor
+        )
         try:
             _sync(root)
         except OSError:
@@ -366,24 +547,158 @@ def renew(
         os.close(fd)
 
 
+def revoke_capability(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    *,
+    expected_application_sha256: str,
+) -> dict[str, Any]:
+    """Irreversibly revoke one published messaging capability while offline."""
+    import fcntl
+
+    root = _directory(app_directory)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        application, _ = read_publication(runtime, root)
+        if config_digest(application) != expected_application_sha256:
+            raise MessagingConfigError("messaging_capability_revocation_conflict")
+        descriptor = application["client"]["descriptor"]
+        try:
+            state = read_capability_state(runtime, descriptor, require_active=False)
+        except MessagingConfigError as exception:
+            if str(exception) != "messaging_capability_state_rejected":
+                raise
+            state = _repair_capability_pointers(runtime, descriptor)
+        if state["action"] == "revoke":
+            return {
+                "status": "revoked",
+                "application_sha256": expected_application_sha256,
+                "capability_id": descriptor["capability_id"],
+                "sequence": state["sequence"],
+            }
+        _, stem = _capability_journal_names(runtime, descriptor)
+        current = protected_read(runtime.state_root / (stem + "-current.json"))
+        record = capability_state_record(
+            runtime,
+            descriptor,
+            sequence=state["sequence"] + 1,
+            predecessor_sha256=hashlib.sha256(current).hexdigest(),
+            action="revoke",
+            occurred_at_ms=max(runtime.service.clock(), state["occurred_at_ms"]),
+        )
+        raw = canonical_bytes(record)
+        entry_name = stem + f"-{state['sequence'] + 1:020d}.json"
+        _publish_capability_entry(runtime.state_root, entry_name, raw)
+        _publish_capability_pointers(runtime, stem, raw)
+        confirmed = read_capability_state(runtime, descriptor, require_active=False)
+        if confirmed["action"] != "revoke":
+            raise MessagingConfigError("messaging_capability_state_rejected")
+        return {
+            "status": "revoked",
+            "application_sha256": expected_application_sha256,
+            "capability_id": descriptor["capability_id"],
+            "sequence": confirmed["sequence"],
+        }
+    except MessagingConfigError:
+        raise
+    except Exception:
+        raise MessagingConfigError("messaging_capability_revocation_rejected") from None
+    finally:
+        os.close(fd)
+
+
+def _published_predecessor_descriptor(
+    runtime: HostedRuntime,
+    root: Path,
+    application: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Recover the exact signed predecessor selected by publication metadata."""
+    publication = read_document(root / "publication.json")
+    predecessor_sha256 = publication["body"]["predecessor_sha256"]
+    if predecessor_sha256 is None:
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    matches: list[Mapping[str, Any]] = []
+    metadata_roots = [root]
+    for candidate in root.iterdir():
+        if candidate.name.startswith("generation-") and candidate.is_dir():
+            metadata_roots.append(_directory(candidate))
+    for metadata_root in metadata_roots:
+        candidate_path = metadata_root / "application.json"
+        if not candidate_path.exists():
+            continue
+        candidate = read_document(candidate_path)
+        if config_digest(candidate) != predecessor_sha256:
+            continue
+        validate_shape(candidate)
+        verify_binding(
+            runtime,
+            candidate,
+            read_document(metadata_root / "binding.json"),
+        )
+        matches.append(candidate)
+    if not matches or any(candidate != matches[0] for candidate in matches[1:]):
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    predecessor = matches[0]["client"]["descriptor"]
+    descriptor = application["client"]["descriptor"]
+    if (
+        predecessor["client_id"] != descriptor["client_id"]
+        or predecessor["key_id"] != descriptor["key_id"]
+    ):
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    return cast(Mapping[str, Any], predecessor)
+
+
 def recover(
     runtime: HostedRuntime,
     app_directory: Path | str,
     *,
     expected_application_sha256: str,
 ) -> dict[str, Any]:
-    """Validate exact published state and retry durability, never recreate/delete it."""
+    """Validate exact published state and finish an interrupted renewal journal."""
+    import fcntl
+
     target = _directory(app_directory)
-    application, _metadata = read_publication(runtime, target)
-    if config_digest(application) != expected_application_sha256:
-        raise MessagingConfigError("messaging_recovery_conflict")
-    load_application(runtime, target)
+    fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        _sync(target)
-        _sync(target.parent)
-    except OSError:
-        raise MessagingConfigError("messaging_published_durability_uncertain") from None
-    return {"status": "configured", "application_sha256": expected_application_sha256}
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        application, _metadata = read_publication(runtime, target)
+        if config_digest(application) != expected_application_sha256:
+            raise MessagingConfigError("messaging_recovery_conflict")
+        try:
+            load_application(runtime, target)
+        except MessagingConfigError as exception:
+            if str(exception) == "messaging_capability_stale":
+                predecessor = _published_predecessor_descriptor(
+                    runtime, target, application
+                )
+                _replace_capability_state(
+                    runtime,
+                    predecessor,
+                    application["client"]["descriptor"],
+                )
+            elif str(exception) == "messaging_capability_state_rejected":
+                state = _repair_capability_pointers(
+                    runtime, application["client"]["descriptor"]
+                )
+                if state["action"] == "revoke":
+                    raise MessagingConfigError("messaging_capability_revoked") from None
+            else:
+                raise
+            load_application(runtime, target)
+        try:
+            _sync(target)
+            _sync(target.parent)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        return {
+            "status": "configured",
+            "application_sha256": expected_application_sha256,
+        }
+    finally:
+        os.close(fd)
 
 
 def prepare(
@@ -426,12 +741,11 @@ def prepare(
             _write(staging, name, key)
         key = secrets.token_bytes(32)
         now = runtime.service.clock()
-        cap = create_capability(
+        cap = create_messaging_capability(
             key,
             client_id="client:messaging:" + secrets.token_hex(16),
             methods=sorted(MESSAGING_METHODS),
             not_before_ms=now,
-            not_after_ms=now + 30 * 86400000,
         )
         application["client"] = {
             "descriptor": cap.descriptor,
@@ -461,6 +775,7 @@ def prepare(
         )
         persisted = read_document(staging / "application.json")
         verify_binding(runtime, persisted, read_document(staging / "binding.json"))
+        _initialize_capability_state(runtime, cap.descriptor)
         _compose(runtime, staging, persisted, initialize=True)
         _write(staging, "publication.json", _publication(runtime, persisted, ".", None))
         load_application(runtime, staging)
@@ -500,7 +815,7 @@ def prepare(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Trusted prepare/renew/recover and read-only diagnostics/run entrypoints."""
+    """Trusted prepare/renew/revoke/recover and read-only operator entrypoints."""
     import argparse
     import signal
     import sys
@@ -513,7 +828,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("prepare", "renew", "recover", "diagnostics", "run")
+        "command",
+        choices=("prepare", "renew", "revoke", "recover", "diagnostics", "run"),
     )
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--bundle", default="runtime.json")
@@ -535,7 +851,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock = None
     previous_signals = {}
     try:
-        if args.command in {"renew", "recover"}:
+        if args.command in {"renew", "revoke", "recover"}:
             import re
 
             if (
@@ -574,8 +890,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for r in spec[d]["routes"].values()
             }
             result = prepare(runtime, args.app_dir, spec, secret_sources=sources)
-        elif args.command in {"renew", "recover"}:
-            operation = renew if args.command == "renew" else recover
+        elif args.command in {"renew", "revoke", "recover"}:
+            operation = {
+                "renew": renew,
+                "revoke": revoke_capability,
+                "recover": recover,
+            }[args.command]
             result = operation(
                 runtime,
                 args.app_dir,

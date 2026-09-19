@@ -868,6 +868,236 @@ def verify_recovery_rebirth(
     return copy.deepcopy(dict(value))
 
 
+CREDENTIAL_SUCCESSION_SCHEMA: Final = "dm.we.credential-succession/v2"
+CREDENTIAL_SUCCESSION_DOMAIN: Final = b"daimon/weave-credential-succession/v2\x00"
+
+
+def create_credential_succession(
+    previous: RootAuthority,
+    successor: RootAuthority,
+    *,
+    embodiment_id: str,
+    incarnation_id: str,
+    migration_id: str,
+    issued_at_ms: int,
+    root_seeds: Sequence[bytes],
+    signing_seed: bytes,
+) -> dict[str, Any]:
+    """Explicit dual-consent validity migration of the existing incarnation.
+
+    Does not publish, change custody, admit a body or erase previous authority.
+    """
+    old = previous.manifest.member(embodiment_id, incarnation_id)
+    new = successor.manifest.member(embodiment_id, incarnation_id)
+    core = {
+        "schema": CREDENTIAL_SUCCESSION_SCHEMA,
+        "being_ref": previous.state.being_ref,
+        "control_head": previous.state.head,
+        "previous_manifest_hash": previous.manifest.digest,
+        "successor_manifest_hash": successor.manifest.digest,
+        "previous_revision": previous.manifest.value["revision"],
+        "successor_revision": successor.manifest.value["revision"],
+        "previous_credential_id": old["embodiment_credential_id"],
+        "successor_credential_id": new["embodiment_credential_id"],
+        "previous_authorization_id": old["incarnation_authorization_id"],
+        "successor_authorization_id": new["incarnation_authorization_id"],
+        "embodiment_id": embodiment_id,
+        "incarnation_id": incarnation_id,
+        "migration_id": migration_id,
+        "issued_at_ms": issued_at_ms,
+    }
+    content_hash = hashlib.sha256(
+        CREDENTIAL_SUCCESSION_DOMAIN + canonical_bytes(core)
+    ).hexdigest()
+    preimage = CREDENTIAL_SUCCESSION_DOMAIN + bytes.fromhex(content_hash)
+    signatures = [
+        {
+            "alg": "Ed25519",
+            "kid": key_id("Ed25519", ed25519_public(seed)),
+            "value": b64url(Ed25519PrivateKey.from_private_bytes(seed).sign(preimage)),
+        }
+        for seed in root_seeds
+    ]
+    acceptance = {
+        "alg": "Ed25519",
+        "kid": key_id("Ed25519", ed25519_public(signing_seed)),
+        "value": b64url(
+            Ed25519PrivateKey.from_private_bytes(signing_seed).sign(
+                preimage + b"/acceptance"
+            )
+        ),
+    }
+    result = {
+        **core,
+        "content_hash": content_hash,
+        "signatures": sorted(signatures, key=lambda row: row["kid"]),
+        "acceptance": acceptance,
+    }
+    return verify_credential_succession(result, previous, successor)
+
+
+def verify_credential_succession(
+    value: Mapping[str, Any],
+    previous: RootAuthority,
+    successor: RootAuthority,
+) -> dict[str, Any]:
+    """Verify exact root/embodiment consent without reviving revoked authority."""
+    fields = {
+        "schema",
+        "being_ref",
+        "control_head",
+        "previous_manifest_hash",
+        "successor_manifest_hash",
+        "previous_revision",
+        "successor_revision",
+        "previous_credential_id",
+        "successor_credential_id",
+        "previous_authorization_id",
+        "successor_authorization_id",
+        "embodiment_id",
+        "incarnation_id",
+        "migration_id",
+        "issued_at_ms",
+        "content_hash",
+        "signatures",
+        "acceptance",
+    }
+    try:
+        if set(value) != fields or value["schema"] != CREDENTIAL_SUCCESSION_SCHEMA:
+            raise ValueError("shape")
+        instant = value["issued_at_ms"]
+        if (
+            isinstance(instant, bool)
+            or not isinstance(instant, int)
+            or not 0 <= instant < 2**53
+            or not isinstance(value["migration_id"], str)
+            or not 1 <= len(value["migration_id"]) <= 128
+        ):
+            raise ValueError("time/id")
+        if (
+            previous.state != successor.state
+            or value["being_ref"] != previous.state.being_ref
+            or value["control_head"] != previous.state.head
+            or value["previous_manifest_hash"] != previous.manifest.digest
+            or value["successor_manifest_hash"] != successor.manifest.digest
+            or value["previous_revision"] != previous.manifest.value["revision"]
+            or value["successor_revision"] != successor.manifest.value["revision"]
+            or value["successor_revision"] != value["previous_revision"] + 1
+        ):
+            raise ValueError("lineage")
+        old = previous.manifest.member(value["embodiment_id"], value["incarnation_id"])
+        new = successor.manifest.member(value["embodiment_id"], value["incarnation_id"])
+        if (
+            old["status"] != "active"
+            or new["status"] != "active"
+            or value["previous_credential_id"] != old["embodiment_credential_id"]
+            or value["successor_credential_id"] != new["embodiment_credential_id"]
+            or value["previous_authorization_id"] != old["incarnation_authorization_id"]
+            or value["successor_authorization_id"]
+            != new["incarnation_authorization_id"]
+        ):
+            raise ValueError("member")
+        old_credential = previous.credentials[value["previous_credential_id"]]
+        new_credential = successor.credentials[value["successor_credential_id"]]
+        old_auth = previous.incarnations[value["previous_authorization_id"]]
+        new_auth = successor.incarnations[value["successor_authorization_id"]]
+        # The original proof is historical, not fresh use of an expired credential.
+        old_body = verify_embodiment_credential(
+            old_credential, previous.state, at_ms=old_auth["body"]["started_at_ms"]
+        )
+        new_body = verify_embodiment_credential(
+            new_credential, successor.state, at_ms=instant
+        )
+        verify_incarnation_authorization(
+            new_auth, new_credential, successor.state, at_ms=instant
+        )
+        if (
+            old_credential["schema"] != "dm.identity.artifact/v1"
+            or new_credential["schema"] != "dm.identity.artifact/v2"
+        ):
+            raise ValueError("unsupported migration")
+        expected_body = {
+            k: copy.deepcopy(v)
+            for k, v in old_body.items()
+            if k not in {"valid_from_ms", "valid_until_ms", "control_head"}
+        }
+        expected_body.update(
+            control_head=previous.state.head,
+            validity={
+                "mode": "until-revoked",
+                "not_before_ms": old_body["valid_from_ms"],
+            },
+        )
+        if new_body != expected_body:
+            raise ValueError("credential mutation")
+        if new_auth["body"] != {
+            **old_auth["body"],
+            "embodiment_credential_id": new_credential["artifact_id"],
+        }:
+            raise ValueError("incarnation mutation")
+        expected_manifest = copy.deepcopy(dict(previous.manifest.value))
+        expected_manifest["revision"] += 1
+        for row in expected_manifest["embodiments"]:
+            if row == old:
+                row["embodiment_credential_id"] = new_credential["artifact_id"]
+                row["incarnation_authorization_id"] = new_auth["artifact_id"]
+        if successor.manifest.value != expected_manifest:
+            raise ValueError("manifest mutation")
+        if successor.credentials != {
+            **previous.credentials,
+            new_credential["artifact_id"]: new_credential,
+        } or successor.incarnations != {
+            **previous.incarnations,
+            new_auth["artifact_id"]: new_auth,
+        }:
+            raise ValueError("history mutation")
+        core = {
+            k: copy.deepcopy(v)
+            for k, v in value.items()
+            if k not in {"content_hash", "signatures", "acceptance"}
+        }
+        content_hash = hashlib.sha256(
+            CREDENTIAL_SUCCESSION_DOMAIN + canonical_bytes(core)
+        ).hexdigest()
+        if value["content_hash"] != content_hash:
+            raise ValueError("hash")
+        preimage = CREDENTIAL_SUCCESSION_DOMAIN + bytes.fromhex(content_hash)
+        public_keys, threshold = _root_public_keys(previous.state)
+        signatures = value["signatures"]
+        if not isinstance(signatures, list) or not 1 <= len(signatures) <= 32:
+            raise ValueError("signatures")
+        seen: set[str] = set()
+        for signature in signatures:
+            if (
+                set(signature) != {"alg", "kid", "value"}
+                or signature["alg"] != "Ed25519"
+                or signature["kid"] in seen
+                or signature["kid"] not in public_keys
+            ):
+                raise ValueError("signature")
+            Ed25519PublicKey.from_public_bytes(public_keys[signature["kid"]]).verify(
+                unb64url(signature["value"], length=64), preimage
+            )
+            seen.add(signature["kid"])
+        if len(seen) < threshold or signatures != sorted(
+            signatures, key=lambda row: row["kid"]
+        ):
+            raise ValueError("threshold")
+        acceptance = value["acceptance"]
+        if (
+            set(acceptance) != {"alg", "kid", "value"}
+            or acceptance["alg"] != "Ed25519"
+            or acceptance["kid"] != old_body["signing_key"]["key_id"]
+        ):
+            raise ValueError("acceptance")
+        Ed25519PublicKey.from_public_bytes(
+            unb64url(old_body["signing_key"]["public"], length=32)
+        ).verify(unb64url(acceptance["value"], length=64), preimage + b"/acceptance")
+    except (ValueError, KeyError, TypeError, InvalidSignature) as error:
+        raise AuthorityEpochError("invalid_credential_succession") from error
+    return copy.deepcopy(dict(value))
+
+
 @dataclass(frozen=True)
 class RootHistoryAuthority:
     """Select one exact verified root authority for every accepted epoch."""
@@ -892,6 +1122,8 @@ class RootHistoryAuthority:
                 verify_embodiment_enrollment(value, previous, successor)
             elif value.get("schema") == RECOVERY_REBIRTH_SCHEMA:
                 verify_recovery_rebirth(value, previous, successor)
+            elif value.get("schema") == CREDENTIAL_SUCCESSION_SCHEMA:
+                verify_credential_succession(value, previous, successor)
             else:
                 raise AuthorityEpochError("unsupported_authority_successor")
 

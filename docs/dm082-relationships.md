@@ -1,5 +1,10 @@
 # DM-082 relationship, founded-Tribe and grant runtime
 
+> Explicit successor: [messaging permissions V2](../specs/messaging-permissions-v2.md) adds indefinite
+> messaging validity, root/body-approved credential succession and V8 startup.
+> Historical V1 signed semantics below remain unchanged. This library slice
+> does not establish messaging integration, migration or live acceptance.
+
 Status: implemented as an isolated V0 producer and verifier. This document
 describes Daimon Matrix; Matrix.org is not part of the runtime.
 

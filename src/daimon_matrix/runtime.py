@@ -84,6 +84,7 @@ from .sync import SyncEngine
 from .weave import BeingManifest, EventSigner, RootAuthority, WeaveProtocolError
 
 BUNDLE_SCHEMA_V7: Final = "dm.runtime.bundle/v7"
+BUNDLE_SCHEMA_V8: Final = "dm.runtime.bundle/v8"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
@@ -267,6 +268,71 @@ def _indexed(values: Any) -> dict[str, Mapping[str, Any]]:
     return result
 
 
+def verify_relationship_card_authority(
+    card: Mapping[str, Any],
+    authority: RootAuthority | RootHistoryAuthority,
+    *,
+    at_ms: int,
+) -> None:
+    """Verify a validated card's historical pin and current routing dependency.
+
+    The caller separately verifies the signed card event and card lane. V1
+    retains its exact-current-manifest rule. V2 never grants messaging by itself.
+    """
+    try:
+        active = (
+            authority.active
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+        position = card["control_position"]
+        if card["being_ref"] != active.manifest.being_ref:
+            raise ValueError("being")
+        if card["schema"] == "dm.relationship.card/v2":
+            historical = (
+                authority.select({"manifest_hash": position["manifest_hash"]})
+                if isinstance(authority, RootHistoryAuthority)
+                else active
+            )
+            if historical.manifest.digest != position["manifest_hash"]:
+                raise ValueError("pin")
+            old_row = historical.manifest.member(
+                position["embodiment_id"], position["incarnation_id"]
+            )
+            historical._verify_member(old_row, card["issued_at_ms"])
+            candidates = [
+                row
+                for row in active.manifest.value["embodiments"]
+                if row["embodiment_id"] == position["embodiment_id"]
+                and row["status"] == "active"
+            ]
+            if len(candidates) != 1 or candidates[0]["body_ref"] != old_row["body_ref"]:
+                raise ValueError("current member")
+            member = candidates[0]
+        else:
+            if position["manifest_hash"] != active.manifest.digest:
+                raise ValueError("pin")
+            member = active.manifest.member(
+                position["embodiment_id"], position["incarnation_id"]
+            )
+        if member["status"] != "active":
+            raise ValueError("inactive")
+        credential = active.credentials[member["embodiment_credential_id"]]
+        body = verify_embodiment_credential(credential, active.state, at_ms=at_ms)
+        if card["schema"] == "dm.relationship.card/v2" and (
+            credential["schema"] != "dm.identity.artifact/v2"
+            or body["validity"]["mode"] != "until-revoked"
+        ):
+            raise ValueError("finite messaging dependency")
+        if (
+            card["encryption_key"] != body["encryption_key"]
+            or "messages" not in body["purposes"]
+        ):
+            raise ValueError("routing key/purpose")
+    except (KeyError, TypeError, ValueError) as error:
+        raise RelationshipError("relationship_card_control_unverified") from error
+
+
 def load_runtime(
     state_root: Path,
     bundle_name: str,
@@ -297,7 +363,7 @@ def load_runtime(
     if not isinstance(raw_bundle, Mapping):
         raise RuntimeError("invalid_runtime_bundle")
     schema = raw_bundle.get("schema")
-    if schema != BUNDLE_SCHEMA_V7:
+    if schema not in {BUNDLE_SCHEMA_V7, BUNDLE_SCHEMA_V8}:
         raise RuntimeError("unsupported_runtime_bundle")
     fields = {
         "authority_history",
@@ -525,11 +591,8 @@ def load_runtime(
             or capability.capability_id in capabilities
         ):
             raise RuntimeError("invalid_runtime_capability")
-        if (
-            capability.descriptor["status"] != "active"
-            or not capability.descriptor["not_before_ms"]
-            <= capabilities_observed_at_ms
-            < capability.descriptor["not_after_ms"]
+        if schema == BUNDLE_SCHEMA_V7 and not capability.active_at(
+            capabilities_observed_at_ms
         ):
             raise RuntimeError("runtime_capability_not_active")
         profile_value = value["profile"]
@@ -1158,45 +1221,14 @@ def load_runtime(
 
         def verify_relationship_card(card: Mapping[str, Any], at_ms: int) -> None:
             being_ref = card.get("being_ref")
-            card_authority = (
-                active_authorities.get(being_ref)
+            selected = (
+                selected_relationship_authorities.get(being_ref)
                 if isinstance(being_ref, str)
                 else None
             )
-            if card_authority is None or being_ref != card_authority.manifest.being_ref:
+            if selected is None:
                 raise RelationshipError("relationship_card_authority_unknown")
-            position = card.get("control_position")
-            if (
-                not isinstance(position, Mapping)
-                or position.get("manifest_hash") != card_authority.manifest.digest
-            ):
-                raise RelationshipError("relationship_card_control_unverified")
-            try:
-                member = card_authority.manifest.member(
-                    position["embodiment_id"], position["incarnation_id"]
-                )
-                if member["status"] != "active":
-                    raise RelationshipError("relationship_card_control_unverified")
-                credential = card_authority.credentials[
-                    member["embodiment_credential_id"]
-                ]
-                body = verify_embodiment_credential(
-                    credential, card_authority.state, at_ms=at_ms
-                )
-            except (
-                KeyError,
-                TypeError,
-                VerificationError,
-                WeaveProtocolError,
-            ) as exception:
-                raise RelationshipError(
-                    "relationship_card_control_unverified"
-                ) from exception
-            if (
-                card.get("encryption_key") != body["encryption_key"]
-                or "messages" not in body["purposes"]
-            ):
-                raise RelationshipError("relationship_card_control_unverified")
+            verify_relationship_card_authority(card, selected, at_ms=at_ms)
 
         try:
             relationship_context = RelationshipServiceContext(
@@ -1257,6 +1289,15 @@ def load_runtime(
                 raise RuntimeError("runtime_route_provider_rejected") from exception
             providers[binding.provider_ref] = instance
         router = RouteCoordinator(communication, route_profile, providers, clock=clock)
+
+    def current_tribe_provider(tribe_ref: str, at_ms: int) -> VerifiedTribeSnapshot:
+        assert relationship_context is not None
+        with relationship_context.store.authorization_view(
+            at_ms=at_ms,
+            card_verifier=relationship_context.card_verifier,
+        ) as view:
+            return view.snapshot(tribe_ref)
+
     try:
         scopes = ScopeResolver(
             ledger,
@@ -1267,12 +1308,7 @@ def load_runtime(
             tribes=tribes,
             peer_embodiments=frozenset(peer_endpoints),
             tribe_provider=(
-                None
-                if relationship_context is None
-                else lambda tribe_ref, at_ms: relationship_context.store.view(
-                    at_ms=at_ms,
-                    card_verifier=relationship_context.card_verifier,
-                ).snapshot(tribe_ref)
+                None if relationship_context is None else current_tribe_provider
             ),
         )
     except ScopeError as exception:

@@ -1,0 +1,1360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/hosted/v8/bundle.schema.json",
+  "title": "Hosted runtime V8; expired finite roles unavailable, not startup deadlines",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "operator_capability_binding",
+    "runtime_id",
+    "runtime_label",
+    "control_artifacts",
+    "control_head",
+    "manifest",
+    "authority_history",
+    "credentials",
+    "incarnations",
+    "binding",
+    "binding_activation",
+    "provisional_history",
+    "local_origin",
+    "ledger",
+    "socket",
+    "keystore",
+    "capabilities",
+    "routing",
+    "scopes",
+    "peer_transport",
+    "species",
+    "sources",
+    "relationships"
+  ],
+  "properties": {
+    "schema": {
+      "const": "dm.runtime.bundle/v8"
+    },
+    "operator_capability_binding": {
+      "$ref": "#/$defs/operatorCapabilityBinding"
+    },
+    "runtime_id": {
+      "type": "string",
+      "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "runtime_label": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "control_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "control_head": {
+      "$ref": "#/$defs/artifactId"
+    },
+    "manifest": {
+      "type": "object"
+    },
+    "authority_history": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/authorityHistoryEntry"
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/artifact"
+          },
+          {
+            "$ref": "#/$defs/credentialV2"
+          }
+        ]
+      }
+    },
+    "incarnations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "binding": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/artifact"
+        }
+      ]
+    },
+    "binding_activation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/artifact"
+        }
+      ]
+    },
+    "provisional_history": {
+      "type": "null"
+    },
+    "local_origin": {
+      "$ref": "#/$defs/origin"
+    },
+    "ledger": {
+      "$ref": "#/$defs/filename"
+    },
+    "socket": {
+      "$ref": "#/$defs/filename"
+    },
+    "keystore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filename",
+        "counter",
+        "signing_slot"
+      ],
+      "properties": {
+        "filename": {
+          "$ref": "#/$defs/filename"
+        },
+        "counter": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "signing_slot": {
+          "type": "string",
+          "pattern": "^runtime\\.signing\\.v1:[A-Za-z0-9._:-]{1,128}$"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "allOf": [
+        {
+          "contains": {
+            "$ref": "#/$defs/communicationCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/curatorCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/memoryCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/observeCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/relationshipsCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/reviewCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/routesCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/sourcesCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/speciesCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/weaveCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/hostCuratorCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "$ref": "#/$defs/hostStatusCapability"
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "descriptor",
+          "profile",
+          "runtime_id",
+          "secret_slot"
+        ],
+        "properties": {
+          "descriptor": {
+            "type": "object"
+          },
+          "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "client_config_filename",
+              "client_directory",
+              "client_key_filename",
+              "role",
+              "schema"
+            ],
+            "properties": {
+              "client_config_filename": {
+                "const": "client.json"
+              },
+              "client_directory": {
+                "type": "string",
+                "enum": [
+                  ".",
+                  "operator-clients/communication",
+                  "operator-clients/curator",
+                  "operator-clients/memory",
+                  "operator-clients/relationships",
+                  "operator-clients/review",
+                  "operator-clients/routes",
+                  "operator-clients/sources",
+                  "operator-clients/species",
+                  "operator-clients/weave",
+                  "host-clients/curator",
+                  "host-clients/status"
+                ]
+              },
+              "client_key_filename": {
+                "type": "string",
+                "enum": [
+                  "capability.key",
+                  "client.key"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "communication",
+                  "curator",
+                  "memory",
+                  "observe",
+                  "relationships",
+                  "review",
+                  "routes",
+                  "sources",
+                  "species",
+                  "status",
+                  "weave"
+                ]
+              },
+              "schema": {
+                "enum": [
+                  "dm.operator.capability-profile/v1",
+                  "dm.host.capability-profile/v1"
+                ]
+              }
+            }
+          },
+          "runtime_id": {
+            "type": "string",
+            "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+          },
+          "secret_slot": {
+            "type": "string",
+            "pattern": "^runtime\\.(?:host-)?capability\\.v1:[A-Za-z0-9._:-]{1,128}$"
+          }
+        }
+      }
+    },
+    "routing": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "filename",
+            "profile"
+          ],
+          "properties": {
+            "filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "profile": {
+              "type": "object"
+            }
+          }
+        }
+      ]
+    },
+    "scopes": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "body_capabilities",
+            "relationships_filename"
+          ],
+          "properties": {
+            "body_capabilities": {
+              "type": "array",
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "relationships_filename": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/filename"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "peer_transport": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "encryption_slot",
+            "exchange_filename",
+            "listen_host",
+            "listen_port",
+            "outbox_filename",
+            "targets"
+          ],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "encryption_slot": {
+              "type": "string",
+              "pattern": "^peer\\.encryption\\.v1:[A-Za-z0-9._:-]{1,128}$"
+            },
+            "exchange_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "outbox_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "listen_host": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^\\S+$"
+            },
+            "listen_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "targets": {
+              "type": "array",
+              "maxItems": 255,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "embodiment_id",
+                  "endpoint",
+                  "timeout_ms"
+                ],
+                "properties": {
+                  "embodiment_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "pattern": "^https?://[^/?#]+(?::[0-9]+)?/dm-peer/v1$",
+                    "maxLength": 2048
+                  },
+                  "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30000
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "species": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cas_filename",
+            "enrollment_release_id",
+            "local_policy_ref",
+            "pointer_filename",
+            "registry_filename",
+            "species_id"
+          ],
+          "properties": {
+            "cas_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "enrollment_release_id": {
+              "type": "string",
+              "pattern": "^dm:species-release:v0:[A-Za-z0-9_-]{43}$"
+            },
+            "local_policy_ref": {
+              "$ref": "#/$defs/contentRef"
+            },
+            "pointer_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "registry_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "species_id": {
+              "type": "string",
+              "pattern": "^dm:species:v0:[A-Za-z0-9_-]{43}$"
+            }
+          }
+        }
+      ]
+    },
+    "sources": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cas_filename",
+            "known_beings"
+          ],
+          "properties": {
+            "cas_filename": {
+              "$ref": "#/$defs/filename"
+            },
+            "known_beings": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "authority_history",
+                  "control_artifacts",
+                  "control_head",
+                  "credentials",
+                  "incarnations",
+                  "ledger_filename",
+                  "manifest"
+                ],
+                "properties": {
+                  "authority_history": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "$ref": "#/$defs/authorityHistoryEntry"
+                    }
+                  },
+                  "control_artifacts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1024,
+                    "items": {
+                      "$ref": "#/$defs/artifact"
+                    }
+                  },
+                  "control_head": {
+                    "$ref": "#/$defs/artifactId"
+                  },
+                  "credentials": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "items": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/artifact"
+                        },
+                        {
+                          "$ref": "#/$defs/credentialV2"
+                        }
+                      ]
+                    }
+                  },
+                  "incarnations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "items": {
+                      "$ref": "#/$defs/artifact"
+                    }
+                  },
+                  "ledger_filename": {
+                    "$ref": "#/$defs/filename"
+                  },
+                  "manifest": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "relationships": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known_being_refs",
+            "store_filename"
+          ],
+          "properties": {
+            "known_being_refs": {
+              "type": "array",
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "store_filename": {
+              "$ref": "#/$defs/filename"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "operatorCapabilityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "body",
+        "signature"
+      ],
+      "properties": {
+        "schema": {
+          "const": "dm.operator.capability-binding/v1"
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime_id",
+            "runtime_label",
+            "being_ref",
+            "origin",
+            "signing_key_id",
+            "capability_set_hash"
+          ],
+          "properties": {
+            "runtime_id": {
+              "type": "string",
+              "pattern": "^dm:runtime:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "runtime_label": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "being_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "origin": {
+              "$ref": "#/$defs/origin"
+            },
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "capability_set_hash": {
+              "type": "string",
+              "pattern": "^dm:operator-capability-set:v1:[A-Za-z0-9_-]{43}$"
+            }
+          }
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "key_id",
+            "value"
+          ],
+          "properties": {
+            "algorithm": {
+              "const": "Ed25519"
+            },
+            "key_id": {
+              "type": "string",
+              "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{86}$"
+            }
+          }
+        }
+      }
+    },
+    "communicationCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "communication"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "curatorCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "curator"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "memoryCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "memory"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "observeCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "observe"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "relationshipsCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "relationships"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "reviewCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "review"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "routesCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "routes"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "sourcesCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "sources"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "speciesCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "species"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "weaveCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "weave"
+            },
+            "schema": {
+              "const": "dm.operator.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "hostCuratorCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "curator"
+            },
+            "schema": {
+              "const": "dm.host.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "hostStatusCapability": {
+      "type": "object",
+      "required": [
+        "profile"
+      ],
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "role",
+            "schema"
+          ],
+          "properties": {
+            "role": {
+              "const": "status"
+            },
+            "schema": {
+              "const": "dm.host.capability-profile/v1"
+            }
+          }
+        }
+      }
+    },
+    "authorityHistoryEntry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "successor"
+          ],
+          "properties": {
+            "manifest": {
+              "type": "object"
+            },
+            "successor": {
+              "type": "object"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "control_artifacts",
+            "control_head",
+            "credentials",
+            "incarnations",
+            "successor"
+          ],
+          "properties": {
+            "manifest": {
+              "type": "object"
+            },
+            "control_artifacts": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1024,
+              "items": {
+                "$ref": "#/$defs/artifact"
+              }
+            },
+            "control_head": {
+              "$ref": "#/$defs/artifactId"
+            },
+            "credentials": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/artifact"
+                  },
+                  {
+                    "$ref": "#/$defs/credentialV2"
+                  }
+                ]
+              }
+            },
+            "incarnations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "$ref": "#/$defs/artifact"
+              }
+            },
+            "successor": {
+              "type": "object"
+            }
+          }
+        }
+      ]
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^dm:identity:v1:[A-Za-z0-9_-]{43}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "body",
+        "kind",
+        "schema",
+        "signatures"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/artifactId"
+        },
+        "body": {
+          "type": "object"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "schema": {
+          "const": "dm.identity.artifact/v1"
+        },
+        "signatures": {
+          "type": "array"
+        }
+      }
+    },
+    "filename": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "principal_id"
+      ],
+      "properties": {
+        "body_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "embodiment_id": {
+          "type": "string"
+        },
+        "incarnation_id": {
+          "type": "string"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "contentRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_length",
+        "content_id",
+        "media_type",
+        "sha256"
+      ],
+      "properties": {
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 67108864
+        },
+        "content_id": {
+          "type": "string",
+          "pattern": "^dm:species-content:v0:[A-Za-z0-9_-]{43}$"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
+      }
+    },
+    "credentialV2_b64_32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "credentialV2_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "key_id",
+        "public"
+      ],
+      "properties": {
+        "algorithm": {
+          "enum": [
+            "Ed25519",
+            "X25519"
+          ]
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "public": {
+          "$ref": "#/$defs/credentialV2_b64_32"
+        }
+      }
+    },
+    "credentialV2_signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "key_id",
+        "role",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519"
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^dm:key:v1:[A-Za-z0-9_-]{43}$"
+        },
+        "role": {
+          "enum": [
+            "root-authorization",
+            "embodiment-acceptance"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "credentialV2_transportPrincipal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "principal_id",
+        "scheme"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/credentialV2_key"
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scheme": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "credentialV2_embodimentCredential": {
+      "allOf": [{"if": {"properties": {"validity": {"properties": {"mode": {"const": "until-revoked"}}}}}, "then": {"properties": {"purposes": {"contains": {"const": "messages"}}}}}],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "being_ref",
+        "body_ref",
+        "control_head",
+        "embodiment_id",
+        "encryption_key",
+        "purposes",
+        "revocation_generation",
+        "signing_key",
+        "transport_principals",
+        "validity"
+      ],
+      "properties": {
+        "being_ref": {
+          "type": "string",
+          "pattern": "^dm:being:v1:"
+        },
+        "body_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "control_head": {
+          "type": "string",
+          "pattern": "^dm:identity:v1:"
+        },
+        "embodiment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "encryption_key": {
+          "$ref": "#/$defs/credentialV2_key"
+        },
+        "purposes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "revocation_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "signing_key": {
+          "$ref": "#/$defs/credentialV2_key"
+        },
+        "transport_principals": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/credentialV2_transportPrincipal"
+          }
+        },
+        "validity": {
+          "$ref": "#/$defs/credentialV2_validity"
+        }
+      }
+    },
+    "credentialV2_validity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "not_before_ms"
+          ],
+          "properties": {
+            "mode": {
+              "const": "until-revoked"
+            },
+            "not_before_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "not_before_ms",
+            "not_after_ms"
+          ],
+          "properties": {
+            "mode": {
+              "const": "finite"
+            },
+            "not_before_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "not_after_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      ]
+    },
+    "credentialV2": {
+      "title": "V2 root-authorized embodiment credential",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "artifact_id",
+        "body",
+        "signatures"
+      ],
+      "properties": {
+        "schema": {
+          "const": "dm.identity.artifact/v2"
+        },
+        "kind": {
+          "const": "embodiment-credential"
+        },
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^dm:identity:v2:[A-Za-z0-9_-]{43}$"
+        },
+        "body": {
+          "$ref": "#/$defs/credentialV2_embodimentCredential"
+        },
+        "signatures": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/credentialV2_signature"
+          }
+        }
+      }
+    }
+  }
+}

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -138,6 +140,21 @@ MAX_ARTIFACT_BYTES: Final = 1024 * 1024
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 TARGET_PROFILE_SCHEMA: Final = "dm.operator.rebirth-target-profile/v1"
 PREPARATION_SCHEMA: Final = "dm.operator.rebirth-preparation/v1"
+MESSAGING_MIGRATION_APPROVAL_SCHEMA: Final = (
+    "dm.operator.messaging-permissions-migration-approval/v1"
+)
+MESSAGING_MIGRATION_APPROVAL_DOMAIN: Final = (
+    "dm.operator.messaging-permissions-migration-approval/v1"
+)
+MESSAGING_MIGRATION_JOURNAL_SCHEMA: Final = (
+    "dm.operator.messaging-permissions-migration-journal/v1"
+)
+MESSAGING_MIGRATION_JOURNAL_DOMAIN: Final = b"daimon/messaging-migration-journal/v1\x00"
+MESSAGING_MIGRATION_FLOOR_SCHEMA: Final = (
+    "dm.operator.messaging-permissions-generation-floor/v1"
+)
+MESSAGING_MIGRATION_FLOOR_DOMAIN: Final = b"daimon/messaging-migration-floor/v1\x00"
+MESSAGING_MIGRATION_KEY_DOMAIN: Final = b"daimon/messaging-migration-key/v1\x00"
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -1977,7 +1994,7 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
         "relationships",
     }
     bundle = _closed(value, fields, "invalid_rebirth_runtime_bundle")
-    if bundle["schema"] != "dm.runtime.bundle/v7":
+    if bundle["schema"] not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}:
         raise RebirthError("unsupported_rebirth_runtime_bundle")
     if any(
         bundle[field] is not None
@@ -2105,6 +2122,228 @@ def _owner_directory(path: Path, code: str) -> Path:
     return absolute
 
 
+@dataclass
+class _HeldPrivateFile:
+    root: _MessagingMigrationRoot
+    name: str
+    descriptor: int
+    identity: tuple[int, int]
+    code: str
+    maximum_size: int
+
+    def read(self) -> bytes:
+        info = self.verify_identity()
+        os.lseek(self.descriptor, 0, os.SEEK_SET)
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := os.read(self.descriptor, 1024 * 1024):
+            size += len(chunk)
+            if size > self.maximum_size:
+                raise RebirthError(self.code)
+            chunks.append(chunk)
+        after = self.verify_identity()
+        if (info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise RebirthError(self.code)
+        return b"".join(chunks)
+
+    def verify_identity(self) -> os.stat_result:
+        self.root.validate()
+        try:
+            path_info = os.stat(
+                self.name,
+                dir_fd=self.root.descriptor,
+                follow_symlinks=False,
+            )
+            info = os.fstat(self.descriptor)
+        except OSError as exception:
+            raise RebirthError(self.code) from exception
+        if (
+            (path_info.st_dev, path_info.st_ino) != self.identity
+            or (info.st_dev, info.st_ino) != self.identity
+            or not stat.S_ISREG(path_info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or path_info.st_uid != os.geteuid()
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(path_info.st_mode) & 0o077
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or path_info.st_nlink != 1
+            or info.st_nlink != 1
+            or path_info.st_size > self.maximum_size
+            or info.st_size > self.maximum_size
+        ):
+            raise RebirthError(self.code)
+        return info
+
+    def verify_bytes(self, expected: bytes, *, changed_code: str | None = None) -> None:
+        if not hmac.compare_digest(self.read(), expected):
+            raise RebirthError(changed_code or self.code)
+
+    def close(self) -> None:
+        os.close(self.descriptor)
+
+
+class _MessagingMigrationRoot:
+    """Retained owner directory and per-runtime serialization lock."""
+
+    def __init__(self, path: Path, bundle_name: str):
+        self.path = _owner_directory(path, "messaging_migration_state_root_rejected")
+        before = self.path.lstat()
+        try:
+            self.descriptor = os.open(
+                self.path,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except OSError as exception:
+            raise RebirthError("messaging_migration_state_root_rejected") from exception
+        after = os.fstat(self.descriptor)
+        self.identity = (after.st_dev, after.st_ino)
+        if (
+            (before.st_dev, before.st_ino) != self.identity
+            or not stat.S_ISDIR(after.st_mode)
+            or after.st_uid != os.geteuid()
+            or stat.S_IMODE(after.st_mode) & 0o077
+        ):
+            os.close(self.descriptor)
+            raise RebirthError("messaging_migration_state_root_rejected")
+        self.lock_name = f".{bundle_name}.messaging-v2.lock"
+        self.lock_descriptor: int | None = None
+        try:
+            self.lock_descriptor = os.open(
+                self.lock_name,
+                os.O_RDWR
+                | os.O_CREAT
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=self.descriptor,
+            )
+            lock_info = os.fstat(self.lock_descriptor)
+            if (
+                not stat.S_ISREG(lock_info.st_mode)
+                or lock_info.st_uid != os.geteuid()
+                or stat.S_IMODE(lock_info.st_mode) != 0o600
+                or lock_info.st_nlink != 1
+            ):
+                raise RebirthError("messaging_migration_lock_rejected")
+            fcntl.flock(self.lock_descriptor, fcntl.LOCK_EX)
+            self.lock_identity = (lock_info.st_dev, lock_info.st_ino)
+            self.validate()
+        except BaseException:
+            self.close()
+            raise
+
+    def __enter__(self) -> _MessagingMigrationRoot:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self.lock_descriptor is not None:
+            with suppress(OSError):
+                fcntl.flock(self.lock_descriptor, fcntl.LOCK_UN)
+            with suppress(OSError):
+                os.close(self.lock_descriptor)
+            self.lock_descriptor = None
+        with suppress(OSError, AttributeError):
+            os.close(self.descriptor)
+
+    def validate(self) -> None:
+        try:
+            path_info = self.path.lstat()
+            info = os.fstat(self.descriptor)
+            if self.lock_descriptor is None:
+                raise OSError("closed migration lock")
+            lock_path_info = os.stat(
+                self.lock_name,
+                dir_fd=self.descriptor,
+                follow_symlinks=False,
+            )
+            lock_info = os.fstat(self.lock_descriptor)
+        except OSError as exception:
+            raise RebirthError("messaging_migration_state_root_changed") from exception
+        if (
+            (path_info.st_dev, path_info.st_ino) != self.identity
+            or (info.st_dev, info.st_ino) != self.identity
+            or not stat.S_ISDIR(path_info.st_mode)
+            or not stat.S_ISDIR(info.st_mode)
+            or path_info.st_uid != os.geteuid()
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(path_info.st_mode) & 0o077
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or (lock_path_info.st_dev, lock_path_info.st_ino) != self.lock_identity
+            or (lock_info.st_dev, lock_info.st_ino) != self.lock_identity
+            or lock_path_info.st_nlink != 1
+            or lock_info.st_nlink != 1
+        ):
+            raise RebirthError("messaging_migration_state_root_changed")
+
+    def open_file(
+        self,
+        name: str,
+        code: str,
+        *,
+        minimum_size: int = 0,
+        maximum_size: int = MAX_TIME,
+    ) -> _HeldPrivateFile:
+        self.validate()
+        descriptor: int | None = None
+        try:
+            before = os.stat(name, dir_fd=self.descriptor, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or stat.S_IMODE(before.st_mode) & 0o077
+                or before.st_nlink != 1
+                or not minimum_size <= before.st_size <= maximum_size
+            ):
+                raise RebirthError(code)
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=self.descriptor,
+            )
+            after = os.fstat(descriptor)
+            identity = (after.st_dev, after.st_ino)
+            if (
+                (before.st_dev, before.st_ino) != identity
+                or not stat.S_ISREG(after.st_mode)
+                or after.st_uid != os.geteuid()
+                or stat.S_IMODE(after.st_mode) & 0o077
+                or after.st_nlink != 1
+                or not minimum_size <= after.st_size <= maximum_size
+            ):
+                raise RebirthError(code)
+            return _HeldPrivateFile(
+                self,
+                name,
+                descriptor,
+                identity,
+                code,
+                maximum_size,
+            )
+        except RebirthError:
+            if descriptor is not None:
+                os.close(descriptor)
+            raise
+        except OSError as exception:
+            if descriptor is not None:
+                os.close(descriptor)
+            raise RebirthError(code) from exception
+
+    def fsync(self) -> None:
+        os.fsync(self.descriptor)
+
+
 def _reject_symlink_ancestors(path: Path, code: str) -> None:
     ancestor = path.parent
     while ancestor != ancestor.parent:
@@ -2137,6 +2376,7 @@ def _owner_file_descriptor(
         or not stat.S_ISREG(before.st_mode)
         or before.st_uid != os.geteuid()
         or stat.S_IMODE(before.st_mode) & 0o077
+        or before.st_nlink != 1
         or not minimum_size <= before.st_size <= maximum_size
     ):
         raise RebirthError(code)
@@ -2152,6 +2392,7 @@ def _owner_file_descriptor(
             or not stat.S_ISREG(after.st_mode)
             or after.st_uid != os.geteuid()
             or stat.S_IMODE(after.st_mode) & 0o077
+            or after.st_nlink != 1
             or not minimum_size <= after.st_size <= maximum_size
         ):
             raise RebirthError(code)
@@ -2188,6 +2429,1210 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _messaging_migration_key_id(key: bytes) -> str:
+    if not isinstance(key, bytes) or len(key) < 32:
+        raise RebirthError("messaging_migration_journal_key_rejected")
+    return hashlib.sha256(MESSAGING_MIGRATION_KEY_DOMAIN + key).hexdigest()
+
+
+def _messaging_migration_hash(value: Any) -> str:
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def _messaging_migration_head(value: Any) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise RebirthError("invalid_messaging_migration_head")
+    return value
+
+
+def _messaging_migration_owner_key(bundle: Mapping[str, Any]) -> dict[str, str]:
+    try:
+        authority = authority_from_runtime_bundle(bundle)
+        origin = _origin(bundle["local_origin"])
+        member = authority.manifest.member(
+            origin["embodiment_id"], origin["incarnation_id"]
+        )
+        descriptor = authority.credentials[member["embodiment_credential_id"]]["body"][
+            "signing_key"
+        ]
+        row = _closed(
+            descriptor,
+            {"algorithm", "key_id", "public"},
+            "messaging_migration_owner_key_rejected",
+        )
+        public = unb64url(str(row["public"]), length=32)
+        if row["algorithm"] != "Ed25519" or row["key_id"] != key_id("Ed25519", public):
+            raise RebirthError("messaging_migration_owner_key_rejected")
+        return {key: str(row[key]) for key in ("algorithm", "key_id", "public")}
+    except RebirthError:
+        raise
+    except (KeyError, TypeError, ValueError) as exception:
+        raise RebirthError("messaging_migration_owner_key_rejected") from exception
+
+
+def _messaging_migration_file_hash(path: Path) -> str:
+    descriptor = _owner_file_descriptor(
+        path,
+        "messaging_migration_preserved_reference_rejected",
+        maximum_size=MAX_ARTIFACT_BYTES * 64,
+    )
+    try:
+        hasher = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            hasher.update(chunk)
+        return hasher.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _messaging_migration_journal_key(path: Path) -> bytes:
+    descriptor = _owner_file_descriptor(
+        path,
+        "messaging_migration_journal_key_rejected",
+        minimum_size=32,
+        maximum_size=64,
+    )
+    try:
+        key = os.read(descriptor, 65)
+    finally:
+        os.close(descriptor)
+    _messaging_migration_key_id(key)
+    return key
+
+
+def _messaging_migration_references(
+    state_root: Path, references: Mapping[str, str]
+) -> list[dict[str, str]]:
+    if set(references) != {"inbox", "outbox", "rpc"}:
+        raise RebirthError("messaging_migration_preserved_references_incomplete")
+    result: list[dict[str, str]] = []
+    for role in sorted(references):
+        name = references[role]
+        if not isinstance(name, str) or _LABEL.fullmatch(name) is None:
+            raise RebirthError("messaging_migration_preserved_reference_rejected")
+        result.append(
+            {
+                "role": role,
+                "path": name,
+                "sha256": _messaging_migration_file_hash(state_root / name),
+            }
+        )
+    return result
+
+
+def _messaging_migration_authority_binding(
+    bundle: Mapping[str, Any], *, policy_head: str, relationship_head: str
+) -> dict[str, Any]:
+    authority = authority_from_runtime_bundle(bundle)
+    return {
+        "bundle_sha256": _messaging_migration_hash(bundle),
+        "control_head": authority.state.head,
+        "manifest_hash": authority.manifest.digest,
+        "policy_head": _messaging_migration_head(policy_head),
+        "relationship_head": _messaging_migration_head(relationship_head),
+        "authority_history": copy.deepcopy(bundle["authority_history"]),
+        "authority_history_sha256": _messaging_migration_hash(
+            bundle["authority_history"]
+        ),
+        "current_revocations": copy.deepcopy(authority.state.revocations),
+        "current_revocations_sha256": _messaging_migration_hash(
+            authority.state.revocations
+        ),
+    }
+
+
+def create_messaging_permissions_migration_approval(
+    old_bundle: Mapping[str, Any],
+    new_bundle: Mapping[str, Any],
+    *,
+    state_root: Path,
+    migration_id: str,
+    output_generation: int,
+    old_policy_head: str,
+    new_policy_head: str,
+    old_relationship_head: str,
+    new_relationship_head: str,
+    capability_journal_identity: str,
+    journal_key: bytes,
+    preserved_references: Mapping[str, str],
+    owner_signing_seed: bytes,
+) -> dict[str, Any]:
+    """Sign one exact V1-to-V2 messaging-permissions publication transaction."""
+
+    root = _owner_directory(state_root, "messaging_migration_state_root_rejected")
+    try:
+        if str(uuid.UUID(migration_id)) != migration_id:
+            raise ValueError("migration id")
+    except (TypeError, ValueError) as exception:
+        raise RebirthError("invalid_messaging_migration_id") from exception
+    if (
+        not isinstance(output_generation, int)
+        or isinstance(output_generation, bool)
+        or output_generation < 1
+    ):
+        raise RebirthError("invalid_messaging_migration_generation")
+    if (
+        not isinstance(capability_journal_identity, str)
+        or not capability_journal_identity.startswith("dm:capability-journal:")
+        or len(capability_journal_identity.encode()) > 256
+    ):
+        raise RebirthError("invalid_messaging_migration_capability_journal")
+    if (
+        old_bundle.get("schema") != "dm.runtime.bundle/v7"
+        or new_bundle.get("schema") != "dm.runtime.bundle/v8"
+    ):
+        raise RebirthError("messaging_migration_not_v1_to_v2")
+    owner_key = _messaging_migration_owner_key(old_bundle)
+    if owner_key != signing_descriptor(owner_signing_seed):
+        raise RebirthError("messaging_migration_owner_key_rejected")
+    if _messaging_migration_owner_key(new_bundle) != owner_key:
+        raise RebirthError("messaging_migration_owner_continuity_rejected")
+    if any(
+        old_bundle.get(field) != new_bundle.get(field)
+        for field in ("runtime_id", "runtime_label", "local_origin")
+    ):
+        raise RebirthError("messaging_migration_runtime_identity_changed")
+    body = {
+        "migration_id": migration_id,
+        "runtime_id": old_bundle["runtime_id"],
+        "old": _messaging_migration_authority_binding(
+            old_bundle,
+            policy_head=old_policy_head,
+            relationship_head=old_relationship_head,
+        ),
+        "new": _messaging_migration_authority_binding(
+            new_bundle,
+            policy_head=new_policy_head,
+            relationship_head=new_relationship_head,
+        ),
+        "capability_journal": {
+            "identity": capability_journal_identity,
+            "key_id": _messaging_migration_key_id(journal_key),
+        },
+        "preserved_references": _messaging_migration_references(
+            root, preserved_references
+        ),
+        "output_generation": output_generation,
+        "owner_signing_key": owner_key,
+    }
+    return {
+        "schema": MESSAGING_MIGRATION_APPROVAL_SCHEMA,
+        "body": body,
+        "signature": _request_signature(
+            owner_signing_seed,
+            body,
+            domain=MESSAGING_MIGRATION_APPROVAL_DOMAIN,
+        ),
+    }
+
+
+def _verify_messaging_migration_approval(value: Any) -> dict[str, Any]:
+    approval = _closed(
+        value,
+        {"schema", "body", "signature"},
+        "invalid_messaging_migration_approval",
+    )
+    body = _closed(
+        approval["body"],
+        {
+            "migration_id",
+            "runtime_id",
+            "old",
+            "new",
+            "capability_journal",
+            "preserved_references",
+            "output_generation",
+            "owner_signing_key",
+        },
+        "invalid_messaging_migration_approval",
+    )
+    owner_key = _closed(
+        body["owner_signing_key"],
+        {"algorithm", "key_id", "public"},
+        "invalid_messaging_migration_approval",
+    )
+    signature = _closed(
+        approval["signature"],
+        {"alg", "kid", "value"},
+        "invalid_messaging_migration_approval",
+    )
+    try:
+        if str(uuid.UUID(str(body["migration_id"]))) != body["migration_id"]:
+            raise ValueError("migration id")
+        _bounded(body["runtime_id"], "invalid_messaging_migration_approval")
+        if (
+            not isinstance(body["output_generation"], int)
+            or isinstance(body["output_generation"], bool)
+            or body["output_generation"] < 1
+        ):
+            raise ValueError("generation")
+        capability_journal = _closed(
+            body["capability_journal"],
+            {"identity", "key_id"},
+            "invalid_messaging_migration_approval",
+        )
+        if (
+            not isinstance(capability_journal["identity"], str)
+            or not capability_journal["identity"].startswith("dm:capability-journal:")
+            or len(capability_journal["identity"].encode()) > 256
+        ):
+            raise ValueError("capability journal")
+        _messaging_migration_head(capability_journal["key_id"])
+        for name in ("old", "new"):
+            binding = _closed(
+                body[name],
+                {
+                    "bundle_sha256",
+                    "control_head",
+                    "manifest_hash",
+                    "policy_head",
+                    "relationship_head",
+                    "authority_history",
+                    "authority_history_sha256",
+                    "current_revocations",
+                    "current_revocations_sha256",
+                },
+                "invalid_messaging_migration_approval",
+            )
+            _bounded(binding["control_head"], "invalid_messaging_migration_approval")
+            for field in (
+                "bundle_sha256",
+                "manifest_hash",
+                "policy_head",
+                "relationship_head",
+                "authority_history_sha256",
+                "current_revocations_sha256",
+            ):
+                _messaging_migration_head(binding[field])
+            if (
+                not isinstance(binding["authority_history"], list)
+                or not isinstance(binding["current_revocations"], Mapping)
+                or binding["authority_history_sha256"]
+                != _messaging_migration_hash(binding["authority_history"])
+                or binding["current_revocations_sha256"]
+                != _messaging_migration_hash(binding["current_revocations"])
+            ):
+                raise ValueError("authority binding")
+        references = body["preserved_references"]
+        if not isinstance(references, list) or len(references) != 3:
+            raise ValueError("references")
+        roles: set[str] = set()
+        for value in references:
+            reference = _closed(
+                value,
+                {"role", "path", "sha256"},
+                "invalid_messaging_migration_approval",
+            )
+            role = reference["role"]
+            if (
+                role not in {"inbox", "outbox", "rpc"}
+                or role in roles
+                or not isinstance(reference["path"], str)
+                or _LABEL.fullmatch(reference["path"]) is None
+            ):
+                raise ValueError("references")
+            _messaging_migration_head(reference["sha256"])
+            roles.add(role)
+        if roles != {"inbox", "outbox", "rpc"}:
+            raise ValueError("references")
+        public = unb64url(str(owner_key["public"]), length=32)
+        if (
+            approval["schema"] != MESSAGING_MIGRATION_APPROVAL_SCHEMA
+            or owner_key["algorithm"] != "Ed25519"
+            or owner_key["key_id"] != key_id("Ed25519", public)
+            or signature["alg"] != "Ed25519"
+            or signature["kid"] != owner_key["key_id"]
+        ):
+            raise ValueError("identity")
+        Ed25519PublicKey.from_public_bytes(public).verify(
+            unb64url(str(signature["value"]), length=64),
+            domain_bytes(MESSAGING_MIGRATION_APPROVAL_DOMAIN, body),
+        )
+    except RebirthError as exception:
+        raise RebirthError("invalid_messaging_migration_approval") from exception
+    except (InvalidSignature, KeyError, TypeError, ValueError) as exception:
+        raise RebirthError("invalid_messaging_migration_approval") from exception
+    return copy.deepcopy(dict(approval))
+
+
+def _authenticated_messaging_migration_journal(
+    core: Mapping[str, Any], journal_key: bytes
+) -> dict[str, Any]:
+    result = copy.deepcopy(dict(core))
+    result["authentication"] = {
+        "alg": "HMAC-SHA256",
+        "key_id": _messaging_migration_key_id(journal_key),
+        "value": hmac.new(
+            journal_key,
+            MESSAGING_MIGRATION_JOURNAL_DOMAIN + canonical_bytes(core),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+    return result
+
+
+def _verify_messaging_migration_journal(
+    value: Any, journal_key: bytes
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema",
+        "state",
+        "approval",
+        "candidate_bundle",
+        "authentication",
+    }:
+        raise RebirthError("messaging_migration_journal_authentication_failed")
+    core = {key: copy.deepcopy(value[key]) for key in value if key != "authentication"}
+    expected = _authenticated_messaging_migration_journal(core, journal_key)
+    if not hmac.compare_digest(canonical_bytes(value), canonical_bytes(expected)):
+        raise RebirthError("messaging_migration_journal_authentication_failed")
+    if value["schema"] != MESSAGING_MIGRATION_JOURNAL_SCHEMA or value["state"] not in {
+        "prepared",
+        "completed",
+    }:
+        raise RebirthError("messaging_migration_journal_authentication_failed")
+    approval = _verify_messaging_migration_approval(value["approval"])
+    if approval["body"]["capability_journal"]["key_id"] != _messaging_migration_key_id(
+        journal_key
+    ) or approval["body"]["new"]["bundle_sha256"] != _messaging_migration_hash(
+        value["candidate_bundle"]
+    ):
+        raise RebirthError("messaging_migration_journal_authentication_failed")
+    return copy.deepcopy(dict(value))
+
+
+def _authenticated_messaging_migration_floor(
+    body: Mapping[str, Any], journal_key: bytes
+) -> dict[str, Any]:
+    result = copy.deepcopy(dict(body))
+    result["authentication"] = {
+        "alg": "HMAC-SHA256",
+        "key_id": _messaging_migration_key_id(journal_key),
+        "value": hmac.new(
+            journal_key,
+            MESSAGING_MIGRATION_FLOOR_DOMAIN + canonical_bytes(body),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+    return result
+
+
+def _verify_messaging_migration_floor(value: Any, journal_key: bytes) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema",
+        "generation",
+        "migration_id",
+        "output_bundle_sha256",
+        "capability_journal",
+        "authentication",
+    }:
+        raise RebirthError("messaging_migration_generation_floor_authentication_failed")
+    body = {key: copy.deepcopy(value[key]) for key in value if key != "authentication"}
+    expected = _authenticated_messaging_migration_floor(body, journal_key)
+    if (
+        not hmac.compare_digest(canonical_bytes(value), canonical_bytes(expected))
+        or value["schema"] != MESSAGING_MIGRATION_FLOOR_SCHEMA
+        or not isinstance(value["generation"], int)
+        or isinstance(value["generation"], bool)
+        or value["generation"] < 1
+    ):
+        raise RebirthError("messaging_migration_generation_floor_authentication_failed")
+    return copy.deepcopy(dict(value))
+
+
+def _messaging_migration_floor_for_approval(
+    approval: Mapping[str, Any], journal_key: bytes
+) -> dict[str, Any]:
+    body = approval["body"]
+    return _authenticated_messaging_migration_floor(
+        {
+            "schema": MESSAGING_MIGRATION_FLOOR_SCHEMA,
+            "generation": body["output_generation"],
+            "migration_id": body["migration_id"],
+            "output_bundle_sha256": body["new"]["bundle_sha256"],
+            "capability_journal": copy.deepcopy(body["capability_journal"]),
+        },
+        journal_key,
+    )
+
+
+def _check_messaging_migration_generation_floor(
+    root: _MessagingMigrationRoot,
+    floor_name: str,
+    expected: Mapping[str, Any],
+    journal_key: bytes,
+) -> tuple[dict[str, Any] | None, _HeldPrivateFile | None]:
+    try:
+        floor_file = root.open_file(
+            floor_name,
+            "messaging_migration_generation_floor_rejected",
+            minimum_size=1,
+            maximum_size=4 * MAX_ARTIFACT_BYTES,
+        )
+    except RebirthError as exception:
+        try:
+            os.stat(floor_name, dir_fd=root.descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return None, None
+        raise exception
+    current = _verify_messaging_migration_floor(
+        _private_document(floor_file, "messaging_migration_generation_floor_rejected"),
+        journal_key,
+    )
+    current_generation = current["generation"]
+    expected_generation = expected["generation"]
+    if current_generation > expected_generation:
+        floor_file.close()
+        raise RebirthError("messaging_migration_stale_generation")
+    if current_generation == expected_generation and canonical_bytes(
+        current
+    ) != canonical_bytes(expected):
+        floor_file.close()
+        raise RebirthError("messaging_migration_generation_conflict")
+    return current, floor_file
+
+
+def _messaging_migration_paths(root: Path, bundle_name: str) -> tuple[Path, Path]:
+    if not isinstance(bundle_name, str) or _LABEL.fullmatch(bundle_name) is None:
+        raise RebirthError("messaging_migration_runtime_name_rejected")
+    return (
+        root / bundle_name,
+        root / f".{bundle_name}.messaging-v2-migration.json",
+    )
+
+
+def _verify_messaging_migration_references(root: Path, references: Any) -> None:
+    if not isinstance(references, list) or len(references) != 3:
+        raise RebirthError("messaging_migration_preserved_reference_changed")
+    roles: set[str] = set()
+    for value in references:
+        row = _closed(
+            value,
+            {"role", "path", "sha256"},
+            "messaging_migration_preserved_reference_changed",
+        )
+        role = str(row["role"])
+        path = str(row["path"])
+        if (
+            role not in {"inbox", "outbox", "rpc"}
+            or role in roles
+            or _LABEL.fullmatch(path) is None
+            or _messaging_migration_file_hash(root / path) != row["sha256"]
+        ):
+            raise RebirthError("messaging_migration_preserved_reference_changed")
+        roles.add(role)
+    if roles != {"inbox", "outbox", "rpc"}:
+        raise RebirthError("messaging_migration_preserved_reference_changed")
+
+
+def _private_document(file: _HeldPrivateFile, code: str) -> Any:
+    try:
+        raw = file.read()
+        value = json.loads(raw)
+        if canonical_bytes(value) != raw.rstrip(b"\n"):
+            raise RebirthError(code)
+        return value
+    except RebirthError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as exception:
+        raise RebirthError(code) from exception
+
+
+def _hold_messaging_migration_references(
+    root: _MessagingMigrationRoot, references: Any
+) -> list[tuple[_HeldPrivateFile, str]]:
+    if not isinstance(references, list) or len(references) != 3:
+        raise RebirthError("messaging_migration_preserved_reference_changed")
+    result: list[tuple[_HeldPrivateFile, str]] = []
+    roles: set[str] = set()
+    try:
+        for value in references:
+            row = _closed(
+                value,
+                {"role", "path", "sha256"},
+                "messaging_migration_preserved_reference_changed",
+            )
+            role = str(row["role"])
+            name = str(row["path"])
+            expected_hash = str(row["sha256"])
+            if (
+                role not in {"inbox", "outbox", "rpc"}
+                or role in roles
+                or _LABEL.fullmatch(name) is None
+            ):
+                raise RebirthError("messaging_migration_preserved_reference_changed")
+            held = root.open_file(
+                name,
+                "messaging_migration_preserved_reference_changed",
+                maximum_size=MAX_ARTIFACT_BYTES * 64,
+            )
+            result.append((held, expected_hash))
+            roles.add(role)
+        if roles != {"inbox", "outbox", "rpc"}:
+            raise RebirthError("messaging_migration_preserved_reference_changed")
+        _revalidate_messaging_migration_references(result)
+        return result
+    except BaseException:
+        for held, _expected_hash in result:
+            held.close()
+        raise
+
+
+def _revalidate_messaging_migration_references(
+    references: Sequence[tuple[_HeldPrivateFile, str]],
+) -> None:
+    for held, expected_hash in references:
+        if not hmac.compare_digest(
+            hashlib.sha256(held.read()).hexdigest(), expected_hash
+        ):
+            raise RebirthError("messaging_migration_preserved_reference_changed")
+
+
+def _unlink_private_transaction_file(
+    root: _MessagingMigrationRoot, name: str, code: str
+) -> None:
+    try:
+        info = os.stat(name, dir_fd=root.descriptor, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or info.st_nlink != 1
+        ):
+            raise RebirthError(code)
+        os.unlink(name, dir_fd=root.descriptor)
+        root.fsync()
+    except FileNotFoundError:
+        return
+    except RebirthError:
+        raise
+    except OSError as exception:
+        raise RebirthError(code) from exception
+
+
+def _migration_staging_prefix(
+    bundle_name: str, migration_id: str, artifact: str
+) -> str:
+    return f".{bundle_name}.messaging-v2-txn-{migration_id}.{artifact}."
+
+
+def _cleanup_messaging_migration_staging(
+    root: _MessagingMigrationRoot,
+    *,
+    bundle_name: str,
+    migration_id: str,
+    artifact: str,
+    final_name: str,
+) -> None:
+    prefix = _migration_staging_prefix(bundle_name, migration_id, artifact)
+    pattern = re.compile(re.escape(prefix) + r"[0-9a-f]{32}\.staging")
+    removed = False
+    for name in os.listdir(root.descriptor):
+        if not name.startswith(prefix):
+            continue
+        if pattern.fullmatch(name) is None:
+            raise RebirthError("messaging_migration_staging_residue_rejected")
+        try:
+            info = os.stat(name, dir_fd=root.descriptor, follow_symlinks=False)
+        except OSError as exception:
+            raise RebirthError(
+                "messaging_migration_staging_residue_rejected"
+            ) from exception
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_nlink not in {1, 2}
+        ):
+            raise RebirthError("messaging_migration_staging_residue_rejected")
+        if info.st_nlink == 2:
+            try:
+                final_info = os.stat(
+                    final_name,
+                    dir_fd=root.descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exception:
+                raise RebirthError(
+                    "messaging_migration_staging_residue_rejected"
+                ) from exception
+            if (final_info.st_dev, final_info.st_ino) != (info.st_dev, info.st_ino):
+                raise RebirthError("messaging_migration_staging_residue_rejected")
+        os.unlink(name, dir_fd=root.descriptor)
+        removed = True
+    if removed:
+        root.fsync()
+
+
+def _atomic_private_publish(
+    root: _MessagingMigrationRoot,
+    *,
+    bundle_name: str,
+    migration_id: str,
+    artifact: str,
+    final_name: str,
+    raw: bytes,
+    replace: bool,
+    fault_hook: Callable[[str], None] | None,
+    final_invariant: Callable[[], None] | None = None,
+) -> _HeldPrivateFile:
+    """Publish only complete fsynced bytes; leave classifiable staging on failure."""
+
+    _cleanup_messaging_migration_staging(
+        root,
+        bundle_name=bundle_name,
+        migration_id=migration_id,
+        artifact=artifact,
+        final_name=final_name,
+    )
+    staging_name = (
+        _migration_staging_prefix(bundle_name, migration_id, artifact)
+        + uuid.uuid4().hex
+        + ".staging"
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            staging_name,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=root.descriptor,
+        )
+        first = os.write(descriptor, raw[:1])
+        if first != min(1, len(raw)):
+            raise OSError("short staging write")
+        if fault_hook is not None:
+            fault_hook(f"{artifact}:after_first_byte")
+        offset = first
+        while offset < len(raw):
+            written = os.write(descriptor, raw[offset:])
+            if written <= 0:
+                raise OSError("short staging write")
+            offset += written
+        if fault_hook is not None:
+            fault_hook(f"{artifact}:after_full_write_before_fsync")
+        os.fsync(descriptor)
+        if fault_hook is not None:
+            fault_hook(f"{artifact}:after_file_fsync_before_install")
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_nlink != 1
+            or info.st_size != len(raw)
+        ):
+            raise RebirthError("messaging_migration_staging_rejected")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        checked = b""
+        while len(checked) < len(raw):
+            chunk = os.read(descriptor, min(1024 * 1024, len(raw) - len(checked)))
+            if not chunk:
+                break
+            checked += chunk
+        if not hmac.compare_digest(checked, raw):
+            raise RebirthError("messaging_migration_staging_rejected")
+        root.validate()
+        if final_invariant is not None:
+            final_invariant()
+        if replace:
+            os.replace(
+                staging_name,
+                final_name,
+                src_dir_fd=root.descriptor,
+                dst_dir_fd=root.descriptor,
+            )
+        else:
+            os.link(
+                staging_name,
+                final_name,
+                src_dir_fd=root.descriptor,
+                dst_dir_fd=root.descriptor,
+                follow_symlinks=False,
+            )
+            os.unlink(staging_name, dir_fd=root.descriptor)
+        if fault_hook is not None:
+            fault_hook(f"{artifact}:after_install_before_directory_fsync")
+        root.fsync()
+        if fault_hook is not None:
+            fault_hook(f"{artifact}:after_directory_fsync")
+        published = root.open_file(
+            final_name,
+            "messaging_migration_published_file_rejected",
+            minimum_size=1,
+            maximum_size=max(len(raw), 1),
+        )
+        published.verify_bytes(raw)
+        if published.identity != (info.st_dev, info.st_ino):
+            published.close()
+            raise RebirthError("messaging_migration_published_file_rejected")
+        return published
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def prepare_messaging_permissions_migration(
+    state_root: Path,
+    bundle_name: str,
+    candidate_bundle: Mapping[str, Any],
+    approval: Any,
+    *,
+    journal_key: bytes,
+    current_policy_head: str,
+    current_relationship_head: str,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Durably establish one exact, authenticated migration before publication."""
+
+    if not isinstance(bundle_name, str) or _LABEL.fullmatch(bundle_name) is None:
+        raise RebirthError("messaging_migration_runtime_name_rejected")
+    normalized = _verify_messaging_migration_approval(approval)
+    body = normalized["body"]
+    if (
+        body["old"]["policy_head"] != _messaging_migration_head(current_policy_head)
+        or body["old"]["relationship_head"]
+        != _messaging_migration_head(current_relationship_head)
+        or body["capability_journal"]["key_id"]
+        != _messaging_migration_key_id(journal_key)
+        or body["new"]["bundle_sha256"] != _messaging_migration_hash(candidate_bundle)
+    ):
+        raise RebirthError("messaging_migration_approval_mismatch")
+    journal_name = f".{bundle_name}.messaging-v2-migration.json"
+    floor_name = f".{bundle_name}.messaging-v2-generation.json"
+    migration_id = str(body["migration_id"])
+    references: list[tuple[_HeldPrivateFile, str]] = []
+    held: list[_HeldPrivateFile] = []
+    with _MessagingMigrationRoot(state_root, bundle_name) as root:
+        try:
+            runtime_file = root.open_file(
+                bundle_name,
+                "messaging_migration_runtime_unavailable",
+                minimum_size=1,
+                maximum_size=4 * MAX_ARTIFACT_BYTES,
+            )
+            held.append(runtime_file)
+            old_bundle = _private_document(
+                runtime_file, "messaging_migration_runtime_unavailable"
+            )
+            if (
+                body["old"]
+                != _messaging_migration_authority_binding(
+                    old_bundle,
+                    policy_head=current_policy_head,
+                    relationship_head=current_relationship_head,
+                )
+                or body["new"]
+                != _messaging_migration_authority_binding(
+                    candidate_bundle,
+                    policy_head=body["new"]["policy_head"],
+                    relationship_head=body["new"]["relationship_head"],
+                )
+                or body["owner_signing_key"]
+                != _messaging_migration_owner_key(old_bundle)
+                or body["owner_signing_key"]
+                != _messaging_migration_owner_key(candidate_bundle)
+            ):
+                raise RebirthError("messaging_migration_approval_mismatch")
+            references = _hold_messaging_migration_references(
+                root, body["preserved_references"]
+            )
+            expected_floor = _messaging_migration_floor_for_approval(
+                normalized, journal_key
+            )
+            _current_floor, floor_file = _check_messaging_migration_generation_floor(
+                root, floor_name, expected_floor, journal_key
+            )
+            if floor_file is not None:
+                held.append(floor_file)
+            core = {
+                "schema": MESSAGING_MIGRATION_JOURNAL_SCHEMA,
+                "state": "prepared",
+                "approval": normalized,
+                "candidate_bundle": copy.deepcopy(dict(candidate_bundle)),
+            }
+            journal = _authenticated_messaging_migration_journal(core, journal_key)
+            journal_raw = canonical_bytes(journal)
+            _cleanup_messaging_migration_staging(
+                root,
+                bundle_name=bundle_name,
+                migration_id=migration_id,
+                artifact="initial_journal",
+                final_name=journal_name,
+            )
+            try:
+                existing_file = root.open_file(
+                    journal_name,
+                    "messaging_migration_journal_rejected",
+                    minimum_size=1,
+                    maximum_size=4 * MAX_ARTIFACT_BYTES,
+                )
+            except RebirthError as exception:
+                try:
+                    os.stat(
+                        journal_name,
+                        dir_fd=root.descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    existing_file = None
+                else:
+                    raise exception
+            if existing_file is not None:
+                held.append(existing_file)
+                existing = _verify_messaging_migration_journal(
+                    _private_document(
+                        existing_file, "messaging_migration_journal_rejected"
+                    ),
+                    journal_key,
+                )
+                if canonical_bytes(existing) != journal_raw:
+                    raise RebirthError("messaging_migration_journal_conflict")
+                return existing
+            runtime_file.verify_bytes(
+                canonical_bytes(old_bundle),
+                changed_code="messaging_migration_runtime_conflict",
+            )
+            _revalidate_messaging_migration_references(references)
+            published = _atomic_private_publish(
+                root,
+                bundle_name=bundle_name,
+                migration_id=migration_id,
+                artifact="initial_journal",
+                final_name=journal_name,
+                raw=journal_raw,
+                replace=False,
+                fault_hook=fault_hook,
+            )
+            held.append(published)
+            runtime_file.verify_bytes(
+                canonical_bytes(old_bundle),
+                changed_code="messaging_migration_runtime_conflict",
+            )
+            _revalidate_messaging_migration_references(references)
+            if fault_hook is not None:
+                fault_hook("after_journal_durable")
+            return journal
+        finally:
+            for reference, _expected_hash in references:
+                with suppress(OSError):
+                    reference.close()
+            for file in held:
+                with suppress(OSError):
+                    file.close()
+
+
+def resume_messaging_permissions_migration(
+    state_root: Path,
+    bundle_name: str,
+    *,
+    journal_key: bytes,
+    current_policy_head: str,
+    current_relationship_head: str,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Resume an established messaging migration through exact publication."""
+
+    if not isinstance(bundle_name, str) or _LABEL.fullmatch(bundle_name) is None:
+        raise RebirthError("messaging_migration_runtime_name_rejected")
+    journal_name = f".{bundle_name}.messaging-v2-migration.json"
+    floor_name = f".{bundle_name}.messaging-v2-generation.json"
+    candidate_name = f".{bundle_name}.messaging-v2-candidate"
+    held: list[_HeldPrivateFile] = []
+    references: list[tuple[_HeldPrivateFile, str]] = []
+    with _MessagingMigrationRoot(state_root, bundle_name) as root:
+        try:
+            journal_file = root.open_file(
+                journal_name,
+                "messaging_migration_journal_missing",
+                minimum_size=1,
+                maximum_size=4 * MAX_ARTIFACT_BYTES,
+            )
+            held.append(journal_file)
+            journal = _verify_messaging_migration_journal(
+                _private_document(journal_file, "messaging_migration_journal_rejected"),
+                journal_key,
+            )
+            body = journal["approval"]["body"]
+            migration_id = str(body["migration_id"])
+            candidate_bundle = journal["candidate_bundle"]
+            candidate_raw = canonical_bytes(candidate_bundle)
+            references = _hold_messaging_migration_references(
+                root, body["preserved_references"]
+            )
+            expected_floor = _messaging_migration_floor_for_approval(
+                journal["approval"], journal_key
+            )
+            current_floor, current_floor_file = (
+                _check_messaging_migration_generation_floor(
+                    root, floor_name, expected_floor, journal_key
+                )
+            )
+            if current_floor_file is not None:
+                held.append(current_floor_file)
+            runtime_file = root.open_file(
+                bundle_name,
+                "messaging_migration_runtime_unavailable",
+                minimum_size=1,
+                maximum_size=4 * MAX_ARTIFACT_BYTES,
+            )
+            held.append(runtime_file)
+            current_bundle = _private_document(
+                runtime_file, "messaging_migration_runtime_unavailable"
+            )
+            current_hash = _messaging_migration_hash(current_bundle)
+            old_hash = body["old"]["bundle_sha256"]
+            new_hash = body["new"]["bundle_sha256"]
+            if current_hash == old_hash:
+                expected_policy = body["old"]["policy_head"]
+                expected_relationship = body["old"]["relationship_head"]
+            elif current_hash == new_hash:
+                expected_policy = body["new"]["policy_head"]
+                expected_relationship = body["new"]["relationship_head"]
+            else:
+                raise RebirthError("messaging_migration_runtime_conflict")
+            if (
+                _messaging_migration_head(current_policy_head) != expected_policy
+                or _messaging_migration_head(current_relationship_head)
+                != expected_relationship
+            ):
+                raise RebirthError("messaging_migration_head_conflict")
+
+            installed_file = runtime_file
+            if current_hash == old_hash:
+                _cleanup_messaging_migration_staging(
+                    root,
+                    bundle_name=bundle_name,
+                    migration_id=migration_id,
+                    artifact="candidate",
+                    final_name=candidate_name,
+                )
+                try:
+                    candidate_file = root.open_file(
+                        candidate_name,
+                        "messaging_migration_candidate_rejected",
+                        minimum_size=1,
+                        maximum_size=4 * MAX_ARTIFACT_BYTES,
+                    )
+                except RebirthError as exception:
+                    try:
+                        os.stat(
+                            candidate_name,
+                            dir_fd=root.descriptor,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        candidate_file = None
+                    else:
+                        raise exception
+                if candidate_file is not None:
+                    try:
+                        candidate_file.verify_bytes(
+                            candidate_raw,
+                            changed_code="messaging_migration_candidate_conflict",
+                        )
+                    except RebirthError:
+                        candidate_file.close()
+                        _unlink_private_transaction_file(
+                            root,
+                            candidate_name,
+                            "messaging_migration_candidate_rejected",
+                        )
+                        candidate_file = None
+                if candidate_file is None:
+                    candidate_file = _atomic_private_publish(
+                        root,
+                        bundle_name=bundle_name,
+                        migration_id=migration_id,
+                        artifact="candidate",
+                        final_name=candidate_name,
+                        raw=candidate_raw,
+                        replace=False,
+                        fault_hook=fault_hook,
+                    )
+                held.append(candidate_file)
+                if fault_hook is not None:
+                    fault_hook("after_candidate_durable")
+                try:
+                    root.validate()
+                    candidate_file.verify_bytes(
+                        candidate_raw,
+                        changed_code="messaging_migration_candidate_changed",
+                    )
+                    _revalidate_messaging_migration_references(references)
+                except RebirthError as exception:
+                    if str(exception) in {
+                        "messaging_migration_candidate_rejected",
+                        "messaging_migration_candidate_changed",
+                        "messaging_migration_published_file_rejected",
+                    }:
+                        _unlink_private_transaction_file(
+                            root,
+                            candidate_name,
+                            "messaging_migration_candidate_changed",
+                        )
+                        raise RebirthError(
+                            "messaging_migration_candidate_changed"
+                        ) from exception
+                    raise
+                if fault_hook is not None:
+                    fault_hook("before_runtime_install")
+                root.validate()
+                candidate_file.verify_bytes(
+                    candidate_raw,
+                    changed_code="messaging_migration_candidate_changed",
+                )
+                _revalidate_messaging_migration_references(references)
+                os.replace(
+                    candidate_name,
+                    bundle_name,
+                    src_dir_fd=root.descriptor,
+                    dst_dir_fd=root.descriptor,
+                )
+                root.fsync()
+                installed_file = root.open_file(
+                    bundle_name,
+                    "messaging_migration_installed_runtime_rejected",
+                    minimum_size=1,
+                    maximum_size=4 * MAX_ARTIFACT_BYTES,
+                )
+                held.append(installed_file)
+                if installed_file.identity != candidate_file.identity:
+                    raise RebirthError("messaging_migration_installed_runtime_rejected")
+                installed_file.verify_bytes(
+                    candidate_raw,
+                    changed_code="messaging_migration_installed_runtime_rejected",
+                )
+                if fault_hook is not None:
+                    fault_hook("after_output_durable")
+
+            installed_file.verify_bytes(
+                candidate_raw,
+                changed_code="messaging_migration_installed_runtime_rejected",
+            )
+            _revalidate_messaging_migration_references(references)
+            journal_file.verify_identity()
+
+            def verify_prepared_publication_invariants() -> None:
+                root.validate()
+                installed_file.verify_bytes(
+                    candidate_raw,
+                    changed_code="messaging_migration_installed_runtime_rejected",
+                )
+                _revalidate_messaging_migration_references(references)
+                journal_file.verify_bytes(
+                    canonical_bytes(journal),
+                    changed_code="messaging_migration_journal_rejected",
+                )
+                if journal["state"] != "prepared":
+                    raise RebirthError("messaging_migration_journal_rejected")
+
+            if (
+                current_floor is None
+                or current_floor["generation"] < expected_floor["generation"]
+            ):
+                _cleanup_messaging_migration_staging(
+                    root,
+                    bundle_name=bundle_name,
+                    migration_id=migration_id,
+                    artifact="floor",
+                    final_name=floor_name,
+                )
+                if fault_hook is not None:
+                    fault_hook("before_generation_floor_install")
+                root.validate()
+                installed_file.verify_bytes(
+                    candidate_raw,
+                    changed_code="messaging_migration_installed_runtime_rejected",
+                )
+                _revalidate_messaging_migration_references(references)
+                journal_file.verify_identity()
+                floor_file = _atomic_private_publish(
+                    root,
+                    bundle_name=bundle_name,
+                    migration_id=migration_id,
+                    artifact="floor",
+                    final_name=floor_name,
+                    raw=canonical_bytes(expected_floor),
+                    replace=True,
+                    fault_hook=fault_hook,
+                    final_invariant=verify_prepared_publication_invariants,
+                )
+                held.append(floor_file)
+                current_floor_file = floor_file
+            if current_floor_file is None:
+                raise RebirthError("messaging_migration_generation_floor_rejected")
+            current_floor_file.verify_bytes(
+                canonical_bytes(expected_floor),
+                changed_code="messaging_migration_generation_floor_rejected",
+            )
+            if fault_hook is not None:
+                fault_hook("after_generation_floor_durable")
+            installed_file.verify_bytes(
+                candidate_raw,
+                changed_code="messaging_migration_installed_runtime_rejected",
+            )
+            _revalidate_messaging_migration_references(references)
+            journal_file.verify_identity()
+            completed_core = {
+                "schema": MESSAGING_MIGRATION_JOURNAL_SCHEMA,
+                "state": "completed",
+                "approval": journal["approval"],
+                "candidate_bundle": candidate_bundle,
+            }
+            completed = _authenticated_messaging_migration_journal(
+                completed_core, journal_key
+            )
+            if journal["state"] == "completed":
+                journal_file.verify_bytes(
+                    canonical_bytes(completed),
+                    changed_code="messaging_migration_journal_rejected",
+                )
+                return completed
+            _cleanup_messaging_migration_staging(
+                root,
+                bundle_name=bundle_name,
+                migration_id=migration_id,
+                artifact="completion",
+                final_name=journal_name,
+            )
+            if fault_hook is not None:
+                fault_hook("before_completion_install")
+            root.validate()
+            installed_file.verify_bytes(
+                candidate_raw,
+                changed_code="messaging_migration_installed_runtime_rejected",
+            )
+            _revalidate_messaging_migration_references(references)
+            journal_file.verify_identity()
+            completed_file = _atomic_private_publish(
+                root,
+                bundle_name=bundle_name,
+                migration_id=migration_id,
+                artifact="completion",
+                final_name=journal_name,
+                raw=canonical_bytes(completed),
+                replace=True,
+                fault_hook=fault_hook,
+                final_invariant=verify_prepared_publication_invariants,
+            )
+            held.append(completed_file)
+            if fault_hook is not None:
+                fault_hook("after_completion_durable")
+            return completed
+        finally:
+            for reference, _expected_hash in references:
+                with suppress(OSError):
+                    reference.close()
+            for file in held:
+                with suppress(OSError):
+                    file.close()
 
 
 def _write_new_document(path: Path, value: Mapping[str, Any]) -> None:
@@ -4094,6 +5539,25 @@ def parser() -> argparse.ArgumentParser:
     activate_recovery.add_argument("--activation", type=Path, required=True)
     activate_recovery.add_argument("--output", type=Path, required=True)
     activate_recovery.add_argument("--password-fd", type=int, required=True)
+    for command, help_text in (
+        (
+            "apply-messaging-permissions-migration",
+            "establish and apply one owner-approved V1-to-V2 migration",
+        ),
+        (
+            "resume-messaging-permissions-migration",
+            "resume one established owner-approved V1-to-V2 migration",
+        ),
+    ):
+        migration = commands.add_parser(command, help=help_text)
+        migration.add_argument("--state-root", type=Path, required=True)
+        migration.add_argument("--runtime-name", required=True)
+        migration.add_argument("--journal-key-file", type=Path, required=True)
+        migration.add_argument("--current-policy-head", required=True)
+        migration.add_argument("--current-relationship-head", required=True)
+        if command == "apply-messaging-permissions-migration":
+            migration.add_argument("--candidate", type=Path, required=True)
+            migration.add_argument("--approval", type=Path, required=True)
     return result
 
 
@@ -4101,7 +5565,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = parser().parse_args(argv)
         now = time.time_ns() // 1_000_000
-        if arguments.command == "create-replacement-root-holder":
+        if arguments.command in {
+            "apply-messaging-permissions-migration",
+            "resume-messaging-permissions-migration",
+        }:
+            journal_key = _messaging_migration_journal_key(arguments.journal_key_file)
+            if arguments.command == "apply-messaging-permissions-migration":
+                prepare_messaging_permissions_migration(
+                    arguments.state_root,
+                    arguments.runtime_name,
+                    _safe_document(
+                        arguments.candidate,
+                        "messaging_migration_candidate_rejected",
+                    ),
+                    _safe_document(
+                        arguments.approval,
+                        "invalid_messaging_migration_approval",
+                    ),
+                    journal_key=journal_key,
+                    current_policy_head=arguments.current_policy_head,
+                    current_relationship_head=arguments.current_relationship_head,
+                )
+            receipt = resume_messaging_permissions_migration(
+                arguments.state_root,
+                arguments.runtime_name,
+                journal_key=journal_key,
+                current_policy_head=arguments.current_policy_head,
+                current_relationship_head=arguments.current_relationship_head,
+            )
+        elif arguments.command == "create-replacement-root-holder":
             authority = authority_from_document(
                 _safe_document(arguments.authority, "rebirth_authority_unavailable")
             )
@@ -4506,6 +5998,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "ACTIVATION_SCHEMA",
     "AUTHORITY_SCHEMA",
+    "MESSAGING_MIGRATION_APPROVAL_SCHEMA",
+    "MESSAGING_MIGRATION_FLOOR_SCHEMA",
+    "MESSAGING_MIGRATION_JOURNAL_SCHEMA",
     "PREPARATION_SCHEMA",
     "RECOVERY_ACTIVATION_SCHEMA",
     "REQUEST_SCHEMA",
@@ -4526,13 +6021,16 @@ __all__ = [
     "create_distributed_enrollment_share",
     "create_distributed_enrollment_share_from_holder",
     "create_enrollment_request",
+    "create_messaging_permissions_migration_approval",
     "create_recovery_target_preparation",
     "create_synthetic_single_store_recovery_custody",
     "create_target_preparation",
     "main",
     "parser",
+    "prepare_messaging_permissions_migration",
     "recovery_request_base",
     "restore_recovery_ledger",
+    "resume_messaging_permissions_migration",
     "validate_activation",
     "validate_distributed_enrollment_intent",
     "validate_enrollment_request",

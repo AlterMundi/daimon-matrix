@@ -334,6 +334,7 @@ class MessagingServiceContext:
     channels: Mapping[str, MessagingChannel]
     client_channels: Mapping[str, frozenset[str]]
     deliveries: Mapping[str, MessagingDelivery] = dataclass_field(default_factory=dict)
+    capability_guard: Callable[[LocalCapability], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -478,6 +479,18 @@ class HostedWeave:
         client_id = capability.client_id
         request_id = request["request_id"]
         method = request["method"]
+        if method in MESSAGING_METHODS:
+            guard = None if self.messaging is None else self.messaging.capability_guard
+            if (
+                guard is None
+                and capability.descriptor["schema"] == "dm.local.capability/v2"
+            ):
+                raise LocalApiError("authentication_failed")
+            if guard is not None:
+                try:
+                    guard(capability)
+                except Exception:
+                    raise LocalApiError("authentication_failed") from None
         if now - request[
             "issued_at_ms"
         ] > MAX_CLOCK_SKEW_MS and not self.ledger.rpc_request_matches(
