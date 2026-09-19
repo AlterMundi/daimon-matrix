@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/messaging/v1/semantic-receipt-carrier.schema.json",
+  "title": "V2 application's reply body carrying a complete signed recipient receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["text", "resource_ref", "recipient_being_ref", "response_context", "semantic_receipt"],
+  "properties": {
+    "text": {"type": "string"},
+    "resource_ref": {"type": "string", "minLength": 1},
+    "recipient_being_ref": {"type": "string", "minLength": 1},
+    "response_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "message_id", "message_hash", "sender_being_ref", "sender_embodiment_id", "thread_id"],
+      "properties": {
+        "schema": {"const": "dm.messaging.application-response/v1"},
+        "message_id": {"type": "string", "format": "uuid"},
+        "message_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sender_being_ref": {"type": "string", "minLength": 1},
+        "sender_embodiment_id": {"type": "string", "minLength": 1},
+        "thread_id": {"type": "string", "format": "uuid"}
+      }
+    },
+    "semantic_receipt": {
+      "allOf": [
+        {"$ref": "../../weave/v1/event.schema.json"},
+        {"type": "object", "properties": {"payload": {"$ref": "../../communication/v2/receipt-payload.schema.json"}}}
+      ]
+    }
+  }
+}

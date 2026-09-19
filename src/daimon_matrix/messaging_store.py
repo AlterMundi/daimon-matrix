@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -282,9 +282,47 @@ class MessagingInboxStore:
                     policy_hash TEXT NOT NULL,
                     message BLOB NOT NULL,
                     evidence BLOB NOT NULL,
-                    envelope BLOB NOT NULL
+                    envelope BLOB NOT NULL,
+                    admission_version INTEGER NOT NULL DEFAULT 1
+                        CHECK(admission_version IN (1, 2))
                 );
             """)
+
+    @staticmethod
+    def _has_admission_version(database: sqlite3.Connection) -> bool:
+        return any(
+            row["name"] == "admission_version"
+            for row in database.execute("PRAGMA table_info(inbox)")
+        )
+
+    @classmethod
+    def upgrade_admission_path(cls, path: Path) -> None:
+        """Durably classify all existing rows as V1 before V2 can be admitted."""
+
+        path = path.absolute()
+        with (
+            closing(sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)) as database,
+            database,
+        ):
+            database.row_factory = sqlite3.Row
+            database.execute("BEGIN IMMEDIATE")
+            if not cls._has_admission_version(database):
+                database.execute(
+                    "ALTER TABLE inbox ADD COLUMN admission_version INTEGER NOT NULL "
+                    "DEFAULT 1 CHECK(admission_version IN (1, 2))"
+                )
+
+    def upgrade_admission_v2(self) -> None:
+        self.upgrade_admission_path(self.path)
+
+    def _admission_version(self, message_id: str, current: int) -> int:
+        with self._database() as database:
+            if not self._has_admission_version(database):
+                return 1
+            row = database.execute(
+                "SELECT admission_version FROM inbox WHERE message_id=?", (message_id,)
+            ).fetchone()
+        return current if row is None else int(row["admission_version"])
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
@@ -386,9 +424,15 @@ class MessagingInboxStore:
         evidence: Mapping[str, Any],
         raw: bytes,
         policy_hash: str,
+        admission_version: int = 1,
     ) -> dict[str, Any]:
+        if admission_version not in {1, 2}:
+            raise MessagingInboxError("messaging_admission_version_invalid")
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
+            versioned = self._has_admission_version(database)
+            if admission_version == 2 and not versioned:
+                raise MessagingInboxError("messaging_admission_migration_required")
             self._delivery(database, raw, retain=True)
             self._identity(database, message)
             existing = database.execute(
@@ -398,23 +442,31 @@ class MessagingInboxStore:
                 if (
                     bytes(existing["message"]) != canonical_bytes(message)
                     or existing["policy_hash"] != policy_hash
+                    or (
+                        versioned and existing["admission_version"] != admission_version
+                    )
                 ):
                     raise MessagingInboxError("messaging_message_conflict")
                 return {
                     "inbox_sequence": existing["inbox_sequence"],
                     "message_id": message["event_id"],
                 }
+            fields = "message_id, policy_hash, message, evidence, envelope"
+            values: tuple[Any, ...] = (
+                message["event_id"],
+                policy_hash,
+                canonical_bytes(message),
+                canonical_bytes(evidence),
+                raw,
+            )
+            if versioned:
+                fields += ", admission_version"
+                values += (admission_version,)
             cursor = database.execute(
-                "INSERT INTO inbox "
-                "(message_id, policy_hash, message, evidence, envelope) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    message["event_id"],
-                    policy_hash,
-                    canonical_bytes(message),
-                    canonical_bytes(evidence),
-                    raw,
-                ),
+                f"INSERT INTO inbox ({fields}) VALUES ("
+                + ", ".join("?" for _ in values)
+                + ")",
+                values,
             )
             return {
                 "inbox_sequence": cursor.lastrowid,
@@ -423,8 +475,13 @@ class MessagingInboxStore:
 
     def _message(self, message_id: str, policy_hash: str) -> dict[str, Any]:
         with self._database() as database:
+            admission = (
+                "admission_version"
+                if self._has_admission_version(database)
+                else "1 AS admission_version"
+            )
             row = database.execute(
-                "SELECT inbox_sequence, message, evidence FROM inbox "
+                f"SELECT inbox_sequence, message, evidence, {admission} FROM inbox "
                 "WHERE message_id=? AND policy_hash=?",
                 (message_id, policy_hash),
             ).fetchone()
@@ -432,6 +489,7 @@ class MessagingInboxStore:
             raise MessagingInboxError("messaging_message_missing")
         return {
             "inbox_sequence": row["inbox_sequence"],
+            "admission_version": row["admission_version"],
             "message": json.loads(row["message"]),
             "evidence": json.loads(row["evidence"]),
         }
@@ -447,8 +505,13 @@ class MessagingInboxStore:
         ):
             raise MessagingInboxError("messaging_page_bounds")
         with self._database() as database:
+            admission = (
+                "admission_version"
+                if self._has_admission_version(database)
+                else "1 AS admission_version"
+            )
             rows = database.execute(
-                "SELECT inbox_sequence, message, evidence FROM inbox "
+                f"SELECT inbox_sequence, message, evidence, {admission} FROM inbox "
                 "WHERE inbox_sequence>? AND policy_hash=? "
                 "ORDER BY inbox_sequence LIMIT ?",
                 (after, policy_hash, limit),
@@ -456,6 +519,7 @@ class MessagingInboxStore:
         return [
             {
                 "inbox_sequence": row["inbox_sequence"],
+                "admission_version": row["admission_version"],
                 "message": json.loads(row["message"]),
                 "evidence": json.loads(row["evidence"]),
             }

@@ -20,6 +20,7 @@ from .runtime import HostedRuntime
 from .weave import RootAuthority
 
 APPLICATION_SCHEMA = "dm.messaging.application/v1"
+APPLICATION_SCHEMA_V2 = "dm.messaging.application/v2"
 BINDING_SCHEMA = "dm.messaging.operator-binding/v1"
 BINDING_DOMAIN = b"daimon/messaging-operator-binding/v1\x00"
 
@@ -328,10 +329,17 @@ def _shape(value: Any, schema: dict[str, Any]) -> None:
 
 def validate_shape(application: Any, *, specification: bool = False) -> None:
     try:
-        _shape(
-            application,
-            SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA,
+        import copy
+
+        shape = copy.deepcopy(
+            SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA
         )
+        if (
+            isinstance(application, dict)
+            and application.get("schema") == APPLICATION_SCHEMA_V2
+        ):
+            shape["properties"]["schema"] = {"const": APPLICATION_SCHEMA_V2}
+        _shape(application, shape)
         # Numeric addresses only: no resolver changes to listener binding.
         import ipaddress
         from urllib.parse import urlsplit
@@ -519,7 +527,9 @@ _STORE_SCHEMA_SQL = {
         NULL, envelope BLOB NOT NULL, PRIMARY KEY(message_id, authorization_id) );
         CREATE TABLE IF NOT EXISTS inbox ( inbox_sequence INTEGER PRIMARY KEY
         AUTOINCREMENT, message_id TEXT NOT NULL UNIQUE, policy_hash TEXT NOT NULL,
-        message BLOB NOT NULL, evidence BLOB NOT NULL, envelope BLOB NOT NULL );
+        message BLOB NOT NULL, evidence BLOB NOT NULL, envelope BLOB NOT NULL,
+        admission_version INTEGER NOT NULL DEFAULT 1
+        CHECK(admission_version IN (1, 2)) );
     """,
     "outbox": """
         CREATE TABLE IF NOT EXISTS messaging_outbox ( owner TEXT NOT NULL, send_id
@@ -550,8 +560,16 @@ _STORE_SCHEMA_SQL = {
     """,
 }
 
+_LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
+    ",\n        admission_version INTEGER NOT NULL DEFAULT 1\n        "
+    "CHECK(admission_version IN (1, 2))",
+    "",
+)
 
-def _validate_store_schema(name: str, path: Path) -> None:
+
+def _validate_store_schema(
+    name: str, path: Path, *, require_inbox_admission: bool = False
+) -> None:
     """Inspect published state without DDL, recovery, or sidecar creation."""
     import re
     import sqlite3
@@ -591,12 +609,17 @@ def _validate_store_schema(name: str, path: Path) -> None:
                 sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
             ) as db,
             closing(sqlite3.connect(":memory:")) as expected,
+            closing(sqlite3.connect(":memory:")) as legacy,
         ):
-            # DDL is confined to an anonymous in-memory reference, never a store.
-            # No store constructor is used even for this reference.
+            # DDL is confined to anonymous in-memory references, never a store.
+            # No store constructor is used even for these references.
             expected.executescript(_STORE_SCHEMA_SQL[schema])
+            expected_catalogs = [catalog(expected)]
+            if schema == "inbox" and not require_inbox_admission:
+                legacy.executescript(_LEGACY_INBOX_SCHEMA_SQL)
+                expected_catalogs.append(catalog(legacy))
             if (
-                catalog(db) != catalog(expected)
+                catalog(db) not in expected_catalogs
                 or db.execute("PRAGMA user_version").fetchone() != (0,)
                 or db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
             ):
@@ -781,7 +804,11 @@ def _compose(
     if not initialize:
         # Validate every store before the first constructor can initialize anything.
         for name, path in stores.items():
-            _validate_store_schema(name, path)
+            _validate_store_schema(
+                name,
+                path,
+                require_inbox_admission=application["schema"] == APPLICATION_SCHEMA_V2,
+            )
     if shared is None:
         relationships = RelationshipStore(
             stores["relationships"],
@@ -829,6 +856,17 @@ def _compose(
         clock=service.clock,
     )
     sender._bind(service.clock())
+    communication = service.communication
+    assert communication is not None
+    if application["schema"] == APPLICATION_SCHEMA_V2:
+        if not communication.receipts_v2:
+            raise MessagingConfigError("messaging_semantic_migration_required")
+        communication.foreign_authority_resolver = resolve_authority
+        sender.communication = communication
+        receiver.communication = communication
+        receiver.reconcile_receipts()
+    elif communication.receipts_v2:
+        raise MessagingConfigError("messaging_semantic_migration_required")
     providers, ingresses = {}, {}
     for phase in ("evidence", "message"):
         row = outgoing["routes"][phase]
@@ -857,7 +895,10 @@ def _compose(
         message_provider=providers["message"],
         # Client lease renewal does not change transport replay bindings.
         config_digest=config_digest(
-            {k: v for k, v in application.items() if k != "client"}
+            {
+                **{k: v for k, v in application.items() if k != "client"},
+                "schema": APPLICATION_SCHEMA,
+            }
         ),
     )
     messaging = MessagingServiceContext(
