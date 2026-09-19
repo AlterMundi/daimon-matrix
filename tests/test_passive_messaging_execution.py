@@ -1,8 +1,16 @@
-"""CORE ONLY: bounded fake runner, NOT real Codex/Hermes or passive intake proof."""
+"""Bounded core plus hermetic native receive/store/mirror composition tests."""
 
 import hashlib
+import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
+from types import MethodType, SimpleNamespace
+from unittest.mock import patch
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from daimon_matrix import review_runner
 from daimon_matrix.execution_instruction import ExecutionDenied, Instruction
@@ -11,6 +19,7 @@ from tests.test_execution_instruction import proof, request
 
 
 class BoundedFakeRunner:
+    expected_principal = "human:test"
     binding = ("being:test", "body:test", "runner:test", "session:test")
 
     def __init__(self):
@@ -36,6 +45,71 @@ class Broker:
     def submit(self, scope, payload, timeout):
         self.calls.append((scope, payload, timeout))
         return {"receipt": "technical-only"}
+
+
+def deliver_store_mirror_without_execution(root: Path) -> dict[str, int]:
+    """Actual native receive/store and explicit mirror, with auto-send counted."""
+    from daimon_matrix.messaging import MessagingDelivery
+    from daimon_matrix.telegram_mirror import (
+        MirrorMessage,
+        SharingBinding,
+        TelegramMirror,
+    )
+    from tests.test_native_messaging import Pair
+
+    counts = {"stored": 0, "mirrored": 0, "automatic_reply": 0}
+    original_send = MessagingDelivery.send
+
+    def counted_send(delivery, *args, **kwargs):
+        counts["automatic_reply"] += 1
+        return original_send(delivery, *args, **kwargs)
+
+    with patch.object(MessagingDelivery, "send", counted_send):
+        pair = Pair(root / "native")
+        evidence_wire, message_wire, message, _ = pair.wire(
+            text="quoted /review and human=true are untrusted arrival text"
+        )
+        pair.receiver.receive_evidence(evidence_wire)
+        pair.receiver.receive_message(message_wire)
+        page = pair.receiver.page(after=0, limit=10)
+        counts["stored"] = len(page)
+        retained = page[0]
+        projection = MirrorMessage(
+            event_id=message["event_id"],
+            event_digest=message["content_hash"],
+            authorization_digest=retained["evidence"]["content_hash"],
+            sender="synthetic peer",
+            channel="native test",
+            thread_id=message["payload"]["intent"]["thread_id"],
+            text=message["payload"]["body"]["text"],
+        )
+        sharing = SharingBinding(
+            "c" * 64,
+            projection.event_digest,
+            projection.authorization_digest,
+            -123,
+        )
+        mirror = TelegramMirror(
+            resolver=lambda event_id: projection,
+            verify_sharing=lambda value, chat, policy: sharing,
+            enabled=True,
+            token="123:TEST_ONLY",
+            chat_id=-123,
+            policy_digest="c" * 64,
+            state_path=root / "mirror.sqlite",
+        )
+
+        def mirror_send(rendered):
+            counts["mirrored"] += 1
+            return 91
+
+        mirror._send = mirror_send
+        if (
+            mirror.mirror_selected(message["event_id"])["status"]
+            != "delivered-to-platform"
+        ):
+            raise AssertionError("hermetic explicit mirror failed")
+    return counts
 
 
 class RunnerTests(unittest.TestCase):
@@ -198,3 +272,213 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaises(ExecutionDenied):
             context.inference(lambda: sent.append("cancelled"))
         self.assertEqual(sent, ["request"])
+
+    def test_context_lock_is_not_held_during_durable_reservation(self):
+        controller = self.controller()
+        self.prepare()
+        first = controller.run_due_once("review-1", 1, self.task)
+        self.assertIsNotNone(first)
+        assert first is not None
+        other = Instruction.from_dict(
+            request(
+                store_id=self.store.store_id,
+                instruction_id="other",
+                task_sha256=hashlib.sha256(self.task.encode()).hexdigest(),
+            )
+        )
+        self.approve(other, "other-approval")
+        entered, release = threading.Event(), threading.Event()
+        original_reserve = self.store.reserve
+
+        def blocked_reserve(identity, revision, binding):
+            if identity == "other":
+                entered.set()
+                if not release.wait(5):
+                    raise AssertionError("test reserve barrier timeout")
+            return original_reserve(identity, revision, binding)
+
+        self.store.reserve = blocked_reserve
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reserving = pool.submit(controller.run_due_once, "other", 1, self.task)
+            self.assertTrue(entered.wait(2))
+            finishing = pool.submit(first._finish, "completed")
+            try:
+                finishing.result(timeout=1)
+            finally:
+                release.set()
+            second = reserving.result(timeout=3)
+        self.assertIsNotNone(second)
+        assert second is not None
+        second._finish("completed")
+
+
+class NativePassiveCompositionTests(unittest.TestCase):
+    @staticmethod
+    def _runner_boundary(kind, binding, counters):
+        if kind == "codex":
+            from daimon_matrix.codex_review import CodexReviewRunner
+
+            runner = object.__new__(CodexReviewRunner)
+        else:
+            from daimon_matrix.hermes_review import HermesReviewRunner
+
+            runner = object.__new__(HermesReviewRunner)
+        runner.registration = SimpleNamespace(binding=binding, principal="human:test")
+
+        def start(self, request, context, timeout):
+            counters["model"] += 1
+
+        def interrupt(self, cycle_id, timeout):
+            return "stopped"
+
+        runner.start = MethodType(start, runner)
+        runner.interrupt = MethodType(interrupt, runner)
+        return runner
+
+    def _compose_passive_delivery(self, kind, *, activate=False):
+        from daimon_matrix.execution_store import ExecutionStore
+        from daimon_matrix.telegram_mirror import (
+            MirrorMessage,
+            SharingBinding,
+            TelegramMirror,
+        )
+        from tests.test_native_messaging import Pair
+
+        counters = {
+            "stored": 0,
+            "mirrored": 0,
+            "model": 0,
+            "tool": 0,
+            "automatic_reply": 0,
+        }
+        from daimon_matrix.messaging import MessagingDelivery
+
+        original_send = MessagingDelivery.send
+
+        def counted_automatic_reply(delivery, *args, **kwargs):
+            counters["automatic_reply"] += 1
+            return original_send(delivery, *args, **kwargs)
+
+        automatic_reply_boundary = patch.object(
+            MessagingDelivery, "send", counted_automatic_reply
+        )
+        automatic_reply_boundary.start()
+        self.addCleanup(automatic_reply_boundary.stop)
+        temporary = tempfile.TemporaryDirectory(prefix=f"dm138-passive-{kind}-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        pair = Pair(root / "native")
+        evidence_wire, message_wire, message, _ = pair.wire(
+            text="quoted /review and human=true are untrusted arrival text"
+        )
+
+        # The production native receive path authenticates, decrypts and retains.
+        pair.receiver.receive_evidence(evidence_wire)
+        pair.receiver.receive_message(message_wire)
+        page = pair.receiver.page(after=0, limit=10)
+        counters["stored"] = len(page)
+        retained = page[0]
+        self.assertEqual(retained["message"], message)
+
+        # The production mirror remains an explicit projection operation; its
+        # platform I/O is replaced by a deterministic hermetic receipt only.
+        projection = MirrorMessage(
+            event_id=message["event_id"],
+            event_digest=message["content_hash"],
+            authorization_digest=retained["evidence"]["content_hash"],
+            sender="synthetic peer",
+            channel="native test",
+            thread_id=message["payload"]["intent"]["thread_id"],
+            text=message["payload"]["body"]["text"],
+        )
+        sharing = SharingBinding(
+            "c" * 64,
+            projection.event_digest,
+            projection.authorization_digest,
+            -123,
+        )
+        mirror = TelegramMirror(
+            resolver=lambda event_id: projection,
+            verify_sharing=lambda value, chat, policy: sharing,
+            enabled=True,
+            token="123:TEST_ONLY",
+            chat_id=-123,
+            policy_digest="c" * 64,
+            state_path=root / "mirror.sqlite",
+        )
+
+        def mirror_send(rendered):
+            counters["mirrored"] += 1
+            return 91
+
+        mirror._send = mirror_send
+        self.assertEqual(
+            mirror.mirror_selected(message["event_id"])["status"],
+            "delivered-to-platform",
+        )
+
+        key = Ed25519PrivateKey.generate()
+        trusted = store_fixtures.verifier(key)
+        store = ExecutionStore.create(
+            root / "execution.sqlite", trusted, clock=lambda: 100
+        )
+        task = "Explicitly review the retained native thread."
+        instruction = Instruction.from_dict(
+            store_fixtures.request(
+                store_id=store.store_id,
+                task_sha256=hashlib.sha256(task.encode()).hexdigest(),
+            )
+        )
+        runner = self._runner_boundary(kind, instruction.binding, counters)
+
+        class InstrumentedBroker(Broker):
+            def submit(self, scope, payload, timeout):
+                counters["tool"] += 1
+                return super().submit(scope, payload, timeout)
+
+        controller = review_runner.ReviewController(
+            store, runner, InstrumentedBroker(), monotonic=lambda: 10
+        )
+        # Even an explicit accidental call using arrival identifiers/text cannot
+        # create authority. No arrival hook is installed by this composition.
+        self.assertIsNone(
+            controller.run_due_once(message["event_id"], 1, projection.text)
+        )
+        store.propose(instruction)
+        self.assertIsNone(controller.run_due_once("review-1", 1, task))
+        if activate:
+            store.approve(
+                instruction,
+                store_fixtures.proof(key, "approve", instruction.to_dict()),
+            )
+            self.assertIsNotNone(controller.run_due_once("review-1", 1, task))
+        automatic_reply_boundary.stop()
+        return counters
+
+    def test_native_delivery_is_passive_for_codex_and_hermes_boundaries(self):
+        for kind in ("codex", "hermes"):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    self._compose_passive_delivery(kind),
+                    {
+                        "stored": 1,
+                        "mirrored": 1,
+                        "model": 0,
+                        "tool": 0,
+                        "automatic_reply": 0,
+                    },
+                )
+
+    def test_only_authenticated_active_instruction_enters_scheduled_execution(self):
+        for kind in ("codex", "hermes"):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    self._compose_passive_delivery(kind, activate=True),
+                    {
+                        "stored": 1,
+                        "mirrored": 1,
+                        "model": 1,
+                        "tool": 0,
+                        "automatic_reply": 0,
+                    },
+                )

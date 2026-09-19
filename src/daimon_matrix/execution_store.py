@@ -102,12 +102,12 @@ class ExecutionStore:
             )
         return cls(path, verifier, clock=clock)
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, *, timeout: float = 10.0) -> sqlite3.Connection:
         # mode=rw is essential: a lost journal must not silently become a new journal.
         db = sqlite3.connect(
             self.path.resolve().as_uri() + "?mode=rw",
             uri=True,
-            timeout=10,
+            timeout=timeout,
             isolation_level=None,
         )
         try:
@@ -119,10 +119,10 @@ class ExecutionStore:
             raise
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction(self, *, timeout: float = 10.0) -> Iterator[sqlite3.Connection]:
         if getattr(self._local, "db", None) is not None:
             raise ExecutionDenied("submission callbacks must not reenter journal")
-        db = self._connect()
+        db = self._connect(timeout=timeout)
         try:
             db.execute("BEGIN IMMEDIATE")
             db.execute("SAVEPOINT authority")
@@ -152,6 +152,14 @@ class ExecutionStore:
         finally:
             self._local.db = None
             db.close()
+
+    @staticmethod
+    def _cancellation_timeout(remaining: float) -> float:
+        if not math.isfinite(remaining) or remaining <= 0:
+            raise ExecutionDenied("cleanup deadline reached")
+        # Cancellation must never queue behind an unrelated SQLite writer. The
+        # controller may still spend the shared deadline interrupting known work.
+        return 0.0
 
     def observe_clock(self) -> float:
         """Persist every observation, including bounded checkpoints under dispatch.
@@ -380,6 +388,25 @@ class ExecutionStore:
             ).fetchall()
         return [self.status(row["id"], row["revision"]) for row in rows]
 
+    def cancellation_status(
+        self, identity: str, revision: int, remaining: float
+    ) -> dict[str, Any]:
+        """Read exact cancellation evidence without waiting for a SQLite writer."""
+        timeout = self._cancellation_timeout(remaining)
+        with closing(self._connect(timeout=timeout)) as db:
+            row = self._row(db, identity, revision)
+            self._instruction(row)
+            cycles = db.execute(
+                "SELECT cycle_id,slot,deadline,state,outcome FROM cycles "
+                "WHERE id=? AND revision=? "
+                "AND state IN ('intent','ambiguous') ORDER BY slot",
+                (identity, revision),
+            ).fetchall()
+            return {
+                "state": row["state"],
+                "in_flight": [dict(c) for c in cycles],
+            }
+
     def reserve(
         self, identity: str, revision: int, binding: tuple[str, str, str, str]
     ) -> Cycle | None:
@@ -476,6 +503,19 @@ class ExecutionStore:
         with self._transaction() as db:
             return self._guard(db, cycle)
 
+    def cancellation_check(
+        self,
+        cycle: Cycle,
+        remaining: float,
+        checkpoint: Callable[[], None],
+    ) -> Instruction:
+        """Recheck an owned cycle without queuing behind another writer."""
+        timeout = self._cancellation_timeout(remaining)
+        with self._transaction(timeout=timeout) as db:
+            instruction = self._guard(db, cycle)
+            checkpoint()
+            return instruction
+
     def dispatch(
         self,
         cycle: Cycle,
@@ -539,6 +579,17 @@ class ExecutionStore:
                     (cycle.cycle_id,),
                 )
 
+    def cancellation_mark_ambiguous(self, cycle: Cycle, remaining: float) -> None:
+        """Persist cancellation uncertainty without waiting for a writer."""
+        timeout = self._cancellation_timeout(remaining)
+        with self._transaction(timeout=timeout) as db:
+            row = self._cycle(db, cycle)
+            if row["state"] == "intent":
+                db.execute(
+                    "UPDATE cycles SET state='ambiguous' WHERE cycle_id=?",
+                    (cycle.cycle_id,),
+                )
+
     def finish(self, cycle: Cycle, outcome: str) -> None:
         """Trusted adapter reconciliation, NOT a model tool or a timeout reclaimer.
 
@@ -567,8 +618,44 @@ class ExecutionStore:
                     (row["id"], row["revision"]),
                 )
 
+    def cancellation_finish(self, cycle: Cycle, outcome: str, remaining: float) -> None:
+        """Reconcile a stopped runtime without waiting beyond cleanup budget."""
+        if outcome not in {"completed", "stopped"}:
+            raise ExecutionDenied("unsupported terminal outcome")
+        timeout = self._cancellation_timeout(remaining)
+        with self._transaction(timeout=timeout) as db:
+            row = self._cycle(db, cycle)
+            if row["state"] not in {"intent", "ambiguous"}:
+                raise ExecutionDenied("cycle already terminal")
+            db.execute(
+                "UPDATE cycles SET state=?,outcome=? WHERE cycle_id=?",
+                (outcome, outcome, cycle.cycle_id),
+            )
+            instruction = self._instruction(self._row(db, row["id"], row["revision"]))
+            count = db.execute(
+                "SELECT count(*) FROM cycles WHERE id=? AND revision=?",
+                (row["id"], row["revision"]),
+            ).fetchone()[0]
+            if count >= instruction.max_cycles:
+                db.execute(
+                    "UPDATE instructions SET state='completed' "
+                    "WHERE id=? AND revision=? AND state='active'",
+                    (row["id"], row["revision"]),
+                )
+
     def cycle_status(self, cycle_id: str) -> dict[str, Any]:
-        with closing(self._connect()) as db:
+        return self._cycle_status(cycle_id, timeout=10.0)
+
+    def cancellation_cycle_status(
+        self, cycle_id: str, remaining: float
+    ) -> dict[str, Any]:
+        """Read one owned cycle without waiting for a SQLite writer."""
+        return self._cycle_status(
+            cycle_id, timeout=self._cancellation_timeout(remaining)
+        )
+
+    def _cycle_status(self, cycle_id: str, *, timeout: float) -> dict[str, Any]:
+        with closing(self._connect(timeout=timeout)) as db:
             row = db.execute(
                 "SELECT cycle_id,id,revision,slot,deadline,state,outcome "
                 "FROM cycles WHERE cycle_id=?",

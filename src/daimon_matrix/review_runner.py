@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+import sqlite3
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -27,6 +29,9 @@ class ReviewRequest:
 
 
 class ReviewRunner(Protocol):
+    @property
+    def expected_principal(self) -> str: ...
+
     @property
     def binding(self) -> tuple[str, str, str, str]: ...
 
@@ -64,6 +69,52 @@ class NativeBroker(Protocol):
         ...
 
 
+@dataclass
+class _CleanupBudget:
+    monotonic: Callable[[], float]
+    deadline: float
+    last: float
+    readable: bool = True
+
+    @classmethod
+    def start(cls, monotonic: Callable[[], float], timeout: float) -> _CleanupBudget:
+        try:
+            now = monotonic()
+        except Exception:
+            return cls(monotonic, float("nan"), float("nan"), False)
+        deadline = now + timeout
+        readable = (
+            math.isfinite(now)
+            and math.isfinite(timeout)
+            and timeout > 0
+            and math.isfinite(deadline)
+        )
+        return cls(monotonic, deadline, now, readable)
+
+    def remaining(self) -> float | None:
+        if not self.readable:
+            return None
+        try:
+            now = self.monotonic()
+        except Exception:
+            self.readable = False
+            return None
+        if not math.isfinite(now) or now < self.last:
+            self.readable = False
+            return None
+        self.last = now
+        remaining = self.deadline - now
+        if not math.isfinite(remaining) or remaining <= 0:
+            return None
+        return remaining
+
+
+def _sqlite_busy(error: Exception) -> bool:
+    return isinstance(error, sqlite3.OperationalError) and getattr(
+        error, "sqlite_errorcode", None
+    ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+
+
 class CycleContext:
     """Host-only capability; do not serialize token or expose this object to models."""
 
@@ -75,6 +126,7 @@ class CycleContext:
         broker: NativeBroker,
         monotonic: Callable[[], float],
         monotonic_deadline: float,
+        on_terminal: Callable[[CycleContext], None] | None = None,
     ):
         self.cycle = cycle
         self.instruction = instruction
@@ -82,6 +134,7 @@ class CycleContext:
         self._broker = broker
         self._monotonic = monotonic
         self._monotonic_deadline = monotonic_deadline
+        self._on_terminal = on_terminal
         self._last_monotonic = monotonic_deadline - instruction.max_cycle_seconds
         self._clock_fault = False
         self._last_wall = float("-inf")
@@ -115,6 +168,12 @@ class CycleContext:
 
     def _checkpoint(self) -> None:
         self.remaining()
+
+    def _finish(self, outcome: Literal["completed", "stopped"]) -> None:
+        self._store.finish(self.cycle, outcome)
+        self._fenced = True
+        if self._on_terminal is not None:
+            self._on_terminal(self)
 
     def check(self) -> None:
         try:
@@ -165,6 +224,17 @@ class ReviewController:
         self.runner = runner
         self.broker = broker
         self.monotonic = monotonic
+        self._contexts: dict[tuple[str, int, str], CycleContext] = {}
+        self._contexts_lock = threading.Lock()
+
+    def _forget(self, context: CycleContext) -> None:
+        key = (
+            context.cycle.instruction_id,
+            context.cycle.revision,
+            context.cycle.cycle_id,
+        )
+        with self._contexts_lock:
+            self._contexts.pop(key, None)
 
     def run_due_once(
         self, identity: str, revision: int, task: str
@@ -177,6 +247,10 @@ class ReviewController:
         if status["state"] != "active":
             return None
         instruction = self.store.get_instruction(identity, revision)
+        if instruction.principal != self.runner.expected_principal:
+            raise ExecutionDenied(
+                "instruction principal is not the registered principal"
+            )
         if hashlib.sha256(task.encode("utf-8")).hexdigest() != instruction.task_sha256:
             raise ExecutionDenied("task digest mismatch")
         start_mono = self.monotonic()
@@ -192,7 +266,10 @@ class ReviewController:
             self.broker,
             self.monotonic,
             start_mono + instruction.max_cycle_seconds,
+            self._forget,
         )
+        with self._contexts_lock:
+            self._contexts[(identity, revision, cycle.cycle_id)] = context
         request = ReviewRequest(instruction, task, cycle.cycle_id, cycle.deadline)
         self.store.dispatch(
             cycle,
@@ -203,35 +280,113 @@ class ReviewController:
         )
         return context
 
-    def enforce(self, context: CycleContext) -> None:
+    def enforce(
+        self,
+        context: CycleContext,
+        timeout: float | None = None,
+        *,
+        _budget: _CleanupBudget | None = None,
+    ) -> Literal["stopped", "unknown"]:
         """Called by the supervising adapter on cancellation/deadline notifications.
 
         This is not a background watchdog; an adapter without independent bounded
         supervision is not a supported runner. Ambiguity is never timeout-reclaimed.
         """
+        budget = _budget or _CleanupBudget.start(
+            self.monotonic,
+            context.instruction.cleanup_seconds if timeout is None else timeout,
+        )
+        remaining = budget.remaining()
+        if remaining is None:
+            context._fenced = True
+            return "unknown"
         persistence_error = None
         try:
-            if self.store.cycle_status(context.cycle.cycle_id)["state"] in {
+            cycle_state = self.store.cancellation_cycle_status(
+                context.cycle.cycle_id, remaining
+            )["state"]
+            if budget.remaining() is None:
+                context._fenced = True
+                return "unknown"
+            if cycle_state in {
                 "completed",
                 "stopped",
             }:
-                return
-            context.check()
-            return
+                self._forget(context)
+                return "stopped"
+            remaining = budget.remaining()
+            if remaining is None:
+                context._fenced = True
+                return "unknown"
+            self.store.cancellation_check(context.cycle, remaining, context._checkpoint)
+            return "unknown"
         except ExecutionDenied:
             pass
         except Exception as exc:
             persistence_error = exc
         context._fenced = True
+        remaining = budget.remaining()
+        if remaining is None:
+            return "unknown"
         try:
-            self.store.mark_ambiguous(context.cycle)
+            self.store.cancellation_mark_ambiguous(context.cycle, remaining)
         except Exception as exc:
             persistence_error = persistence_error or exc
-        # A lost/corrupt journal must never prevent stopping the known runtime.
-        result = self.runner.interrupt(
-            context.cycle.cycle_id, context.instruction.cleanup_seconds
-        )
+        # Re-read the one shared deadline immediately before interrupting. A lost
+        # or corrupt journal still cannot prevent a bounded stop of known work.
+        remaining = budget.remaining()
+        if remaining is None:
+            return "unknown"
+        result = self.runner.interrupt(context.cycle.cycle_id, remaining)
         if persistence_error is not None:
+            if _sqlite_busy(persistence_error):
+                return "unknown"
             raise persistence_error  # no replacement journal or invented receipt
-        if result == "stopped":
-            self.store.finish(context.cycle, "stopped")
+        if result != "stopped":
+            return result
+        remaining = budget.remaining()
+        if remaining is None:
+            return "unknown"
+        self.store.cancellation_finish(context.cycle, "stopped", remaining)
+        self._forget(context)
+        if budget.remaining() is None:
+            return "unknown"
+        return "stopped"
+
+    def cancel_active(
+        self, identity: str, revision: int, timeout: float
+    ) -> tuple[Literal["stopped", "unknown"], tuple[str, ...]]:
+        """Boundedly interrupt exact contexts after their authority is tombstoned."""
+        budget = _CleanupBudget.start(self.monotonic, timeout)
+        with self._contexts_lock:
+            matches = [
+                context
+                for (context_id, context_revision, _), context in self._contexts.items()
+                if (context_id, context_revision) == (identity, revision)
+            ]
+        matches.sort(key=lambda context: context.cycle.cycle_id)
+        cycle_ids = {context.cycle.cycle_id for context in matches}
+        outcome: Literal["stopped", "unknown"] = "stopped"
+        for context in matches:
+            if budget.remaining() is None:
+                outcome = "unknown"
+                break
+            try:
+                if self.enforce(context, _budget=budget) != "stopped":
+                    outcome = "unknown"
+            except Exception:
+                outcome = "unknown"
+        remaining = budget.remaining()
+        if remaining is None:
+            return "unknown", tuple(sorted(cycle_ids))
+        try:
+            audit = self.store.cancellation_status(identity, revision, remaining)
+            in_flight = audit["in_flight"]
+            cycle_ids.update(str(cycle["cycle_id"]) for cycle in in_flight)
+            if budget.remaining() is None:
+                return "unknown", tuple(sorted(cycle_ids))
+            if in_flight:
+                outcome = "unknown"
+        except Exception:
+            outcome = "unknown"
+        return outcome, tuple(sorted(cycle_ids))

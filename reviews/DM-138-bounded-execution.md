@@ -1,7 +1,8 @@
 # DM-138 — bounded execution core implementation review record
 
-Status: **historical core self-review below; corrected core + Codex adapter delta
-recorded in the final section; independent delta review pending**.
+Status: **historical core and rejected repair evidence below; the DM-138
+large-history final-audit deadline repair is implemented and author-qualified in
+the uncommitted candidate, pending independent exact-byte re-review**.
 This record does not close #138 or certify installed Codex/Hermes integration.
 
 ## Scope and provenance
@@ -198,3 +199,215 @@ local principal/network isolation; production NativeBroker integration; Hermes
 and passive intake/MCP/mirror composition; parent-owned generated inventories,
 wheel qualification and separately authorized live acceptance. Full #138 remains
 open. This lane makes no commits, pushes, GitHub writes or service deployments.
+
+## Follow-up: repair of independent HIGH findings (uncommitted)
+
+The independent frozen-candidate review at
+`work/messaging-rollout/reviews/DM-138-REPAIR-INDEPENDENT.md` requested changes
+for two in-scope HIGH findings. This section records implemented behavior and
+local evidence only; it does not convert that verdict to approval.
+
+1. `ReviewRunner.expected_principal` is now part of the trusted controller
+   contract. Codex and Hermes expose the principal from their signed
+   registrations, and `ReviewController.run_due_once` compares it before
+   `reserve`. Real-controller negative fixtures prove that a separately trusted
+   wrong principal creates zero cycle rows, operation rows, runner-runtime rows,
+   worker/provider/native calls or single-flight poison. Same-principal controls
+   still enter each fully constructed runner.
+2. `ReviewController` now owns exact active contexts under a thread-safe
+   instruction/revision/cycle key. Registration precedes startup dispatch, and
+   successful completion removes the context. Signed operator cancellation
+   consumes the challenge, writes the durable tombstone, then boundedly enforces
+   every exact active context within one cleanup budget. The closed response
+   reports `stopped` only if every admitted context is durably reconciled;
+   otherwise it reports `unknown` while retaining the tombstone.
+3. Executable regressions cover cancellation during blocked startup, Codex
+   review-now cancellation after provider submission (`unknown` with local
+   process reaped and no later submission), and a Hermes finite-periodic cycle
+   started by an external scheduler (`stopped` before provider/native submission).
+   Replay remains denied. This installs no scheduler or arrival hook.
+
+The existing OS-isolation limits remain: Python callbacks and same-UID process
+boundaries are not isolation, real authenticators/signers/provider credentials
+and native brokers remain deployment obligations, and transmitted remote work
+cannot be recalled. DM-041/package generated inventories are outside this claim,
+were not modified or regenerated, and remain a publication blocker until their
+own claimed lane updates and independently qualifies them.
+
+## Follow-up: cancellation restart/lost-context correction (uncommitted)
+
+Parent audit found a further cancellation acknowledgement gap in the frozen
+candidate: after controller/process restart, a signed cancellation still wrote
+its tombstone but an empty in-memory context map caused `cancel_active` to return
+`stopped` even while the exact journal retained `intent` or `ambiguous`. A new
+real-store/operator regression was first run against those bytes and failed with
+`'stopped' != 'unknown'`.
+
+`cancel_active` now snapshots only owned exact contexts, releases the context
+lock, spends the same single bounded cleanup budget enforcing those contexts,
+and finally correlates the result with durable exact instruction/revision
+in-flight evidence. Any remaining exact `intent`/`ambiguous` cycle or failed
+journal read forces `unknown`; its public cycle ID is reported without inventing
+the lost capability, invoking an unrelated runtime, or marking it stopped.
+Durably terminal exact cycles and the no-cycle case still permit `stopped`, and
+other instruction IDs/revisions are ignored. Reservation no longer holds the
+context-registry lock across the SQLite call; a deterministic barrier regression
+proves a terminal callback can complete while another reservation is paused.
+
+Final-byte local evidence for this micro-repair:
+
+- Focused instruction/store/controller/frontend suite: **48 tests, OK**, zero
+  skips. This includes restart `intent`, restart `ambiguous`, mixed terminal and
+  unowned exact cycles, unrelated instruction/revision controls, no-cycle/all-
+  terminal positive controls, normal owned bounded cancellation and lock order.
+- Exact pinned Codex plus DM-040 contract suite: **25 tests, OK**, zero skips.
+- Exact pinned Hermes fixture suite: **50 tests, OK**, zero skips. The first run
+  encountered host `/tmp` exhaustion (`ENOSPC`) and a consequent fixture startup
+  miss; after removing one stale 407 MiB prior-review fixture, the one justified
+  full rerun passed cleanly. This is recorded as environment evidence, not hidden.
+
+This remains author evidence only. It does not replace independent re-review,
+resolve the separately owned DM-041/package publication drift, deploy a human
+frontend, or authorize any live model/message/service operation.
+
+## Follow-up: end-to-end cleanup deadline correction (uncommitted)
+
+The next independent exact-byte review found one remaining in-scope defect:
+SQLite cycle checks, ambiguity writes and the final exact audit were outside the
+nominal cleanup accounting. A permanent production-path regression was added
+first with a real `BEGIN IMMEDIATE` writer held for 1.2 seconds. Against the
+rejected bytes, its 1.0-second budget took **1.236474 seconds** and interruption
+still received **0.999989 seconds** despite **0.000000 seconds** remaining. The
+test failed on both the 0.120-second wall-clock tolerance and stale timeout, as
+intended.
+
+The controller now creates one absolute monotonic deadline before snapshotting
+contexts and shares it across every exact context and the final audit. Remaining
+time is recomputed before every cancellation store call and immediately before
+every interrupt. Cancellation-only store methods use zero SQLite busy timeout;
+ordinary store methods retain their ten-second wait and transaction semantics.
+Exhausted, non-finite or backward cleanup time skips subsequent work and returns
+`unknown`. SQLite busy state after a bounded stop likewise remains conservative
+rather than being promoted to durable reconciliation. `stopped` still requires
+the final exact instruction/revision audit to find no `intent` or `ambiguous`
+cycle.
+
+On the final bytes the same `BEGIN IMMEDIATE` regression completed
+`cancel_active` in **0.001763 seconds**; the interrupt received
+**0.999053 seconds** when **0.999040 seconds** remained, returned `unknown`,
+retained the cancellation tombstone and left unresolved cycle evidence
+nonterminal. An unlocked positive control returned `stopped` only after exact
+durable settlement. Additional permanent controls cover an exclusive-lock final
+audit and exhausted or unreadable monotonic budgets.
+
+Final local qualification for this correction:
+
+- focused instruction/store/controller/frontend suite: **52 tests, OK**, zero
+  skips, 12.058 seconds;
+- exact pinned Codex plus DM-040 contract suite: **25 tests, OK**, zero skips,
+  57.200 seconds;
+- exact pinned Hermes fixture suite: **50 tests, OK**, zero skips, 315.099
+  seconds;
+- Ruff check/format over all 12 candidate Python artifacts, strict mypy over all
+  seven candidate source modules, compileall, both execution schemas and diff
+  whitespace: clean.
+
+During qualification, three broader controls exposed and drove narrow
+corrections: cancellation checkpointing had to retain the context's independent
+monotonic deadline; an already-held runner transaction had to become bounded
+`unknown` rather than an escaped SQLite busy error; and an all-terminal,
+non-interrupting controller audit had to remain a valid positive control even
+when called outside the signed operator tombstone path. No DM-041 inventory,
+generated provenance, package output or deployment artifact was changed. This
+record remains author evidence pending another independent exact-byte review.
+
+## Follow-up: large-history final-audit deadline repair (uncommitted)
+
+The repair4 candidate remained unsafe: `ExecutionStore.cancellation_status`
+selected and materialized every exact historical cycle before filtering terminal
+states in Python, while `ReviewController.cancel_active` did not re-read its
+shared absolute deadline after the final audit. The same missing checkpoint also
+existed after terminal `cancellation_cycle_status` and successful
+`cancellation_finish` calls. Therefore an all-terminal audit could exceed its
+budget and still report `stopped`.
+
+### Preserved RED
+
+The permanent regression uses the real `ReviewController.cancel_active`, real
+`ExecutionStore`, a signed/cancelled instruction and 750,000 schema-valid exact
+terminal cycle rows. Before production changes, this exact command was run:
+
+```sh
+PYTHONPATH=src /home/debian/dm-milestone2-test-venv/bin/python -m unittest tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget -v
+```
+
+Exact RED output:
+
+```text
+test_cancel_large_terminal_history_finishes_final_audit_within_budget (tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget) ... FAIL
+
+======================================================================
+FAIL: test_cancel_large_terminal_history_finishes_final_audit_within_budget (tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/debian/dm-milestone2-issue138/tests/test_execution_store.py", line 716, in test_cancel_large_terminal_history_finishes_final_audit_within_budget
+    self.assertLess(
+    ~~~~~~~~~~~~~~~^
+        elapsed,
+        ^^^^^^^^
+        budget,
+        ^^^^^^^
+        "final cancellation audit returned stopped after its shared deadline",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: 1.8812800627201796 not less than 1.0 : final cancellation audit returned stopped after its shared deadline
+
+----------------------------------------------------------------------
+Ran 1 test in 3.589s
+
+FAILED (failures=1)
+LARGE_TERMINAL_HISTORY_AUDIT rows=750000 budget=1.000000 elapsed=1.881280 result=stopped
+```
+
+A second pre-change RED ran three deterministic real-store checkpoint tests. It
+failed all six assertions: expired, non-finite, backward and exception-raising
+post-audit reads each returned `('stopped', ())`, and post-terminal-status plus
+post-finish expiry each returned `stopped` instead of `unknown`.
+
+### Minimal correction and final evidence
+
+`cancellation_status` now applies exact `id`, exact `revision` and
+`state IN ('intent','ambiguous')` in SQL, so terminal rows are never returned to
+Python. The controller re-reads the one `_CleanupBudget` after the final audit,
+after terminal-cycle status reads and after durable cancellation finish. Expired,
+non-finite, backward or exception-raising reads return `unknown`; discovered
+unresolved exact cycle IDs are retained. Ordinary store APIs and their ten-second
+busy behavior are unchanged, while cancellation-only calls retain zero-busy
+behavior.
+
+The four focused regressions passed in **2.196 seconds**; the final core run's
+750,000-row audit returned `stopped` within budget in **0.272713 seconds**.
+Final-byte qualification after test-only lint cleanup recorded:
+
+- core instruction/store/controller/frontend: **56 tests, 0 skips, OK**, 15.187
+  test seconds / 15.553 wall seconds;
+- exact pinned Codex plus DM-040 contract focus: **25 tests, 0 skips, OK**,
+  62.810 test seconds / 63.435 wall seconds;
+- exact pinned Hermes fixture: **50 tests, 0 skips, OK**, 347.255 test seconds /
+  348.024 wall seconds;
+- expanded Codex plus complete DM-040 module: **46 tests, 2 explicit private/live
+  smoke skips, OK**, 60.375 test seconds / 61.148 wall seconds.
+
+The core run includes unlocked owned cancellation, no-cycle/all-terminal restart,
+unresolved intent/ambiguous exact IDs, tombstone-before-interrupt, unowned-cycle
+non-interference, exact instruction/revision scoping, one shared cleanup budget,
+no journal access while holding the context registry lock, and the repair4 SQLite
+lock regression. Codex and Hermes fixtures retain principal mismatch rejection
+before reservation. Ruff check and format passed for all 12 candidate Python
+artifacts; strict mypy passed seven source modules; compileall, both execution
+schemas, and the repository secret scan passed; all 16 changed paths remain claim
+covered with zero staged or DM-041/package paths; real and temporary-index diff
+hygiene passed. No commit, push, post, merge or deployment is authorized or
+claimed. DM-041/package-generated drift and all previously stated live
+isolation/provider/credential limitations remain outside this repair.

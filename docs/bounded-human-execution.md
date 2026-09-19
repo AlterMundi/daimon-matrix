@@ -3,14 +3,17 @@
 ## Delivery boundary
 
 This implements the **shared instruction, SQLite journal, operator control API,
-typed runner/controller contract and a single-inference Codex App Server adapter**.
-The adapter is exercised with the exact pinned binary and a loopback synthetic
-provider, not installed/paid execution. See the separate registration below.
-There is no default review job, background scheduler, message-arrival callback,
-default model client, new embodiment, service installer, or credential-copy path.
-`tests/test_passive_messaging_execution.py` tests a **bounded fake runner** and
-core dispatch counters only. Despite its reserved filename, it does not prove
-passive real inbox/MCP/mirror composition or real Codex/Hermes dispatch.
+typed runner/controller contract, single-inference Codex App Server adapter and
+single-inference Hermes adapter**. The adapters are exercised with exact pinned
+fixtures and loopback synthetic providers, not installed/paid execution. See the
+separate registrations below. There is no default review job, background
+scheduler, message-arrival callback, default model client, new embodiment,
+service installer, or credential-copy path.
+`tests/test_passive_messaging_execution.py` composes the actual native
+receive/store and explicit mirror paths with both runner/controller types and
+instrumented model, tool and automatic-reply boundaries. The exact fixture suites
+repeat that passive arrival assertion with fully constructed Codex and Hermes
+runners. Execution remains a separate explicit scheduled-controller call.
 
 The separately included Codex generated-schema parser fix accepts finite numbers
 in vendor JSON Schema without changing Matrix signed-artifact canonicalization,
@@ -55,10 +58,13 @@ The owner MUST isolate public trust configuration, journal, controller and
 transport credentials from model-controlled code. File mode 0600 alone is not
 isolation from a same-UID shell. No agent-selected shell/files/alternate MCP
 route is allowed. A Python object or Protocol is not an OS security boundary.
-This core does not provision an authenticated frontend, isolation, or runner
-supervisor. Without those external components a target is **not qualified for
-periodic execution**; do not expose activation in its human frontend. An active
-journal row records verified approval, not installed runner readiness.
+`human_execution_frontend.py` and `HumanExecutionOperator` provide the host-only
+challenge/proof and Codex/Hermes controller integration, but the embedding owner
+still provisions the direct-human authenticator, external signer, filesystem
+isolation and runner supervisor. Without that external isolation a target is
+**not qualified for periodic execution**; do not expose activation to a model or
+message-arrival path. An active journal row records verified approval, not
+installed runner readiness.
 
 ## Operator API and module CLI
 
@@ -148,8 +154,11 @@ journal is not an anti-rollback hardware counter or a defense against its owner.
 
 `ReviewController(store, runner, broker).run_due_once(id, revision, task)` returns
 a host-only `CycleContext` or no work. It checks approval, exact task digest,
-current binding, window, slot and single-flight state, then gates the single
+the runner registration's expected human principal, current binding, window,
+slot and single-flight state, then gates the single
 `ReviewRunner.start(ReviewRequest, context, timeout)` inference submission.
+Principal mismatch is rejected before `reserve`: it creates no cycle, operation
+or runner-runtime intent and cannot consume a cycle budget or single-flight slot.
 `ReviewRequest` contains the immutable instruction, task, cycle ID and absolute
 action deadline. The deadline is the earlier of finite instruction end and
 approved cycle duration; queue time also consumes the monotonic budget.
@@ -173,6 +182,41 @@ watchdog threads or pretend that cooperative cancellation kills arbitrary code.
 Late provider responses are evidence only. Already transmitted effects cannot
 be recalled. Adapters without hard bounded submission/supervision must not be
 registered for periodic operation.
+
+The controller also owns a thread-safe registry keyed by exact instruction ID,
+revision and cycle ID. It registers each context after reserve but before the
+startup dispatch crosses `runner.start`, and successful terminal settlement
+removes it. This registry applies equally to review-now and to explicit
+`run_due_once` calls made by an external finite-periodic scheduler; it does not
+install a scheduler or arrival hook. After a cancellation challenge is consumed,
+`HumanExecutionOperator.confirm_cancel` first writes the durable tombstone, then
+asks the controller to enforce every exact active context within the single
+approved cleanup budget. Its closed result contains only `instruction_id`,
+`revision`, `state`, `interruption` and `cycles`. `interruption="stopped"` means
+every exact admitted cycle is durably reconciled; any timeout, missing stop
+evidence, persistence fault or transmitted-but-unreconciled provider/effect is
+`unknown`. The controller snapshots only contexts it actually owns, releases its
+context lock, boundedly enforces that snapshot, and then compares the result with
+the journal's exact instruction/revision `intent`/`ambiguous` evidence. The final
+audit selects only those two unresolved states in SQL; it does not fetch or
+materialize exact terminal history. One absolute monotonic deadline is captured
+before the snapshot and shared across all owned contexts, cancellation-only
+journal checks/writes and the final exact audit. Those cancellation store
+operations use a zero busy timeout rather than inheriting the ordinary journal's
+ten-second SQLite wait. Remaining time is read again immediately before every
+interrupt and immediately after every cancellation-only store operation whose
+result could otherwise produce `stopped`, including the final audit. An expired,
+non-finite, backward or unreadable monotonic budget starts no further cleanup
+step and forces `unknown`, even when an audit found no unresolved row.
+Thus a restart or lost ownership cannot turn an unresolved durable cycle into a
+stopped acknowledgement. Such an unowned cycle is listed and forces `unknown`,
+but the controller neither invents its secret capability nor
+interrupts/finishes it.
+Unrelated instructions and revisions do not affect the result; no admitted exact
+cycles, or only durably completed/stopped exact cycles, may return `stopped`.
+Store calls and bounded interruption occur outside the context-registry lock so a
+terminal callback cannot deadlock behind a reservation or cancellation audit.
+The cancellation tombstone is retained in either case.
 
 ## Parent integration / exact follow-up paths
 

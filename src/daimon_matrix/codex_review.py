@@ -256,6 +256,10 @@ class CodexReviewRunner:
     def binding(self) -> tuple[str, str, str, str]:
         return self.registration.binding
 
+    @property
+    def expected_principal(self) -> str:
+        return self.registration.principal
+
     def _validate_files(self) -> None:
         # Config/skills/auth from another session must not enter this owned profile.
         allowed = {"review.lock", "review.sqlite", "review.sqlite-journal"}
@@ -299,6 +303,7 @@ class CodexReviewRunner:
             if (
                 i.binding != self.binding
                 or i.store_id != registration.store_id
+                or i.principal != registration.principal
                 or i.provider != registration.provider
                 or i.model != registration.model
                 or i.end > registration.expires
@@ -866,5 +871,5 @@ class CodexReviewRunner:
             if server:
                 await asyncio.wait_for(server.wait_closed(), 1)
             self._settled = (not provider_sent or provider_done) and not native_unknown
-        context._store.finish(context.cycle, "completed")
+        context._finish("completed")
         self._record(request.cycle_id, state="completed")

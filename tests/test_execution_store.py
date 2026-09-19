@@ -4,11 +4,14 @@ import hashlib
 import multiprocessing
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from threading import Barrier
+from typing import Literal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -406,6 +409,7 @@ class ReviewClock:
 
 
 class ProbeRunner:
+    expected_principal = "human:test"
     binding = ("being:test", "body:test", "runner:test", "session:test")
 
     def __init__(self):
@@ -415,9 +419,20 @@ class ProbeRunner:
     def start(self, request, context, timeout):
         self.starts.append((request, context, timeout))
 
-    def interrupt(self, cycle_id, timeout):
+    def interrupt(self, cycle_id, timeout) -> Literal["stopped", "unknown"]:
         self.interrupts.append((cycle_id, timeout))
         return "stopped"
+
+
+class TimedProbeRunner(ProbeRunner):
+    def __init__(self, outcome: Literal["stopped", "unknown"]):
+        super().__init__()
+        self.outcome: Literal["stopped", "unknown"] = outcome
+        self.timed_interrupts = []
+
+    def interrupt(self, cycle_id, timeout) -> Literal["stopped", "unknown"]:
+        self.timed_interrupts.append((cycle_id, timeout, time.monotonic()))
+        return self.outcome
 
 
 class ProbeBroker:
@@ -468,6 +483,7 @@ class IndependentReviewRegressions(unittest.TestCase):
     def start(self):
         context = self.controller.run_due_once("review-1", 1, self.task)
         self.assertIsNotNone(context)
+        assert context is not None
         self.assertEqual(len(self.runner.starts), 1)
         return context
 
@@ -530,6 +546,305 @@ class IndependentReviewRegressions(unittest.TestCase):
         self.assertEqual(self.store.cycle_status(c.cycle.cycle_id)["state"], "stopped")
         with self.assertRaises(ExecutionDenied):
             c.native(self.i.scope[0], {})
+
+    def test_cancel_cleanup_budget_includes_real_sqlite_write_lock(self):
+        self.runner = TimedProbeRunner("unknown")
+        self.controller = ReviewController(
+            self.store, self.runner, self.broker, monotonic=time.monotonic
+        )
+        c = self.start()
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "cleanup-lock-cancel",
+            ),
+        )
+        locked = threading.Event()
+
+        def hold_write_lock():
+            with closing(sqlite3.connect(self.path)) as db:
+                db.execute("BEGIN IMMEDIATE")
+                locked.set()
+                time.sleep(1.2)
+                db.rollback()
+
+        budget = 1.0
+        tolerance = 0.12
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            holder = pool.submit(hold_write_lock)
+            self.assertTrue(locked.wait(2), "SQLite write lock was not acquired")
+            started = time.monotonic()
+            result = self.controller.cancel_active("review-1", 1, budget)
+            elapsed = time.monotonic() - started
+            holder.result(timeout=3)
+
+        self.assertEqual(result[0], "unknown")
+        self.assertEqual(result[1], (c.cycle.cycle_id,))
+        self.assertEqual(self.store.status("review-1", 1)["state"], "cancelled")
+        self.assertEqual(len(self.runner.timed_interrupts), 1)
+        _, interrupt_timeout, interrupted_at = self.runner.timed_interrupts[0]
+        spent_before_interrupt = interrupted_at - started
+        available_at_interrupt = max(0.0, budget - spent_before_interrupt)
+        print(
+            "CANCEL_LOCK_BUDGET_EVIDENCE",
+            f"budget={budget:.6f}",
+            f"elapsed={elapsed:.6f}",
+            f"spent_before_interrupt={spent_before_interrupt:.6f}",
+            f"interrupt_timeout={interrupt_timeout:.6f}",
+            f"available_at_interrupt={available_at_interrupt:.6f}",
+        )
+        violations = []
+        if elapsed > budget + tolerance:
+            violations.append(
+                f"elapsed {elapsed:.6f}s exceeded {budget:.6f}s budget + "
+                f"{tolerance:.6f}s tolerance"
+            )
+        if interrupt_timeout > available_at_interrupt + 0.03:
+            violations.append(
+                f"interrupt received stale {interrupt_timeout:.6f}s timeout with only "
+                f"{available_at_interrupt:.6f}s remaining"
+            )
+        self.assertEqual(violations, [], "; ".join(violations))
+
+    def test_cancel_final_exact_audit_does_not_wait_for_sqlite_lock(self):
+        c = self.start()
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "cleanup-audit-lock-cancel",
+            ),
+        )
+        restarted = ReviewController(
+            self.store, self.runner, self.broker, monotonic=time.monotonic
+        )
+        locked = threading.Event()
+
+        def hold_exclusive_lock():
+            with closing(sqlite3.connect(self.path)) as db:
+                db.execute("BEGIN EXCLUSIVE")
+                locked.set()
+                time.sleep(1.2)
+                db.rollback()
+
+        budget = 1.0
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            holder = pool.submit(hold_exclusive_lock)
+            self.assertTrue(locked.wait(2), "SQLite exclusive lock was not acquired")
+            started = time.monotonic()
+            result = restarted.cancel_active("review-1", 1, budget)
+            elapsed = time.monotonic() - started
+            holder.result(timeout=3)
+
+        self.assertEqual(result, ("unknown", ()))
+        self.assertEqual(self.runner.interrupts, [])
+        self.assertLessEqual(elapsed, budget + 0.12)
+        self.assertEqual(self.store.status("review-1", 1)["state"], "cancelled")
+        self.assertEqual(self.store.cycle_status(c.cycle.cycle_id)["state"], "intent")
+
+    def test_cancel_large_terminal_history_finishes_final_audit_within_budget(self):
+        history_size = 750_000
+        instruction = self.instruction(
+            instruction_id="large-history",
+            end=1_000_000,
+            interval=1,
+            cleanup_seconds=1,
+            max_cycles=history_size,
+        )
+        self.approve(instruction, "large-history-approval")
+        with closing(sqlite3.connect(self.path)) as db:
+            generation = db.execute(
+                "SELECT generation FROM instructions WHERE id=? AND revision=?",
+                (instruction.instruction_id, instruction.revision),
+            ).fetchone()[0]
+            db.execute(
+                "WITH RECURSIVE history(slot) AS ("
+                "VALUES(0) UNION ALL SELECT slot + 1 FROM history WHERE slot + 1 < ?"
+                ") INSERT INTO cycles "
+                "(cycle_id,id,revision,slot,binding,deadline,generation,"
+                "token_hash,state,outcome) "
+                "SELECT printf('terminal-%06d',slot),?,?,slot,?,108 + slot,?,"
+                "printf('%064x',slot),"
+                "CASE slot % 2 WHEN 0 THEN 'completed' ELSE 'stopped' END,"
+                "CASE slot % 2 WHEN 0 THEN 'completed' ELSE 'stopped' END "
+                "FROM history",
+                (
+                    history_size,
+                    instruction.instruction_id,
+                    instruction.revision,
+                    execution_store.canonical(list(instruction.binding[2:])).decode(),
+                    generation,
+                ),
+            )
+            db.commit()
+        self.store.cancel(
+            instruction.instruction_id,
+            instruction.revision,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload(
+                    instruction.instruction_id, instruction.revision
+                ),
+                "large-history-cancel",
+            ),
+        )
+        restarted = ReviewController(
+            self.store, self.runner, self.broker, monotonic=time.monotonic
+        )
+
+        budget = float(instruction.cleanup_seconds)
+        started = time.monotonic()
+        result = restarted.cancel_active(
+            instruction.instruction_id, instruction.revision, budget
+        )
+        elapsed = time.monotonic() - started
+        print(
+            "LARGE_TERMINAL_HISTORY_AUDIT",
+            f"rows={history_size}",
+            f"budget={budget:.6f}",
+            f"elapsed={elapsed:.6f}",
+            f"result={result[0]}",
+        )
+
+        self.assertEqual(result, ("stopped", ()))
+        self.assertLess(
+            elapsed,
+            budget,
+            "final cancellation audit returned stopped after its shared deadline",
+        )
+
+    def test_cancel_final_audit_rechecks_expired_or_faulted_shared_deadline(self):
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "post-audit-deadline-cancel",
+            ),
+        )
+        conditions = {
+            "expired": 11.0,
+            "nonfinite": float("nan"),
+            "backward": 9.0,
+            "unreadable": RuntimeError("monotonic unavailable"),
+        }
+        for condition, final_read in conditions.items():
+            with self.subTest(condition=condition):
+                reads = iter((10.0, 10.0, final_read))
+
+                def monotonic(reads=reads):
+                    value = next(reads)
+                    if isinstance(value, Exception):
+                        raise value
+                    return value
+
+                restarted = ReviewController(
+                    self.store, self.runner, self.broker, monotonic=monotonic
+                )
+                self.assertEqual(
+                    restarted.cancel_active("review-1", 1, 1.0), ("unknown", ())
+                )
+
+    def test_cancel_terminal_cycle_status_rechecks_shared_deadline(self):
+        context = self.start()
+        context._finish("completed")
+        reads = iter((10.0, 10.0, 11.0))
+        self.controller.monotonic = lambda: next(reads)
+
+        self.assertEqual(self.controller.enforce(context, timeout=1.0), "unknown")
+        self.assertEqual(
+            self.store.cycle_status(context.cycle.cycle_id)["state"], "completed"
+        )
+
+    def test_cancel_finish_rechecks_shared_deadline_before_stopped(self):
+        context = self.start()
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "post-finish-deadline-cancel",
+            ),
+        )
+        reads = iter((10.0,) * 7 + (11.0,))
+        self.controller.monotonic = lambda: next(reads)
+
+        self.assertEqual(self.controller.enforce(context, timeout=1.0), "unknown")
+        self.assertEqual(
+            self.store.cycle_status(context.cycle.cycle_id)["state"], "stopped"
+        )
+
+    def test_cancel_cleanup_budget_unlocked_positive_control(self):
+        self.runner = TimedProbeRunner("stopped")
+        self.controller = ReviewController(
+            self.store, self.runner, self.broker, monotonic=time.monotonic
+        )
+        c = self.start()
+        self.store.cancel(
+            "review-1",
+            1,
+            proof(
+                self.key,
+                "cancel",
+                self.store.cancellation_payload("review-1", 1),
+                "cleanup-unlocked-cancel",
+            ),
+        )
+        budget = 1.0
+        started = time.monotonic()
+        result = self.controller.cancel_active("review-1", 1, budget)
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(result, ("stopped", (c.cycle.cycle_id,)))
+        self.assertEqual(self.store.cycle_status(c.cycle.cycle_id)["state"], "stopped")
+        self.assertEqual(len(self.runner.timed_interrupts), 1)
+        _, interrupt_timeout, interrupted_at = self.runner.timed_interrupts[0]
+        available_at_interrupt = max(0.0, budget - (interrupted_at - started))
+        self.assertGreater(interrupt_timeout, 0)
+        self.assertLessEqual(interrupt_timeout, available_at_interrupt + 0.03)
+        self.assertLessEqual(elapsed, 0.25)
+
+    def test_cancel_exhausted_or_unreadable_budget_skips_cleanup(self):
+        for condition in ("exhausted", "unreadable"):
+            with self.subTest(condition=condition):
+                if condition == "unreadable":
+                    self.setUp()
+                c = self.start()
+                self.store.cancel(
+                    "review-1",
+                    1,
+                    proof(
+                        self.key,
+                        "cancel",
+                        self.store.cancellation_payload("review-1", 1),
+                        f"cleanup-{condition}-cancel",
+                    ),
+                )
+                timeout = 0.0
+                if condition == "unreadable":
+                    timeout = 1.0
+                    self.controller.monotonic = lambda: float("nan")
+
+                result = self.controller.cancel_active("review-1", 1, timeout)
+
+                self.assertEqual(result, ("unknown", (c.cycle.cycle_id,)))
+                self.assertEqual(self.runner.interrupts, [])
+                self.assertEqual(
+                    self.store.cycle_status(c.cycle.cycle_id)["state"], "intent"
+                )
+                self.assertEqual(self.store.status("review-1", 1)["state"], "cancelled")
 
     def test_positive_successful_time_observation_latches_later_rollback(self):
         c = self.start()

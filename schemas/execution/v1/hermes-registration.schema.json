@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://altermundi.github.io/daimon-matrix/schemas/execution/v1/hermes-registration.schema.json",
+  "title": "Explicit bounded Hermes review registration v1",
+  "description": "Public payload signed by isolated human frontend using execution/v1/approve. Distinct from an execution instruction and from DM-041. Binding or metadata alone never admits execution. No credential material. Existing body, provider/model selection and finite cycles require independent host verification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "principal",
+    "store_id",
+    "being",
+    "embodiment",
+    "runner",
+    "session",
+    "provider",
+    "model",
+    "schema",
+    "api_mode",
+    "endpoint",
+    "source_commit",
+    "source_archive_sha256",
+    "python_sha256",
+    "environment_sha256",
+    "profile",
+    "expires",
+    "mode",
+    "max_response_bytes",
+    "token_accounting"
+  ],
+  "properties": {
+    "principal": {
+      "$ref": "#/$defs/name"
+    },
+    "store_id": {
+      "$ref": "#/$defs/name"
+    },
+    "being": {
+      "$ref": "#/$defs/name"
+    },
+    "embodiment": {
+      "$ref": "#/$defs/name"
+    },
+    "runner": {
+      "$ref": "#/$defs/name"
+    },
+    "session": {
+      "$ref": "#/$defs/name"
+    },
+    "provider": {
+      "$ref": "#/$defs/name"
+    },
+    "model": {
+      "$ref": "#/$defs/name"
+    },
+    "schema": {
+      "const": "execution/v1/hermes-registration"
+    },
+    "api_mode": {
+      "const": "chat_completions"
+    },
+    "endpoint": {
+      "type": "string",
+      "pattern": "^(https://[^/?#@\\s]+|http://127\\.0\\.0\\.1(?::[0-9]+)?)/v1/chat/completions$",
+      "description": "Runtime additionally validates URL components; no redirects. HTTP only for explicitly qualified synthetic loopback."
+    },
+    "source_commit": {
+      "const": "5c8870c1625761956a56fd2b225720dbe9083e45"
+    },
+    "source_archive_sha256": {
+      "const": "09789981423142fec1a26239d5209f96c41453078ff73e2fc4a11e1d45728660"
+    },
+    "python_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "environment_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "profile": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Existing empty owner-only runtime journal directory; never the live Hermes profile."
+    },
+    "expires": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "mode": {
+      "const": "ephemeral-review"
+    },
+    "max_response_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 1048576
+    },
+    "token_accounting": {
+      "const": "utf8-bytes-upper-bound-v1",
+      "description": "Host must independently qualify byte-token upper bounds and hard output cap for the exact provider/model; not universal tokenization."
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

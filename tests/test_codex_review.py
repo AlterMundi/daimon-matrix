@@ -4,13 +4,15 @@ import hashlib
 import http.server
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import time
 import unittest
-from contextlib import suppress
+from contextlib import closing, suppress
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -236,6 +238,93 @@ class PinnedRunnerTests(unittest.TestCase):
             self.instruction, proof(self.key, "approve", self.instruction.to_dict())
         )
 
+    def test_cross_principal_instruction_is_denied_before_worker_or_native_calls(self):
+        from daimon_matrix.codex_review import CodexReviewRunner
+        from daimon_matrix.execution_instruction import (
+            ApprovalVerifier,
+            canonical,
+            digest,
+        )
+
+        other_key = Ed25519PrivateKey.generate()
+        trusted = ApprovalVerifier(
+            {
+                "human:test": self.key.public_key(),
+                "human:other": other_key.public_key(),
+            }
+        )
+        self.store.verifier = trusted
+        self.instruction = replace(self.instruction, principal="human:other")
+        approval_body = {
+            "purpose": "execution/v1/approve",
+            "event_id": "other-human-approval",
+            "principal": "human:other",
+            "payload_sha256": digest(self.instruction.to_dict()),
+        }
+        approval = approval_body | {
+            "signature": other_key.sign(canonical(approval_body)).hex()
+        }
+        runner = CodexReviewRunner(
+            self.payload,
+            proof(self.key, "approve", self.payload),
+            trusted,
+            existing_body=lambda _: True,
+            binary=Path(BINARY),
+            catalog=Path(CATALOG),
+        )
+        self.addCleanup(runner.close)
+        worker_calls = []
+        runner._worker = lambda request, context: worker_calls.append(request.cycle_id)
+        self.store.approve(self.instruction, approval)
+
+        with self.assertRaisesRegex(ExecutionDenied, "registered"):
+            ReviewController(self.store, runner, self.broker).run_due_once(
+                "review-1", 1, self.task
+            )
+
+        with closing(sqlite3.connect(self.store.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM cycles").fetchone()[0], 0)
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM operations").fetchone()[0], 0
+            )
+        with closing(sqlite3.connect(runner._state_path)) as db:
+            self.assertEqual(
+                db.execute("SELECT count(*) FROM runtime").fetchone()[0], 0
+            )
+        self.assertIsNone(runner._thread)
+        self.assertEqual(worker_calls, [])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.broker.calls, [])
+
+    def test_same_principal_instruction_reaches_worker_control_without_effects(self):
+        runner = self.runner()
+        worker_calls = []
+        runner._worker = lambda request, context: worker_calls.append(request.cycle_id)
+        self.approve()
+
+        context = ReviewController(self.store, runner, self.broker).run_due_once(
+            "review-1", 1, self.task
+        )
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertTrue(runner.wait(context.cycle.cycle_id, 2))
+        self.assertEqual(worker_calls, [context.cycle.cycle_id])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.broker.calls, [])
+
+    def test_actual_codex_boundary_does_not_observe_native_arrival(self):
+        from tests.test_passive_messaging_execution import (
+            deliver_store_mirror_without_execution,
+        )
+
+        runner = self.runner()
+        controller = ReviewController(self.store, runner, self.broker)
+        counts = deliver_store_mirror_without_execution(self.root / "passive")
+        self.assertIsNone(controller.run_due_once("absent", 1, self.task))
+        self.assertEqual(counts, {"stored": 1, "mirrored": 1, "automatic_reply": 0})
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.broker.calls, [])
+
     def test_real_app_server_single_inference_and_scoped_native_receipt(self):
         runner = self.runner()
         controller = ReviewController(self.store, runner, self.broker)
@@ -443,6 +532,89 @@ class PinnedRunnerTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(len(self.broker.calls), 1)  # preflight inbox only
         self.release_response.set()
+
+    def test_signed_review_now_cancel_interrupts_owned_inflight_cycle(self):
+        from daimon_matrix.hermes_review import HermesReviewRunner
+        from daimon_matrix.human_execution_frontend import HumanTurn
+        from daimon_matrix.operator_execution import HumanExecutionOperator
+
+        self.release_response.clear()
+        runner = self.runner()
+        controller = ReviewController(self.store, runner, self.broker)
+        other_store = ExecutionStore.create(
+            self.root / "unused-hermes.sqlite", self.verifier
+        )
+        other_runner = object.__new__(HermesReviewRunner)
+        other_runner.registration = SimpleNamespace(
+            binding=("being:test", "body:test", "hermes:runner", "hermes:session"),
+            principal="human:test",
+        )
+        other_controller = ReviewController(other_store, other_runner, Broker())
+        challenge_ids = iter(f"challenge-{index}" for index in range(1, 10))
+        operator = HumanExecutionOperator(
+            challenge_path=self.root / "challenges.sqlite",
+            bindings={
+                "codex": (self.store, controller),
+                "hermes": (other_store, other_controller),
+            },
+            authenticate=lambda turn: turn.authentication == f"session:{turn.turn_id}",
+            signer=lambda _principal, message: self.key.sign(message),
+            challenge_id=lambda: next(challenge_ids),
+        )
+        self.instruction = replace(
+            self.instruction, mode="manual", interval=None, max_cycles=1
+        )
+
+        def turn(label):
+            return HumanTurn(
+                principal="human:test",
+                turn_id=label,
+                origin="direct-human",
+                authentication=f"session:{label}",
+            )
+
+        display = operator.prepare_review_now(
+            turn("review-prepare"), "codex", self.instruction, self.task
+        )
+        context = operator.confirm(
+            turn("review-confirm"), display["challenge_id"], display
+        )
+        self.assertTrue(self.request_received.wait(5))
+        cancel = operator.prepare_cancel(turn("cancel-prepare"), "codex", "review-1", 1)
+
+        result = operator.confirm_cancel(
+            turn("cancel-confirm"), cancel["challenge_id"], cancel
+        )
+        interrupted_by_confirm = runner.wait(context.cycle.cycle_id, 0.2)
+        if not interrupted_by_confirm:
+            controller.enforce(context)
+
+        self.assertEqual(
+            result,
+            {
+                "instruction_id": "review-1",
+                "revision": 1,
+                "state": "cancelled",
+                "interruption": "unknown",
+                "cycles": [context.cycle.cycle_id],
+            },
+        )
+        self.assertTrue(interrupted_by_confirm)
+        runtime = runner.status(context.cycle.cycle_id)
+        self.assertEqual(runtime["state"], "ambiguous")
+        pid = runtime["pid"]
+        if pid is not None:
+            proc = Path(f"/proc/{pid}/stat")
+            self.assertTrue(not proc.exists() or proc.read_text().split()[2] == "Z")
+        self.assertEqual((len(self.calls), len(self.broker.calls)), (1, 1))
+        self.release_response.set()
+        time.sleep(0.1)
+        self.assertEqual((len(self.calls), len(self.broker.calls)), (1, 1))
+        self.assertEqual(self.store.status("review-1", 1)["state"], "cancelled")
+        with self.assertRaisesRegex(ExecutionDenied, "replay"):
+            operator.confirm_cancel(
+                turn("cancel-replay"), cancel["challenge_id"], cancel
+            )
 
     def test_absolute_deadline_supervisor_stops_hanging_provider(self):
         self.release_response.clear()
