@@ -502,14 +502,22 @@ class ContractAndProfileTests(HermesBodyFixture):
     def test_profile_is_deterministic_exclusive_and_native_memory_free(self) -> None:
         manifest = self.create()
         self.assertEqual(manifest, verify_profile(self.plan))
-        self.assertEqual(len(manifest["matrix_package"]["modules"]), 58)
+        self.assertEqual(len(manifest["matrix_package"]["modules"]), 66)
         self.assertTrue(
             {
+                "codex_review.py",
+                "execution_instruction.py",
+                "execution_store.py",
+                "hermes_review.py",
+                "hermes_review_worker.py",
+                "human_execution_frontend.py",
                 "messaging.py",
                 "messaging_store.py",
                 "messaging_config.py",
+                "operator_execution.py",
                 "operator_messaging.py",
                 "operator_runtime_upgrade.py",
+                "review_runner.py",
                 "telegram_mirror.py",
             }
             <= {item["name"] for item in manifest["matrix_package"]["modules"]}

@@ -2186,17 +2186,57 @@ def build_ephemeral_argv(plan: CodexBodyPlan) -> list[str]:
     ]
 
 
+def _normalized_external_schema(raw: bytes) -> bytes:
+    """Audited vendor JSON normalization, not Matrix artifact canonicalization.
+
+    JSON Schema legitimately contains finite floats (e.g. minimum: 0.0).
+    Preserve their JSON representation, Unicode and the existing pinned digest;
+    never route signed Matrix artifacts through this external-data parser.
+    """
+    code = "generated_schema_invalid"
+    if not 1 <= len(raw) <= MAX_DOCUMENT_BYTES:
+        raise CodexBodyError(code)
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise CodexBodyError(code)
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> None:
+        raise CodexBodyError(code)
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=unique,
+            parse_constant=reject_constant,
+        )
+        normalized = json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (UnicodeError, ValueError, RecursionError) as exception:
+        raise CodexBodyError(code) from exception
+    if len(normalized) > MAX_DOCUMENT_BYTES:
+        raise CodexBodyError("codex_document_too_large")
+    return normalized
+
+
 def normalized_schema_bundle_digest(root: Path) -> tuple[int, str]:
-    """Canonicalize generated JSON because 0.146.0 emits unstable map order."""
+    """Normalize generated vendor JSON; retain the audited path/NUL framing."""
 
     files = sorted(root.rglob("*.json"))
     digest = hashlib.sha256()
     for path in files:
-        value = _json_load(path.read_bytes(), "generated_schema_invalid")
+        normalized = _normalized_external_schema(path.read_bytes())
         relative = path.relative_to(root).as_posix().encode("utf-8")
-        digest.update(
-            relative + b"\x00" + _canonical(value, "generated_schema_invalid") + b"\x00"
-        )
+        digest.update(relative + b"\x00" + normalized + b"\x00")
     return len(files), digest.hexdigest()
 
 

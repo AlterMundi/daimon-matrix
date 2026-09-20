@@ -1,0 +1,823 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.daimon.dev/execution/v1/instruction.schema.json",
+  "title": "Finite human execution instruction",
+  "description": "Cross-field end > start and signature/predecessor verification are mandatory runtime checks. Integers are Unix seconds; no arrival-origin authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instruction_id",
+    "store_id",
+    "principal",
+    "being",
+    "embodiment",
+    "runner",
+    "session",
+    "provider",
+    "model",
+    "revision",
+    "start",
+    "end",
+    "max_cycle_seconds",
+    "cleanup_seconds",
+    "max_cycles",
+    "max_effects",
+    "max_input_tokens",
+    "max_output_tokens",
+    "schema",
+    "predecessor",
+    "mode",
+    "interval",
+    "task_sha256",
+    "scope"
+  ],
+  "properties": {
+    "instruction_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "store_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "principal": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "being": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "embodiment": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "runner": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "session": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "start": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "end": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "max_cycle_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "cleanup_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "max_cycles": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "max_effects": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "max_input_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "schema": {
+      "const": "execution/v1"
+    },
+    "predecessor": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "enum": [
+        "manual",
+        "periodic"
+      ]
+    },
+    "interval": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "task_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "channel",
+          "thread",
+          "tool",
+          "action"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+          },
+          "thread": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+          },
+          "tool": {
+            "enum": [
+              "messaging_inbox",
+              "messaging_send",
+              "messaging_reply"
+            ]
+          },
+          "action": {
+            "enum": [
+              "review",
+              "send",
+              "reply"
+            ]
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "tool": {
+                "const": "messaging_inbox"
+              },
+              "action": {
+                "const": "review"
+              }
+            }
+          },
+          {
+            "properties": {
+              "tool": {
+                "const": "messaging_send"
+              },
+              "action": {
+                "const": "send"
+              }
+            }
+          },
+          {
+            "properties": {
+              "tool": {
+                "const": "messaging_reply"
+              },
+              "action": {
+                "const": "reply"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "manual"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "interval": {
+            "type": "null"
+          },
+          "max_cycles": {
+            "const": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "interval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "predecessor": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "predecessor": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "event_id",
+        "principal",
+        "payload_sha256",
+        "signature"
+      ],
+      "properties": {
+        "purpose": {
+          "enum": [
+            "execution/v1/approve",
+            "execution/v1/cancel"
+          ]
+        },
+        "event_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "principal": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "payload_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{128}$"
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruction_id",
+        "store_id",
+        "principal",
+        "being",
+        "embodiment",
+        "runner",
+        "session",
+        "provider",
+        "model",
+        "revision",
+        "start",
+        "end",
+        "max_cycle_seconds",
+        "cleanup_seconds",
+        "max_cycles",
+        "max_effects",
+        "max_input_tokens",
+        "max_output_tokens",
+        "schema",
+        "predecessor",
+        "mode",
+        "interval",
+        "task_sha256",
+        "scope",
+        "state",
+        "generation",
+        "next_eligible_slot",
+        "in_flight",
+        "last_outcome"
+      ],
+      "properties": {
+        "instruction_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "store_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "principal": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "being": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "embodiment": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "runner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "session": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_cycle_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "cleanup_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_cycles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_effects": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "schema": {
+          "const": "execution/v1"
+        },
+        "predecessor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "enum": [
+            "manual",
+            "periodic"
+          ]
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "channel",
+              "thread",
+              "tool",
+              "action"
+            ],
+            "properties": {
+              "channel": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+              },
+              "thread": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+              },
+              "tool": {
+                "enum": [
+                  "messaging_inbox",
+                  "messaging_send",
+                  "messaging_reply"
+                ]
+              },
+              "action": {
+                "enum": [
+                  "review",
+                  "send",
+                  "reply"
+                ]
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "tool": {
+                    "const": "messaging_inbox"
+                  },
+                  "action": {
+                    "const": "review"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "tool": {
+                    "const": "messaging_send"
+                  },
+                  "action": {
+                    "const": "send"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "tool": {
+                    "const": "messaging_reply"
+                  },
+                  "action": {
+                    "const": "reply"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "active",
+            "superseded",
+            "expired",
+            "completed",
+            "cancelled"
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_eligible_slot": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "in_flight": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cycle_id",
+              "slot",
+              "deadline",
+              "state",
+              "outcome"
+            ],
+            "properties": {
+              "cycle_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+              },
+              "slot": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "deadline": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "state": {
+                "enum": [
+                  "intent",
+                  "ambiguous",
+                  "completed",
+                  "stopped"
+                ]
+              },
+              "outcome": {
+                "enum": [
+                  null,
+                  "completed",
+                  "stopped"
+                ]
+              }
+            }
+          }
+        },
+        "last_outcome": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "cycle_id",
+                "slot",
+                "deadline",
+                "state",
+                "outcome"
+              ],
+              "properties": {
+                "cycle_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+                },
+                "slot": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "deadline": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "intent",
+                    "ambiguous",
+                    "completed",
+                    "stopped"
+                  ]
+                },
+                "outcome": {
+                  "enum": [
+                    null,
+                    "completed",
+                    "stopped"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "manual"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "interval": {
+                "type": "null"
+              },
+              "max_cycles": {
+                "const": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "interval": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "revision": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "predecessor": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "predecessor": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "store_id",
+        "instruction_id",
+        "revision",
+        "principal",
+        "instruction_sha256"
+      ],
+      "properties": {
+        "store_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "instruction_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "principal": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "instruction_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "codex_registration": {
+      "title": "Separately human-approved Codex execution registration (NOT DM-040 V1 profile)",
+      "description": "ApprovalVerifier approve proof covers this whole distinct schema object. External existing-body/provider ownership verification is mandatory. Fresh ephemeral review threads, single request, no tools, finite registration; no schedule or auth material.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "store_id",
+        "being",
+        "embodiment",
+        "runner",
+        "session",
+        "provider",
+        "model",
+        "schema",
+        "endpoint",
+        "profile",
+        "catalog_sha256",
+        "expires",
+        "mode",
+        "max_response_bytes"
+      ],
+      "properties": {
+        "principal": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "store_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "being": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "embodiment": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "runner": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "session": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:._/-]{1,200}$"
+        },
+        "schema": {
+          "const": "execution/v1/codex-registration"
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^(https://[^/?#@]+|http://127\\.0\\.0\\.1:[0-9]+)/[^?#]*responses$"
+        },
+        "profile": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "catalog_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expires": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "const": "ephemeral-review"
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        }
+      }
+    }
+  }
+}
