@@ -9,6 +9,11 @@ on:
       - tests/test_mandatory_echo*py
       - tests/test_operator_first_embodiment.py
       - tests/test_dm025_client.py
+      - tools/prepare_chat_identity.py
+      - tests/test_prepare_chat_identity.py
+      - src/daimon_matrix/operator_messaging.py
+      - src/daimon_matrix/operator_runtime_upgrade.py
+      - tests/test_operator_runtime_upgrade.py
       - pyproject.toml
       - provenance/hermes-agent-0.19.0.json
   pull_request:
@@ -19,6 +24,11 @@ on:
       - tests/test_mandatory_echo*py
       - tests/test_operator_first_embodiment.py
       - tests/test_dm025_client.py
+      - tools/prepare_chat_identity.py
+      - tests/test_prepare_chat_identity.py
+      - src/daimon_matrix/operator_messaging.py
+      - src/daimon_matrix/operator_runtime_upgrade.py
+      - tests/test_operator_runtime_upgrade.py
       - pyproject.toml
       - provenance/hermes-agent-0.19.0.json
 
@@ -40,6 +50,17 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install .
+      - name: Verify installed package provenance
+        run: |
+          python - <<'PY'
+          import importlib.metadata
+          import pathlib
+          import daimon_matrix
+          installed = pathlib.Path(daimon_matrix.__file__).resolve()
+          assert pathlib.Path.cwd().resolve() not in installed.parents, installed
+          assert importlib.metadata.version("daimon-matrix") == "0.1.0rc1"
+          print(installed)
+          PY
       - name: Real HTTP, deadlines, interruption and hard parent death
         run: >-
           python -W error::ResourceWarning -m unittest
@@ -59,4 +80,10 @@ jobs:
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_operator_first_embodiment.FirstEmbodimentTests.test_distributed_genesis_becomes_a_loadable_first_runtime
+          tests.test_prepare_chat_identity
+          tests.test_operator_messaging.ProvisioningTests.test_host_visibility_accepts_current_authority_with_history_wrapper
+          tests.test_operator_messaging.ProvisioningTests.test_host_visibility_uses_signed_application_not_runtime_digest
           tests.test_dm025_client.LocalClientTests -v
+      - name: Installed legacy host migration and rollback
+        if: runner.os == 'Linux' && matrix.python == '3.11'
+        run: python -W error::ResourceWarning -m unittest tests.test_operator_runtime_upgrade -v
