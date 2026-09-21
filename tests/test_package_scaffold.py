@@ -152,7 +152,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 68)
+        self.assertEqual(len(modules), 70)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -295,6 +295,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "README.md",
                 "pyproject.toml",
                 "src/daimon_matrix/__init__.py",
+                "src/daimon_matrix/agent_chat.py",
+                "src/daimon_matrix/agent_chat_assets/hermes_plugin.py",
+                "src/daimon_matrix/agent_chat_assets/SKILL.md",
                 "src/daimon_matrix/authority_epochs.py",
                 "src/daimon_matrix/birth.py",
                 "src/daimon_matrix/canonical.py",
@@ -369,6 +372,9 @@ class ArtifactBoundaryTests(unittest.TestCase):
             WHEEL_FILES,
             {
                 "daimon_matrix/__init__.py",
+                "daimon_matrix/agent_chat.py",
+                "daimon_matrix/agent_chat_assets/hermes_plugin.py",
+                "daimon_matrix/agent_chat_assets/SKILL.md",
                 "daimon_matrix/authority_epochs.py",
                 "daimon_matrix/birth.py",
                 "daimon_matrix/canonical.py",

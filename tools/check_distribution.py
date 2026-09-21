@@ -37,6 +37,9 @@ SDIST_FILES: Final = frozenset(
         "README.md",
         "pyproject.toml",
         "src/daimon_matrix/__init__.py",
+        "src/daimon_matrix/agent_chat.py",
+        "src/daimon_matrix/agent_chat_assets/hermes_plugin.py",
+        "src/daimon_matrix/agent_chat_assets/SKILL.md",
         "src/daimon_matrix/authority_epochs.py",
         "src/daimon_matrix/birth.py",
         "src/daimon_matrix/canonical.py",
@@ -110,6 +113,9 @@ SDIST_FILES: Final = frozenset(
 WHEEL_FILES: Final = frozenset(
     {
         "daimon_matrix/__init__.py",
+        "daimon_matrix/agent_chat.py",
+        "daimon_matrix/agent_chat_assets/hermes_plugin.py",
+        "daimon_matrix/agent_chat_assets/SKILL.md",
         "daimon_matrix/authority_epochs.py",
         "daimon_matrix/birth.py",
         "daimon_matrix/canonical.py",
