@@ -654,7 +654,6 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
         import time
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-        mode = ["headers"]
         seen = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -666,6 +665,7 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )
                 seen.append(request)
+                mode = request["text"]
                 raw = json.dumps(
                     {
                         "ok": True,
@@ -678,28 +678,28 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
                     }
                 ).encode()
                 try:
-                    if mode[0] == "headers":
+                    if mode == "headers":
                         self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
                         for _ in range(20):
                             self.wfile.write(b"a")
                             self.wfile.flush()
-                            time.sleep(0.06)
+                            time.sleep(0.15)
                         self.wfile.write(
                             b"\r\nContent-Length: "
                             + str(len(raw)).encode()
                             + b"\r\n\r\n"
                             + raw
                         )
-                    elif mode[0] == "chunks":
+                    elif mode == "chunks":
                         self.wfile.write(
                             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;"
                         )
                         for _ in range(20):
                             self.wfile.write(b"a")
                             self.wfile.flush()
-                            time.sleep(0.06)
+                            time.sleep(0.15)
                         self.wfile.write(b"\r\nx\r\n0\r\n\r\n")
-                    elif mode[0] in ("framing", "chunk-success"):
+                    elif mode in ("framing", "chunk-success"):
                         self.wfile.write(
                             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         )
@@ -708,18 +708,18 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
                         )
                         self.wfile.write(
                             (b"X-Trailer: " + b"a" * 1000 + b"\r\n")
-                            * (300 if mode[0] == "framing" else 1)
+                            * (300 if mode == "framing" else 1)
                             + b"\r\n"
                         )
                     else:
                         self.send_response(200)
                         self.send_header("Content-Length", str(len(raw)))
                         self.end_headers()
-                        if mode[0] == "body":
+                        if mode == "body":
                             for byte in raw[:20]:
                                 self.wfile.write(bytes([byte]))
                                 self.wfile.flush()
-                                time.sleep(0.06)
+                                time.sleep(0.15)
                             raw = raw[20:]
                         self.wfile.write(raw)
                 except (BrokenPipeError, ConnectionResetError):
@@ -742,30 +742,38 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
         try:
             with (
                 patch.object(mirror, "_plain_http_exchange", local_exchange),
-                patch.object(mirror, "_PLAIN_HTTP_SECONDS", 0.4),
+                # Include interpreter/PTY startup on shared Intel Mac runners.
+                # Each slow response still takes >=3s, well beyond this total
+                # deadline; the production timeout is not changed.
+                patch.object(mirror, "_PLAIN_HTTP_SECONDS", 1.5),
             ):
                 transport = mirror.PlainTelegramTransport(
                     token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
                 )
-                request = mirror.plain_request("deadline", chat_id=-123, topic_id=None)
                 for value in ("headers", "body", "chunks", "framing"):
-                    mode[0] = value
+                    request = mirror.plain_request(value, chat_id=-123, topic_id=None)
                     with self.subTest(mode=value):
                         start = time.monotonic()
                         with self.assertRaisesRegex(
                             ValueError, "echo_transport_ambiguous"
                         ):
                             transport.send(request)
-                        self.assertLess(time.monotonic() - start, 1.0)
+                        self.assertLess(time.monotonic() - start, 2.5)
                 for value in ("success", "chunk-success"):
-                    mode[0] = value
+                    request = mirror.plain_request(value, chat_id=-123, topic_id=None)
                     self.assertEqual(
                         mirror.classify_plain_response(
                             transport.send(request), request, bot_id=123
                         )[0],
                         "confirmed",
                     )
-                self.assertEqual(len(seen), 6)
+                self.assertEqual(
+                    [request["text"] for request in seen],
+                    [
+                        "headers", "body", "chunks", "framing", "success",
+                        "chunk-success",
+                    ],
+                )
         finally:
             server.shutdown()
             thread.join()
