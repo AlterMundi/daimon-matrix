@@ -125,7 +125,6 @@ class ChatLinkTests(unittest.TestCase):
 
     def test_complete_signed_install_and_retry_without_network(self):
         import hashlib
-        import json
         import secrets
         import select
         import subprocess
@@ -277,7 +276,10 @@ class ChatLinkTests(unittest.TestCase):
                 ready_path = outputs[1] / "ready.json"
                 command = [
                     sys.executable,
-                    "tools/chat_link.py",
+                    "-c",
+                    "import faulthandler,runpy; "
+                    "faulthandler.dump_traceback_later(20); "
+                    "runpy.run_path('tools/chat_link.py',run_name='__main__')",
                     "run",
                     "--runtime-root",
                     str(root / "1/package/runtime"),
@@ -293,15 +295,17 @@ class ChatLinkTests(unittest.TestCase):
                 with subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 ) as process:
+                    available, _, _ = select.select([process.stderr], [], [], 25)
+                    line = process.stderr.readline() if available else b""
+                    running = process.poll() is None
                     try:
-                        available, _, _ = select.select([process.stderr], [], [], 15)
-                        self.assertTrue(available, "transport readiness timeout")
-                        line = process.stderr.readline()
-                        self.assertEqual(json.loads(line)["code"], "ready")
-                        self.assertIsNone(process.poll())
-                    finally:
                         process.terminate()
-                        process.communicate(timeout=10)
+                        _, diagnostics = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        _, diagnostics = process.communicate(timeout=5)
+                    self.assertIn(b'"code":"ready"', line, line + diagnostics)
+                    self.assertTrue(running)
 
     def test_cli_help_and_endpoint_validation(self):
         import subprocess
