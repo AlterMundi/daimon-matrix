@@ -83,6 +83,7 @@ from daimon_matrix.memory_policy import (
     create_memory_policy,
 )
 from daimon_matrix.memory_projection import CURRENT_PROJECTION_DOMAIN
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.projections import PROJECTION_DOMAIN
 from daimon_matrix.runtime import load_runtime
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
@@ -502,12 +503,14 @@ class ContractAndProfileTests(HermesBodyFixture):
     def test_profile_is_deterministic_exclusive_and_native_memory_free(self) -> None:
         manifest = self.create()
         self.assertEqual(manifest, verify_profile(self.plan))
-        self.assertEqual(len(manifest["matrix_package"]["modules"]), 66)
+        self.assertEqual(len(manifest["matrix_package"]["modules"]), 68)
         self.assertTrue(
             {
                 "codex_review.py",
                 "execution_instruction.py",
                 "execution_store.py",
+                "mandatory_echo.py",
+                "native_egress.py",
                 "hermes_review.py",
                 "hermes_review_worker.py",
                 "human_execution_frontend.py",
@@ -1175,11 +1178,15 @@ class RealDaemonProviderTests(RuntimeFixture):
                 "resource_fences": [],
             }
 
+        def clock() -> int:
+            return time.time_ns() // 1_000_000
+
         self.runtime = load_runtime(
             self.state_root,
             "runtime.json",
             lambda: bytearray(PASSWORD),
-            clock=lambda: time.time_ns() // 1_000_000,
+            clock=clock,
+            egress=synthetic_visibility(clock=clock),
             body_reader=body_reader,
         )
         self.stop = threading.Event()

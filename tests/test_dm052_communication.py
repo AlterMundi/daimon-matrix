@@ -24,6 +24,7 @@ from daimon_matrix.communication import (
     ROUTE_ATTEMPT_SCHEMA,
     CommunicationError,
     CommunicationStore,
+    SyntheticRouteProvider,
     dispatch_attempt,
 )
 from daimon_matrix.local_api import (
@@ -406,12 +407,12 @@ class LogicalMessageTests(LogicalCommunicationFixture):
         )
         self.assertEqual(self.store.conflicts()[0]["lane"], "delivery")
 
-    def test_route_ack_is_not_recipient_intake(self) -> None:
+    def test_synthetic_route_ack_is_not_recipient_intake(self) -> None:
         _message, _resolution, result = self.append_message(
             [self.target("embodiment:legion")]
         )
         attempt = self.attempt(result["legs"][0]["leg_id"], 4)
-        provider = FakeProvider()
+        provider = SyntheticRouteProvider(provider_ref="route:fake-direct")
         ack = dispatch_attempt(self.store, provider, attempt)
         self.assertEqual(ack["state"], "route-acked")
         self.assertEqual(
@@ -421,19 +422,27 @@ class LogicalMessageTests(LogicalCommunicationFixture):
         with self.assertRaisesRegex(CommunicationError, "terminal_result_incomplete"):
             self.store.result(result["message_id"], require_terminal=True)
 
-    def test_response_loss_retries_one_stable_provider_effect(self) -> None:
+    def test_legacy_dispatch_rejects_effectful_provider_before_effect(self) -> None:
         _message, _resolution, result = self.append_message(
             [self.target("embodiment:legion")]
         )
         attempt = self.attempt(result["legs"][0]["leg_id"], 5)
         provider = FakeProvider()
         provider.fail_after_effect = True
-        with self.assertRaisesRegex(CommunicationError, "route_result_unknown"):
-            dispatch_attempt(self.store, provider, attempt)
-        self.assertEqual(provider.effects, {attempt["attempt_id"]})
-        second = dispatch_attempt(self.store, provider, attempt)
-        self.assertEqual(second["state"], "route-acked")
-        self.assertEqual(provider.effects, {attempt["attempt_id"]})
+        with self.assertRaisesRegex(CommunicationError, "route_provider_not_gated"):
+            dispatch_attempt(self.store, provider, attempt)  # type: ignore[arg-type]
+        self.assertEqual(provider.effects, set())
+        with self.assertRaisesRegex(CommunicationError, "route_attempt_not_known"):
+            self.store.record_route_ack(
+                attempt_id=attempt["attempt_id"],
+                ack={
+                    "schema": "dm.route-ack/v1",
+                    "provider_ref": provider.provider_ref,
+                    "attempt_id": attempt["attempt_id"],
+                    "status": "accepted",
+                },
+                failed=False,
+            )
 
     def test_terminal_receipt_replay_and_conflict(self) -> None:
         _message, _resolution, result = self.append_message(

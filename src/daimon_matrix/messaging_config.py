@@ -16,6 +16,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .authority_epochs import RootHistoryAuthority
 from .canonical import b64url, canonical_bytes, unb64url
 from .identity import verify_embodiment_credential, verify_incarnation_authorization
+from .mandatory_echo import TABLE_SQL as ECHO_TABLE_SQL
+from .native_egress import OPERATION_TABLE_SQL, OperationBinding
 from .runtime import HostedRuntime
 from .weave import RootAuthority
 
@@ -119,6 +121,14 @@ def _verify_public_binding(
         )
     except Exception:
         raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def verify_public_binding(
+    identity: Mapping[str, Any], public_key: bytes, document: Any, binding: Any
+) -> None:
+    """Narrow public verifier for detached operator-binding/v1 documents."""
+
+    _verify_public_binding(dict(identity), public_key, document, binding)
 
 
 def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> None:
@@ -751,7 +761,8 @@ _STORE_SCHEMA_SQL = {
         state TEXT NOT NULL CHECK(state IN ('pending','acked')), claim_id TEXT,
         consumer_id TEXT, lease_until_ms INTEGER);
         CREATE TABLE IF NOT EXISTS inbox_requests (request_id TEXT PRIMARY KEY,
-        request_hash TEXT NOT NULL, delivery_id TEXT NOT NULL);
+        request_hash TEXT NOT NULL, delivery_id TEXT NOT NULL, response BLOB,
+        response_sha256 TEXT, egress_path_id TEXT);
         CREATE TABLE IF NOT EXISTS inbox_tombstones (delivery_id TEXT PRIMARY KEY,
         recipient_id TEXT NOT NULL, envelope_hash TEXT NOT NULL, received_at_ms
         INTEGER NOT NULL, sequence INTEGER NOT NULL UNIQUE);
@@ -759,6 +770,11 @@ _STORE_SCHEMA_SQL = {
         request_hash TEXT NOT NULL, result_json BLOB NOT NULL);
     """,
 }
+
+_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY = dict(_STORE_SCHEMA_SQL)
+_EGRESS_SCHEMA_SQL = ";".join((OPERATION_TABLE_SQL, *ECHO_TABLE_SQL.values(), ""))
+for _egress_store in ("outbox", "opaque"):
+    _STORE_SCHEMA_SQL[_egress_store] += _EGRESS_SCHEMA_SQL
 
 _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
     ",\n        admission_version INTEGER NOT NULL DEFAULT 1\n        "
@@ -768,7 +784,11 @@ _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
 
 
 def _validate_store_schema(
-    name: str, path: Path, *, require_inbox_admission: bool = False
+    name: str,
+    path: Path,
+    *,
+    require_inbox_admission: bool = False,
+    allow_missing_visibility: bool = False,
 ) -> None:
     """Inspect published state without DDL, recovery, or sidecar creation."""
     import re
@@ -815,7 +835,10 @@ def _validate_store_schema(
             # No store constructor is used even for these references.
             expected.executescript(_STORE_SCHEMA_SQL[schema])
             expected_catalogs = [catalog(expected)]
-            if schema == "inbox" and not require_inbox_admission:
+            if allow_missing_visibility and schema in {"outbox", "opaque"}:
+                legacy.executescript(_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY[schema])
+                expected_catalogs.append(catalog(legacy))
+            elif schema == "inbox" and not require_inbox_admission:
                 legacy.executescript(_LEGACY_INBOX_SCHEMA_SQL)
                 expected_catalogs.append(catalog(legacy))
             if (
@@ -871,6 +894,8 @@ def _compose(
     from .service import MESSAGING_METHODS, MessagingServiceContext
 
     service = runtime.service
+    if not runtime.egress.release_enabled and runtime.egress.catalog_mode != "migrate":
+        raise MessagingConfigError("messaging_visibility_required")
     # The ordinary RPC store has its own resolver/card and authorization contract.
     # Silently replacing it or maintaining a second history loses revocations.
     shared = application.get("relationship_mode")
@@ -1017,6 +1042,7 @@ def _compose(
                 name,
                 path,
                 require_inbox_admission=application["schema"] == APPLICATION_SCHEMA_V2,
+                allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
             )
     if shared is None:
         relationships = RelationshipStore(
@@ -1063,6 +1089,8 @@ def _compose(
         custody=custody,
         outbox=MessagingOutboxStore(stores["outbox"]),
         clock=service.clock,
+        egress=runtime.egress,
+        egress_catalog_id="messaging-outbox",
     )
     sender._bind(service.clock())
     communication = service.communication
@@ -1077,6 +1105,13 @@ def _compose(
     elif communication.receipts_v2:
         raise MessagingConfigError("messaging_semantic_migration_required")
     providers, ingresses = {}, {}
+    ingress_authority_head = service.origin["body_ref"]
+    if not isinstance(ingress_authority_head, str):
+        raise MessagingConfigError("messaging_identity_rejected")
+
+    def authorize_ingress_egress(binding: OperationBinding) -> bool:
+        return binding.authority_head == ingress_authority_head
+
     for phase in ("evidence", "message"):
         row = outgoing["routes"][phase]
         providers[phase] = DirectHTTPProvider(
@@ -1086,6 +1121,7 @@ def _compose(
             sender_principal=identity["being_ref"],
             sender_body_ref=service.origin["body_ref"],
             clock=service.clock,
+            egress=runtime.egress,
         )
         row = incoming["routes"][phase]
         ingresses[phase] = TransportIngress(
@@ -1096,6 +1132,10 @@ def _compose(
             recipient_embodiment_id=service.origin["embodiment_id"],
             inbox=OpaqueInbox(stores["opaque-" + phase], clock=service.clock),
             clock=service.clock,
+            egress=runtime.egress,
+            egress_catalog_id=f"messaging-{phase}-responses",
+            egress_authority_head=ingress_authority_head,
+            egress_authorizer=authorize_ingress_egress,
             intake_validator=getattr(receiver, "receive_" + phase),
         )
     delivery = MessagingDelivery(

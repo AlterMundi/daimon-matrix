@@ -19,6 +19,7 @@ from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.conformance import _test_exists
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import create_capability, create_request
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.relationship_store import (
     RelationshipServiceContext,
     RelationshipStore,
@@ -1309,6 +1310,7 @@ class RelationshipRuntimeTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         context = runtime.service.relationships
         self.assertIsNotNone(context)
@@ -1357,6 +1359,7 @@ class RelationshipRuntimeTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
 

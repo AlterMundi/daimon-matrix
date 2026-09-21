@@ -79,12 +79,9 @@ class ForeignReceiptTests(unittest.TestCase):
         )
 
     def test_reply_authors_stable_receipt_and_reduces_retained_carrier(self):
-        from daimon_matrix.messaging import MessagingChannel, MessagingSender
-        from daimon_matrix.messaging_store import (
-            MessagingInboxStore,
-            MessagingOutboxStore,
-        )
-        from tests.test_native_messaging import NativeSendRpcTests
+        from daimon_matrix.messaging import MessagingChannel
+        from daimon_matrix.messaging_store import MessagingInboxStore
+        from tests.test_native_messaging import NativeSendRpcTests, synthetic_sender
 
         store = self.store()
         self.sender.communication = store
@@ -114,13 +111,14 @@ class ForeignReceiptTests(unittest.TestCase):
             clock=lambda: self.pair.now,
         )
         back_store.upgrade_receipts_v2()
-        back = MessagingSender(
+        back = synthetic_sender(
             context=context,
             ledger=self.pair.local_ledger,
             signer=self.pair.recipient.signer,
-            custody=self.pair.receiver_custody,
-            outbox=MessagingOutboxStore(self.root / "receiver/outbox.sqlite3"),
+            delivery_custody=self.pair.receiver_custody,
+            outbox_path=self.root / "receiver/outbox.sqlite3",
             clock=lambda: self.pair.now,
+            catalog_id="test-semantic-reply-messaging-outbox",
         )
         back.communication = back_store
         request = dict(
@@ -1835,6 +1833,7 @@ class MigrationReviewProbes(unittest.TestCase):
             load_application,
             read_publication,
         )
+        from daimon_matrix.native_egress import synthetic_visibility
         from daimon_matrix.runtime import load_runtime
         from tests.test_dm024_runtime import PASSWORD
         from tests.test_messaging_runtime import application_fixture
@@ -1885,6 +1884,7 @@ class MigrationReviewProbes(unittest.TestCase):
                     "runtime.json",
                     lambda: bytearray(PASSWORD),
                     clock=lambda: self.pair.now,
+                    egress=synthetic_visibility(clock=lambda: self.pair.now),
                 )
                 result = op.upgrade_semantic_receipts(
                     restarted, target, expected_application_sha256=predecessor

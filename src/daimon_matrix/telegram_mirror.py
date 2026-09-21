@@ -24,11 +24,16 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import html
+import http.client
 import json
 import os
 import re
 import sqlite3
 import stat
+import subprocess
+import sys
+import time
+import urllib.error
 import urllib.request
 from bisect import bisect_right
 from collections.abc import Callable, Iterator
@@ -187,6 +192,428 @@ def _state(path: str | os.PathLike[str]) -> Iterator[sqlite3.Connection]:
         if fd is not None:
             os.close(fd)
         os.close(parent)
+
+
+# V2 primitives are intentionally separate: V1 remains selective and is NOT a gate.
+def render_plain_parts(document: str) -> list[str]:
+    """Complete, unnormalized plaintext; no markup interpretation or truncation."""
+    if (
+        type(document) is not str
+        or not document
+        or len(document.encode("utf-8")) > 98304
+    ):
+        raise ValueError("echo_projection_invalid")
+    chunks, chunk, units = [], "", 0
+    for char in document:
+        size = len(char.encode("utf-16-le")) // 2
+        if units + size > 3000:
+            chunks.append(chunk)
+            chunk, units = "", 0
+        chunk += char
+        units += size
+    chunks.append(chunk)
+    if len(chunks) > MAX_PARTS:
+        raise ValueError("echo_projection_invalid")
+    return [
+        f"Daimon Matrix visibility v2 · part {i}/{len(chunks)}\n{c}"
+        for i, c in enumerate(chunks, 1)
+    ]
+
+
+def plain_request(text: str, *, chat_id: int, topic_id: int | None) -> dict[str, Any]:
+    if (
+        type(chat_id) is not int
+        or not 0 < abs(chat_id) < 2**52
+        or (
+            topic_id is not None
+            and (type(topic_id) is not int or not 0 < topic_id < 2**31)
+        )
+        or type(text) is not str
+        or not text
+        or len(text.encode("utf-16-le")) // 2 > 4096
+    ):
+        raise ValueError("echo_request_invalid")
+    value: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "link_preview_options": {"is_disabled": True},
+    }
+    if topic_id is not None:
+        value["message_thread_id"] = topic_id
+    return value
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_key")
+        result[key] = value
+    return result
+
+
+def validate_plain_response(
+    raw: bytes, request: dict[str, Any], *, bot_id: int
+) -> dict[str, Any]:
+    """Validate retained Bot API evidence; exact text, numeric bot/chat/topic pins."""
+    try:
+        if type(raw) is not bytes or len(raw) > 65536:
+            raise ValueError
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        result = value["result"]
+        topic = request.get("message_thread_id")
+        if type(bot_id) is not int or not 0 < bot_id < 2**52:
+            raise ValueError
+        if topic is None:
+            if (
+                "message_thread_id" in result
+                or result.get("is_topic_message", False) is not False
+            ):
+                raise ValueError
+        elif (
+            type(result.get("message_thread_id")) is not int
+            or result.get("is_topic_message") is not True
+        ):
+            raise ValueError
+        entities = result.get("entities", [])
+        if type(entities) is not list or len(entities) > 4096:
+            raise ValueError
+        for entity in entities:
+            if (
+                type(entity) is not dict
+                or set(entity) != {"type", "offset", "length"}
+                or entity["type"]
+                not in {
+                    "mention",
+                    "hashtag",
+                    "cashtag",
+                    "bot_command",
+                    "url",
+                    "email",
+                    "phone_number",
+                }
+                or type(entity["offset"]) is not int
+                or entity["offset"] < 0
+                or type(entity["length"]) is not int
+                or entity["length"] <= 0
+                or entity["offset"] + entity["length"]
+                > len(request["text"].encode("utf-16-le")) // 2
+            ):
+                raise ValueError
+        if (
+            value.get("ok") is not True
+            or type(result["message_id"]) is not int
+            or not 0 < result["message_id"] < 2**52
+            or type(result["chat"]["id"]) is not int
+            or result["chat"]["id"] != request["chat_id"]
+            or type(result["from"]["id"]) is not int
+            or result["from"]["id"] != bot_id
+            or result["from"].get("is_bot") is not True
+            or result.get("text") != request["text"]
+            or result.get("message_thread_id") != request.get("message_thread_id")
+        ):
+            raise ValueError
+        return dict(value)
+    except Exception:
+        raise ValueError("echo_response_invalid") from None
+
+
+def classify_plain_response(
+    raw: bytes, request: dict[str, Any], *, bot_id: int
+) -> tuple[str, int]:
+    """Platform acceptance or explicit Bot API rejection; never infer from timeout.
+
+    Unknown/malformed/5xx results are ambiguous. A valid negative response retains
+    its full evidence but cannot satisfy confirmation. Retry delay is bounded.
+    """
+    try:
+        if type(raw) is not bytes or len(raw) > 65536:
+            raise ValueError
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        if value.get("ok") is True:
+            validate_plain_response(raw, request, bot_id=bot_id)
+            return "confirmed", 0
+        if (
+            type(value) is not dict
+            or set(value)
+            not in (
+                {"ok", "error_code", "description"},
+                {"ok", "error_code", "description", "parameters"},
+            )
+            or value["ok"] is not False
+            or type(value["error_code"]) is not int
+            or value["error_code"] not in (400, 401, 403, 404, 409, 429)
+            or type(value["description"]) is not str
+            or not 0 < len(value["description"]) <= 4096
+        ):
+            raise ValueError
+        delay = 30
+        if "parameters" in value:
+            parameters = value["parameters"]
+            if type(parameters) is not dict or set(parameters) != {"retry_after"}:
+                raise ValueError
+            delay = parameters["retry_after"]
+            if type(delay) is not int or not 1 <= delay <= 86400:
+                raise ValueError
+        return "rejected", delay
+    except Exception:
+        raise ValueError("echo_response_invalid") from None
+
+
+_PLAIN_HTTP_SECONDS = 10.0
+
+
+def _plain_http_exchange(url: str, payload: bytes) -> tuple[int, bytes]:
+    """One isolated local executor, killed/reaped on EVERY interrupted exit.
+
+    The monotonic budget includes interpreter startup, DNS, connect/TLS, HTTP
+    headers/framing/body and IPC. Never release a caller's guard with a live
+    executor. Reaping may take OS scheduling time; remote cancellation is NOT
+    implied. No token in argv, environment, stderr or an on-disk job file.
+    """
+    deadline = time.monotonic() + _PLAIN_HTTP_SECONDS
+    data = json.dumps([os.getpid(), url, payload.decode("utf-8")]).encode()
+    with subprocess.Popen(
+        [sys.executable, "-I", str(Path(__file__).resolve())],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        env={},
+    ) as child:
+        try:
+            output, _ = child.communicate(
+                data, timeout=max(0, deadline - time.monotonic())
+            )
+            if child.returncode != 0 or time.monotonic() >= deadline:
+                raise ValueError
+            status, raw = output.split(b"\n", 1)
+            if len(status) != 3 or len(raw) > 65536:
+                raise ValueError
+            return int(status), raw
+        finally:
+            # Includes KeyboardInterrupt/SystemExit and unexpected IPC failures.
+            # kill + wait, not an abandoned thread/future or a daemon task.
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+
+
+class _PlainBoundedReader:
+    """Bound cumulative raw HTTP bytes, including headers/chunks/trailers."""
+
+    def __init__(self, reader: Any) -> None:
+        self._reader = reader
+        self._remaining = 262144
+
+    def _read(self, size: int, *, line: bool) -> bytes:
+        limit = self._remaining + 1
+        size = limit if size < 0 else min(size, limit)
+        raw = self._reader.readline(size) if line else self._reader.read(size)
+        self._remaining -= len(raw)
+        if self._remaining < 0:
+            raise ValueError("echo_http_framing_limit")
+        return bytes(raw)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._read(size, line=False)
+
+    def readline(self, size: int = -1) -> bytes:
+        return self._read(size, line=True)
+
+    def close(self) -> None:
+        self._reader.close()
+
+
+class _PlainBoundedResponse(http.client.HTTPResponse):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.fp = _PlainBoundedReader(self.fp)  # type: ignore[assignment]
+
+
+def _plain_http_child() -> None:
+    """Private stdlib-only executor entry; no runtime, journal or lock handles."""
+    try:
+        # These process-local bounds cannot change the V1 transport in the parent.
+        http.client.HTTPConnection.response_class = _PlainBoundedResponse
+        http.client.HTTPSConnection.response_class = _PlainBoundedResponse
+        data = sys.stdin.buffer.read(131073)
+        if len(data) > 131072:
+            raise ValueError
+        parent_pid, url, payload = json.loads(data)
+        # Linux executor death coupling: after a hard parent crash there must
+        # not be an orphan HTTP sender continuing after its guard disappears.
+        # Check AFTER installing PDEATHSIG to close the startup/death race.
+        if sys.platform != "linux":
+            raise ValueError
+        import ctypes
+        import signal
+
+        if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
+            raise ValueError
+        if type(parent_pid) is not int or os.getppid() != parent_pid:
+            raise ValueError
+        wire = urllib.request.Request(
+            url,
+            data=payload.encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect()
+        )
+        try:
+            response = opener.open(wire, timeout=10)
+        except urllib.error.HTTPError as negative:
+            response = negative
+        with response:
+            status = response.status
+            raw = response.read(65537)
+            if len(raw) > 65536 or getattr(response, "length", None) not in (None, 0):
+                raise ValueError
+        sys.stdout.buffer.write(str(status).encode() + b"\n" + raw)
+        sys.stdout.buffer.flush()
+    except Exception:
+        # No exception URL, credential, body or traceback crosses this boundary.
+        raise SystemExit(1) from None
+
+
+class PlainTelegramTransport:
+    """V2 runtime-only transport. No network on construction, retry or redirects.
+
+    Credential availability/getMe enrollment is the composing runtime's duty.
+    A send failure always has an ambiguous outcome; it is never a retry grant.
+    """
+
+    def __init__(
+        self, *, token: str, bot_id: int, chat_id: int, topic_id: int | None
+    ) -> None:
+        if (
+            type(token) is not str
+            or not re.fullmatch(r"[0-9]{1,20}:[A-Za-z0-9_-]{1,128}", token)
+            or type(bot_id) is not int
+            or not 0 < bot_id < 2**52
+            or int(token.split(":", 1)[0]) != bot_id
+        ):
+            raise ValueError("echo_transport_config_invalid")
+        plain_request("validate", chat_id=chat_id, topic_id=topic_id)
+        self._token, self._bot_id = token, bot_id
+        self._chat_id, self._topic_id = chat_id, topic_id
+
+    def send(self, request: dict[str, Any]) -> bytes:
+        try:
+            # Snapshot input once; Python equality alone aliases True and 1.
+            serialized = json.dumps(request, sort_keys=True, allow_nan=False)
+            request = json.loads(serialized)
+            expected = plain_request(
+                request["text"], chat_id=self._chat_id, topic_id=self._topic_id
+            )
+            if serialized != json.dumps(expected, sort_keys=True, allow_nan=False):
+                raise ValueError
+        except Exception:
+            raise ValueError("echo_request_invalid") from None
+        try:
+            status, raw = _plain_http_exchange(
+                f"https://api.telegram.org/bot{self._token}/sendMessage",
+                json.dumps(request, ensure_ascii=False, allow_nan=False).encode(),
+            )
+            verdict, _ = classify_plain_response(raw, request, bot_id=self._bot_id)
+            expected_status = (
+                200 if verdict == "confirmed" else json.loads(raw)["error_code"]
+            )
+            if status != expected_status:
+                raise ValueError
+            return bytes(raw)
+        except Exception:
+            raise ValueError("echo_transport_ambiguous") from None
+
+
+def qualify_telegram_destination(
+    *,
+    token: str,
+    bot_id: int,
+    chat_id: int,
+    topic_id: int | None,
+    probe_text: str,
+) -> dict[str, Any]:
+    """Explicit owner-ceremony bot/destination qualification.
+
+    ``probe_text`` must be a fresh, unique value supplied by the owner caller.
+    The operation performs exactly one getMe and, only after identity matches,
+    one sendMessage through the same bounded no-proxy/no-redirect HTTP boundary
+    as :class:`PlainTelegramTransport`. It retains only hashes and numeric pins.
+    No network occurs merely by importing this module or constructing a
+    transport; a future owner CLI must invoke this function explicitly.
+    """
+    try:
+        # Construction validates token syntax, the numeric token prefix, policy
+        # bot identity, and destination without performing network I/O.
+        transport = PlainTelegramTransport(
+            token=token,
+            bot_id=bot_id,
+            chat_id=chat_id,
+            topic_id=topic_id,
+        )
+        request = plain_request(probe_text, chat_id=chat_id, topic_id=topic_id)
+
+        status, get_me_raw = _plain_http_exchange(
+            f"https://api.telegram.org/bot{token}/getMe", b"{}"
+        )
+        if status != 200 or type(get_me_raw) is not bytes or len(get_me_raw) > 65536:
+            raise ValueError
+        get_me = json.loads(
+            get_me_raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        if type(get_me) is not dict or set(get_me) != {"ok", "result"}:
+            raise ValueError
+        identity = get_me["result"]
+        if (
+            get_me["ok"] is not True
+            or type(identity) is not dict
+            or type(identity.get("id")) is not int
+            or identity["id"] != bot_id
+            or identity.get("is_bot") is not True
+        ):
+            raise ValueError
+
+        # send() re-snapshots and validates the exact request and validates the
+        # full response (text, sender, chat, topic semantics, and message ID).
+        probe_raw = transport.send(request)
+        probe_result = validate_plain_response(probe_raw, request, bot_id=bot_id)[
+            "result"
+        ]
+        message_id = probe_result["message_id"]
+        qualified_at_ms = time.time_ns() // 1_000_000
+        if (
+            type(qualified_at_ms) is not int
+            or not 0 < qualified_at_ms < 2**63
+            or type(message_id) is not int
+            or not 0 < message_id < 2**52
+        ):
+            raise ValueError
+        return {
+            "schema": "dm.messaging.telegram-qualification/v1",
+            "qualified_at_ms": qualified_at_ms,
+            "token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "get_me_bot_id": bot_id,
+            "probe_chat_id": chat_id,
+            "probe_topic_id": topic_id,
+            "probe_message_id": message_id,
+            "probe_text_sha256": hashlib.sha256(probe_text.encode("utf-8")).hexdigest(),
+        }
+    except Exception:
+        # Never expose token-bearing URLs, raw responses, or upstream details.
+        raise ValueError("telegram_qualification_failed") from None
 
 
 class TelegramMirror:
@@ -387,3 +814,7 @@ class TelegramMirror:
                 )
                 db.commit()
         return {"status": "delivered-to-platform", "confirmed_parts": len(parts)}
+
+
+if __name__ == "__main__":
+    _plain_http_child()
