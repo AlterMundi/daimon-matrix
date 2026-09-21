@@ -25,7 +25,7 @@ moving branch or `main`.
 
 ```bash
 CANDIDATE=<exact-commit-from-operator>
-PYTHON=/Users/altermundi/.local/share/daimon-matrix/bf1c36f02d50b31af13cabd0e3a1de83492df9b5/venv/bin/python
+PYTHON=<absolute-path-to-existing-isolated-venv>/bin/python
 setup_dir=$(mktemp -d)
 git -C "$setup_dir" init
 git -C "$setup_dir" remote add origin https://github.com/AlterMundi/daimon-matrix.git
@@ -36,9 +36,9 @@ test "$(git -C "$setup_dir" rev-parse HEAD)" = "$CANDIDATE" || exit 1
 "$PYTHON" -m pip install --no-deps --force-reinstall "$setup_dir"
 "$PYTHON" -m pip show daimon-matrix
 umask 077
-mkdir -p /Users/altermundi/.local/state/daimon-matrix
+mkdir -p "$HOME/.local/state/daimon-matrix"
 "$PYTHON" "$setup_dir/tools/prepare_chat_identity.py" \
-  --output /Users/altermundi/.local/state/daimon-matrix/oliva \
+  --output "$HOME/.local/state/daimon-matrix/oliva" \
   --label oliva-hermes --body-ref hermes:mac:oliva --principal-id oliva@mac
 ```
 
@@ -62,7 +62,8 @@ authority, credential history and a genuine local signature, not private keys.
 No further software access to Ani's machine is implied.
 
 Also report the Mac's mesh/VPN address and whether it can reach Legion's existing
-SSH port at `10.10.20.27:22` (TCP connection only, no SSH login needed). This
+SSH port at the mesh address supplied privately by the operator (TCP connection
+only, no SSH login needed). This
 determines direct routing versus the already authorized infrastructure route;
 loopback pilot endpoints are not usable from another machine.
 
