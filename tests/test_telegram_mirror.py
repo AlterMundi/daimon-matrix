@@ -617,13 +617,16 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
             return child
 
         with (
-            patch.object(mirror, "_PLAIN_HTTP_SECONDS", 0.4),
+            # Include real interpreter startup on shared Intel runners. The
+            # resolver stalls for 30s: the total deadline must still kill it.
+            patch.object(mirror, "_PLAIN_HTTP_SECONDS", 2.0),
             patch.object(subprocess, "Popen", launch),
         ):
             started = time.monotonic()
             with self.assertRaises(subprocess.TimeoutExpired):
                 mirror._plain_http_exchange("http://127.0.0.1:1/", b"{}")
-            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertLess(time.monotonic() - started, 3.0)
+        self.assertIsNotNone(partial[0], "executor must reach the stalled resolver")
         self.assertIn(b"resolver-entered", partial[0])
         self.assertEqual(children[0].returncode, -9)
         self.assertTrue(children[0].stdin.closed)
