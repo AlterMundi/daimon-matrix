@@ -277,8 +277,8 @@ class ChatLinkTests(unittest.TestCase):
                 command = [
                     sys.executable,
                     "-c",
-                    "import faulthandler,runpy; "
-                    "faulthandler.dump_traceback_later(20); "
+                    "import faulthandler,runpy,sys; "
+                    "faulthandler.dump_traceback_later(20,file=sys.stdout); "
                     "runpy.run_path('tools/chat_link.py',run_name='__main__')",
                     "run",
                     "--runtime-root",
@@ -293,19 +293,20 @@ class ChatLinkTests(unittest.TestCase):
                     hashlib.sha256(ready_path.read_bytes()).hexdigest(),
                 ]
                 with subprocess.Popen(
-                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
                 ) as process:
                     available, _, _ = select.select([process.stderr], [], [], 25)
                     line = process.stderr.readline() if available else b""
                     running = process.poll() is None
                     try:
                         process.terminate()
-                        _, diagnostics = process.communicate(timeout=5)
+                        trace, diagnostics = process.communicate(timeout=5)
                     except subprocess.TimeoutExpired:
                         process.kill()
-                        _, diagnostics = process.communicate(timeout=5)
-                    self.assertIn(b'"code":"ready"', line, line + diagnostics)
+                        trace, diagnostics = process.communicate(timeout=5)
+                    self.assertIn(b'"code":"ready"', line, line + trace + diagnostics)
                     self.assertTrue(running)
+                    self.assertEqual(process.returncode, 0, diagnostics)
 
     def test_cli_help_and_endpoint_validation(self):
         import subprocess

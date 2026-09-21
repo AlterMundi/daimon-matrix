@@ -1264,24 +1264,23 @@ def main() -> None:
             raise ValueError("chat_link_ready_application_changed")
         # Pass custody bytes only through an inherited descriptor, never argv.
         descriptor = os.open(args.password_file, os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            raise SystemExit(
-                run_messaging(
-                    [
-                        "run",
-                        "--state-root",
-                        str(root),
-                        "--app-dir",
-                        supplied["app_directory"],
-                        "--password-fd",
-                        str(descriptor),
-                        "--visibility-installation",
-                        supplied["visibility_installation"],
-                    ]
-                )
+        # The operator's one-shot password reader owns/closes this descriptor.
+        # Closing it again could close an unrelated subsequently reused fd.
+        raise SystemExit(
+            run_messaging(
+                [
+                    "run",
+                    "--state-root",
+                    str(root),
+                    "--app-dir",
+                    supplied["app_directory"],
+                    "--password-fd",
+                    str(descriptor),
+                    "--visibility-installation",
+                    supplied["visibility_installation"],
+                ]
             )
-        finally:
-            os.close(descriptor)
+        )
     lock = acquire_lock(root)
     try:
         runtime = load_runtime(

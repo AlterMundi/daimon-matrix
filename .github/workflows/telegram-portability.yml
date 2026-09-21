@@ -73,6 +73,10 @@ jobs:
           assert importlib.metadata.version("daimon-matrix") == "0.1.0rc1"
           print(installed)
           PY
+      - name: Installed peer enrollment and foreground transport lifecycle
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python -W error::ResourceWarning -m unittest tests.test_chat_link -v
       - name: Real HTTP, deadlines, interruption and hard parent death
         run: >-
           python -W error::ResourceWarning -m unittest
@@ -93,7 +97,6 @@ jobs:
           python -W error::ResourceWarning -m unittest
           tests.test_operator_first_embodiment.FirstEmbodimentTests.test_distributed_genesis_becomes_a_loadable_first_runtime
           tests.test_prepare_chat_identity
-          tests.test_chat_link
           tests.test_agent_chat
           tests.test_operator_messaging.ExclusivePublicationTests
           tests.test_operator_messaging.ProvisioningTests.test_host_visibility_accepts_current_authority_with_history_wrapper
