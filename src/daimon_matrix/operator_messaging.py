@@ -130,6 +130,41 @@ def _visibility_factory(
     return factory
 
 
+def host_visibility_factory(
+    app_directory: Path | str,
+    installation_path: Path | str,
+    *,
+    clock: Callable[[], int],
+) -> VisibilityFactory:
+    """Verify an existing app and installation for a host under its runtime lock.
+
+    Pass this factory to load_runtime together with read_application_authorities;
+    then load_application before readiness. No signing, migration or network I/O.
+    Unlike the bare daemon, the installation binds the messaging application,
+    not the runtime bundle. An invalid publication fails before opening stores.
+    """
+
+    def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
+        identity = _public_identity(
+            context.authority,
+            context.origin,
+            context.runtime_id,
+            context.runtime_label,
+            clock(),
+        )
+        application, _ = _read_publication(
+            _directory(app_directory),
+            lambda value, binding: verify_public_binding(
+                identity, context.signer_public_key, value, binding
+            ),
+        )
+        return _visibility_factory(
+            application, Path(installation_path), clock=clock, catalog_mode="validate"
+        )(context)
+
+    return factory
+
+
 def _write(root: Path, name: str, raw: bytes) -> None:
     fd = os.open(
         root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600

@@ -93,8 +93,11 @@ class RouteError(ValueError):
 class RouteAmbiguous(RouteError):
     """The effect may have happened but no authenticated result was received."""
 
-    def __init__(self) -> None:
-        super().__init__("route_result_unknown", retryable=True)
+    def __init__(
+        self, code: str = "route_result_unknown", *, fallback_allowed: bool = True
+    ) -> None:
+        super().__init__(code, retryable=True)
+        self.fallback_allowed = fallback_allowed
 
 
 def _closed(value: Any, fields: set[str], code: str) -> Mapping[str, Any]:
@@ -1453,13 +1456,18 @@ class AuthenticatedProvider:
             if response_sink is not None:
                 response_sink(raw_response)
             return result
+        except RouteError as exception:
+            # Retain possible remote effects and exact retry bytes, but an
+            # invalid response must not authorize trying a different route.
+            raise RouteAmbiguous(exception.code, fallback_allowed=False) from exception
+        except NativeEgressError as exception:
+            # A local visibility/authority failure is not route unavailability.
+            raise RouteAmbiguous(fallback_allowed=False) from exception
         except (
             ConnectionError,
             OSError,
             TimeoutError,
             http.client.HTTPException,
-            NativeEgressError,
-            RouteError,
         ) as exception:
             raise RouteAmbiguous() from exception
 
@@ -1936,7 +1944,9 @@ class RouteCoordinator:
                 result = dict(
                     AuthenticatedProvider.send_prepared(authenticated, request)
                 )
-            except RouteAmbiguous:
+            except RouteAmbiguous as exception:
+                if not exception.fallback_allowed:
+                    raise
                 evidence.append(
                     {
                         "provider_ref": binding.provider_ref,

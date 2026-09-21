@@ -143,6 +143,46 @@ def signed_visibility_installation(root: Path, runtime, pair, app_root: Path) ->
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_host_visibility_uses_signed_application_not_runtime_digest(self):
+        from daimon_matrix.operator_messaging import host_visibility_factory
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_dm024_runtime import PASSWORD
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "host-app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
+        factory = host_visibility_factory(
+            target, installation, clock=lambda: self.pair.now
+        )
+        restarted = load_runtime(
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: self.pair.now,
+            egress_factory=factory,
+        )
+        self.assertTrue(restarted.egress.release_enabled)
+        self.assertEqual(restarted.egress.catalog_mode, "validate")
+        composed = load_application(restarted, target)
+        self.assertIs(composed.egress, restarted.egress)
+
+        # Signed publication verification, not merely a matching app digest.
+        publication = target / "publication.json"
+        value = json.loads(publication.read_bytes())
+        value["binding"]["signature"] = "tampered"
+        publication.write_bytes(canonical_bytes(value))
+        with self.assertRaises(ValueError):
+            load_runtime(
+                runtime.state_root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: self.pair.now,
+                egress_factory=factory,
+            )
+
     @contextlib.contextmanager
     def interrupt_capability_entry_publication(self, operator, final_path, boundary):
         real_write = operator.os.write

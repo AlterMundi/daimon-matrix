@@ -9,9 +9,10 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -87,7 +88,7 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             ],
             "projected_content": "complete-plaintext-content-and-metadata",
         }
-        self.disclosure = {
+        self.disclosure: dict[str, Any] = {
             "schema": "dm.messaging.visibility-disclosure/v1",
             "issued_at_ms": 1_900_000_000_000,
             "destination": destination,
@@ -126,7 +127,7 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             "acceptance_digest": self._digest(acceptance_set),
             "proof_key_id": "sha256:" + hashlib.sha256(self.proof_key).hexdigest(),
         }
-        self.document = {
+        self.document: dict[str, Any] = {
             "schema": "dm.messaging.visibility-installation/v1",
             "generation": 1,
             "runtime_id": "owner-runtime",
@@ -266,7 +267,7 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             )
 
     def test_installation_rejects_mismatched_closed_digest_relationships(self) -> None:
-        mutations = (
+        mutations: tuple[Callable[[dict[str, Any]], None], ...] = (
             lambda d: d.update(application_sha256="d" * 64),
             lambda d: d.update(runtime_id="other-runtime"),
             lambda d: d["policy"].update(chat_id=-999),
@@ -341,8 +342,9 @@ def control_projection(operation_id: str) -> dict[str, object]:
 class TelegramTransport:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.send: Callable[[dict[str, object]], bytes] = self._send
 
-    def send(self, request: dict[str, object]) -> bytes:
+    def _send(self, request: dict[str, object]) -> bytes:
         self.calls.append(request)
         result: dict[str, object] = {
             "message_id": len(self.calls),
@@ -411,7 +413,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         self,
         binding: OperationBinding,
         *,
-        change: object | None = None,
+        change: Callable[[dict[str, Any]], None] | None = None,
         authorization_id: str = "00000000-0000-4000-8000-000000000137",
     ) -> bytes:
         challenge = self.controller.ambiguity_challenge(binding)
@@ -437,7 +439,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
             "native_operation_id": challenge["native_operation_id"],
             "decision": decision,
         }
-        if callable(change):
+        if change is not None:
             change(command)
         body = {
             **self.owner_identity,

@@ -1653,7 +1653,7 @@ class ProviderNegativeTests(RouteFixture):
         self.assertEqual(calls, 1)
         self.assertEqual(self.store.leg(leg_id)["state"], "accepted")
 
-    def test_tampered_authenticated_response_is_definitive_and_no_fallback(
+    def test_tampered_authenticated_response_is_ambiguous_and_no_fallback(
         self,
     ) -> None:
         _, result, raw, authorization = self.message_and_delivery()
@@ -1688,8 +1688,11 @@ class ProviderNegativeTests(RouteFixture):
             {direct.provider_ref: direct, hub.provider_ref: hub},
             clock=lambda: self.now,
         )
-        with self.assertRaisesRegex(RouteError, "transport_response_rejected"):
+        with self.assertRaisesRegex(
+            RouteError, "transport_response_rejected"
+        ) as raised:
             coordinator.dispatch(leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000)
+        self.assertTrue(raised.exception.retryable)
         self.assertEqual(hub_calls, 0)
 
     def test_provider_result_is_closed_and_cannot_supply_endpoint(self) -> None:
