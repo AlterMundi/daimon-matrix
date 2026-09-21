@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -143,6 +144,41 @@ def signed_visibility_installation(root: Path, runtime, pair, app_root: Path) ->
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_host_visibility_accepts_current_authority_with_history_wrapper(self):
+        from daimon_matrix.authority_epochs import RootHistoryAuthority
+        from daimon_matrix.operator_messaging import host_visibility_factory
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_dm024_runtime import PASSWORD
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "history-host-app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
+        factory = host_visibility_factory(
+            target, installation, clock=lambda: self.pair.now
+        )
+
+        def with_history(context):
+            # Exercise the public factory with a verified history wrapper. A
+            # wrapper is not itself equal to its otherwise identical active head.
+            history = RootHistoryAuthority(context.authority, [], [])
+            controller = factory(replace(context, authority=history))
+            # A different current authority must still fail closed.
+            with self.assertRaises(ValueError):
+                factory(replace(context, authority=RootHistoryAuthority(
+                    self.pair.recipient.authority, [], []
+                )))
+            return controller
+
+        restarted = load_runtime(
+            runtime.state_root, "runtime.json", lambda: bytearray(PASSWORD),
+            clock=lambda: self.pair.now, egress_factory=with_history,
+        )
+        self.assertTrue(restarted.egress.release_enabled)
+        self.assertIs(load_application(restarted, target).egress, restarted.egress)
+
     def test_host_visibility_uses_signed_application_not_runtime_digest(self):
         from daimon_matrix.operator_messaging import host_visibility_factory
         from daimon_matrix.runtime import load_runtime

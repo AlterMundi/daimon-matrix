@@ -28,6 +28,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, cast
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import canonical_bytes, unb64url
 from .local_api import create_messaging_capability
 from .messaging_config import (
@@ -91,7 +92,14 @@ def _visibility_factory(
             clock(),
         )
         selected_owner = authorities.get(owner_identity["being_ref"])
-        if selected_owner != context.authority:
+        # The application pins the current public authority, not the wrapper
+        # that additionally verifies events from earlier credential epochs.
+        current_authority = (
+            context.authority.active
+            if isinstance(context.authority, RootHistoryAuthority)
+            else context.authority
+        )
+        if selected_owner != current_authority:
             raise MessagingConfigError("messaging_visibility_installation_rejected")
 
         def verify_owner(document: Any, binding: Any) -> None:
