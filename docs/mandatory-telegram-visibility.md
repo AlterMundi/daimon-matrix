@@ -137,7 +137,12 @@ and reaps the executor before returning on timeout or interruption. This is not
 an abandoned-thread/future timeout. OS process creation/reaping and scheduling
 can add latency; if quiescence stalls, the execution guard stays held rather than
 silently releasing it. Linux `PR_SET_PDEATHSIG(SIGKILL)` plus a post-install
-parent-PID check prevents a hard-crash orphan from continuing HTTP; unsupported
+parent-PID check prevents a hard-crash orphan from continuing HTTP. The Darwin
+candidate instead gives the fresh executor a private controlling terminal:
+the parent exclusively owns its master, so parent exit hangs up the executor's
+foreground session. The executor restores and unblocks SIGHUP and verifies its
+parent after attachment, before HTTP. This is fresh exec, not `pty.fork()` or
+Python `preexec_fn`. The terminal never carries request bytes. Unsupported
 platforms or unavailable death coupling fail closed before network. Forced
 process/host loss still requires the parent's runtime recovery/quiescence policy,
 not treating lock availability as remote cancellation.
@@ -148,8 +153,17 @@ The child receives only the bounded request and URL through a private pipe, not
 argv/environment or a job file. It inherits no journal/guard descriptors or
 ambient environment and emits no exception diagnostics. The composing installation
 must provide a trusted executable `sys.executable`, immutable real-file module
-path and Linux subprocess/death-signal support; zipped/frozen distributions and
-other platforms are not qualified by this slice. No new public configuration,
+path and qualified platform lifetime support. On Darwin the host must not
+duplicate the terminal master or retain it in a raw-fork child: CLOEXEC and
+explicit descriptor passing prevent inheritance across ordinary exec, not an
+arbitrary embedding process's raw fork. The Matrix host does not raw-fork.
+Zipped/frozen distributions and other platforms are not qualified by this slice.
+The dedicated portability workflow tests real local HTTP, deadlines, process
+interruption and hard parent death on Linux and macOS ARM64. Its exact-head
+result is required before claiming Darwin qualification; Linux PTY success alone
+does not establish it. This does not qualify Intel dependency installation,
+Hermes attachment, participant onboarding or a live Telegram conversation.
+No new public configuration,
 model capability or transport destination selector is introduced.
 
 Explicit negative HTTP/Bot API responses are returned only after their exact

@@ -1,0 +1,36 @@
+name: Telegram executor portability
+
+on:
+  push:
+    paths:
+      - .github/workflows/telegram-portability.yml
+      - src/daimon_matrix/telegram_mirror.py
+      - tests/test_telegram*py
+      - pyproject.toml
+  pull_request:
+    paths:
+      - .github/workflows/telegram-portability.yml
+      - src/daimon_matrix/telegram_mirror.py
+      - tests/test_telegram*py
+      - pyproject.toml
+
+permissions:
+  contents: read
+
+jobs:
+  local-http:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+        python: ["3.11", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install .
+      - name: Real HTTP, deadlines, interruption and hard parent death
+        run: python -W error::ResourceWarning -m unittest tests.test_telegram_mirror tests.test_telegram_executor_portability -v

@@ -371,6 +371,37 @@ def classify_plain_response(
 _PLAIN_HTTP_SECONDS = 10.0
 
 
+def _plain_lifetime_mode() -> str:
+    platform_name = sys.platform
+    if platform_name == "linux":
+        return "linux"
+    if platform_name == "darwin":
+        return "terminal"
+    raise ValueError("echo_executor_platform_unsupported")
+
+
+@contextmanager
+def _plain_lifetime() -> Iterator[int | None]:
+    """Own the Darwin executor's terminal master until the executor is reaped.
+
+    No terminal carries request bytes or secrets. Fresh exec, not pty.fork or a
+    Python preexec_fn, isolates macOS system-library state before urllib runs.
+    No unrelated child may inherit the master: both descriptors are CLOEXEC,
+    and the executor receives only the slave in its explicit pass_fds set.
+    """
+    if _plain_lifetime_mode() == "linux":
+        yield None
+        return
+    master, slave = os.openpty()
+    try:
+        os.set_inheritable(master, False)
+        os.set_inheritable(slave, False)
+        yield slave
+    finally:
+        os.close(slave)
+        os.close(master)
+
+
 def _plain_http_exchange(url: str, payload: bytes) -> tuple[int, bytes]:
     """One isolated local executor, killed/reaped on EVERY interrupted exit.
 
@@ -380,16 +411,22 @@ def _plain_http_exchange(url: str, payload: bytes) -> tuple[int, bytes]:
     implied. No token in argv, environment, stderr or an on-disk job file.
     """
     deadline = time.monotonic() + _PLAIN_HTTP_SECONDS
-    data = json.dumps([os.getpid(), url, payload.decode("utf-8")]).encode()
-    with subprocess.Popen(
-        [sys.executable, "-I", str(Path(__file__).resolve())],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        env={},
-    ) as child:
+    with (
+        _plain_lifetime() as lifetime_fd,
+        subprocess.Popen(
+            [sys.executable, "-I", str(Path(__file__).resolve())],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            pass_fds=() if lifetime_fd is None else (lifetime_fd,),
+            env={},
+        ) as child,
+    ):
         try:
+            data = json.dumps(
+                [os.getpid(), url, payload.decode("utf-8"), lifetime_fd]
+            ).encode()
             output, _ = child.communicate(
                 data, timeout=max(0, deadline - time.monotonic())
             )
@@ -448,17 +485,37 @@ def _plain_http_child() -> None:
         data = sys.stdin.buffer.read(131073)
         if len(data) > 131072:
             raise ValueError
-        parent_pid, url, payload = json.loads(data)
-        # Linux executor death coupling: after a hard parent crash there must
-        # not be an orphan HTTP sender continuing after its guard disappears.
-        # Check AFTER installing PDEATHSIG to close the startup/death race.
-        if sys.platform != "linux":
-            raise ValueError
-        import ctypes
+        parent_pid, url, payload, lifetime_fd = json.loads(data)
         import signal
 
-        if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
-            raise ValueError
+        if lifetime_fd is None:
+            if sys.platform != "linux":
+                raise ValueError
+            import ctypes
+
+            if ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
+                raise ValueError
+        else:
+            # On Darwin the private terminal's master belongs only to the
+            # parent. Master closure causes kernel hangup of this foreground
+            # session. The same path is exercised with real PTYs on Linux.
+            # Never inherit an ignored/blocked HUP disposition from the host.
+            import termios
+
+            if (
+                sys.platform not in {"darwin", "linux"}
+                or type(lifetime_fd) is not int
+                or lifetime_fd < 3
+                or not os.isatty(lifetime_fd)
+            ):
+                raise ValueError
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGHUP})
+            os.setsid()
+            fcntl.ioctl(lifetime_fd, termios.TIOCSCTTY, 0)
+            if os.tcgetpgrp(lifetime_fd) != os.getpgrp():
+                raise ValueError
+        # Check AFTER attaching death coupling to close the startup/death race.
         if type(parent_pid) is not int or os.getppid() != parent_pid:
             raise ValueError
         wire = urllib.request.Request(

@@ -1,5 +1,6 @@
 """Offline native mirror tests; Telegram is always mocked."""
 
+import sys
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -515,6 +516,7 @@ class MandatoryPlainTests(unittest.TestCase):
             thread.join()
             server.server_close()
 
+    @unittest.skipUnless(sys.platform == "linux", "Linux PDEATHSIG/pidfd contract")
     def test_parent_death_stops_local_http_executor(self):
         import os
         import signal
