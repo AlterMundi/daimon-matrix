@@ -429,7 +429,17 @@ worker.advance("synthetic-op", sys.argv[2])
 """
         result = subprocess.run(
             [sys.executable, "-c", child, str(self.path), binding],
-            env={**os.environ, "PYTHONPATH": "src"},
+            # Use the same artifact as the parent, even from outside the repo.
+            # A literal "src" silently retested checkout code in wheel checks.
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    [
+                        str(Path(echo.__file__).resolve().parents[1]),
+                        str(Path(__file__).resolve().parents[1]),
+                    ]
+                ),
+            },
             capture_output=True,
             timeout=10,
         )
