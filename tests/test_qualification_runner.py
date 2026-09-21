@@ -10,6 +10,11 @@ from tools import qualify
 
 
 class QualificationRunnerTests(unittest.TestCase):
+    def test_legacy_fixture_matches_production_migration_pin(self) -> None:
+        from daimon_matrix.operator_runtime_upgrade import LEGACY_REVISION
+
+        self.assertEqual(qualify.LEGACY_REVISION, LEGACY_REVISION)
+
     def test_environment_does_not_inherit_credentials_or_live_gates(self) -> None:
         with patch.dict(
             os.environ,

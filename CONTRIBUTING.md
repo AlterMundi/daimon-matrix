@@ -72,6 +72,9 @@ work; it does not restart design or erase previously verified evidence.
   finished candidate. Use `python tools/qualify.py --help` for the isolated unit
   runner and exact contract preflight. Keep build, secrets, and external contract
   jobs: the unit runner does not replace them or prove a live deployment.
+  A shallow checkout must first seed the legacy migration fixture with
+  `git fetch --no-tags --depth=1 origin 915c56c8899fd53d683bd7c7c81c3465b600bed9`;
+  missing fixture objects are a preflight failure, not a late test-time download.
 - Request independent review on a qualified exact head. Re-review fixes and
   affected invariants; do not restart an unrelated full-stack audit each round.
   New evidenced blockers still need correction. Optional improvements belong in

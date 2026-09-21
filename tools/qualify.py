@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+LEGACY_REVISION = "915c56c8899fd53d683bd7c7c81c3465b600bed9"
 PINS = {
     "COLLECTIVE_MEMORY_CONTRACT_ROOT": "3e3b39416917f8e3c2bc5ca69362b20296205938",
     "HMK_CONTRACT_ROOT": "f10fd5c3089c0962920314c97e14bc024feffa7a",
@@ -71,10 +72,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for key, path in contracts.items():
             check_checkout(path, PINS[key])
+        # Migration tests otherwise fall back to a download late in the suite.
+        # Seed once with: git fetch origin <LEGACY_REVISION>.
+        subprocess.run(
+            ["git", "cat-file", "-e", LEGACY_REVISION + "^{commit}"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        )
     except (OSError, ValueError, subprocess.CalledProcessError):
         print(
             "qualification preflight failed: "
-            "require clean Git checkouts at documented pins",
+            "require clean contract checkouts and the pinned legacy Git object",
             file=sys.stderr,
         )
         return 2
