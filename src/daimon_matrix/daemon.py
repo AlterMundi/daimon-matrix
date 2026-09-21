@@ -9,6 +9,7 @@ import os
 import secrets
 import signal
 import socket
+import socketserver
 import stat
 import struct
 import sys
@@ -212,6 +213,15 @@ class _BoundedPeerHTTPServer(http.server.ThreadingHTTPServer):
     ) -> None:
         self._peer_slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
         super().__init__(server_address, handler)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind calls getfqdn(), which can block indefinitely
+        # in macOS reverse DNS even for an explicit loopback/VPN listen address.
+        # These authenticated transports do not use a DNS name for routing,
+        # identity, or authorization. Bind numerically and retain HTTP metadata.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = str(self.server_address[0])
+        self.server_port = self.server_address[1]
 
     def process_request(
         self,

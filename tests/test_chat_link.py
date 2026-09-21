@@ -328,6 +328,21 @@ class ChatLinkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_endpoints(endpoints)
 
+    def test_transport_bind_does_not_require_reverse_dns(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest.mock import patch
+
+        from daimon_matrix.daemon import (
+            _BoundedMessagingHTTPServer,
+            _BoundedPeerHTTPServer,
+        )
+
+        with patch("socket.getfqdn", side_effect=AssertionError("DNS unavailable")):
+            for server_class in (_BoundedPeerHTTPServer, _BoundedMessagingHTTPServer):
+                with server_class(("127.0.0.1", 0), BaseHTTPRequestHandler) as server:
+                    self.assertEqual(server.server_name, "127.0.0.1")
+                    self.assertGreater(server.server_port, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

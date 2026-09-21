@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/telegram-portability.yml
       - src/daimon_matrix/telegram_mirror.py
+      - src/daimon_matrix/daemon.py
       - tests/test_telegram*py
       - tests/test_mandatory_echo*py
       - tests/test_operator_first_embodiment.py
@@ -26,6 +27,7 @@ on:
     paths:
       - .github/workflows/telegram-portability.yml
       - src/daimon_matrix/telegram_mirror.py
+      - src/daimon_matrix/daemon.py
       - tests/test_telegram*py
       - tests/test_mandatory_echo*py
       - tests/test_operator_first_embodiment.py
