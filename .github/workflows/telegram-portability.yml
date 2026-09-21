@@ -7,12 +7,14 @@ on:
       - src/daimon_matrix/telegram_mirror.py
       - tests/test_telegram*py
       - pyproject.toml
+      - provenance/hermes-agent-0.19.0.json
   pull_request:
     paths:
       - .github/workflows/telegram-portability.yml
       - src/daimon_matrix/telegram_mirror.py
       - tests/test_telegram*py
       - pyproject.toml
+      - provenance/hermes-agent-0.19.0.json
 
 permissions:
   contents: read
