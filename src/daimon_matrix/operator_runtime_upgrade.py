@@ -185,12 +185,30 @@ def _locks(source: Path) -> Iterator[None]:
 
 def _validate(root: Path, code: Path, password: bytes) -> None:
     script = """
-import os,sys,time
+import os,shutil,sys,tempfile,time
 sys.path.insert(0,sys.argv[1])
 from pathlib import Path
 from daimon_matrix.runtime import load_runtime
 password=os.read(int(sys.argv[3]),4097)
-load_runtime(Path(sys.argv[2]),'runtime.json',lambda:bytearray(password),clock=lambda:time.time_ns()//1000000)
+clock=lambda:time.time_ns()//1000000
+options={}
+try:
+    from daimon_matrix.native_egress import closed_visibility
+except ModuleNotFoundError as exc:
+    if exc.name != 'daimon_matrix.native_egress':
+        raise
+else:
+    options['egress']=closed_visibility(clock=clock,catalog_mode='migrate')
+with tempfile.TemporaryDirectory(prefix='dm-runtime-validate-') as scratch:
+    clone=Path(scratch)/'runtime'
+    shutil.copytree(Path(sys.argv[2]),clone)
+    load_runtime(
+        clone,
+        'runtime.json',
+        lambda:bytearray(password),
+        clock=clock,
+        **options,
+    )
 """
     read, write = os.pipe()
     try:

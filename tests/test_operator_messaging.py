@@ -2,16 +2,144 @@
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
+import sqlite3
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.messaging_config import load_application
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from daimon_matrix.canonical import b64url, canonical_bytes
+from daimon_matrix.messaging_config import (
+    BINDING_DOMAIN,
+    _public_identity,
+    config_digest,
+    create_binding,
+    load_application,
+    read_publication,
+)
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_messaging import prepare
 from tests.test_messaging_runtime import application_fixture
+
+
+def signed_visibility_installation(root: Path, runtime, pair, app_root: Path) -> Path:
+    application, _metadata = read_publication(runtime, app_root)
+    application_sha256 = config_digest(application)
+    token = b"137:SIGNED_TEST_ONLY"
+    proof_key = b"\x89" * 32
+    for name, raw in (("telegram.token", token), ("echo-proof.key", proof_key)):
+        path = root / name
+        path.write_bytes(raw)
+        path.chmod(0o600)
+    participants = sorted({pair.sender.state.being_ref, pair.recipient.state.being_ref})
+    scope = {
+        "mode": "all-inter-daimon-communications",
+        "channels": [
+            {
+                "channel_id": application[direction]["channel_id"],
+                "direction": direction,
+                "local_being_ref": pair.sender.state.being_ref,
+                "peer_being_ref": pair.recipient.state.being_ref,
+                "bootstrap_policy": {},
+                "relationship_disclosure": {},
+            }
+            for direction in ("incoming", "outgoing")
+        ],
+        "projected_content": "complete-plaintext-content-and-metadata",
+    }
+    disclosure = {
+        "schema": "dm.messaging.visibility-disclosure/v1",
+        "issued_at_ms": runtime.service.clock(),
+        "destination": {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "plain-json/v2",
+        },
+        "scope": scope,
+        "scope_sha256": hashlib.sha256(canonical_bytes(scope)).hexdigest(),
+        "participants": participants,
+        "risk": (
+            "all-inter-daimon-communication-will-be-posted-as-plaintext-"
+            "to-the-fixed-telegram-destination"
+        ),
+    }
+
+    def peer_binding(document):
+        identity = _public_identity(
+            pair.recipient.authority,
+            pair.recipient.origin,
+            "peer-visibility-runtime",
+            "peer-visibility-runtime",
+            runtime.service.clock(),
+        )
+        body = {**identity, "application_sha256": config_digest(document)}
+        signature = Ed25519PrivateKey.from_private_bytes(
+            pair.recipient.signer.seed
+        ).sign(BINDING_DOMAIN + canonical_bytes(body))
+        return {
+            "schema": "dm.messaging.operator-binding/v1",
+            "body": body,
+            "signature": b64url(signature),
+        }
+
+    owner_ref = runtime.service.ledger.authority.manifest.being_ref
+    bindings = {
+        owner_ref: create_binding(runtime, disclosure),
+        pair.recipient.state.being_ref: peer_binding(disclosure),
+    }
+    acceptance_set = {
+        "schema": "dm.messaging.visibility-acceptance-set/v1",
+        "disclosure_sha256": config_digest(disclosure),
+        "bindings": [bindings[participant] for participant in participants],
+    }
+    document = {
+        "schema": "dm.messaging.visibility-installation/v1",
+        "generation": 1,
+        "runtime_id": runtime.service.runtime_id,
+        "application_sha256": application_sha256,
+        "disclosure": disclosure,
+        "acceptance_set": acceptance_set,
+        "policy": {
+            "schema": "daimon-visibility-policy/v2",
+            "generation": 1,
+            "origin": "owner-signed-installation",
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "plain-json/v2",
+            "acceptance_digest": config_digest(acceptance_set),
+            "proof_key_id": "sha256:" + hashlib.sha256(proof_key).hexdigest(),
+        },
+        "secrets": {
+            "telegram_token_file": "telegram.token",
+            "telegram_token_sha256": hashlib.sha256(token).hexdigest(),
+            "proof_key_file": "echo-proof.key",
+        },
+        "telegram_qualification": {
+            "schema": "dm.messaging.telegram-qualification/v1",
+            "qualified_at_ms": runtime.service.clock(),
+            "token_sha256": hashlib.sha256(token).hexdigest(),
+            "get_me_bot_id": 137,
+            "probe_chat_id": -100137,
+            "probe_topic_id": None,
+            "probe_message_id": 1,
+            "probe_text_sha256": "b" * 64,
+        },
+    }
+    installation = root / "visibility-installation.json"
+    installation.write_bytes(
+        canonical_bytes(
+            {"document": document, "binding": create_binding(runtime, document)}
+        )
+    )
+    installation.chmod(0o600)
+    return installation
 
 
 class ProvisioningTests(unittest.TestCase):
@@ -139,6 +267,7 @@ class ProvisioningTests(unittest.TestCase):
                     "runtime.json",
                     lambda: bytearray(PASSWORD),
                     clock=lambda: self.pair.now,
+                    egress=synthetic_visibility(clock=lambda: self.pair.now),
                 )
                 result = operator.revoke_capability(
                     restarted,
@@ -209,6 +338,7 @@ class ProvisioningTests(unittest.TestCase):
                     "runtime.json",
                     lambda: bytearray(PASSWORD),
                     clock=lambda: self.pair.now,
+                    egress=synthetic_visibility(clock=lambda: self.pair.now),
                 )
                 result = operator.recover(
                     restarted,
@@ -398,6 +528,7 @@ class ProvisioningTests(unittest.TestCase):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
         with self.assertRaisesRegex(ValueError, "messaging_capability_revoked"):
             load_application(restarted, target)
@@ -447,6 +578,7 @@ class ProvisioningTests(unittest.TestCase):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
         resumed = operator.revoke_capability(
             restarted,
@@ -592,13 +724,10 @@ class ProvisioningTests(unittest.TestCase):
             GrantReference,
             MessagingChannel,
             MessagingPeerPolicy,
-            MessagingSender,
         )
         from daimon_matrix.messaging_config import load_application
-        from daimon_matrix.messaging_store import (
-            MessagingInboxStore,
-            MessagingOutboxStore,
-        )
+        from daimon_matrix.messaging_store import MessagingInboxStore
+        from daimon_matrix.native_egress import synthetic_visibility
         from daimon_matrix.operator_messaging import prepare
         from daimon_matrix.routes import OpaqueInbox, TransportIngress
         from daimon_matrix.runtime import load_runtime
@@ -616,6 +745,7 @@ class ProvisioningTests(unittest.TestCase):
             loaded,
             public_document,
         )
+        from tests.test_native_messaging import synthetic_sender
 
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -631,6 +761,7 @@ class ProvisioningTests(unittest.TestCase):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
 
         forward = next(
@@ -765,6 +896,7 @@ class ProvisioningTests(unittest.TestCase):
             clock=lambda: self.pair.now,
         )
         ingresses = {}
+        receiver_egress = synthetic_visibility(clock=lambda: self.pair.now)
         for phase in ("evidence", "message"):
             route = spec["outgoing"]["routes"][phase]
             ingresses[phase] = TransportIngress(
@@ -778,6 +910,8 @@ class ProvisioningTests(unittest.TestCase):
                     clock=lambda: self.pair.now,
                 ),
                 clock=lambda: self.pair.now,
+                egress=receiver_egress,
+                egress_catalog_id=f"test-v2-http-{phase}-responses",
                 intake_validator=getattr(receiver, "receive_" + phase),
             )
         server = create_messaging_http_server(
@@ -799,6 +933,7 @@ class ProvisioningTests(unittest.TestCase):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: self.pair.now,
+                egress=synthetic_visibility(clock=lambda: self.pair.now),
             )
             app = load_application(restarted, target)
             # Runtime/session capabilities remain finite.  Only after restart and
@@ -837,13 +972,14 @@ class ProvisioningTests(unittest.TestCase):
                 clock=lambda: self.pair.now,
             )
             member_ledger.initialize()
-            reply_sender = MessagingSender(
+            reply_sender = synthetic_sender(
                 context=reverse_context,
                 ledger=member_ledger,
                 signer=member.signer,
-                custody=journey.custody("member"),
-                outbox=MessagingOutboxStore(self.root / "v2-reply-outbox.sqlite"),
+                delivery_custody=journey.custody("member"),
+                outbox_path=self.root / "v2-reply-outbox.sqlite",
                 clock=lambda: self.pair.now,
+                catalog_id="test-v2-reply-messaging-outbox",
             )
             reply_pair = reply_sender.prepare(
                 client_id="client:v2-reply",
@@ -877,6 +1013,8 @@ class ProvisioningTests(unittest.TestCase):
         prepare(runtime, target, spec, secret_sources=sources)
         application = load_application(runtime, target)
         sender = application.service.messaging.deliveries["peer-out"].sender
+        logical_send_id = _uuid("pre-migration")
+        thread_id = _uuid("migration-thread")
         with (
             patch.object(
                 sender.ledger,
@@ -887,8 +1025,8 @@ class ProvisioningTests(unittest.TestCase):
         ):
             sender.prepare(
                 client_id="client:operator-messaging",
-                send_id=_uuid("pre-migration"),
-                thread_id=_uuid("migration-thread"),
+                send_id=logical_send_id,
+                thread_id=thread_id,
                 text="reserved",
             )
         previous, _ = read_publication(runtime, target)
@@ -903,13 +1041,57 @@ class ProvisioningTests(unittest.TestCase):
         operator.upgrade_semantic_receipts(
             runtime, target, expected_application_sha256=config_digest(previous)
         )
-        with self.assertRaisesRegex(ValueError, "messaging_authorization_expired"):
+        fresh = sender.prepare(
+            client_id="client:operator-messaging",
+            send_id=logical_send_id,
+            thread_id=thread_id,
+            text="reserved",
+        )
+        self.assertEqual(
             sender.prepare(
                 client_id="client:operator-messaging",
-                send_id=_uuid("pre-migration"),
-                thread_id=_uuid("migration-thread"),
+                send_id=logical_send_id,
+                thread_id=thread_id,
                 text="reserved",
-            )
+            ),
+            fresh,
+        )
+        with contextlib.closing(sqlite3.connect(sender.outbox.path)) as database:
+            rows = database.execute(
+                "SELECT send_id, plan, evidence, message FROM messaging_outbox "
+                "ORDER BY rowid"
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        first_plan, fresh_plan = (json.loads(row[1]) for row in rows)
+        self.assertEqual(rows[0][0], logical_send_id)
+        self.assertNotEqual(rows[1][0], logical_send_id)
+        self.assertEqual(rows[0][2:], (None, None))
+        self.assertEqual(rows[1][2:], fresh)
+        self.assertEqual(
+            [first_plan["carrier_generation"], fresh_plan["carrier_generation"]],
+            [1, 2],
+        )
+        self.assertEqual(
+            [first_plan["logical_send_id"], fresh_plan["logical_send_id"]],
+            [logical_send_id, logical_send_id],
+        )
+        self.assertEqual(fresh_plan["issued_at_ms"], first_plan["expires_at_ms"])
+        self.assertEqual(
+            fresh_plan["expires_at_ms"],
+            fresh_plan["issued_at_ms"] + sender.context.policy.max_ttl_ms,
+        )
+        self.assertNotEqual(
+            first_plan["message_authorization_id"],
+            fresh_plan["message_authorization_id"],
+        )
+        self.assertNotEqual(
+            first_plan["evidence_authorization_id"],
+            fresh_plan["evidence_authorization_id"],
+        )
+        message = sender.ledger.event(json.loads(fresh[1])["event_id"])
+        assert message is not None
+        self.assertEqual(message["payload"]["body"]["text"], "reserved")
+        self.assertIsNone(message["payload"]["reply"])
 
     def test_v2_migration_restart_before_publication_selection(self):
         from daimon_matrix import operator_messaging as operator
@@ -943,6 +1125,7 @@ class ProvisioningTests(unittest.TestCase):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
         self.assertTrue(restarted.service.communication.receipts_v2)
         with self.assertRaises(ValueError):
@@ -955,6 +1138,7 @@ class ProvisioningTests(unittest.TestCase):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
         self.assertIsNotNone(load_application(again, target).service.messaging)
 
@@ -1455,8 +1639,10 @@ class ProvisioningTests(unittest.TestCase):
     def test_cli_diagnostics_and_run_use_actual_loader_and_redact(self):
         from daimon_matrix.operator_messaging import main
         from tests.test_dm024_runtime import PASSWORD
+        from tests.test_native_messaging import synthetic_visibility_installation
 
         runtime, spec, _sources, _reads = application_fixture(self)
+        visibility_installation = synthetic_visibility_installation(self.root)
         target = self.root / "app"
         spec_path = self.root / "specification.json"
         spec_path.write_bytes(canonical_bytes(spec))
@@ -1488,6 +1674,19 @@ class ProvisioningTests(unittest.TestCase):
                             str(readfd),
                         ]
                         + (
+                            [
+                                "--visibility-installation",
+                                str(visibility_installation),
+                            ]
+                            if command != "prepare"
+                            else []
+                        )
+                        + (
+                            ["--visibility-schema-version", "1"]
+                            if command == "migrate-visibility"
+                            else []
+                        )
+                        + (
                             ["--spec", str(spec_path), "--secret-dir", str(self.root)]
                             if command == "prepare"
                             else []
@@ -1503,6 +1702,62 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(result, 0, errors)
         self.assertEqual(json.loads(output)["status"], "configured")
         predecessor = json.loads(output)["application_sha256"]
+        visibility_installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
+
+        visibility_tables = (
+            "mandatory_egress_operations",
+            "echo_v2_obligations",
+            "echo_v2_catalog",
+        )
+        visibility_stores = (
+            target / spec["stores"]["outbox"],
+            target / spec["stores"]["opaque-evidence"],
+            target / spec["stores"]["opaque-message"],
+        )
+        for store in visibility_stores:
+            with contextlib.closing(sqlite3.connect(store)) as database:
+                retained = {
+                    row[0]
+                    for row in database.execute(
+                        "SELECT name FROM sqlite_schema WHERE type='table'"
+                    )
+                }
+            self.assertTrue(set(visibility_tables).isdisjoint(retained))
+
+        def tables(store):
+            with contextlib.closing(sqlite3.connect(store)) as database:
+                return {
+                    row[0]
+                    for row in database.execute(
+                        "SELECT name FROM sqlite_schema WHERE type='table'"
+                    )
+                }
+
+        before = {store: tables(store) for store in visibility_stores}
+        result, _output, errors = call("diagnostics")
+        self.assertEqual(result, 1)
+        self.assertEqual(
+            {store: tables(store) for store in visibility_stores},
+            before,
+        )
+        result, output, errors = call("migrate-visibility")
+        self.assertEqual(result, 0, errors)
+        self.assertEqual(json.loads(output)["status"], "visibility-migrated")
+        self.assertEqual(json.loads(output)["visibility_schema_version"], 1)
+        result, _output, _errors = call(
+            "migrate-visibility", ["--visibility-schema-version", "2"]
+        )
+        self.assertEqual(result, 1)
+        result, output, errors = call("diagnostics")
+        self.assertEqual(result, 0, errors)
+        self.assertEqual(json.loads(output)["status"], "ready")
+        result, _output, _errors = call(
+            "migrate-visibility", ["--expected-application-sha256", predecessor]
+        )
+        self.assertEqual(result, 1)
+
         self.pair.now += 1
         result, output, errors = call(
             "renew", ["--expected-application-sha256", predecessor]
@@ -1510,6 +1765,9 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(result, 0, errors)
         self.assertEqual(json.loads(output)["status"], "renewed")
         digest = json.loads(output)["application_sha256"]
+        visibility_installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
         result, output, errors = call(
             "recover", ["--expected-application-sha256", digest]
         )
@@ -1553,8 +1811,10 @@ class ProvisioningTests(unittest.TestCase):
         import sys
 
         from tests.test_dm024_runtime import PASSWORD
+        from tests.test_native_messaging import synthetic_visibility_installation
 
         runtime, spec, sources, _ = application_fixture(self)
+        visibility_installation = synthetic_visibility_installation(self.root)
         with socket.socket() as peer_socket, socket.socket() as app_socket:
             peer_socket.bind(("127.0.0.1", 0))
             app_socket.bind(("127.0.0.1", 0))
@@ -1571,6 +1831,9 @@ class ProvisioningTests(unittest.TestCase):
             )
         target = self.root / "child-app"
         prepare(runtime, target, spec, secret_sources=sources)
+        visibility_installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
         readfd, writefd = os.pipe()
         readyread, readywrite = os.pipe()
         os.write(writefd, PASSWORD)
@@ -1595,6 +1858,8 @@ class ProvisioningTests(unittest.TestCase):
                 str(target),
                 "--password-fd",
                 str(readfd),
+                "--visibility-installation",
+                str(visibility_installation),
                 "--ready-fd",
                 str(readywrite),
             ],
@@ -1608,7 +1873,13 @@ class ProvisioningTests(unittest.TestCase):
             self.assertTrue(
                 select.select([readyread], [], [], 20)[0], "child readiness timeout"
             )
-            self.assertTrue(os.read(readyread, 4096), "child exited without readiness")
+            ready = os.read(readyread, 4096)
+            if not ready:
+                child_output, child_errors = child.communicate(timeout=5)
+                self.fail(
+                    "child exited without readiness: "
+                    + repr((child.returncode, child_output, child_errors))
+                )
             self.assertIsNone(child.poll())
             for port in (peer_port, app_port):
                 with socket.create_connection(("127.0.0.1", port), timeout=3):

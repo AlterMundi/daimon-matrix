@@ -221,7 +221,7 @@
       "stimulus": "Replay exact delivery bytes, reseal under a new delivery ID and lose one provider response after its effect.",
       "fault": "Same delivery ID changes bytes and route acceptance is presented as recipient intake.",
       "expected": "Routes and reseals never duplicate the leg; conflicts quarantine; ambiguous provider effects retry by stable attempt; ACK is non-terminal.",
-      "evidence": ["tests.test_dm052_communication.LogicalMessageTests.test_response_loss_retries_one_stable_provider_effect", "tests.test_dm052_communication.LogicalMessageTests.test_route_ack_is_not_recipient_intake", "tests.test_dm052_communication.LogicalMessageTests.test_same_delivery_id_with_changed_bytes_is_quarantined", "tests.test_dm052_communication.LogicalMessageTests.test_semantic_dedup_ignores_routes_reseal_and_incarnation_details"],
+      "evidence": ["tests.test_dm052_communication.LogicalMessageTests.test_same_delivery_id_with_changed_bytes_is_quarantined", "tests.test_dm052_communication.LogicalMessageTests.test_semantic_dedup_ignores_routes_reseal_and_incarnation_details", "tests.test_dm052_communication.LogicalMessageTests.test_synthetic_route_ack_is_not_recipient_intake", "tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_signed_owner_retry_binds_exact_state_and_replays_without_post"],
       "cleanup": "Remove fake-provider effects and isolated operational projections.",
       "platform": "all",
       "ci_lane": "complete",

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
 import socket
+import sqlite3
 import threading
 import unittest
 from collections.abc import Callable, Mapping
@@ -23,6 +25,7 @@ from daimon_matrix.communication import (
     RESOLUTION_PAYLOAD_SCHEMA,
     CommunicationError,
     CommunicationStore,
+    dispatch_attempt,
 )
 from daimon_matrix.daemon import serve_connection
 from daimon_matrix.local_api import (
@@ -33,6 +36,7 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.routes import (
     GATEWAY_POLICY_SCHEMA,
     PROVIDER_RESULT_SCHEMA,
@@ -103,13 +107,26 @@ class RouteFixture(SealedFixture):
         self.store.initialize()
         self.secret = hashlib.sha256(b"dm053 synthetic transport credential").digest()
         self.calls: list[str] = []
+        self.egress = synthetic_visibility(clock=lambda: self.now)
+        self.receiver_egress = synthetic_visibility(clock=lambda: self.now)
+        self.receiver_authority_head = "route-authority:test-generation"
+
+    def authorize_receiver_egress(self, binding: Any) -> bool:
+        return bool(binding.authority_head == self.receiver_authority_head)
 
     def message_and_delivery(
         self,
         *,
         recipients: tuple[str, ...] = ("daimonmatrix",),
         relationship: bool = False,
+        direct: bool = False,
+        thread_id: str | None = None,
+        text: str = "route me, not my authority",
+        reply: Mapping[str, Any] | None = None,
+        body_extra: Mapping[str, Any] | None = None,
+        causal_parents: tuple[str, ...] = (),
     ) -> tuple[dict[str, Any], dict[str, Any], bytes, DisclosureAuthorization]:
+        thread_id = thread_id or identifier(71_000_000, 1)
         message = self.ledger_a.append_local(
             kind="experience.observed",
             subject="communication",
@@ -118,17 +135,20 @@ class RouteFixture(SealedFixture):
                 "intent": {
                     "operation": "message.send",
                     "scope": "/tribe" if relationship else "/we",
-                    "thread_id": identifier(71_000_000, 1),
+                    "thread_id": thread_id,
                 },
-                "body": {"text": "route me, not my authority"},
-                "reply": None,
+                "body": {"text": text, **dict(body_extra or {})},
+                "reply": copy.deepcopy(reply),
             },
             signer=self.signers["legion"],
+            causal_parents=list(causal_parents),
             occurred_at_ms=NOW,
         )
         targets = [
             {
-                "scope_kind": "relationship" if relationship else "we",
+                "scope_kind": (
+                    "relationship" if relationship else "direct" if direct else "we"
+                ),
                 "recipient_type": "relationship" if relationship else "embodiment",
                 "recipient_id": (
                     f"membership:{label}" if relationship else f"embodiment:{label}"
@@ -273,6 +293,10 @@ class RouteFixture(SealedFixture):
             recipient_body_ref="body:daimonmatrix",
             inbox=inbox,
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id=f"test-ingress-{name}",
+            egress_authority_head=self.receiver_authority_head,
+            egress_authorizer=self.authorize_receiver_egress,
             hub=hub,
             presence_ref=presence_ref,
             fence_ref=fence_ref,
@@ -301,8 +325,58 @@ class RouteFixture(SealedFixture):
             sender_body_ref="body:legion",
             round_trip=round_trip,
             clock=lambda: self.now,
+            egress=self.egress,
             available=available,
         )
+
+    def route_projection(
+        self,
+        *,
+        result: Mapping[str, Any],
+        raw: bytes,
+        authorization: DisclosureAuthorization,
+        name: str,
+    ) -> dict[str, Any]:
+        leg = result["legs"][0]
+        recipient_id = str(leg["recipient_id"])
+        relationship = str(leg["recipient_type"]) == "relationship"
+        _, ingress = self.ingress(
+            name,
+            authorization,
+            recipient_id=recipient_id,
+            recipient_embodiment_id=(
+                "embodiment:daimonmatrix" if relationship else None
+            ),
+        )
+        provider = self.provider(name, "direct", ingress.handle)
+        profile = self.profile(
+            [
+                self.binding(
+                    provider.provider_ref,
+                    provider.route_ref,
+                    provider.route_class,
+                    priority=0,
+                    recipient_id=recipient_id,
+                )
+            ]
+        )
+        dispatched = RouteCoordinator(
+            self.store,
+            profile,
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+            egress=self.egress,
+        ).dispatch(
+            leg_id=str(leg["leg_id"]), envelope=raw, deadline_ms=self.now + 20_000
+        )
+        attempt_id = str(dispatched["attempts"][-1]["attempt_id"])
+        catalog_id = (
+            "route-" + hashlib.sha256(profile.profile_id.encode()).hexdigest()[:24]
+        )
+        status = self.egress.inspect(self.egress.binding(catalog_id, attempt_id))
+        self.assertEqual(status["state"], "confirmed")
+        request = cast(Any, self.egress)._transport.requests[-1]
+        return cast(dict[str, Any], json.loads(request["text"].split("\n", 1)[1]))
 
 
 class RouteSelectionTests(RouteFixture):
@@ -492,6 +566,7 @@ class RouteSelectionTests(RouteFixture):
             self.profile([]),
             {},
             clock=lambda: self.now,
+            egress=self.egress,
         )
         with self.assertRaisesRegex(RouteError, "route_unroutable"):
             coordinator.dispatch(leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000)
@@ -516,28 +591,21 @@ class RouteSelectionTests(RouteFixture):
             recipient_body_ref="body:daimonmatrix",
             inbox=inbox,
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-ingress-refusal",
+            egress_authority_head=self.receiver_authority_head,
+            egress_authorizer=self.authorize_receiver_egress,
             intake_validator=refuse,
         )
         direct = self.provider("refusal", "direct", ingress.handle)
         hub_calls = 0
 
-        class HubSpy:
-            provider_ref = "provider:hub"
-            route_ref = "route:hub"
-            route_class = "hub"
+        def hub_effect(_request: bytes) -> bytes:
+            nonlocal hub_calls
+            hub_calls += 1
+            raise AssertionError("hub fallback obtained egress after refusal")
 
-            def inspect(self) -> Mapping[str, Any]:
-                return {"available": True, "evidence_ref": "dm:evidence:v1:hub"}
-
-            def manifest(self) -> Mapping[str, Any]:
-                return _test_manifest(
-                    self.provider_ref, self.route_ref, self.route_class
-                )
-
-            def deliver(self, _submission: Mapping[str, Any]) -> Mapping[str, Any]:
-                nonlocal hub_calls
-                hub_calls += 1
-                return {}
+        hub = self.provider("hub", "hub", hub_effect)
 
         coordinator = RouteCoordinator(
             self.store,
@@ -549,7 +617,7 @@ class RouteSelectionTests(RouteFixture):
                     self.binding("provider:hub", "route:hub", "hub", priority=0),
                 ]
             ),
-            {direct.provider_ref: direct, "provider:hub": HubSpy()},
+            {direct.provider_ref: direct, hub.provider_ref: hub},
             clock=lambda: self.now,
         )
         dispatched = coordinator.dispatch(
@@ -621,6 +689,10 @@ class RouteSelectionTests(RouteFixture):
             recipient_body_ref="body:daimonmatrix",
             inbox=direct_inbox,
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-ingress-direct",
+            egress_authority_head=self.receiver_authority_head,
+            egress_authorizer=self.authorize_receiver_egress,
             intake_validator=self.validator(authorization),
         )
         forward = AuthenticatedProvider(
@@ -633,22 +705,26 @@ class RouteSelectionTests(RouteFixture):
             sender_body_ref="body:hub-forwarder",
             round_trip=forward_ingress.handle,
             clock=lambda: self.now,
+            egress=self.egress,
         )
         forwarded_envelope = unb64url(hub_claim["items"][0]["envelope"])
-        metadata = json.loads(forwarded_envelope)
-        forwarded = forward.deliver(
-            {
-                "schema": "dm.route-submission/v1",
-                "attempt_id": identifier(72_000_000, 5),
-                "leg_id": leg_id,
-                "message_id": result["message_id"],
-                "recipient_id": "embodiment:daimonmatrix",
-                "delivery_id": metadata["delivery_id"],
-                "envelope_sha256": hashlib.sha256(forwarded_envelope).hexdigest(),
-                "envelope": b64url(forwarded_envelope),
-                "deadline_ms": NOW + 20_000,
-            }
-        )
+        forwarded = RouteCoordinator(
+            self.store,
+            self.profile(
+                [
+                    self.binding(
+                        "provider:forward", "route:forward", "direct", priority=0
+                    )
+                ]
+            ),
+            {forward.provider_ref: forward},
+            clock=lambda: self.now,
+            egress=self.egress,
+        ).dispatch(
+            leg_id=leg_id,
+            envelope=forwarded_envelope,
+            deadline_ms=NOW + 20_000,
+        )["selected"]
         self.assertEqual(forwarded["outcome"], "recipient-intake")
         replay_claim = direct_inbox.claim(
             recipient_id="embodiment:daimonmatrix",
@@ -686,6 +762,7 @@ class RouteSelectionTests(RouteFixture):
             sender_body_ref="body:legion",
             round_trip=counted,
             clock=lambda: self.now,
+            egress=self.egress,
         )
         profile = self.profile(
             [self.binding("provider:direct", "route:direct", "direct", priority=0)],
@@ -708,6 +785,77 @@ class RouteSelectionTests(RouteFixture):
 
 
 class InboxAndProtocolTests(RouteFixture):
+    def test_response_release_revalidates_exact_route_authority_generation(
+        self,
+    ) -> None:
+        _message, result, raw, authorization = self.message_and_delivery()
+        current = {"head": "route-authority:generation-1"}
+        directory = self.root_path / "provider-revoked-response"
+        directory.mkdir(mode=0o700)
+        inbox = OpaqueInbox(directory / "inbox.sqlite", clock=lambda: self.now)
+        ingress = TransportIngress(
+            provider_ref="provider:revoked-response",
+            route_ref="route:revoked-response",
+            key_ref="credential:revoked-response",
+            secret=self.secret,
+            recipient_id="embodiment:daimonmatrix",
+            recipient_body_ref="body:daimonmatrix",
+            inbox=inbox,
+            clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-ingress-revoked-response",
+            egress_authority_head="route-authority:generation-1",
+            egress_authorizer=lambda binding: current["head"] == binding.authority_head,
+            intake_validator=self.validator(authorization),
+        )
+        base_transport = cast(Any, self.receiver_egress)._transport
+
+        class RevokeDuringEcho:
+            def send(_self, request: dict[str, Any]) -> bytes:
+                response = base_transport.send(request)
+                current["head"] = "route-authority:generation-2"
+                return cast(bytes, response)
+
+        cast(Any, self.receiver_egress)._transport = RevokeDuringEcho()
+        provider = self.provider("revoked-response", "direct", ingress.handle)
+        coordinator = RouteCoordinator(
+            self.store,
+            self.profile(
+                [
+                    self.binding(
+                        provider.provider_ref,
+                        provider.route_ref,
+                        provider.route_class,
+                        priority=0,
+                    )
+                ]
+            ),
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+            egress=self.egress,
+        )
+        with self.assertRaisesRegex(RouteError, "transport_request_rejected"):
+            coordinator.dispatch(
+                leg_id=result["legs"][0]["leg_id"],
+                envelope=raw,
+                deadline_ms=self.now + 20_000,
+            )
+        self.assertEqual(current["head"], "route-authority:generation-2")
+        self.assertEqual(len(base_transport.requests), 1)
+        with contextlib.closing(sqlite3.connect(inbox.path)) as database:
+            native_path = database.execute(
+                "SELECT egress_path_id FROM inbox_requests"
+            ).fetchone()
+        self.assertEqual(native_path, ("messaging-message-result",))
+        claimed = inbox.claim(
+            recipient_id="embodiment:daimonmatrix",
+            consumer_id="revoked-response-audit",
+            claim_id=identifier(79_000_000, 2),
+            limit=1,
+            lease_until_ms=self.now + 10_000,
+        )
+        self.assertEqual(len(claimed["items"]), 1)
+
     def test_presence_and_fence_gate_must_be_complete_and_current(self) -> None:
         for presence_ref, fence_ref in (
             ("presence:stale", "fence:current"),
@@ -734,6 +882,10 @@ class InboxAndProtocolTests(RouteFixture):
                     recipient_body_ref="body:daimonmatrix",
                     inbox=inbox,
                     clock=lambda: self.now,
+                    egress=self.receiver_egress,
+                    egress_catalog_id=f"test-ingress-{suffix}",
+                    egress_authority_head=self.receiver_authority_head,
+                    egress_authorizer=self.authorize_receiver_egress,
                     presence_ref=presence_ref,
                     fence_ref=fence_ref,
                     intake_validator=self.validator(authorization),
@@ -775,6 +927,10 @@ class InboxAndProtocolTests(RouteFixture):
                 recipient_body_ref="body:daimonmatrix",
                 inbox=OpaqueInbox(directory / "inbox.sqlite", clock=lambda: self.now),
                 clock=lambda: self.now,
+                egress=self.receiver_egress,
+                egress_catalog_id="test-ingress-incomplete",
+                egress_authority_head=self.receiver_authority_head,
+                egress_authorizer=self.authorize_receiver_egress,
                 presence_ref="presence:current",
                 fence_ref="fence:current",
                 intake_validator=self.validator(authorization),
@@ -813,6 +969,7 @@ class InboxAndProtocolTests(RouteFixture):
                 sender_body_ref="body:legion",
                 endpoint=f"http://{host}:{port}/dm-route",
                 clock=lambda: self.now,
+                egress=self.egress,
             )
             coordinator = RouteCoordinator(
                 self.store,
@@ -867,6 +1024,7 @@ class InboxAndProtocolTests(RouteFixture):
             sender_body_ref="body:legion",
             socket_path=socket_path,
             clock=lambda: self.now,
+            egress=self.egress,
         )
         coordinator = RouteCoordinator(
             self.store,
@@ -1118,14 +1276,298 @@ class InboxAndProtocolTests(RouteFixture):
                 recipient_body_ref="body:daimonmatrix",
                 inbox=inbox,
                 clock=lambda: self.now,
+                egress=self.receiver_egress,
+                egress_catalog_id="test-ingress-no-validator",
+                egress_authority_head=self.receiver_authority_head,
+                egress_authorizer=self.authorize_receiver_egress,
             )
         self.assertTrue(ingress.hub)
 
 
+class AuthenticatedEchoProjectionTests(RouteFixture):
+    def test_message_echo_discloses_exact_immutable_logical_message(self) -> None:
+        message, result, raw, authorization = self.message_and_delivery(
+            text="exact message disclosure"
+        )
+        projection = self.route_projection(
+            result=result,
+            raw=raw,
+            authorization=authorization,
+            name="echo-message",
+        )
+        self.assertEqual(
+            projection,
+            {
+                "event_id": message["event_id"],
+                "event_digest": message["content_hash"],
+                "sender": message["being_ref"],
+                "recipients": ["embodiment:daimonmatrix"],
+                "thread_id": message["payload"]["intent"]["thread_id"],
+                "reply_to": None,
+                "kind": "message",
+                "content": {"text": "exact message disclosure"},
+            },
+        )
+
+    def test_reply_echo_discloses_exact_parent_binding(self) -> None:
+        parent, _parent_result, _parent_raw, _parent_authorization = (
+            self.message_and_delivery(text="parent")
+        )
+        thread_id = parent["payload"]["intent"]["thread_id"]
+        reply = {
+            "schema": "daimon-reply/v1",
+            "direct_recipient_embodiment_id": "embodiment:daimonmatrix",
+            "reply_parent_event_ids": [parent["event_id"]],
+        }
+        message, result, raw, authorization = self.message_and_delivery(
+            direct=True,
+            thread_id=thread_id,
+            text="exact reply disclosure",
+            reply=reply,
+            causal_parents=(parent["event_id"],),
+        )
+        projection = self.route_projection(
+            result=result,
+            raw=raw,
+            authorization=authorization,
+            name="echo-reply",
+        )
+        self.assertEqual(
+            projection,
+            {
+                "event_id": message["event_id"],
+                "event_digest": message["content_hash"],
+                "sender": message["being_ref"],
+                "recipients": ["embodiment:daimonmatrix"],
+                "thread_id": thread_id,
+                "reply_to": {
+                    "event_id": parent["event_id"],
+                    "event_digest": parent["content_hash"],
+                },
+                "kind": "reply",
+                "content": {"text": "exact reply disclosure"},
+            },
+        )
+
+    def test_semantic_receipt_echo_discloses_exact_nested_receipt(self) -> None:
+        original, _original_result, _original_raw, _original_authorization = (
+            self.message_and_delivery(relationship=True, text="original")
+        )
+        thread_id = original["payload"]["intent"]["thread_id"]
+        receipt = self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="communication-receipt",
+            payload={
+                "schema": "dm.communication.receipt/v2",
+                "message_being_ref": original["being_ref"],
+                "message_ref": {
+                    "event_id": original["event_id"],
+                    "event_hash": original["content_hash"],
+                },
+                "resolution_ref": {
+                    "event_id": _original_result["legs"][0]["resolution_event_id"],
+                    "event_hash": _original_result["legs"][0]["resolution_hash"],
+                },
+                "thread_id": thread_id,
+                "recipient_type": "relationship",
+                "recipient_id": "membership:daimonmatrix",
+                "outcome": "delivered",
+                "observed_at_ms": NOW,
+            },
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+        _carrier, result, raw, authorization = self.message_and_delivery(
+            relationship=True,
+            thread_id=thread_id,
+            text="receipt carrier",
+            body_extra={"semantic_receipt": receipt},
+        )
+        projection = self.route_projection(
+            result=result,
+            raw=raw,
+            authorization=authorization,
+            name="echo-receipt",
+        )
+        self.assertEqual(
+            projection,
+            {
+                "event_id": receipt["event_id"],
+                "event_digest": receipt["content_hash"],
+                "sender": receipt["being_ref"],
+                "recipients": ["membership:daimonmatrix"],
+                "thread_id": thread_id,
+                "reply_to": {
+                    "event_id": original["event_id"],
+                    "event_digest": original["content_hash"],
+                },
+                "kind": "semantic-receipt",
+                "content": {"outcome": "delivered"},
+            },
+        )
+
+    def test_envelope_hash_mismatch_is_rejected_before_provider_effect(self) -> None:
+        _message, result, raw, authorization = self.message_and_delivery()
+        changed = json.loads(raw)
+        changed["event_hash"] = "0" * 64
+        calls = 0
+        _, ingress = self.ingress("binding-mismatch", authorization)
+
+        def counted(request: bytes) -> bytes:
+            nonlocal calls
+            calls += 1
+            return ingress.handle(request)
+
+        provider = self.provider("binding-mismatch", "direct", counted)
+        coordinator = RouteCoordinator(
+            self.store,
+            self.profile(
+                [
+                    self.binding(
+                        provider.provider_ref,
+                        provider.route_ref,
+                        provider.route_class,
+                        priority=0,
+                    )
+                ]
+            ),
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+            egress=self.egress,
+        )
+        with self.assertRaisesRegex(
+            CommunicationError, "route_envelope_event_mismatch"
+        ):
+            coordinator.dispatch(
+                leg_id=result["legs"][0]["leg_id"],
+                envelope=canonical_bytes(changed),
+                deadline_ms=self.now + 20_000,
+            )
+        self.assertEqual(calls, 0)
+
+    def test_unsupported_logical_kind_is_rejected_before_provider_effect(self) -> None:
+        _message, result, raw, authorization = self.message_and_delivery(
+            body_extra={"semantic_receipt": "not-an-immutable-event"}
+        )
+        calls = 0
+        _, ingress = self.ingress("unsupported-kind", authorization)
+
+        def counted(request: bytes) -> bytes:
+            nonlocal calls
+            calls += 1
+            return ingress.handle(request)
+
+        provider = self.provider("unsupported-kind", "direct", counted)
+        coordinator = RouteCoordinator(
+            self.store,
+            self.profile(
+                [
+                    self.binding(
+                        provider.provider_ref,
+                        provider.route_ref,
+                        provider.route_class,
+                        priority=0,
+                    )
+                ]
+            ),
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+            egress=self.egress,
+        )
+        with self.assertRaisesRegex(
+            CommunicationError, "route_logical_event_unsupported"
+        ):
+            coordinator.dispatch(
+                leg_id=result["legs"][0]["leg_id"],
+                envelope=raw,
+                deadline_ms=self.now + 20_000,
+            )
+        self.assertEqual(calls, 0)
+
+
 class ProviderNegativeTests(RouteFixture):
-    def test_provider_status_outcome_and_intake_binding_are_coherent(self) -> None:
+    def test_route_coordinator_rejects_custom_provider_before_effect(self) -> None:
         _, result, raw, _ = self.message_and_delivery()
-        leg_id = result["legs"][0]["leg_id"]
+        effects = 0
+
+        class MaliciousProvider:
+            provider_ref = "provider:malicious"
+            route_ref = "route:malicious"
+            route_class = "direct"
+
+            def inspect(self) -> Mapping[str, Any]:
+                return {
+                    "provider_ref": self.provider_ref,
+                    "route_ref": self.route_ref,
+                    "route_class": self.route_class,
+                    "available": True,
+                    "evidence_ref": "dm:evidence:v1:malicious",
+                }
+
+            def manifest(self) -> Mapping[str, Any]:
+                return _test_manifest(
+                    self.provider_ref, self.route_ref, self.route_class
+                )
+
+            def deliver(self, _submission: Mapping[str, Any]) -> Mapping[str, Any]:
+                nonlocal effects
+                effects += 1
+                raise AssertionError("custom provider obtained egress")
+
+        provider = MaliciousProvider()
+        with self.assertRaisesRegex(RouteError, "route_provider_not_gated"):
+            RouteCoordinator(
+                self.store,
+                self.profile(
+                    [
+                        self.binding(
+                            provider.provider_ref,
+                            provider.route_ref,
+                            provider.route_class,
+                            priority=0,
+                        )
+                    ]
+                ),
+                {provider.provider_ref: cast(Any, provider)},
+                clock=lambda: self.now,
+                egress=self.egress,
+            )
+        self.assertEqual(effects, 0)
+        self.assertEqual(
+            self.store.leg(result["legs"][0]["leg_id"])["state"], "accepted"
+        )
+        self.assertTrue(raw)
+
+    def test_legacy_dispatch_attempt_rejects_custom_provider_before_effect(
+        self,
+    ) -> None:
+        _, result, _raw, _ = self.message_and_delivery()
+        effects = 0
+
+        class MaliciousProvider:
+            provider_ref = "provider:malicious"
+
+            def deliver(self, _attempt: Mapping[str, Any]) -> Mapping[str, Any]:
+                nonlocal effects
+                effects += 1
+                raise AssertionError("legacy helper obtained egress")
+
+        attempt = {
+            "schema": "dm.route-attempt/v1",
+            "attempt_id": identifier(79_000_000, 1),
+            "leg_id": result["legs"][0]["leg_id"],
+            "provider_ref": "provider:malicious",
+            "route_ref": "route:malicious",
+            "credential_ref": "credential:malicious",
+            "body_ref": "body:malicious",
+            "deadline_ms": NOW + 20_000,
+        }
+        with self.assertRaisesRegex(CommunicationError, "route_provider_not_gated"):
+            dispatch_attempt(self.store, cast(Any, MaliciousProvider()), attempt)
+        self.assertEqual(effects, 0)
+
+    def test_provider_status_outcome_and_intake_binding_are_coherent(self) -> None:
+        self.message_and_delivery()
 
         class Incoherent:
             provider_ref = "provider:incoherent"
@@ -1159,23 +1601,23 @@ class ProviderNegativeTests(RouteFixture):
                 }
 
         provider = Incoherent()
-        coordinator = RouteCoordinator(
-            self.store,
-            self.profile(
-                [
-                    self.binding(
-                        provider.provider_ref,
-                        provider.route_ref,
-                        provider.route_class,
-                        priority=0,
-                    )
-                ]
-            ),
-            {provider.provider_ref: provider},
-            clock=lambda: self.now,
-        )
-        with self.assertRaisesRegex(RouteError, "invalid_provider_result"):
-            coordinator.dispatch(leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000)
+        with self.assertRaisesRegex(RouteError, "route_provider_not_gated"):
+            RouteCoordinator(
+                self.store,
+                self.profile(
+                    [
+                        self.binding(
+                            provider.provider_ref,
+                            provider.route_ref,
+                            provider.route_class,
+                            priority=0,
+                        )
+                    ]
+                ),
+                {provider.provider_ref: cast(Any, provider)},
+                clock=lambda: self.now,
+                egress=self.egress,
+            )
 
     def test_changed_bytes_under_delivery_id_quarantine_before_network(self) -> None:
         _, result, raw, authorization = self.message_and_delivery()
@@ -1200,14 +1642,16 @@ class ProviderNegativeTests(RouteFixture):
         coordinator.dispatch(leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000)
         changed = json.loads(raw)
         changed["payload"]["ciphertext"] = "A" * len(changed["payload"]["ciphertext"])
-        with self.assertRaisesRegex(CommunicationError, "delivery_id_conflict"):
+        with self.assertRaisesRegex(
+            CommunicationError, "communication_egress_conflict"
+        ):
             coordinator.dispatch(
                 leg_id=leg_id,
                 envelope=canonical_bytes(changed),
                 deadline_ms=NOW + 20_000,
             )
         self.assertEqual(calls, 1)
-        self.assertEqual(self.store.leg(leg_id)["state"], "quarantined")
+        self.assertEqual(self.store.leg(leg_id)["state"], "accepted")
 
     def test_tampered_authenticated_response_is_definitive_and_no_fallback(
         self,
@@ -1224,26 +1668,12 @@ class ProviderNegativeTests(RouteFixture):
         direct = self.provider("direct", "direct", tampered)
         hub_calls = 0
 
-        def hub_effect(_: Mapping[str, Any]) -> Mapping[str, Any]:
+        def hub_effect(_request: bytes) -> bytes:
             nonlocal hub_calls
             hub_calls += 1
-            return {}
+            raise AssertionError("hub fallback obtained egress after tamper")
 
-        class HubSpy:
-            provider_ref = "provider:hub"
-            route_ref = "route:hub"
-            route_class = "hub"
-
-            def inspect(self) -> Mapping[str, Any]:
-                return {"available": True, "evidence_ref": "dm:evidence:v1:hub"}
-
-            def manifest(self) -> Mapping[str, Any]:
-                return _test_manifest(
-                    self.provider_ref, self.route_ref, self.route_class
-                )
-
-            def deliver(self, submission: Mapping[str, Any]) -> Mapping[str, Any]:
-                return hub_effect(submission)
+        hub = self.provider("hub", "hub", hub_effect)
 
         coordinator = RouteCoordinator(
             self.store,
@@ -1255,7 +1685,7 @@ class ProviderNegativeTests(RouteFixture):
                     self.binding("provider:hub", "route:hub", "hub", priority=0),
                 ]
             ),
-            {direct.provider_ref: direct, "provider:hub": HubSpy()},
+            {direct.provider_ref: direct, hub.provider_ref: hub},
             clock=lambda: self.now,
         )
         with self.assertRaisesRegex(RouteError, "transport_response_rejected"):
@@ -1263,8 +1693,7 @@ class ProviderNegativeTests(RouteFixture):
         self.assertEqual(hub_calls, 0)
 
     def test_provider_result_is_closed_and_cannot_supply_endpoint(self) -> None:
-        _, result, raw, _ = self.message_and_delivery()
-        leg_id = result["legs"][0]["leg_id"]
+        self.message_and_delivery()
 
         class Malformed:
             provider_ref = "provider:bad"
@@ -1292,16 +1721,16 @@ class ProviderNegativeTests(RouteFixture):
                     "endpoint": "http://169.254.169.254/latest/meta-data",
                 }
 
-        coordinator = RouteCoordinator(
-            self.store,
-            self.profile(
-                [self.binding("provider:bad", "route:bad", "direct", priority=0)]
-            ),
-            {"provider:bad": Malformed()},
-            clock=lambda: self.now,
-        )
-        with self.assertRaisesRegex(RouteError, "invalid_provider_result"):
-            coordinator.dispatch(leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000)
+        with self.assertRaisesRegex(RouteError, "route_provider_not_gated"):
+            RouteCoordinator(
+                self.store,
+                self.profile(
+                    [self.binding("provider:bad", "route:bad", "direct", priority=0)]
+                ),
+                {"provider:bad": cast(Any, Malformed())},
+                clock=lambda: self.now,
+                egress=self.egress,
+            )
 
 
 class HostedRouteBoundaryTests(RouteFixture):
@@ -1366,6 +1795,7 @@ class HostedRouteBoundaryTests(RouteFixture):
             self.root_path,
             (root_info.st_dev, root_info.st_ino),
             self.root_path / "matrix.sock",
+            self.egress,
         )
         client, server = socket.socketpair()
         with client, server:

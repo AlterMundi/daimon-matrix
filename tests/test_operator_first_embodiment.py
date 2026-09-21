@@ -18,6 +18,7 @@ from daimon_matrix.canonical import b64url, canonical_bytes, digest
 from daimon_matrix.daemon import create_peer_http_server
 from daimon_matrix.keystore import EncryptedKeystore, PasswordReader
 from daimon_matrix.local_api import LocalCapability, create_request
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_first_embodiment import (
     ACTIVATION_DOMAIN as FIRST_ACTIVATION_DOMAIN,
 )
@@ -239,6 +240,7 @@ class FirstEmbodimentTests(TestCase):
             "runtime.json",
             _reader(self.target_password),
             clock=lambda: NOW + 20,
+            egress=synthetic_visibility(clock=lambda: NOW + 20),
         )
         self.assertEqual(
             runtime.service.ledger.authority.manifest.digest,
@@ -432,6 +434,7 @@ class FirstEmbodimentTests(TestCase):
             "runtime.json",
             _reader(self.target_password),
             clock=lambda: NOW + 20,
+            egress=synthetic_visibility(clock=lambda: NOW + 20),
         )
         old_event = first_runtime.service.ledger.append_local(
             kind="experience.observed",
@@ -530,12 +533,14 @@ class FirstEmbodimentTests(TestCase):
             "runtime.json",
             _reader(self.target_password),
             clock=lambda: NOW + 50,
+            egress=synthetic_visibility(clock=lambda: NOW + 50),
         )
         second = load_runtime(
             second_output / "runtime",
             "runtime.json",
             _reader(second_password),
             clock=lambda: NOW + 50,
+            egress=synthetic_visibility(clock=lambda: NOW + 50),
         )
         self.assertEqual(first.service.ledger.event(old_event["event_id"]), old_event)
         self.assertIsNone(second.service.ledger.event(old_event["event_id"]))

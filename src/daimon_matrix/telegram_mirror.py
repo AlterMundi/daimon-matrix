@@ -536,6 +536,86 @@ class PlainTelegramTransport:
             raise ValueError("echo_transport_ambiguous") from None
 
 
+def qualify_telegram_destination(
+    *,
+    token: str,
+    bot_id: int,
+    chat_id: int,
+    topic_id: int | None,
+    probe_text: str,
+) -> dict[str, Any]:
+    """Explicit owner-ceremony bot/destination qualification.
+
+    ``probe_text`` must be a fresh, unique value supplied by the owner caller.
+    The operation performs exactly one getMe and, only after identity matches,
+    one sendMessage through the same bounded no-proxy/no-redirect HTTP boundary
+    as :class:`PlainTelegramTransport`. It retains only hashes and numeric pins.
+    No network occurs merely by importing this module or constructing a
+    transport; a future owner CLI must invoke this function explicitly.
+    """
+    try:
+        # Construction validates token syntax, the numeric token prefix, policy
+        # bot identity, and destination without performing network I/O.
+        transport = PlainTelegramTransport(
+            token=token,
+            bot_id=bot_id,
+            chat_id=chat_id,
+            topic_id=topic_id,
+        )
+        request = plain_request(probe_text, chat_id=chat_id, topic_id=topic_id)
+
+        status, get_me_raw = _plain_http_exchange(
+            f"https://api.telegram.org/bot{token}/getMe", b"{}"
+        )
+        if status != 200 or type(get_me_raw) is not bytes or len(get_me_raw) > 65536:
+            raise ValueError
+        get_me = json.loads(
+            get_me_raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
+        )
+        if type(get_me) is not dict or set(get_me) != {"ok", "result"}:
+            raise ValueError
+        identity = get_me["result"]
+        if (
+            get_me["ok"] is not True
+            or type(identity) is not dict
+            or type(identity.get("id")) is not int
+            or identity["id"] != bot_id
+            or identity.get("is_bot") is not True
+        ):
+            raise ValueError
+
+        # send() re-snapshots and validates the exact request and validates the
+        # full response (text, sender, chat, topic semantics, and message ID).
+        probe_raw = transport.send(request)
+        probe_result = validate_plain_response(probe_raw, request, bot_id=bot_id)[
+            "result"
+        ]
+        message_id = probe_result["message_id"]
+        qualified_at_ms = time.time_ns() // 1_000_000
+        if (
+            type(qualified_at_ms) is not int
+            or not 0 < qualified_at_ms < 2**63
+            or type(message_id) is not int
+            or not 0 < message_id < 2**52
+        ):
+            raise ValueError
+        return {
+            "schema": "dm.messaging.telegram-qualification/v1",
+            "qualified_at_ms": qualified_at_ms,
+            "token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "get_me_bot_id": bot_id,
+            "probe_chat_id": chat_id,
+            "probe_topic_id": topic_id,
+            "probe_message_id": message_id,
+            "probe_text_sha256": hashlib.sha256(probe_text.encode("utf-8")).hexdigest(),
+        }
+    except Exception:
+        # Never expose token-bearing URLs, raw responses, or upstream details.
+        raise ValueError("telegram_qualification_failed") from None
+
+
 class TelegramMirror:
     """Separate explicit operation, never an intake hook or inbox enumerator.
 

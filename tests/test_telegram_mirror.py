@@ -800,5 +800,261 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
         )
 
 
+class TelegramQualificationTests(unittest.TestCase):
+    token = "123:TEST_ONLY_SECRET"
+    bot_id = 123
+    chat_id = -100123
+    topic_id = 7
+    probe_text = "dm-137 enrollment probe 6f47470e-89d0-4a1d-a1a3-8c6298450f16"
+
+    def get_me(self, *, bot_id: int = 123, is_bot: bool = True) -> bytes:
+        import json
+
+        return json.dumps(
+            {
+                "ok": True,
+                "result": {
+                    "id": bot_id,
+                    "is_bot": is_bot,
+                    "first_name": "Qualification fixture",
+                    "username": "qualification_fixture_bot",
+                },
+            }
+        ).encode()
+
+    def send_result(self, **changes: Any) -> bytes:
+        import json
+
+        result: dict[str, Any] = {
+            "message_id": 91,
+            "from": {"id": self.bot_id, "is_bot": True},
+            "chat": {"id": self.chat_id},
+            "message_thread_id": self.topic_id,
+            "is_topic_message": True,
+            "text": self.probe_text,
+        }
+        result.update(changes)
+        return json.dumps({"ok": True, "result": result}).encode()
+
+    def qualify(self) -> dict[str, Any]:
+        return mirror.qualify_telegram_destination(
+            token=self.token,
+            bot_id=self.bot_id,
+            chat_id=self.chat_id,
+            topic_id=self.topic_id,
+            probe_text=self.probe_text,
+        )
+
+    def test_success_uses_get_me_then_one_exact_probe_and_returns_closed_record(
+        self,
+    ) -> None:
+        import hashlib
+        import json
+
+        calls: list[tuple[str, bytes]] = []
+
+        def exchange(url: str, payload: bytes) -> tuple[int, bytes]:
+            calls.append((url, payload))
+            if len(calls) == 1:
+                return 200, self.get_me()
+            self.assertEqual(
+                json.loads(payload),
+                mirror.plain_request(
+                    self.probe_text, chat_id=self.chat_id, topic_id=self.topic_id
+                ),
+            )
+            return 200, self.send_result()
+
+        with (
+            patch.object(mirror, "_plain_http_exchange", side_effect=exchange),
+            patch(
+                "daimon_matrix.telegram_mirror.time.time_ns",
+                return_value=1_777_777_777_123_000_000,
+            ),
+        ):
+            qualification = self.qualify()
+
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                f"https://api.telegram.org/bot{self.token}/getMe",
+                f"https://api.telegram.org/bot{self.token}/sendMessage",
+            ],
+        )
+        self.assertEqual(calls[0][1], b"{}")
+        self.assertEqual(
+            json.loads(calls[1][1]),
+            mirror.plain_request(
+                self.probe_text,
+                chat_id=self.chat_id,
+                topic_id=self.topic_id,
+            ),
+        )
+        self.assertEqual(
+            qualification,
+            {
+                "schema": "dm.messaging.telegram-qualification/v1",
+                "qualified_at_ms": 1_777_777_777_123,
+                "token_sha256": hashlib.sha256(self.token.encode()).hexdigest(),
+                "get_me_bot_id": self.bot_id,
+                "probe_chat_id": self.chat_id,
+                "probe_topic_id": self.topic_id,
+                "probe_message_id": 91,
+                "probe_text_sha256": hashlib.sha256(
+                    self.probe_text.encode()
+                ).hexdigest(),
+            },
+        )
+        serialized = json.dumps(qualification, sort_keys=True)
+        for forbidden in (
+            self.token,
+            self.probe_text,
+            "api.telegram.org",
+            "first_name",
+            "username",
+            "result",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_wrong_token_prefix_or_get_me_identity_fails_before_probe(self) -> None:
+        with patch.object(mirror, "_plain_http_exchange") as exchange:
+            with self.assertRaisesRegex(ValueError, "^telegram_qualification_failed$"):
+                mirror.qualify_telegram_destination(
+                    token="999:TEST_ONLY_SECRET",
+                    bot_id=self.bot_id,
+                    chat_id=self.chat_id,
+                    topic_id=self.topic_id,
+                    probe_text=self.probe_text,
+                )
+            exchange.assert_not_called()
+
+        for raw in (
+            self.get_me(bot_id=999),
+            self.get_me(is_bot=False),
+            b'{"ok":true,"result":{"id":true,"is_bot":true}}',
+        ):
+            with (
+                self.subTest(raw=raw),
+                patch.object(
+                    mirror, "_plain_http_exchange", return_value=(200, raw)
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                exchange.assert_called_once()
+
+    def test_wrong_probe_destination_topic_sender_or_text_never_qualifies(self) -> None:
+        import copy
+        import json
+
+        valid = json.loads(self.send_result())["result"]
+        mutations = (
+            {"chat": {"id": -999}},
+            {"message_thread_id": 8},
+            {"is_topic_message": False},
+            {"from": {"id": 999, "is_bot": True}},
+            {"from": {"id": self.bot_id, "is_bot": False}},
+            {"text": "different probe"},
+            {"message_id": 0},
+            {"message_id": True},
+        )
+        for mutation in mutations:
+            response = copy.deepcopy(valid)
+            response.update(mutation)
+            raw = json.dumps({"ok": True, "result": response}).encode()
+            with (
+                self.subTest(mutation=mutation),
+                patch.object(
+                    mirror,
+                    "_plain_http_exchange",
+                    side_effect=[(200, self.get_me()), (200, raw)],
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                self.assertEqual(exchange.call_count, 2)
+
+        missing_topic = copy.deepcopy(valid)
+        del missing_topic["message_thread_id"]
+        with (
+            patch.object(
+                mirror,
+                "_plain_http_exchange",
+                side_effect=[
+                    (200, self.get_me()),
+                    (
+                        200,
+                        json.dumps({"ok": True, "result": missing_topic}).encode(),
+                    ),
+                ],
+            ),
+            self.assertRaisesRegex(ValueError, "^telegram_qualification_failed$"),
+        ):
+            self.qualify()
+
+    def test_malformed_truncated_or_http_mismatched_results_never_qualify(self) -> None:
+        import http.client
+
+        malformed_get_me = (
+            (200, b"{"),
+            (200, b'{"ok":true}'),
+            (200, b'{"ok":true,"ok":true,"result":{"id":123,"is_bot":true}}'),
+            (206, self.get_me()),
+        )
+        for response in malformed_get_me:
+            with (
+                self.subTest(response=response),
+                patch.object(
+                    mirror, "_plain_http_exchange", return_value=response
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                exchange.assert_called_once()
+
+        for failure in (
+            (200, b"{"),
+            (206, self.send_result()),
+            http.client.IncompleteRead(b'{"ok":true'),
+        ):
+            with (
+                self.subTest(failure=failure),
+                patch.object(
+                    mirror,
+                    "_plain_http_exchange",
+                    side_effect=[(200, self.get_me()), failure],
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                self.assertEqual(exchange.call_count, 2)
+
+    def test_invalid_probe_is_rejected_without_network(self) -> None:
+        for probe in ("", "x" * 4097):
+            with (
+                self.subTest(probe=probe),
+                patch.object(mirror, "_plain_http_exchange") as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    mirror.qualify_telegram_destination(
+                        token=self.token,
+                        bot_id=self.bot_id,
+                        chat_id=self.chat_id,
+                        topic_id=self.topic_id,
+                        probe_text=probe,
+                    )
+                exchange.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

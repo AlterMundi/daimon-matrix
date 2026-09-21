@@ -152,7 +152,7 @@ class EchoTests(unittest.TestCase):
                 self.journal.admit("bad-policy", projection(), p)
             self.db.rollback()
         controls = {
-            "semantic-receipt": {"outcome": "received"},
+            "semantic-receipt": {"outcome": "delivered"},
             "transport-result": {"stage": "message", "outcome": "accepted"},
             "authorization-control": {"stage": "evidence-before-message"},
         }

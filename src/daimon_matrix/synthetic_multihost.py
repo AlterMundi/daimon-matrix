@@ -62,6 +62,7 @@ from .multihost import (
     validate_cluster_provenance,
     validate_multihost_receipt,
 )
+from .native_egress import synthetic_visibility
 from .peer_transport import (
     PROFILE,
     KeystorePeerCustody,
@@ -366,6 +367,7 @@ def _worker(state_root: Path, password_fd: int, ready_fd: int) -> int:
             "runtime.json",
             lambda: bytearray(password),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
 
         def stop(_number: int, _frame: object) -> None:
@@ -512,6 +514,8 @@ def _peer_client(
         outbox=PeerOutbox(runtime.root / "peer-outbox.sqlite"),
         round_trip=gate,
         clock=lambda: NOW,
+        egress=synthetic_visibility(clock=lambda: NOW),
+        egress_catalog_id=f"synthetic-peer-requests-{label}",
     )
 
 

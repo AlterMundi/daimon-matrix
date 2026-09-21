@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
@@ -28,6 +30,7 @@ from .identity import (
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
 from .local_api import LocalCapability
+from .native_egress import MandatoryEgressController, closed_visibility
 from .operator_capabilities import (
     HOST_CAPABILITY_PROFILE_SCHEMA,
     HOST_CAPABILITY_PROFILES,
@@ -90,6 +93,22 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 Clock = Callable[[], int]
 
 
+@dataclass(frozen=True)
+class VisibilityFactoryContext:
+    """Already-verified public runtime identity available before egress composition."""
+
+    authority: RootAuthority | RootHistoryAuthority
+    origin: Mapping[str, Any]
+    runtime_id: str
+    runtime_label: str
+    signer_public_key: bytes
+    bundle_sha256: str
+    authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
+
+
+VisibilityFactory = Callable[[VisibilityFactoryContext], MandatoryEgressController]
+
+
 class RuntimeError(ValueError):
     """Public authority, paths, or custody cannot safely host a runtime."""
 
@@ -130,6 +149,7 @@ class HostedRuntime:
     state_root: Path
     state_identity: tuple[int, int]
     socket_path: Path
+    egress: MandatoryEgressController
     peer_dispatcher: PeerDispatcher | None = None
     peer_outbox: PeerOutbox | None = None
     peer_context: PeerClientContext | None = None
@@ -142,14 +162,11 @@ class HostedRuntime:
             raise RuntimeError("messaging_custody_not_configured")
         return _RuntimeDeliveryCustody(self.peer_context.custody)
 
-    def create_peer_client(
-        self, endpoint: str, *, timeout_seconds: float = 10
-    ) -> PeerClient:
+    def create_peer_client(self, target_embodiment_id: str) -> PeerClient:
         if self.peer_context is None:
             raise RuntimeError("peer_transport_not_configured")
-        return self.peer_context.client(
-            http_peer_round_trip(endpoint, timeout_seconds=timeout_seconds)
-        )
+        _target, client = self.peer_context.configured(target_embodiment_id)
+        return client
 
 
 def _closed(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -339,6 +356,8 @@ def load_runtime(
     password_reader: PasswordReader,
     *,
     clock: Clock,
+    egress: MandatoryEgressController | None = None,
+    egress_factory: VisibilityFactory | None = None,
     body_reader: BodyReader | None = None,
     tribe_verifier: SnapshotVerifier | None = None,
     curator_fence_verifier: FenceVerifier | None = None,
@@ -354,6 +373,8 @@ def load_runtime(
     Existing local/source authorities cannot be replaced through this seam.
     """
     supplied_relationship_authorities = dict(relationship_authorities or {})
+    if egress is not None and egress_factory is not None:
+        raise RuntimeError("runtime_visibility_configuration_conflict")
 
     root = Path(os.path.abspath(state_root))
     _owner_directory(root)
@@ -1136,6 +1157,34 @@ def load_runtime(
         credential_body["signing_key"]["public"], length=32
     ):
         raise RuntimeError("runtime_signer_mismatch")
+    verified_authorities: dict[str, RootAuthority | RootHistoryAuthority] = {
+        manifest.being_ref: authority,
+        **{
+            being_ref: known_authority
+            for (
+                being_ref,
+                _path,
+                known_authority,
+                _origin,
+            ) in known_source_configurations
+        },
+    }
+    if egress_factory is not None:
+        visibility = egress_factory(
+            VisibilityFactoryContext(
+                authority=authority,
+                origin=local_origin,
+                runtime_id=runtime_id,
+                runtime_label=runtime_label,
+                signer_public_key=signer.public_key,
+                bundle_sha256=hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
+                authorities=MappingProxyType(verified_authorities),
+            )
+        )
+        if not isinstance(visibility, MandatoryEgressController):
+            raise RuntimeError("runtime_visibility_configuration_rejected")
+    else:
+        visibility = egress if egress is not None else closed_visibility(clock=clock)
 
     peer_custody: KeystorePeerCustody | None = None
     if peer_configuration is not None:
@@ -1269,6 +1318,7 @@ def load_runtime(
                 "sender_body_ref": route_profile.body_ref,
                 "clock": clock,
                 "timeout_seconds": provider["timeout_ms"] / 1000,
+                "egress": visibility,
             }
             try:
                 kind = provider["kind"]
@@ -1288,7 +1338,14 @@ def load_runtime(
             except (RouteError, TypeError, ValueError) as exception:
                 raise RuntimeError("runtime_route_provider_rejected") from exception
             providers[binding.provider_ref] = instance
-        router = RouteCoordinator(communication, route_profile, providers, clock=clock)
+        router = RouteCoordinator(
+            communication,
+            route_profile,
+            providers,
+            clock=clock,
+            egress=visibility,
+            egress_catalog_id="runtime-route-requests",
+        )
 
     def current_tribe_provider(tribe_ref: str, at_ms: int) -> VerifiedTribeSnapshot:
         assert relationship_context is not None
@@ -1342,6 +1399,8 @@ def load_runtime(
                     sync_engine=SyncEngine(ledger),
                 ),
                 clock=clock,
+                egress=visibility,
+                egress_catalog_id="runtime-peer-responses",
             )
             peer_outbox = PeerOutbox(
                 _safe_file(
@@ -1357,6 +1416,8 @@ def load_runtime(
                 custody=peer_custody,
                 outbox=peer_outbox,
                 clock=clock,
+                egress=visibility,
+                egress_catalog_id="runtime-peer-requests",
                 endpoints=peer_endpoints,
             )
         except (OSError, TypeError, ValueError) as exception:
@@ -1386,6 +1447,7 @@ def load_runtime(
         sources=source_context,
         relationships=relationship_context,
         peer_context=peer_context,
+        visibility_status=visibility.status,
     )
     ledger.integrity_check()
     final_root = root.lstat()
@@ -1397,6 +1459,7 @@ def load_runtime(
         root,
         identity,
         socket_path,
+        visibility,
         peer_dispatcher=peer_dispatcher,
         peer_outbox=peer_outbox,
         peer_context=peer_context,

@@ -24,6 +24,7 @@ from daimon_matrix.canonical import b64url, canonical_bytes, digest
 from daimon_matrix.identity import signing_descriptor, verify_genesis
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_capabilities import (
     HOST_CAPABILITY_PROFILES,
     HOST_PROFILE_NAMES,
@@ -555,6 +556,7 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
             "runtime.json",
             lambda: bytearray(password),
             clock=lambda: NOW + 30,
+            egress=synthetic_visibility(clock=lambda: NOW + 30),
         )
         self.assertEqual(
             loaded.service.ledger.local_origin, activation["body"]["origin"]

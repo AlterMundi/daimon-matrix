@@ -166,10 +166,11 @@ def validate_projection(projection: dict[str, Any]) -> None:
             projection["content"],
             projection["reply_to"],
         )
-        if kind == "message":
-            if reply is not None:
-                raise ValueError
-        else:
+        if kind == "message" and reply is not None:
+            raise ValueError
+        if kind in ("reply", "semantic-receipt") and reply is None:
+            raise ValueError
+        if reply is not None:
             _fields(reply, {"event_id", "event_digest"})
             _text(reply["event_id"])
             _digest_field(reply["event_digest"])
@@ -180,7 +181,13 @@ def validate_projection(projection: dict[str, Any]) -> None:
                 raise ValueError
         elif kind == "semantic-receipt":
             _fields(content, {"outcome"})
-            if content["outcome"] not in ("received", "accepted", "rejected"):
+            if content["outcome"] not in (
+                "delivered",
+                "failed:transport",
+                "refused:policy",
+                "expired",
+                "resolved:unroutable",
+            ):
                 raise ValueError
         elif kind == "transport-result":
             _fields(content, {"stage", "outcome"})
@@ -190,7 +197,13 @@ def validate_projection(projection: dict[str, Any]) -> None:
                 raise ValueError
         elif kind == "authorization-control":
             _fields(content, {"stage"})
-            if content["stage"] != "evidence-before-message":
+            if content["stage"] not in (
+                "evidence-before-message",
+                "scope",
+                "sync",
+                "transport-response",
+                "semantic-receipt",
+            ):
                 raise ValueError
         else:
             raise ValueError
@@ -418,10 +431,13 @@ class EchoJournal:
                 raise ValueError
             if self.db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
                 raise ValueError
-            rows = self.db.execute(
-                "SELECT name,type,sql FROM sqlite_master WHERE tbl_name IN "
-                "('echo_v2_catalog','echo_v2_obligations') OR name GLOB 'echo_v2_*'"
-            ).fetchall()
+            rows = [
+                tuple(row)
+                for row in self.db.execute(
+                    "SELECT name,type,sql FROM sqlite_master WHERE tbl_name IN "
+                    "('echo_v2_catalog','echo_v2_obligations') OR name GLOB 'echo_v2_*'"
+                ).fetchall()
+            ]
             expected_schema: set[tuple[str, str, str | None]] = {
                 (name, "table", sql) for name, sql in TABLE_SQL.items()
             }
@@ -649,6 +665,28 @@ class MandatoryEcho:
         record = self._journal._load(operation_id, expected_binding_digest)
         self._current(record)
         return _status(record)
+
+    def ambiguity(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, str]:
+        """Return only the exact identifiers needed for an owner retry command."""
+
+        record = self._journal._load(operation_id, expected_binding_digest)
+        self._current(record)
+        if _status(record)["state"] != "ambiguous":
+            raise EchoError("echo_retry_not_ambiguous")
+        policy = record["binding"]["policy"]
+        part = next(
+            item
+            for item in record["parts"]
+            if _part_result(item, policy)[0] != "confirmed"
+        )
+        attempt = part["attempts"][-1]
+        return {
+            "echo_operation_id": record["binding"]["operation_id"],
+            "echo_binding_digest": record["binding_digest"],
+            "latest_attempt_id": attempt["attempt_id"],
+        }
 
     def require_confirmed(
         self, operation_id: str, expected_binding_digest: str

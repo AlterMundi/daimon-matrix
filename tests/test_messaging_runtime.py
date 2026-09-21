@@ -10,7 +10,9 @@ from tests.test_dm022_ledger import seed
 from tests.test_dm024_runtime import NOW, PASSWORD, RuntimeFixture
 
 
-def loaded(test, identity=None):
+def loaded(test, identity=None, *, clock=lambda: NOW):
+    from daimon_matrix.native_egress import synthetic_visibility
+
     fixture = RuntimeFixture()
     fixture.setUp()
     test.addCleanup(fixture.tearDown)
@@ -89,11 +91,30 @@ def loaded(test, identity=None):
         test.assertEqual(len(reads), 1)
         return bytearray(PASSWORD)
 
-    runtime = load_runtime(root, "runtime.json", password, clock=lambda: NOW)
+    runtime = load_runtime(
+        root,
+        "runtime.json",
+        password,
+        clock=clock,
+        egress=synthetic_visibility(clock=clock),
+    )
     return fixture, runtime, reads
 
 
 class BindingTests(unittest.TestCase):
+    def test_peer_request_catalog_is_ready_before_close_and_reused_after(self):
+        from daimon_matrix.daemon import _enabled_egress_paths
+
+        _fixture, runtime, _reads = loaded(self)
+        self.assertIsNotNone(runtime.peer_context)
+        self.assertIn("runtime-peer-requests", runtime.egress.registered_catalog_ids())
+        runtime.egress.validate_registry(_enabled_egress_paths(runtime))
+        self.assertEqual(runtime.egress.status()["registry_state"], "closed")
+        self.assertTrue(runtime.egress.status()["registry_healthy"])
+        client = runtime.create_peer_client("embodiment:daimonmatrix")
+        self.assertIsNotNone(client)
+        self.assertIn("runtime-peer-requests", runtime.egress.registered_catalog_ids())
+
     def test_exact_binding_current_runtime_and_signature_domain(self):
         import daimon_matrix.messaging_config as config
 
@@ -166,7 +187,7 @@ def application_fixture(test):
     pair = Pair(test.root)
     test.pair = pair
     reverse = NativeSendRpcTests.reverse_channel(test, pair)
-    _fixture, runtime, reads = loaded(test, pair.sender)
+    _fixture, runtime, reads = loaded(test, pair.sender, clock=lambda: pair.now)
     # Signed relationship events are at the synthetic relationship clock.
     from dataclasses import replace
 
@@ -232,8 +253,10 @@ class ComposeTests(unittest.TestCase):
     def test_published_missing_tables_refused_without_mutation(self):
         import sqlite3
         from contextlib import closing
+        from dataclasses import replace
 
         from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.native_egress import synthetic_visibility
         from daimon_matrix.operator_messaging import prepare
         from daimon_matrix.synthetic_relationships import _uuid
 
@@ -242,7 +265,16 @@ class ComposeTests(unittest.TestCase):
             ("relationships", ("metadata", "events", "operations")),
             ("inbox", ("deliveries", "identities", "evidence", "inbox")),
             ("outgoing-context", ("deliveries", "identities", "evidence", "inbox")),
-            ("outbox", ("messaging_outbox", "messaging_transport_stages")),
+            (
+                "outbox",
+                (
+                    "messaging_outbox",
+                    "messaging_transport_stages",
+                    "mandatory_egress_operations",
+                    "echo_v2_catalog",
+                    "echo_v2_obligations",
+                ),
+            ),
             (
                 "opaque-evidence",
                 (
@@ -251,6 +283,9 @@ class ComposeTests(unittest.TestCase):
                     "inbox_requests",
                     "inbox_tombstones",
                     "inbox_claims",
+                    "mandatory_egress_operations",
+                    "echo_v2_catalog",
+                    "echo_v2_obligations",
                 ),
             ),
             (
@@ -261,14 +296,23 @@ class ComposeTests(unittest.TestCase):
                     "inbox_requests",
                     "inbox_tombstones",
                     "inbox_claims",
+                    "mandatory_egress_operations",
+                    "echo_v2_catalog",
+                    "echo_v2_obligations",
                 ),
             ),
         ):
             for table in tables:
                 with self.subTest(store=store, table=table):
+                    candidate_runtime = replace(
+                        runtime,
+                        egress=synthetic_visibility(clock=runtime.service.clock),
+                    )
                     target = self.root / (store + "-" + table)
-                    result = prepare(runtime, target, spec, secret_sources=sources)
-                    app = load_application(runtime, target)
+                    result = prepare(
+                        candidate_runtime, target, spec, secret_sources=sources
+                    )
+                    app = load_application(candidate_runtime, target)
                     sender = app.service.messaging.deliveries["peer-out"].sender
                     args = dict(
                         client_id=app.service.capabilities[
@@ -292,7 +336,7 @@ class ComposeTests(unittest.TestCase):
                         ):
                             # A returned application would let the old send ID
                             # prepare anew.
-                            reloaded = load_application(runtime, target)
+                            reloaded = load_application(candidate_runtime, target)
                             reloaded.service.messaging.deliveries[
                                 "peer-out"
                             ].sender.prepare(**args)
@@ -412,7 +456,7 @@ class ComposeTests(unittest.TestCase):
                 ).fetchall():
                     if (
                         store == "relationships" and table in {"metadata", "events"}
-                    ) or table == "inbox_meta":
+                    ) or table in {"inbox_meta", "echo_v2_catalog"}:
                         # Required initialization/authority, not queue traffic.
                         continue
                     self.assertEqual(
@@ -527,6 +571,7 @@ class ComposeTests(unittest.TestCase):
 
         from daimon_matrix.daemon import create_messaging_http_server
         from daimon_matrix.messaging_config import load_application
+        from daimon_matrix.native_egress import synthetic_visibility
         from daimon_matrix.operator_messaging import prepare
         from daimon_matrix.routes import OpaqueInbox, TransportIngress
         from daimon_matrix.synthetic_relationships import _uuid
@@ -534,6 +579,7 @@ class ComposeTests(unittest.TestCase):
         runtime, spec, sources, _ = application_fixture(self)
         peer = self.pair.recipient
         ingresses = {}
+        receiver_egress = synthetic_visibility(clock=runtime.service.clock)
         for phase in ("evidence", "message"):
             route = spec["outgoing"]["routes"][phase]
             ingresses[phase] = TransportIngress(
@@ -547,6 +593,8 @@ class ComposeTests(unittest.TestCase):
                     clock=runtime.service.clock,
                 ),
                 clock=runtime.service.clock,
+                egress=receiver_egress,
+                egress_catalog_id=f"test-configured-http-{phase}-responses",
                 intake_validator=getattr(self.pair.receiver, "receive_" + phase),
             )
         server = create_messaging_http_server(

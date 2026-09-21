@@ -357,6 +357,7 @@ class HostedWeave:
     relationships: RelationshipServiceContext | None = None
     peer_context: PeerClientContext | None = None
     messaging: MessagingServiceContext | None = None
+    visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -1970,6 +1971,18 @@ class HostedWeave:
                     (self.ledger.authority.manifest.digest,),
                 )
             )
+            visibility = (
+                {
+                    "pending": 0,
+                    "retryable": 0,
+                    "quarantined": 0,
+                    "oldest_pending_age_ms": None,
+                    "worker_state": "unavailable",
+                    "worker_failures": 0,
+                }
+                if self.visibility_status is None
+                else dict(self.visibility_status())
+            )
             return {
                 "schema": "dm.runtime.status/v1",
                 "being_ref": self.ledger.authority.manifest.being_ref,
@@ -1978,6 +1991,7 @@ class HostedWeave:
                 "ledger_schema_version": SCHEMA_VERSION,
                 "integrity": "ok",
                 "counts": self.ledger.status_counts(),
+                "visibility": visibility,
                 "authority_epoch": {
                     "schema": "dm.we.authority-epoch-status/v1",
                     "active_manifest_hash": self.ledger.authority.manifest.digest,
