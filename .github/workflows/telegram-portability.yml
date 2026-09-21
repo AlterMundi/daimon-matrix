@@ -81,6 +81,7 @@ jobs:
           python -W error::ResourceWarning -m unittest
           tests.test_operator_first_embodiment.FirstEmbodimentTests.test_distributed_genesis_becomes_a_loadable_first_runtime
           tests.test_prepare_chat_identity
+          tests.test_operator_messaging.ExclusivePublicationTests
           tests.test_operator_messaging.ProvisioningTests.test_host_visibility_accepts_current_authority_with_history_wrapper
           tests.test_operator_messaging.ProvisioningTests.test_host_visibility_uses_signed_application_not_runtime_digest
           tests.test_dm025_client.LocalClientTests -v

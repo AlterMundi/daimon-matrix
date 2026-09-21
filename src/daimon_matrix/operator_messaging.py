@@ -22,6 +22,7 @@ import re
 import secrets
 import shutil
 import stat
+import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -365,18 +366,31 @@ def _replace_capability_state(
 
 
 def _publish(staging: Path, target: Path) -> None:
-    # Linux renameat2 NOREPLACE: another provisioner must never be overwritten.
+    # Never emulate exclusive publication with exists()+rename(): another
+    # provisioner could create even an empty destination between those calls.
+    if sys.platform not in {"linux", "darwin"}:
+        raise MessagingConfigError("messaging_exclusive_publication_unsupported")
     libc = ctypes.CDLL(None, use_errno=True)
-    rename = libc.renameat2
-    rename.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
+    if sys.platform == "darwin":
+        # Apple's <sys/stdio.h>: renamex_np(..., RENAME_EXCL=0x4).
+        rename = getattr(libc, "renamex_np", None)
+        arguments = (os.fsencode(staging), os.fsencode(target), 0x4)
+        types = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    else:
+        rename = getattr(libc, "renameat2", None)
+        arguments = (-100, os.fsencode(staging), -100, os.fsencode(target), 1)
+        types = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+    if rename is None:
+        raise MessagingConfigError("messaging_exclusive_publication_unsupported")
+    rename.argtypes = types
     rename.restype = ctypes.c_int
-    if rename(-100, os.fsencode(staging), -100, os.fsencode(target), 1) != 0:
+    if rename(*arguments) != 0:
         raise MessagingConfigError("messaging_destination_exists_or_unavailable")
 
 

@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sqlite3
+import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -143,6 +144,54 @@ def signed_visibility_installation(root: Path, runtime, pair, app_root: Path) ->
     return installation
 
 
+class ExclusivePublicationTests(unittest.TestCase):
+    def test_real_exclusive_publication_and_existing_empty_destination(self):
+        from daimon_matrix.operator_messaging import _publish
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            staging, target = root / "staging", root / "target"
+            staging.mkdir()
+            (staging / "sentinel").write_bytes(b"preserve")
+            _publish(staging, target)
+            self.assertFalse(staging.exists())
+            self.assertEqual((target / "sentinel").read_bytes(), b"preserve")
+            another = root / "another"
+            another.mkdir()
+            empty = root / "existing-empty"
+            empty.mkdir()
+            inode = empty.stat().st_ino
+            with self.assertRaisesRegex(ValueError, "destination_exists"):
+                _publish(another, empty)
+            self.assertTrue(another.is_dir())
+            self.assertEqual(empty.stat().st_ino, inode)
+            link = root / "link"
+            link.symlink_to(empty, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "destination_exists"):
+                _publish(another, link)
+            self.assertTrue(link.is_symlink())
+
+    def test_unsupported_platform_and_missing_symbol_have_no_rename_fallback(self):
+        from types import SimpleNamespace
+
+        from daimon_matrix import operator_messaging as operator
+
+        with (
+            patch.object(operator.sys, "platform", "unsupported"),
+            patch.object(operator.ctypes, "CDLL") as load,
+            self.assertRaisesRegex(ValueError, "publication_unsupported"),
+        ):
+            operator._publish(Path("source"), Path("target"))
+        load.assert_not_called()
+        for platform in ("linux", "darwin"):
+            with (
+                patch.object(operator.sys, "platform", platform),
+                patch.object(operator.ctypes, "CDLL", return_value=SimpleNamespace()),
+                self.assertRaisesRegex(ValueError, "publication_unsupported"),
+            ):
+                operator._publish(Path("source"), Path("target"))
+
+
 class ProvisioningTests(unittest.TestCase):
     def test_host_visibility_accepts_current_authority_with_history_wrapper(self):
         from daimon_matrix.authority_epochs import RootHistoryAuthority
@@ -167,14 +216,22 @@ class ProvisioningTests(unittest.TestCase):
             controller = factory(replace(context, authority=history))
             # A different current authority must still fail closed.
             with self.assertRaises(ValueError):
-                factory(replace(context, authority=RootHistoryAuthority(
-                    self.pair.recipient.authority, [], []
-                )))
+                factory(
+                    replace(
+                        context,
+                        authority=RootHistoryAuthority(
+                            self.pair.recipient.authority, [], []
+                        ),
+                    )
+                )
             return controller
 
         restarted = load_runtime(
-            runtime.state_root, "runtime.json", lambda: bytearray(PASSWORD),
-            clock=lambda: self.pair.now, egress_factory=with_history,
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: self.pair.now,
+            egress_factory=with_history,
         )
         self.assertTrue(restarted.egress.release_enabled)
         self.assertIs(load_application(restarted, target).egress, restarted.egress)

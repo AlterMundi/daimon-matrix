@@ -24,6 +24,7 @@ The operator supplies an exact verified `CANDIDATE` commit. Do not substitute a
 moving branch or `main`.
 
 ```bash
+set -eu
 CANDIDATE=<exact-commit-from-operator>
 PYTHON=<absolute-path-to-existing-isolated-venv>/bin/python
 setup_dir=$(mktemp -d)

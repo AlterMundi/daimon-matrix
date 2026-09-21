@@ -151,7 +151,7 @@ def prepare(output: Path, *, label: str, body_ref: str, principal_id: str) -> Pa
         incarnation_sequence=prior["incarnation_sequence"],
         started_at_ms=prior["started_at_ms"],
     )
-    manifest = copy.deepcopy(old.manifest.value)
+    manifest = copy.deepcopy(dict(old.manifest.value))
     manifest["revision"] += 1
     manifest["embodiments"][0].update(
         embodiment_credential_id=credential["artifact_id"],
