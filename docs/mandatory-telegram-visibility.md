@@ -163,6 +163,8 @@ interruption and hard parent death on Linux and macOS ARM64. Its exact-head
 result is required before claiming Darwin qualification; Linux PTY success alone
 does not establish it. This does not qualify Intel dependency installation,
 Hermes attachment, participant onboarding or a live Telegram conversation.
+The legacy V1 selective adapter remains Linux-only (`/proc/self/fd` SQLite
+opening); it is not used by V2 mandatory echo and is tested only on Linux.
 No new public configuration,
 model capability or transport destination selector is introduced.
 
