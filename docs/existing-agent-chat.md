@@ -89,3 +89,10 @@ stdin-only text, no hook registration, and durable exact retry/payload conflict.
 Existing messaging tests cover authenticated stdio/UDS transport and daemon
 contracts. Live participant readiness additionally requires actual peer enrollment
 and a human-requested conversation; tool registration alone does not prove that.
+
+## File-based peer connection
+
+If both agents have identities but no signed peer application yet, use
+[file-peer-enrollment.md](file-peer-enrollment.md). It avoids SSH and exchanges
+only an encrypted offer and a signed public response; private identity keys stay
+on their original hosts.

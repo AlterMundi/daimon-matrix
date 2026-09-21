@@ -11,6 +11,8 @@ on:
       - tests/test_dm025_client.py
       - tools/prepare_chat_identity.py
       - tools/install_agent_chat.py
+      - tools/chat_link.py
+      - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
       - src/daimon_matrix/agent_chat_assets/**
       - tests/test_agent_chat.py
@@ -30,6 +32,8 @@ on:
       - tests/test_dm025_client.py
       - tools/prepare_chat_identity.py
       - tools/install_agent_chat.py
+      - tools/chat_link.py
+      - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
       - src/daimon_matrix/agent_chat_assets/**
       - tests/test_agent_chat.py
@@ -89,6 +93,7 @@ jobs:
           python -W error::ResourceWarning -m unittest
           tests.test_operator_first_embodiment.FirstEmbodimentTests.test_distributed_genesis_becomes_a_loadable_first_runtime
           tests.test_prepare_chat_identity
+          tests.test_chat_link
           tests.test_agent_chat
           tests.test_operator_messaging.ExclusivePublicationTests
           tests.test_operator_messaging.ProvisioningTests.test_host_visibility_accepts_current_authority_with_history_wrapper
