@@ -63,8 +63,8 @@ authority, credential history and a genuine local signature, not private keys.
 No further software access to Ani's machine is implied.
 
 Also report the Mac's mesh/VPN address and whether it can reach Legion's existing
-SSH port at the mesh address supplied privately by the operator (TCP connection
-only, no SSH login needed). This
+Matrix TCP listener at the endpoint supplied privately by the operator (connect
+and close without sending a request; no SSH login is needed). This
 determines direct routing versus the already authorized infrastructure route;
 loopback pilot endpoints are not usable from another machine.
 
