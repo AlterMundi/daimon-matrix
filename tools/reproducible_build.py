@@ -36,6 +36,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/authority_epochs.py"),
     Path("src/daimon_matrix/birth.py"),
     Path("src/daimon_matrix/canonical.py"),
+    Path("src/daimon_matrix/chat_host.py"),
     Path("src/daimon_matrix/cli.py"),
     Path("src/daimon_matrix/client.py"),
     Path("src/daimon_matrix/cluster.py"),

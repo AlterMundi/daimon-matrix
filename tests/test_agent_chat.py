@@ -211,6 +211,82 @@ class AgentChatTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "messaging_only"):
             bridge(binding)
 
+    def test_multiple_links_route_explicit_calls_without_cross_link_replies(self):
+        from unittest.mock import AsyncMock
+
+        from mcp.shared.exceptions import MCPError
+
+        self.setup_binding()
+        path = self.write(
+            "collection.json",
+            canonical_bytes(
+                {
+                    "schema": "dm.agent-chat.binding/v2",
+                    "links": {
+                        name: str(self.args.attachment / "binding.json")
+                        for name in ("oliva", "codex")
+                    },
+                }
+            ),
+        )
+        with patch("socket.socket", side_effect=AssertionError("no automatic I/O")):
+            binding = load_binding(path)
+            adapter = bridge(binding)
+        self.assertEqual(binding["incoming_channels"], ["codex/in", "oliva/in"])
+        for link in adapter.links.values():
+            link.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))
+        asyncio.run(
+            adapter.call_tool(
+                None,
+                types.CallToolRequestParams(
+                    name="messaging_inbox", arguments={"channel_id": "oliva/in"}
+                ),
+            )
+        )
+        adapter.links["codex"].call_tool.assert_not_called()
+        call = adapter.links["oliva"].call_tool.call_args.args[1]
+        self.assertEqual(call.arguments["channel_id"], "in")
+        with self.assertRaises(MCPError):
+            asyncio.run(
+                adapter.call_tool(
+                    None,
+                    types.CallToolRequestParams(
+                        name="messaging_reply",
+                        arguments={
+                            "channel_id": "codex/out",
+                            "received_channel_id": "oliva/in",
+                            "send_id": str(uuid.uuid4()),
+                        },
+                    ),
+                )
+            )
+        adapter.links["codex"].call_tool.assert_not_called()
+
+    def test_collection_cannot_mix_runtime_identities_or_recurse(self):
+        self.setup_binding()
+        collection = self.write(
+            "collection.json",
+            canonical_bytes(
+                {
+                    "schema": "dm.agent-chat.binding/v2",
+                    "links": {
+                        "one": str(self.args.attachment / "binding.json"),
+                        "two": str(self.root / "other-binding.json"),
+                    },
+                }
+            ),
+        )
+        other_config = {**self.config, "runtime_id": "dm:runtime:v1:" + "b" * 43}
+        self.write("other-client.json", canonical_bytes(other_config))
+        other = load_binding(self.args.attachment / "binding.json")
+        other["client_config"] = str(self.root / "other-client.json")
+        self.write("other-binding.json", canonical_bytes(other))
+        with self.assertRaisesRegex(ValueError, "mixed_identities"):
+            load_binding(collection)
+        self.write("other-binding.json", collection.read_bytes())
+        with self.assertRaisesRegex(ValueError, "nested_binding"):
+            load_binding(collection)
+
 
 if __name__ == "__main__":
     unittest.main()

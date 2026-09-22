@@ -242,8 +242,31 @@ def make_plan(
         "descriptor_ref": "dm:content:v1:human-requested-agent-chat",
     }
     resource_id = rel.resource_ref(resource)
+    # Adding a peer must not rotate the being-wide card and stale every already
+    # accepted relationship. Reuse the current valid card/resource when possible.
+    reusable = prior_cards[-1] if prior_cards else None
+    if reusable is not None:
+        from daimon_matrix.runtime import verify_relationship_card_authority
+
+        card = reusable["payload"]
+        verify_relationship_card_authority(card, authorities[0], at_ms=start)
+        if card["control_position"]["embodiment_id"] != origins[0]["embodiment_id"]:
+            raise ValueError("chat_link_existing_card_other_embodiment")
+        candidates = [
+            item
+            for item in card["resources"]
+            if item["descriptor"]["classification"] == "shareable"
+            and "messaging.read" in item["descriptor"]["operations"]
+        ]
+        if not candidates:
+            raise ValueError("chat_link_existing_card_has_no_chat_resource")
+        resource = candidates[0]["descriptor"]
+        resource_id = candidates[0]["resource_ref"]
     cards = []
     for i in range(2):
+        if i == 0 and reusable is not None:
+            cards.append(reusable)
+            continue
         last = prior_cards[-1] if i == 0 and prior_cards else None
         cards.append(
             append(
@@ -547,7 +570,7 @@ def sign_proposals(
         or dict(runtime.service.origin) != local["origin"]
     ):
         raise ValueError("chat_link_local_identity_mismatch")
-    if len(plan["events"]) != 11:
+    if len(plan["events"]) not in (10, 11):
         raise ValueError("chat_link_event_count")
     actual = next(
         (
@@ -736,6 +759,8 @@ def install_link(
     output: Path,
     payload: dict[str, Any],
     actor: int,
+    *,
+    additional_link: bool = False,
 ) -> dict[str, Any]:
     """Apply a fully signed plan through the existing production application loader."""
     from urllib.parse import urlsplit
@@ -1010,16 +1035,23 @@ def install_link(
         installation,
         {"document": document, "binding": create_binding(runtime, document)},
     )
-    runtime = load_runtime(
-        runtime_root,
-        "runtime.json",
-        lambda: bytearray(password),
-        clock=now,
-        egress_factory=_visibility_factory(
-            selected, installation, clock=now, catalog_mode="migrate"
-        ),
-    )
-    runtime = load_application(runtime, app)
+    if additional_link:
+        # Existing native catalogs retain their original visibility proof key.
+        # This link owns only its app catalogs and an independent controller.
+        from daimon_matrix.chat_host import application_view
+
+        runtime = application_view(runtime, app, installation, catalog_mode="migrate")
+    else:
+        runtime = load_runtime(
+            runtime_root,
+            "runtime.json",
+            lambda: bytearray(password),
+            clock=now,
+            egress_factory=_visibility_factory(
+                selected, installation, clock=now, catalog_mode="migrate"
+            ),
+        )
+        runtime = load_application(runtime, app)
     runtime.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
     runtime.egress.validate_registered_catalogs()
     result = {
@@ -1200,6 +1232,8 @@ def finish(
     password: bytes,
     response: dict[str, Any],
     output: Path,
+    *,
+    additional_link: bool = False,
 ) -> Path:
     payload = read_public(output / "pending.json")
     plan = payload["plan"]
@@ -1216,7 +1250,9 @@ def finish(
         visibility_bindings=document["visibility_bindings"],
     )
     put(output / "completed-private.json", payload)
-    install_link(runtime_root, password, output, payload, 0)
+    install_link(
+        runtime_root, password, output, payload, 0, additional_link=additional_link
+    )
     return output / "ready.json"
 
 
@@ -1238,6 +1274,7 @@ def main() -> None:
     parser.add_argument("--local-endpoint")
     parser.add_argument("--peer-endpoint")
     parser.add_argument("--visibility-installation", type=Path)
+    parser.add_argument("--additional-link", action="store_true")
     args = parser.parse_args()
     os.umask(0o077)
     root = _state_root(args.runtime_root)
@@ -1302,7 +1339,14 @@ def main() -> None:
         elif args.command == "accept":
             result = accept(runtime, root, password, supplied, output)
         else:
-            result = finish(runtime, root, password, supplied, output)
+            result = finish(
+                runtime,
+                root,
+                password,
+                supplied,
+                output,
+                additional_link=args.additional_link,
+            )
         print(
             json.dumps(
                 {

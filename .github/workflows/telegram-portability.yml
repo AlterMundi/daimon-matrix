@@ -15,6 +15,8 @@ on:
       - tools/chat_link.py
       - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
+      - src/daimon_matrix/chat_host.py
+      - tests/test_chat_host.py
       - src/daimon_matrix/agent_chat_assets/**
       - tests/test_agent_chat.py
       - tests/test_prepare_chat_identity.py
@@ -37,6 +39,8 @@ on:
       - tools/chat_link.py
       - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
+      - src/daimon_matrix/chat_host.py
+      - tests/test_chat_host.py
       - src/daimon_matrix/agent_chat_assets/**
       - tests/test_agent_chat.py
       - tests/test_prepare_chat_identity.py
@@ -78,7 +82,7 @@ jobs:
       - name: Installed peer enrollment and foreground transport lifecycle
         env:
           TMPDIR: ${{ runner.temp }}
-        run: python -W error::ResourceWarning -m unittest tests.test_chat_link -v
+        run: python -W error::ResourceWarning -m unittest tests.test_chat_link tests.test_chat_host -v
       - name: Real HTTP, deadlines, interruption and hard parent death
         run: >-
           python -W error::ResourceWarning -m unittest
