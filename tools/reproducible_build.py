@@ -102,6 +102,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/synthetic_relationships.py"),
     Path("src/daimon_matrix/synthetic_species.py"),
     Path("src/daimon_matrix/synthetic_sources.py"),
+    Path("src/daimon_matrix/we_messaging.py"),
     Path("src/daimon_matrix/weave.py"),
 )
 

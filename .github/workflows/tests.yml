@@ -89,6 +89,9 @@ jobs:
       - run: python -m ruff format --check tests/test_labels.py
       - run: python -m ruff check tests/test_labels.py
       - run: MYPYPATH=src python -m mypy tests/test_labels.py
+      - run: python -m ruff format --check tests/test_we_messaging.py
+      - run: python -m ruff check tests/test_we_messaging.py
+      - run: MYPYPATH=src python -m mypy tests/test_we_messaging.py
       - run: python -m ruff format --check tools/check_foundation_drift.py
       - run: python -m ruff check tools/check_foundation_drift.py
       - run: MYPYPATH=src python -m mypy tools/check_foundation_drift.py

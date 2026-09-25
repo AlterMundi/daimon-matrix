@@ -109,6 +109,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/synthetic_relationships.py",
         "src/daimon_matrix/synthetic_species.py",
         "src/daimon_matrix/synthetic_sources.py",
+        "src/daimon_matrix/we_messaging.py",
         "src/daimon_matrix/weave.py",
     }
 )
@@ -187,6 +188,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/synthetic_relationships.py",
         "daimon_matrix/synthetic_species.py",
         "daimon_matrix/synthetic_sources.py",
+        "daimon_matrix/we_messaging.py",
         "daimon_matrix/weave.py",
         f"{DIST_INFO}/METADATA",
         f"{DIST_INFO}/entry_points.txt",
