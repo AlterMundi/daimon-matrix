@@ -458,7 +458,10 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         )
 
     def _admit(
-        self, operation_id: str, payload: bytes = b"native-request"
+        self,
+        operation_id: str,
+        payload: bytes = b"native-request",
+        path_id: str = "peer-scope-request",
     ) -> OperationBinding:
         with closing(sqlite3.connect(self.path)) as database:
             database.execute("PRAGMA journal_mode=DELETE")
@@ -470,7 +473,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
             binding = self.controller.admit_in_transaction(
                 database,
                 catalog_id="integration-native",
-                path_id="peer-scope-request",
+                path_id=path_id,
                 operation_id=operation_id,
                 locator=operation_id,
                 native_bytes=payload,
@@ -578,7 +581,11 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
     def test_release_requires_confirmation_current_authority_and_one_call_permit(
         self,
     ) -> None:
-        binding = self._admit("scope-operation")
+        # Inter-daimon message egress keeps its confirmed echo. The intra-being
+        # /we lane is covered by the peer transport suite, where the mirror
+        # transport is down for the whole test and the release still succeeds.
+        self.controller.register_path("messaging-message-request", "integration-native")
+        binding = self._admit("scope-operation", path_id="messaging-message-request")
         native_calls: list[bytes] = []
         self.controller.release(binding, b"native-request", native_calls.append)
         self.assertEqual(native_calls, [b"native-request"])

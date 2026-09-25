@@ -32,7 +32,6 @@ from daimon_matrix.identity import (
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.native_egress import (
     MandatoryEgressController,
-    SyntheticEchoTransport,
     synthetic_visibility,
 )
 from daimon_matrix.peer_transport import (
@@ -678,7 +677,19 @@ class PeerTransportTests(PeerTransportFixture):
             return dispatcher.dispatch(raw)
 
         outbox_path = client_state / "outbox.sqlite"
+        # The intra-being /we lane carries no inter-daimon message, so a Telegram
+        # outage must not block it: the mirror transport stays down for the whole
+        # test. A transport failure exercises the same carrier regeneration across
+        # the deadline and the restart that this test protects.
         self.egress._transport = None
+        outage = [ConnectionError("synthetic-outage")]
+        served_round_trip = round_trip
+
+        def round_trip(raw: bytes) -> bytes:
+            if outage:
+                raise outage.pop()
+            return served_round_trip(raw)
+
         client = PeerClient(
             authority=self.authority,
             local_origin=self.origins["legion"],
@@ -702,7 +713,7 @@ class PeerTransportTests(PeerTransportFixture):
                 deadline_ms=self.now + 10,
             )
 
-        with self.assertRaisesRegex(ValueError, "egress_echo_not_confirmed"):
+        with self.assertRaises(PeerTransportAmbiguous):
             invoke()
         self.assertEqual(requests, [])
         with closing(sqlite3.connect(outbox_path)) as database:
@@ -717,7 +728,6 @@ class PeerTransportTests(PeerTransportFixture):
             )
 
         self.now += 11
-        self.egress._transport = SyntheticEchoTransport()
         client = PeerClient(
             authority=self.authority,
             local_origin=self.origins["legion"],
@@ -761,9 +771,19 @@ class PeerTransportTests(PeerTransportFixture):
                 ),
             )
             self.assertNotIn(logical_request_id, {row[0] for row in operations})
+            # Both operations still journal their projection, but no obligation is
+            # ever confirmed and the mirror transport was down the whole time: the
+            # lane carries one being's own state, not an inter-daimon message.
             self.assertEqual(
                 database.execute("SELECT count(*) FROM echo_v2_obligations").fetchone(),
                 (2,),
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM echo_v2_obligations WHERE record LIKE "
+                    "'%confirmed%'"
+                ).fetchone(),
+                (0,),
             )
         reopened_outbox = PeerOutbox(outbox_path)
         reopened = MandatoryEgressController(

@@ -470,6 +470,22 @@ def load_owner_visibility_file(
     )
 
 
+# One being's own `/we` lane: scope resolution and state convergence between its
+# embodiments. These paths never carry an inter-daimon logical message, so the
+# mandatory inter-daimon mirror does not apply to them. The lane is not a bypass
+# flag: it is derived from the catalog's own authoritative store tables, it stays
+# authorized and digest-bound, every operation is still journaled with a release
+# count, and every event remains in the being's ledger where an operator can read
+# it on request. Inter-daimon message and evidence egress keeps its confirmed echo.
+INTRA_BEING_LANE_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        "peer-scope-request",
+        "peer-sync-request",
+        "peer-scope-response",
+        "peer-sync-response",
+    }
+)
+
 PEER_EGRESS_PATHS: Final[frozenset[str]] = frozenset(
     {
         "route-provider-request",
@@ -1678,6 +1694,10 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_operation_mismatch")
         if not self._authorize(binding, catalog):
             raise NativeEgressError("egress_authority_blocked")
+        if binding.path_id in INTRA_BEING_LANE_PATHS:
+            nonce = str(uuid.uuid4())
+            self._live_permits.add(nonce)
+            return ReleasePermit(binding, nonce, self._permit_marker)
         with self._database(catalog) as database:
             try:
                 echo = self._mandatory(binding, database)
