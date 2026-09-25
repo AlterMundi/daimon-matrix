@@ -83,6 +83,35 @@ causal parent.
   MUST fail closed rather than truncate: silently dropping a member from a
   conversation is worse than refusing to send it.
 
+### Implementation note: §3 is finer than #151's wording, deliberately
+
+Issue #151 asks for "one semantic leg and one terminal receipt per member,
+authored by the resolved receipt embodiment". This specification requires one
+target, and therefore one leg and one receipt, per **(member, embodiment)** pair,
+which is strictly finer, and the difference is flagged here rather than buried.
+
+Under the per-member reading a member being designates one body to receive and
+receipt a tribe message, and its siblings learn of it through that being's own
+intra-being lane and sync. That is a coherent design and it needs no change to any
+delivered identity derivation. Under the per-body reading of §3 every body is a
+direct recipient of the sealed envelope and authors its own receipt, so authorship
+inside the tribe is visible per body without depending on a second hop. This
+document keeps the per-body requirement because a being's bodies taking part in
+the tribes it belongs to, all of them hearing the channel, is the requirement this
+plan was written against.
+
+The cost is concrete. `communication.py` derives leg identity from
+`(message_id, recipient_type, recipient_id)`, `accept()` recomputes that identity
+on every call including for an already-materialized message, and the receipt path
+validates against the recomputed value. Widening the key therefore changes how
+existing communication stores re-accept in-flight messages, so per-body legs
+require that migration to be decided explicitly; per-member legs do not.
+
+Deferring is a legitimate choice but not a cheaper one: falling back to the
+per-member reading for V0 only moves the same cost later, because reaching §3
+afterwards still needs the identity widening. What deferring does buy is that the
+tribe channel can ship against delivered leg semantics untouched.
+
 ## 4. One envelope, one wrapped key per member key
 
 One logical tribe message is one signed ledger event sealed into **one**
