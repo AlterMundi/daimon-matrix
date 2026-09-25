@@ -8,6 +8,12 @@ from pathlib import Path
 
 from daimon_matrix import mandatory_echo as echo
 
+# Synchronization bounds only. These tests assert ordering, reaping and single
+# delivery, never speed, so every bound stays far above the deadlines they patch.
+# A three second bound made a correct implementation fail on the slowest shared
+# runner, which is a flake about the runner rather than a finding about the code.
+SYNC_WAIT_SECONDS = 30.0
+
 
 def policy():
     return {
@@ -686,13 +692,13 @@ worker.advance("synthetic-op", sys.argv[2])
             ):
                 worker_thread = threading.Thread(target=run)
                 worker_thread.start()
-                self.assertTrue(received.wait(3))
+                self.assertTrue(received.wait(SYNC_WAIT_SECONDS))
                 contender_thread = threading.Thread(target=contender)
                 contender_thread.start()
-                self.assertTrue(waiting.wait(3))
+                self.assertTrue(waiting.wait(SYNC_WAIT_SECONDS))
                 self.assertFalse(released.is_set())
-                worker_thread.join(3)
-                contender_thread.join(3)
+                worker_thread.join(SYNC_WAIT_SECONDS)
+                contender_thread.join(SYNC_WAIT_SECONDS)
                 self.assertFalse(worker_thread.is_alive())
                 self.assertFalse(contender_thread.is_alive())
                 self.assertEqual(errors, [])
@@ -861,7 +867,7 @@ worker.advance("synthetic-op", sys.argv[2])
         lock.acquire()
 
         def release():
-            waiting.wait(3)
+            waiting.wait(SYNC_WAIT_SECONDS)
             now[0] = 2000
             lock.release()
 
@@ -871,7 +877,7 @@ worker.advance("synthetic-op", sys.argv[2])
             with self.assertRaisesRegex(echo.EchoError, "echo_retry_unauthorized"):
                 self.worker.retry_ambiguous("synthetic-op", binding, b"synthetic")
         finally:
-            thread.join(3)
+            thread.join(SYNC_WAIT_SECONDS)
         self.assertFalse(thread.is_alive())
         self.assertEqual(self.transport.calls, [])
         verify.observed = 1999
@@ -1149,9 +1155,9 @@ worker.advance("synthetic-op", sys.argv[2])
         second = threading.Thread(target=run, args=(True,))
         first.start()
         try:
-            self.assertTrue(entered.wait(3))
+            self.assertTrue(entered.wait(SYNC_WAIT_SECONDS))
             second.start()
-            self.assertTrue(retry_started.wait(3))
+            self.assertTrue(retry_started.wait(SYNC_WAIT_SECONDS))
             self.assertFalse(retry_done.wait(0.05))
         finally:
             finish.set()
