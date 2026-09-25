@@ -165,7 +165,6 @@ class WeLaneTests(SealedFixture):
             message,
             resolution,
             authority=self.authority,
-            recipient_targets=targets,
             custody=self.custodies["legion"],
             issued_at_ms=NOW + 1,
             expires_at_ms=expires,
@@ -203,7 +202,6 @@ class WeLaneTests(SealedFixture):
             message,
             resolution,
             authority=self.authority,
-            recipient_targets=targets,
             custody=self.custodies["legion"],
             issued_at_ms=NOW + 1,
             expires_at_ms=expires,
@@ -229,16 +227,11 @@ class WeLaneTests(SealedFixture):
         self, **kwargs: Any
     ) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any], dict[str, Any]]:
         message, resolution, thread_id = self.author(**kwargs)
-        audience = we_audience(
-            resolution, message_id=message["event_id"], local_embodiment_id=LEGION
-        )
-        targets = we_recipient_targets(self.authority, audience)
         expires = NOW + 30_000
         raw = seal_we_message(
             message,
             resolution,
             authority=self.authority,
-            recipient_targets=targets,
             custody=self.custodies["legion"],
             issued_at_ms=NOW + 1,
             expires_at_ms=expires,
@@ -274,15 +267,10 @@ class WeLaneTests(SealedFixture):
 
     def test_sender_cannot_receive_its_own_message(self) -> None:
         message, resolution, _thread, _payload, _opened = self.send_and_receive()
-        audience = we_audience(
-            resolution, message_id=message["event_id"], local_embodiment_id=LEGION
-        )
-        targets = we_recipient_targets(self.authority, audience)
         raw = seal_we_message(
             message,
             resolution,
             authority=self.authority,
-            recipient_targets=targets,
             custody=self.custodies["legion"],
             issued_at_ms=NOW + 1,
             expires_at_ms=NOW + 30_000,
@@ -401,6 +389,34 @@ class WeLaneTests(SealedFixture):
 
     def test_a_sender_cannot_intake_its_own_message(self) -> None:
         _message, _resolution, _thread, payload, _opened = self.send_and_receive()
+        with self.assertRaises(WeLaneError) as caught:
+            self.lane("legion", at_ms=NOW + 5).intake(payload)
+        self.assertEqual(str(caught.exception), "we_lane_sender_is_local")
+
+    def test_the_canonical_resolution_shape_delivers_and_refuses_the_author(
+        self,
+    ) -> None:
+        """DM-054 names every active embodiment; the author still may not intake.
+
+        The sealed profile authorizes exactly the resolution's target list, so the
+        author holds a wrapped key for its own message. Hearing yourself is not a
+        conversation, and the refusal stays an explicit rule of the lane rather
+        than a narrower seal.
+        """
+        message, resolution, _thread = self.author(include_sender=True)
+        raw = seal_we_message(
+            message,
+            resolution,
+            authority=self.authority,
+            custody=self.custodies["legion"],
+            issued_at_ms=NOW + 1,
+            expires_at_ms=NOW + 30_000,
+        )
+        payload = we_conversation_payload(envelope=raw, resolution=resolution)
+        result = self.lane("daimonmatrix", at_ms=NOW + 5).intake(payload)
+        self.assertEqual(result["message_id"], message["event_id"])
+        self.assertEqual(result["recipient_embodiment_id"], REMOTE)
+        self.assertIsNotNone(self.ledger_b.event(result["receipt"]["event_id"]))
         with self.assertRaises(WeLaneError) as caught:
             self.lane("legion", at_ms=NOW + 5).intake(payload)
         self.assertEqual(str(caught.exception), "we_lane_sender_is_local")

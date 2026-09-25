@@ -12,10 +12,16 @@ talk to each other.
 
 ## Audience and addressee are different things
 
-- **Audience**: every active embodiment of the being except the sender, taken from
-  one signed `/we` resolution whose target list freezes exactly this message's
-  recipients. The audience can decrypt and hear. Hearing is not a request to
-  answer.
+Three ideas stay separate, and only the last two belong to this lane.
+
+- **Carrier set**: DM-054 resolves `/we` to every active embodiment of the being,
+  the author included, and the sealed delivery profile authorizes exactly that
+  list. One envelope therefore carries one wrapped key per active embodiment. Who
+  can decrypt is not a choice this lane makes: it consumes the resolution the
+  resolver already signs, and re-derives the same set from it on the receiving
+  side, so an envelope can neither redirect a message nor widen who hears it.
+- **Audience**: the carrier set minus the author. These are the embodiments a
+  message may be addressed to. Hearing is not a request to answer.
 - **Addressee**: an explicit, sorted, deduplicated set of embodiment IDs inside the
   audience. Only the addressee is expected to answer. A reply names the addressee
   it answers, so an off-address response is visible as such instead of being
@@ -36,6 +42,9 @@ later additive form of the same field, not a rewrite.
   configuration.
 - An embodiment that is not active in the bound manifest, or whose credential is
   not root-authorized, cannot be a recipient.
+- The author holds a wrapped key for its own message and is still refused intake.
+  A message to yourself is a ledger note, not a conversation, and that refusal is
+  an explicit rule rather than a narrower seal the authorization would reject.
 
 ## Delivery and evidence
 

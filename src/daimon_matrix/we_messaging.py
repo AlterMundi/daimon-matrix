@@ -6,12 +6,14 @@ tribe, a membership episode or a grant, and none may be synthesized to fill a
 field. That is why `relationship_requires_distinct_beings` stays exactly as it is
 while siblings still talk to each other.
 
-Two ideas stay separate. The **audience** is every active embodiment of the being
-except the sender, taken from one signed `/we` resolution, and it is who can
-decrypt and hear. The **addressee** set is explicit, sorted, deduplicated and must
-sit inside the audience; it is who the message is directed to. A reply names the
-embodiment it answers, so an off-address answer is visible as such instead of being
-silently ambiguous.
+Three ideas stay separate. The **carrier set** is every active embodiment the
+signed `/we` resolution names, the author included, because DM-054 resolves the
+scope that way and the sealed profile authorizes exactly its target list; who can
+decrypt is therefore not this lane's choice. The **audience** is that set minus the
+author, and it is who a message may be addressed to. The **addressee** set is
+explicit, sorted, deduplicated and must sit inside the audience; it is who the
+message is directed to. A reply names the embodiment it answers, so an off-address
+answer is visible as such instead of being silently ambiguous.
 
 The lane is not a bypass of anything. Events are ordinary signed ledger events,
 sealed per recipient with the existing root-bound delivery profile, and every
@@ -167,18 +169,41 @@ def we_recipient_targets(
     return tuple(targets)
 
 
+def we_sealed_targets(
+    authority: RootAuthority, resolution: Mapping[str, Any], message_id: str
+) -> tuple[RecipientTarget, ...]:
+    """Every embodiment one signed `/we` resolution froze, the author included.
+
+    DM-054 resolves `/we` to all of a being's active embodiments and the sealed
+    profile authorizes exactly that list, so who can decrypt is not a choice this
+    lane makes. The author therefore holds a wrapped key for its own message and
+    is still refused intake: that refusal stays explicit instead of being smuggled
+    in as a narrower seal the disclosure authorization would not match.
+    """
+    _payload, targets = _resolution_payload(
+        resolution,
+        message_id=_text(message_id, "we_lane_message_invalid"),
+        scope=WE_LANE_SCOPE,
+    )
+    return we_recipient_targets(authority, targets)
+
+
 def seal_we_message(
     message: Mapping[str, Any],
     resolution: Mapping[str, Any],
     *,
     authority: RootAuthority,
-    recipient_targets: Sequence[RecipientTarget],
     custody: DeliveryCustody,
     issued_at_ms: int,
     expires_at_ms: int,
     authorization_id: str | None = None,
 ) -> bytes:
-    """Seal one intra-being message to every audience embodiment in one envelope."""
+    """Seal one intra-being message into one envelope for the frozen audience.
+
+    The carrier set comes from the signed resolution, the same source the
+    disclosure authorization is built from, so the two cannot drift apart.
+    """
+    message_id = _text(message["event_id"], "we_lane_message_invalid", maximum=64)
     authorization = DisclosureAuthorization.from_resolution_event(
         event=message,
         resolution_event=resolution,
@@ -189,7 +214,7 @@ def seal_we_message(
     return seal_event(
         message,
         sender_authority=authority,
-        recipients=list(recipient_targets),
+        recipients=list(we_sealed_targets(authority, resolution, message_id)),
         authorization=authorization,
         custody=custody,
         issued_at_ms=issued_at_ms,
@@ -288,7 +313,7 @@ def open_we_conversation(
     local_embodiment = _local_embodiment(authority, local_credential_id)
     if local_embodiment == sender_embodiment:
         raise WeLaneError("we_lane_sender_is_local")
-    targets = we_recipient_targets(authority, audience)
+    targets = we_sealed_targets(authority, resolution, message_id)
     authorized_at_ms = _uint(resolution["occurred_at_ms"], "we_lane_resolution_invalid")
     try:
         authorization = DisclosureAuthorization.synthetic(
