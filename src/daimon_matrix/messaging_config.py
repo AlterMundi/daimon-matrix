@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -136,6 +136,55 @@ def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> No
         _verify_public_binding(
             _identity(runtime), runtime.service.signer.public_key, application, binding
         )
+    except Exception:
+        raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def verify_binding_within_history(
+    runtime: HostedRuntime, value: Any, binding: Any
+) -> None:
+    """Verify one append-only owner-local record against its own verified epoch.
+
+    Enrolling another embodiment advances the being manifest, while every record
+    this runtime already authenticated names the manifest digest it was written
+    under. Demanding the current digest there would invalidate an append-only
+    journal that the same runtime signing key produced, so adding one body would
+    force a rewrite of authenticated history. The record is instead verified
+    exactly against the verified epoch whose manifest digest it names, at the time
+    it claims: an unknown digest, a changed body, an expired credential or a bad
+    signature still fails closed. Current-state documents such as an application
+    publication or a visibility installation keep requiring the current epoch.
+    """
+    try:
+        if not isinstance(binding, Mapping) or set(binding) != {
+            "schema",
+            "body",
+            "signature",
+        }:
+            raise ValueError()
+        body = binding["body"]
+        if not isinstance(body, Mapping):
+            raise ValueError()
+        authority = runtime.service.ledger.authority
+        epoch: RootAuthority
+        if isinstance(authority, RootHistoryAuthority):
+            epoch = authority.select(body)
+        else:
+            if authority.manifest.digest != body.get("manifest_hash"):
+                raise ValueError()
+            epoch = cast(RootAuthority, authority)
+        occurred_at = body.get("occurred_at_ms")
+        at_ms = occurred_at if type(occurred_at) is int else runtime.service.clock()
+        identity = _public_identity(
+            epoch,
+            runtime.service.origin,
+            runtime.service.runtime_id,
+            runtime.service.runtime_label,
+            at_ms,
+        )
+        credential = epoch.credentials[identity["credential_id"]]
+        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+        _verify_public_binding(identity, public_key, value, binding)
     except Exception:
         raise MessagingConfigError("messaging_binding_rejected") from None
 
@@ -590,7 +639,7 @@ def _capability_state_chain(
                 "occurred_at_ms",
             }:
                 raise ValueError()
-            verify_binding(runtime, body, record["binding"])
+            verify_binding_within_history(runtime, body, record["binding"])
             if (
                 body["schema"] != CAPABILITY_STATE_SCHEMA
                 or body["journal_identity"] != identity
