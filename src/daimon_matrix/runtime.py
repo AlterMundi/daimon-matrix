@@ -1375,11 +1375,22 @@ def load_runtime(
     peer_outbox: PeerOutbox | None = None
     peer_context: PeerClientContext | None = None
     peer_listen: tuple[str, int] | None = None
+    we_lane: WeConversation | None = None
     if peer_configuration is not None:
         assert peer_custody is not None
         scope_exchange = ScopeExchangeStore(ledger)
         scope_exchange.initialize()
         try:
+            # One lane instance serves incoming sibling messages on the carrier and
+            # authors outgoing ones for the local API, so both sides agree on who
+            # this body is. Sibling conversation rides the same authenticated peer
+            # keys, so the sealed profile needs no second custody.
+            we_lane = WeConversation(
+                ledger,
+                signer=signer,
+                custody=_RuntimeDeliveryCustody(peer_custody),
+                clock=clock,
+            )
             peer_dispatcher = PeerDispatcher(
                 authority=active,
                 local_origin=local_origin,
@@ -1398,14 +1409,7 @@ def load_runtime(
                     signer=signer,
                     scope_store=scope_exchange,
                     sync_engine=SyncEngine(ledger),
-                    # Sibling conversation rides the same authenticated peer keys,
-                    # so the sealed profile needs no second custody.
-                    we_lane=WeConversation(
-                        ledger,
-                        signer=signer,
-                        custody=_RuntimeDeliveryCustody(peer_custody),
-                        clock=clock,
-                    ),
+                    we_lane=we_lane,
                 ),
                 clock=clock,
                 egress=visibility,
@@ -1456,6 +1460,7 @@ def load_runtime(
         sources=source_context,
         relationships=relationship_context,
         peer_context=peer_context,
+        we_lane=we_lane,
         visibility_status=visibility.status,
     )
     ledger.integrity_check()

@@ -74,6 +74,30 @@ apply; the lane remains authorized, digest-bound and journaled as egress
 operations, and every event stays in the being's ledger where an operator can read
 it on request. Cross-being conversation keeps its confirmed echo.
 
+## Surface
+
+The lane is reachable only through the local authenticated API, and only when a
+human asks:
+
+- `we.converse` — MCP tool `we_converse`, CLI `daimon we converse`. Authors, seals
+  and delivers one message. The audience is resolved by DM-054 at send time, so a
+  sibling enrolled since the last message is included in the next one
+  automatically, with nothing to reconfigure and nobody to grant anything.
+- `we.conversation.page` — MCP tool `we_conversation_page`, CLI `daimon we
+  conversation-page`. Reads this being's own conversation back, optionally filtered
+  by thread and paged by a cursor. It authors nothing and belongs to the observe
+  profile.
+
+`we.converse` sits in the peer capability profile because it uses the carrier;
+`we.conversation.page` sits in the observe profile. Neither is reachable without a
+capability that names it, and no capability is ever minted for the whole surface.
+
+Results name embodiments by id. Owner-local labels of the form
+`<being>.<harness>@<host>` are presentation over those ids: the label layer
+resolves and renders them, and a label authorizes nothing. Rendering the lane's
+results through a configured label registry is the one remaining piece of this
+surface, and it changes no authority and no wire format.
+
 ## Human-request-only
 
 Reading, sending and replying on this lane happen only when a human asks. No inbox

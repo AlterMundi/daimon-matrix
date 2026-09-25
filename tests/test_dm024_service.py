@@ -8,6 +8,7 @@ from contextlib import closing
 from typing import Any
 
 from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import (
     LocalApiError,
@@ -314,6 +315,55 @@ class HostedServiceTests(RootLedgerFixture):
         refused = self.service_b.handle(wrong_transport)
         self.assertFalse(refused["ok"])
         self.assertEqual(refused["error"]["code"], "invalid_transport_binding")
+
+    def test_we_conversation_page_reads_only_the_we_lane(self) -> None:
+        thread_id = "30000000-0000-4000-8000-000000000001"
+        message = self.append(
+            self.ledger_a,
+            "legion",
+            "communication",
+            payload={
+                "schema": MESSAGE_PAYLOAD_SCHEMA,
+                "body": {"addressee": ["embodiment:daimonmatrix"], "text": "hola"},
+                "intent": {
+                    "operation": "we.converse",
+                    "scope": "/we",
+                    "thread_id": thread_id,
+                },
+                "reply": None,
+            },
+        )
+        unrelated = self.append(self.ledger_a, "legion", "not-a-conversation")
+        _, page = self.invoke(self.service_a, 60, "we.conversation.page", {})
+        result = page["result"]
+        self.assertEqual(result["schema"], "dm.we.conversation-page/v1")
+        self.assertEqual(
+            [(row["kind"], row["event_id"]) for row in result["entries"]],
+            [("message", message["event_id"])],
+        )
+        row = result["entries"][0]
+        self.assertEqual(row["text"], "hola")
+        self.assertEqual(row["thread_id"], thread_id)
+        self.assertEqual(row["author"], "embodiment:legion")
+        self.assertEqual(row["addressees"], ["embodiment:daimonmatrix"])
+        self.assertNotIn(
+            unrelated["event_id"], {item["event_id"] for item in result["entries"]}
+        )
+        _, other_thread = self.invoke(
+            self.service_a,
+            61,
+            "we.conversation.page",
+            {"thread_id": "30000000-0000-4000-8000-000000000002"},
+        )
+        self.assertEqual(other_thread["result"]["entries"], [])
+        _, advanced = self.invoke(
+            self.service_a,
+            62,
+            "we.conversation.page",
+            {"after": message["occurred_at_ms"]},
+        )
+        self.assertEqual(advanced["result"]["entries"], [])
+        self.assertEqual(advanced["result"]["after"], message["occurred_at_ms"])
 
     def test_preview_heads_and_projection_methods_are_effect_free(self) -> None:
         remote = self.append(self.ledger_b, "daimonmatrix", "preview-only")
