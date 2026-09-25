@@ -1170,6 +1170,30 @@ class PerBodyLegTests(LogicalCommunicationFixture):
         reopened.initialize()
         self.assertTrue(reopened.legs_v3)
 
+    def test_each_body_terminates_only_its_own_leg(self) -> None:
+        """A receipt closes the leg of the body that signed it, and no other."""
+        self.store = self.upgraded()
+        message, _resolution, result = self.append_message(
+            self.two_bodies(), scope="/tribe"
+        )
+        self.receipt(result, MEMBERSHIP, "delivered")
+        after_one = self.store.result(message["event_id"])
+        self.assertFalse(after_one["terminal"])
+        self.assertEqual(
+            {
+                leg["receipt_origin_embodiment_id"]: leg["state"]
+                for leg in after_one["legs"]
+            },
+            {"embodiment:daimonmatrix": "accepted", "embodiment:legion": "delivered"},
+        )
+        self.receipt(result, MEMBERSHIP, "delivered", remote=True)
+        terminal = self.store.result(message["event_id"], require_terminal=True)
+        self.assertTrue(terminal["terminal"])
+        self.assertEqual({leg["state"] for leg in terminal["legs"]}, {"delivered"})
+        self.assertEqual(
+            {leg["recipient_id"] for leg in terminal["legs"]}, {MEMBERSHIP}
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

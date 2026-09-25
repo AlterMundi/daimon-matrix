@@ -1643,7 +1643,7 @@ class CommunicationStore:
             raise CommunicationError("message_not_known")
         rows = database.execute(
             "SELECT * FROM communication_legs WHERE message_id=? "
-            "ORDER BY recipient_type, recipient_id",
+            "ORDER BY recipient_type, recipient_id, receipt_origin_embodiment_id",
             (message_id,),
         ).fetchall()
         if self.receipts_v2:
@@ -2562,15 +2562,32 @@ class CommunicationStore:
                     self.ledger.authority,
                 )
                 payload = _receipt_payload(receipt)
-                leg = database.execute(
-                    "SELECT * FROM communication_legs WHERE message_id=? "
-                    "AND recipient_type=? AND recipient_id=?",
-                    (
-                        payload["message_id"],
-                        payload["recipient_type"],
-                        payload["recipient_id"],
-                    ),
-                ).fetchone()
+                if self.legs_v3:
+                    # Several bodies of one member hold several legs for the same
+                    # message and recipient, so the receipt's own author is what
+                    # selects the leg it terminates. Binding by recipient alone
+                    # would let one body's receipt close another body's leg.
+                    leg = database.execute(
+                        "SELECT * FROM communication_legs WHERE message_id=? "
+                        "AND recipient_type=? AND recipient_id=? "
+                        "AND receipt_origin_embodiment_id=?",
+                        (
+                            payload["message_id"],
+                            payload["recipient_type"],
+                            payload["recipient_id"],
+                            str(receipt["origin"]["embodiment_id"]),
+                        ),
+                    ).fetchone()
+                else:
+                    leg = database.execute(
+                        "SELECT * FROM communication_legs WHERE message_id=? "
+                        "AND recipient_type=? AND recipient_id=?",
+                        (
+                            payload["message_id"],
+                            payload["recipient_type"],
+                            payload["recipient_id"],
+                        ),
+                    ).fetchone()
                 if leg is None:
                     raise CommunicationError("semantic_leg_not_known")
                 if leg["thread_id"] != payload["thread_id"]:
