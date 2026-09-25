@@ -48,11 +48,23 @@ later additive form of the same field, not a rewrite.
 
 ## Delivery and evidence
 
-One message is one ordinary signed ledger event sealed with the existing root-bound
-delivery profile into a single envelope with one wrapped key per audience
-embodiment. Each recipient authors its own receipt, so authorship stays per body.
-Nothing here widens resource authority, and nothing creates relationship, membership
-or grant evidence.
+One message is one ordinary signed ledger event, and its audience is one signed
+`/we` resolution that names it as a causal parent. Both are authored idempotently
+under a caller-supplied request id, so an exact retry says the same thing once
+instead of repeating it. The pair is sealed with the existing root-bound delivery
+profile into a single envelope with one wrapped key per embodiment in the carrier
+set.
+
+Each recipient authors its own receipt, so authorship stays per body, and the
+sender keeps every sibling receipt it receives, which is how one being can see
+which of its bodies heard a message. A receipt's identity covers everything but
+the instant it was observed, so a retried intake returns the same signed receipt.
+
+Byte-exact transport retry belongs to the peer outbox, not to this lane: re-sealing
+an already authored message is legitimate and produces a fresh envelope for it. An
+envelope's deadline may not outlive the shortest credential validity in the carrier
+set. Nothing here widens resource authority, and nothing creates relationship,
+membership or grant evidence.
 
 ## Visibility
 

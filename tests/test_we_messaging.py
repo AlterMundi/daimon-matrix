@@ -421,6 +421,139 @@ class WeLaneTests(SealedFixture):
             self.lane("legion", at_ms=NOW + 5).intake(payload)
         self.assertEqual(str(caught.exception), "we_lane_sender_is_local")
 
+    def canonical_targets(self) -> list[dict[str, Any]]:
+        """The shape DM-054 resolves `/we` to: every active embodiment."""
+        return sorted(
+            (self.target(LEGION), self.target(REMOTE)),
+            key=lambda row: (row["recipient_type"], row["recipient_id"]),
+        )
+
+    def test_converse_authors_seals_and_delivers_to_the_sibling(self) -> None:
+        sender = self.lane("legion", at_ms=NOW)
+        receiver = self.lane("daimonmatrix", at_ms=NOW + 5)
+        seen: list[str] = []
+
+        def deliver(embodiment_id: str, payload: Any) -> Any:
+            seen.append(embodiment_id)
+            return receiver.intake(payload)
+
+        result = sender.converse(
+            text="hola hermano",
+            addressees=[REMOTE],
+            request_id=str(uuid.uuid4()),
+            targets=self.canonical_targets(),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        self.assertEqual(result["schema"], "dm.we.converse-result/v1")
+        self.assertEqual(result["addressees"], [REMOTE])
+        self.assertEqual(result["audience"], [REMOTE])
+        self.assertEqual(result["carrier"], sorted([LEGION, REMOTE]))
+        self.assertEqual(seen, [REMOTE])
+        self.assertEqual(
+            [(row["state"], row["embodiment_id"]) for row in result["deliveries"]],
+            [("delivered", REMOTE)],
+        )
+        # The sibling's own signed receipt is kept by the sender, so one being can
+        # see which of its bodies heard the message.
+        receipt_id = result["deliveries"][0]["receipt_event_id"]
+        self.assertIsNotNone(self.ledger_a.event(receipt_id))
+        self.assertIsNotNone(self.ledger_a.event(result["message_id"]))
+        self.assertIsNotNone(self.ledger_a.event(result["resolution_id"]))
+        retained = self.ledger_a.event(receipt_id)
+        assert retained is not None
+        self.assertEqual(retained["origin"]["embodiment_id"], REMOTE)
+
+    def test_an_exact_converse_retry_says_it_once(self) -> None:
+        sender = self.lane("legion", at_ms=NOW)
+        receiver = self.lane("daimonmatrix", at_ms=NOW + 5)
+        request_id = str(uuid.uuid4())
+
+        def deliver(embodiment_id: str, payload: Any) -> Any:
+            return receiver.intake(payload)
+
+        first = sender.converse(
+            text="hola hermano",
+            addressees=[REMOTE],
+            request_id=request_id,
+            targets=self.canonical_targets(),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        second = sender.converse(
+            text="hola hermano",
+            addressees=[REMOTE],
+            request_id=request_id,
+            targets=self.canonical_targets(),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["resolution_id"], first["resolution_id"])
+        self.assertEqual(second["thread_id"], first["thread_id"])
+        self.assertEqual(
+            second["deliveries"][0]["receipt_event_id"],
+            first["deliveries"][0]["receipt_event_id"],
+        )
+        messages = [
+            event
+            for event in self.ledger_a.events()
+            if event["subject"] == "communication"
+        ]
+        self.assertEqual(len(messages), 1)
+
+    def test_converse_seals_without_delivering_when_no_carrier_is_given(self) -> None:
+        sender = self.lane("legion", at_ms=NOW)
+        result = sender.converse(
+            text="quedo sellado",
+            addressees=[REMOTE],
+            request_id=str(uuid.uuid4()),
+            targets=self.canonical_targets(),
+            ttl_ms=30_000,
+        )
+        self.assertEqual(
+            [(row["state"], row["embodiment_id"]) for row in result["deliveries"]],
+            [("sealed", REMOTE)],
+        )
+        # Sealing is a local act: the message and its audience are authored, and
+        # no sibling receipt exists yet because nothing crossed the carrier.
+        self.assertIsNotNone(self.ledger_a.event(result["message_id"]))
+        self.assertIsNotNone(self.ledger_a.event(result["resolution_id"]))
+        self.assertEqual(
+            [
+                event
+                for event in self.ledger_a.events()
+                if event["subject"] == "communication-receipt"
+            ],
+            [],
+        )
+
+    def test_converse_refuses_an_addressee_outside_the_audience(self) -> None:
+        sender = self.lane("legion", at_ms=NOW)
+        for bad, code in (
+            ([LEGION], "we_lane_addressee_not_in_audience"),
+            (["embodiment:stranger"], "we_lane_addressee_not_in_audience"),
+            ([REMOTE, REMOTE], "we_lane_addressee_duplicated"),
+            ([], "we_lane_addressee_empty"),
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(WeLaneError) as caught:
+                    sender.converse(
+                        text="hola",
+                        addressees=bad,
+                        request_id=str(uuid.uuid4()),
+                        targets=self.canonical_targets(),
+                    )
+                self.assertEqual(str(caught.exception), code)
+        self.assertEqual(
+            [
+                event
+                for event in self.ledger_a.events()
+                if event["subject"] == "communication"
+            ],
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

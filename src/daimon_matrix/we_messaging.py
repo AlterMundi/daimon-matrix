@@ -28,13 +28,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from .canonical import b64url, canonical_bytes, unb64url
-from .communication import _message_payload, _resolution_payload
+from .communication import (
+    MESSAGE_PAYLOAD_SCHEMA,
+    RESOLUTION_PAYLOAD_SCHEMA,
+    _message_payload,
+    _resolution_payload,
+)
 from .ledger import Clock, Ledger, LedgerError
 from .sealed import (
+    MAX_TTL_MS,
     DeliveryCustody,
     DisclosureAuthorization,
     RecipientTarget,
@@ -45,13 +51,34 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
-from .weave import EventSigner, RootAuthority, WeaveProtocolError, verify_event
+from .weave import (
+    Event,
+    EventSigner,
+    RootAuthority,
+    WeaveProtocolError,
+    verify_event,
+)
 
 WE_LANE_SCOPE: Final = "/we"
 WE_MESSAGE_CONTENT_TYPE: Final = "application/vnd.daimon.we-message+json"
 WE_RECEIPT_CONTENT_TYPE: Final = "application/vnd.daimon.we-receipt+json"
+WE_CONVERSE_OPERATION: Final = "we.converse"
+WE_MESSAGE_SUBJECT: Final = "communication"
+WE_RESOLUTION_SUBJECT: Final = "communication-resolution"
+WE_RECEIPT_SUBJECT: Final = "communication-receipt"
+WE_CLIENT_ID: Final = "dm.we.converse"
+WE_MESSAGE_CLIENT_ID: Final = "dm.we.message/v1"
+WE_RESOLUTION_CLIENT_ID: Final = "dm.we.resolution/v1"
+WE_RECEIPT_CLIENT_ID: Final = "dm.we.receipt/v1"
+WE_INTAKE_SCHEMA: Final = "dm.we.intake-result/v1"
+WE_CONVERSE_RESULT_SCHEMA: Final = "dm.we.converse-result/v1"
 MAX_ADDRESSEES: Final = 256
 MAX_TEXT_BYTES: Final = 64 * 1024
+MAX_WE_TTL_MS: Final = MAX_TTL_MS
+DEFAULT_WE_TTL_MS: Final = 10 * 60 * 1000
+
+DeliverConversation = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
+"""Hand one sealed conversation to a sibling and return its intake result."""
 
 
 class WeLaneError(ValueError):
@@ -70,6 +97,17 @@ def _uint(value: Any, code: str) -> int:
     return value
 
 
+def _uuid_text(value: Any, code: str) -> str:
+    text = _text(value, code, maximum=36)
+    try:
+        parsed = uuid.UUID(text)
+    except (ValueError, AttributeError) as exception:
+        raise WeLaneError(code) from exception
+    if str(parsed) != text:
+        raise WeLaneError(code)
+    return text
+
+
 def _recipient_sort_key(row: Mapping[str, Any]) -> tuple[str, str, str]:
     return (
         str(row["being_ref"]),
@@ -78,24 +116,17 @@ def _recipient_sort_key(row: Mapping[str, Any]) -> tuple[str, str, str]:
     )
 
 
-def we_audience(
-    resolution: Mapping[str, Any],
-    *,
-    message_id: str,
-    local_embodiment_id: str,
+def we_addressable(
+    targets: Sequence[Mapping[str, Any]], *, local_embodiment_id: str
 ) -> tuple[dict[str, Any], ...]:
-    """Active sibling embodiments from one signed `/we` resolution.
+    """Resolved `/we` targets minus the author: who a message may be addressed to.
 
-    The sender is never a recipient of its own message; its siblings are ordinary
-    recipients. An empty audience after excluding the sender fails closed rather
-    than silently becoming a note to self, which belongs in the ledger lane.
+    The author is never an addressee of its own message, and an empty result fails
+    closed rather than silently becoming a note to self, which belongs in the
+    ledger lane. This is the addressing audience, not the carrier set: DM-054
+    resolves the scope to every active embodiment and the seal follows that list.
     """
     local = _text(local_embodiment_id, "we_lane_origin_invalid")
-    _payload, targets = _resolution_payload(
-        resolution,
-        message_id=_text(message_id, "we_lane_message_invalid"),
-        scope=WE_LANE_SCOPE,
-    )
     audience: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in targets:
@@ -117,6 +148,21 @@ def we_audience(
     if len(audience) > MAX_ADDRESSEES:
         raise WeLaneError("we_lane_audience_too_large")
     return tuple(audience)
+
+
+def we_audience(
+    resolution: Mapping[str, Any],
+    *,
+    message_id: str,
+    local_embodiment_id: str,
+) -> tuple[dict[str, Any], ...]:
+    """Active sibling embodiments named by one signed `/we` resolution."""
+    _payload, targets = _resolution_payload(
+        resolution,
+        message_id=_text(message_id, "we_lane_message_invalid"),
+        scope=WE_LANE_SCOPE,
+    )
+    return we_addressable(targets, local_embodiment_id=local_embodiment_id)
 
 
 def we_addressees(
@@ -414,10 +460,6 @@ def _closed_envelope(envelope: Mapping[str, Any]) -> Mapping[str, Any]:
     return envelope
 
 
-WE_RECEIPT_CLIENT_ID: Final = "dm.we.receipt/v1"
-WE_INTAKE_SCHEMA: Final = "dm.we.intake-result/v1"
-
-
 class WeConversation:
     """One being's intra-being conversation over its own ledger.
 
@@ -461,6 +503,190 @@ class WeConversation:
             rows[0]["embodiment_credential_id"], "we_lane_credential_invalid"
         )
         ledger.initialize()
+
+    def converse(
+        self,
+        *,
+        text: str,
+        addressees: Sequence[str],
+        request_id: str,
+        targets: Sequence[Mapping[str, Any]],
+        thread_id: str | None = None,
+        sensitivity: str = "personal",
+        ttl_ms: int = DEFAULT_WE_TTL_MS,
+        deliver: DeliverConversation | None = None,
+    ) -> dict[str, Any]:
+        """Author, seal and hand over one intra-being message.
+
+        Authoring is idempotent per caller-supplied request id, so an exact retry
+        returns the same signed message and resolution instead of saying the same
+        thing twice. Byte-exact transport retry belongs to the peer outbox, not
+        here: re-sealing the same message is legitimate and produces a fresh
+        envelope for it.
+
+        `ttl_ms` may not outlive the shortest credential validity in the carrier
+        set; the sealed profile refuses an envelope whose deadline no credential
+        covers, so a long-lived message needs a credential rotation first.
+        """
+        now = _uint(self.clock(), "we_lane_clock_invalid")
+        request = _uuid_text(request_id, "we_lane_request_invalid")
+        ttl = _uint(ttl_ms, "we_lane_ttl_invalid")
+        if not 0 < ttl <= MAX_WE_TTL_MS:
+            raise WeLaneError("we_lane_ttl_invalid")
+        resolved = [dict(row) for row in targets]
+        addressable = we_addressable(
+            resolved, local_embodiment_id=self.local_embodiment_id
+        )
+        named = we_addressees(addressable, list(addressees))
+        thread = (
+            _uuid_text(thread_id, "we_lane_thread_invalid")
+            if thread_id is not None
+            else str(uuid.uuid5(uuid.NAMESPACE_URL, f"{WE_CLIENT_ID}:thread:{request}"))
+        )
+        classification = _text(sensitivity, "we_lane_sensitivity_invalid", maximum=32)
+        if classification not in {"personal", "private", "shareable"}:
+            raise WeLaneError("we_lane_sensitivity_invalid")
+        message = self._author(
+            client_id=WE_MESSAGE_CLIENT_ID,
+            request_id=request,
+            subject=WE_MESSAGE_SUBJECT,
+            payload={
+                "body": we_message_body(text, named),
+                "intent": {
+                    "operation": WE_CONVERSE_OPERATION,
+                    "scope": WE_LANE_SCOPE,
+                    "thread_id": thread,
+                },
+                "reply": None,
+                "schema": MESSAGE_PAYLOAD_SCHEMA,
+            },
+            sensitivity=classification,
+            occurred_at_ms=now,
+            causal_parents=(),
+        )
+        message_id = _text(message["event_id"], "we_lane_message_invalid", maximum=64)
+        resolution = self._author(
+            client_id=WE_RESOLUTION_CLIENT_ID,
+            request_id=request,
+            subject=WE_RESOLUTION_SUBJECT,
+            payload={
+                "message_id": message_id,
+                "schema": RESOLUTION_PAYLOAD_SCHEMA,
+                "scope": WE_LANE_SCOPE,
+                "targets": resolved,
+            },
+            sensitivity="shareable",
+            occurred_at_ms=now,
+            causal_parents=(message_id,),
+        )
+        envelope = seal_we_message(
+            message,
+            resolution,
+            authority=self.authority,
+            custody=self.custody,
+            issued_at_ms=now,
+            expires_at_ms=now + ttl,
+        )
+        payload = we_conversation_payload(envelope=envelope, resolution=resolution)
+        deliveries: list[dict[str, Any]] = []
+        for row in addressable:
+            sibling = _text(row["recipient_id"], "we_lane_target_invalid")
+            if deliver is None:
+                deliveries.append({"embodiment_id": sibling, "state": "sealed"})
+                continue
+            receipt = self._accept_sibling_receipt(
+                deliver(sibling, payload), sibling=sibling, message=message
+            )
+            self._retain((receipt,), source=f"we:{sibling}")
+            deliveries.append(
+                {
+                    "embodiment_id": sibling,
+                    "receipt_event_id": receipt["event_id"],
+                    "state": "delivered",
+                }
+            )
+        return {
+            "addressees": list(named),
+            "audience": [row["recipient_id"] for row in addressable],
+            "carrier": sorted(str(row["recipient_id"]) for row in resolved),
+            "deliveries": deliveries,
+            "message_hash": message["content_hash"],
+            "message_id": message_id,
+            "resolution_id": resolution["event_id"],
+            "schema": WE_CONVERSE_RESULT_SCHEMA,
+            "thread_id": thread,
+        }
+
+    def _author(
+        self,
+        *,
+        client_id: str,
+        request_id: str,
+        subject: str,
+        payload: Mapping[str, Any],
+        sensitivity: str,
+        occurred_at_ms: int,
+        causal_parents: Sequence[str],
+    ) -> Event:
+        """Author one ledger event, or return the one an earlier attempt made."""
+        digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
+        operation_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{client_id}:{request_id}"))
+        try:
+            return self.ledger.append_local_idempotent(
+                client_id=client_id,
+                request_id=operation_id,
+                request_hash=digest,
+                kind="experience.observed",
+                subject=subject,
+                payload=payload,
+                signer=self.signer,
+                sensitivity=sensitivity,
+                occurred_at_ms=occurred_at_ms,
+                causal_parents=causal_parents,
+            )
+        except (LedgerError, WeaveProtocolError) as exception:
+            raise WeLaneError("we_lane_authoring_rejected") from exception
+
+    def _accept_sibling_receipt(
+        self, result: Any, *, sibling: str, message: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Bind one returned intake result to this message and this sibling."""
+        if not isinstance(result, Mapping) or set(result) != {
+            "message_hash",
+            "message_id",
+            "receipt",
+            "receipt_hash",
+            "recipient_embodiment_id",
+            "schema",
+        }:
+            raise WeLaneError("we_lane_intake_result_invalid")
+        receipt = result["receipt"]
+        if (
+            result["schema"] != WE_INTAKE_SCHEMA
+            or result["message_id"] != message["event_id"]
+            or result["message_hash"] != message["content_hash"]
+            or result["recipient_embodiment_id"] != sibling
+            or not isinstance(receipt, Mapping)
+            or result["receipt_hash"]
+            != hashlib.sha256(canonical_bytes(receipt)).hexdigest()
+        ):
+            raise WeLaneError("we_lane_intake_result_invalid")
+        if (
+            receipt.get("kind") != "experience.observed"
+            or receipt.get("subject") != WE_RECEIPT_SUBJECT
+            or receipt.get("origin", {}).get("embodiment_id") != sibling
+        ):
+            raise WeLaneError("we_lane_intake_result_invalid")
+        payload = receipt.get("payload")
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("schema") != WE_RECEIPT_SCHEMA
+            or payload.get("recipient_id") != sibling
+            or payload.get("recipient_type") != "embodiment"
+            or payload.get("message_ref", {}).get("event_id") != message["event_id"]
+        ):
+            raise WeLaneError("we_lane_intake_result_invalid")
+        return receipt
 
     def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """Open one delivered message, keep it, and author this body's receipt."""
