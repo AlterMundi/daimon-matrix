@@ -13,6 +13,14 @@ and `applications`. Each application specifies its absolute `directory` and
 runtime's existing native transport; subsequent applications have independent
 controllers and transport journals. Preserve that ordering when adding a link.
 
+A runtime may declare an empty `applications` list. It is then hosted for presence
+only: its own ledger, operator surface, peer transport and `/we` sync, with closed
+egress, so it has no messaging channel and no echo obligation. That is how one
+being keeps an embodiment in another harness, or on another host, without
+inventing a relationship just to give it a socket. A freshly activated embodiment
+needs the ordinary one-time visibility migration before the host will validate its
+catalogs; the host never migrates at startup.
+
 Every runtime is locked and unlocked once. Each application keeps its signed
 authority, messaging-only client capability, Unix socket, HTTP listener,
 Telegram policy and durable retry stores. Listeners must use distinct addresses

@@ -27,6 +27,7 @@ from .messaging_config import (
     read_document,
     read_publication,
 )
+from .native_egress import closed_visibility
 from .operator_messaging import _visibility_factory, host_visibility_factory
 from .runtime import HostedRuntime, VisibilityFactoryContext, load_runtime
 from .service import MESSAGING_METHODS
@@ -111,7 +112,7 @@ def validate_config(value: Any) -> dict[str, Any]:
         roots.add(canonical_root)
         if (
             not isinstance(row["applications"], list)
-            or not 1 <= len(row["applications"]) <= 16
+            or not 0 <= len(row["applications"]) <= 16
         ):
             raise ValueError("chat_host_applications_invalid")
         sockets: set[str] = set()
@@ -139,8 +140,26 @@ def validate_config(value: Any) -> dict[str, Any]:
 
 
 def load_views(row: dict[str, Any], *, clock: Callable[[], int]) -> list[HostedRuntime]:
-    """Caller holds the runtime lock until every serving thread has drained."""
-    first, *others = row["applications"]
+    """Caller holds the runtime lock until every serving thread has drained.
+
+    A runtime with no messaging application is hosted for presence only: its own
+    ledger, operator surface, peer transport and `/we` sync, with closed egress and
+    therefore no messaging and no echo obligation. That is how one being keeps an
+    embodiment in another harness or on another host without inventing a
+    relationship just to give it a socket.
+    """
+    applications = row["applications"]
+    if not applications:
+        return [
+            load_runtime(
+                Path(row["state_root"]),
+                "runtime.json",
+                lambda: bytearray(protected_read(Path(row["password_file"]))),
+                clock=clock,
+                egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+            )
+        ]
+    first, *others = applications
     base = load_runtime(
         Path(row["state_root"]),
         "runtime.json",

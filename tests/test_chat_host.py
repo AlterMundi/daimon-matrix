@@ -17,7 +17,11 @@ from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.chat_host import load_views, serve_views, validate_config
 from daimon_matrix.client import ClientConfig, ClientError, LocalClient
 from daimon_matrix.messaging_config import create_binding
-from daimon_matrix.native_egress import SyntheticEchoTransport, closed_visibility
+from daimon_matrix.native_egress import (
+    VISIBILITY_SCHEMA_VERSION,
+    SyntheticEchoTransport,
+    closed_visibility,
+)
 from daimon_matrix.runtime import load_runtime
 from tools.chat_link import (
     disclosures,
@@ -289,3 +293,113 @@ class ChatHostTests(unittest.TestCase):
         ):
             serve_views(views, stop)
         self.assertTrue(stop.is_set())
+
+    def test_config_admits_presence_only_runtime(self):
+        base = {
+            "schema": "dm.chat-host/v1",
+            "runtimes": [
+                {
+                    "state_root": "/owner/one/runtime",
+                    "password_file": "/owner/one/body.password",
+                    "applications": [],
+                }
+            ],
+        }
+        self.assertEqual(validate_config(copy.deepcopy(base)), base)
+        mixed = copy.deepcopy(base)
+        mixed["runtimes"].append(
+            {
+                "state_root": "/owner/two/runtime",
+                "password_file": "/owner/two/body.password",
+                "applications": [
+                    {
+                        "directory": "/owner/two/app",
+                        "visibility": "/owner/two/visibility/installation.json",
+                        "socket": "matrix.sock",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(len(validate_config(mixed)["runtimes"]), 2)
+        for bad in (
+            {**copy.deepcopy(base), "runtimes": []},
+            {
+                "schema": "dm.chat-host/v1",
+                "runtimes": [
+                    {
+                        "state_root": "/owner/one/runtime",
+                        "password_file": "/owner/one/body.password",
+                        "applications": "matrix.sock",
+                    }
+                ],
+            },
+            {
+                "schema": "dm.chat-host/v1",
+                "runtimes": [
+                    {
+                        "state_root": "/owner/one/runtime",
+                        "password_file": "/owner/one/body.password",
+                        "applications": [
+                            {
+                                "directory": f"/owner/app-{index}",
+                                "visibility": f"/owner/vis-{index}",
+                                "socket": "matrix.sock",
+                            }
+                            for index in range(17)
+                        ],
+                    }
+                ],
+            },
+        ):
+            with self.subTest(bad=str(bad)[:60]), self.assertRaises(ValueError):
+                validate_config(bad)
+
+    def test_presence_only_runtime_hosts_without_messaging(self):
+        from daimon_matrix import daemon
+
+        with tempfile.TemporaryDirectory(prefix="dm-presence-") as directory:
+            home = Path(directory).resolve() / "embodiment"
+            public = read_public(
+                prepare(
+                    home,
+                    label="presence-only",
+                    body_ref="codex:peer:presence",
+                    principal_id="compaii.codex@peer",
+                )
+            )
+            bundle_path = home / "package/runtime/runtime.json"
+            bundle = read_public(bundle_path)
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                bundle["peer_transport"]["listen_port"] = reservation.getsockname()[1]
+            bundle_path.write_bytes(canonical_bytes(bundle))
+            row = {
+                "state_root": str(home / "package/runtime"),
+                "password_file": str(home / "body.password"),
+                "applications": [],
+            }
+            views = load_views(row, clock=now)
+            self.assertEqual(len(views), 1)
+            view = views[0]
+            self.assertIsNone(view.messaging_http)
+            self.assertIsNotNone(view.peer_listen)
+            self.assertIsNotNone(view.peer_dispatcher)
+            self.assertEqual(
+                view.socket_path, home / "package/runtime" / bundle["socket"]
+            )
+            self.assertEqual(
+                view.service.ledger.local_origin["principal_id"],
+                "compaii.codex@peer",
+            )
+            self.assertEqual(
+                view.service.ledger.authority.manifest.being_ref,
+                public["document"]["authority"]["manifest"]["being_ref"],
+            )
+            # A freshly activated embodiment carries catalogs that predate the
+            # current visibility schema, exactly as the operator migration step
+            # expects; the host itself never migrates on startup.
+            view.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+            view.egress.validate_registry(daemon._enabled_egress_paths(view))
+            # A second load validates without migrating again.
+            again = load_views(row, clock=now)
+            again[0].egress.validate_registry(daemon._enabled_egress_paths(again[0]))
