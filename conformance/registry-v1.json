@@ -1,6 +1,6 @@
 {
   "schema": "dm.conformance.registry/v1",
-  "suite_version": "DM-026.22",
+  "suite_version": "DM-026.23",
   "fixture_seed": "dm026-v1",
   "scenarios": [
     {
@@ -1425,7 +1425,7 @@
       "stimulus": "Resolve the /tribe audience from the verified membership snapshot, seal one signed event into one envelope with a wrapped key per member key, and open it independently as each recipient.",
       "fault": "A body outside the frozen audience, a revoked or expired credential, a membership terminal, transport-like data offered instead of signed acceptance, and a grant offered as participation authority.",
       "expected": "Membership alone authorizes participation and no grant is consulted, the audience stays exactly what the signed resolution froze, only audience members can open, and removal is refused before any private key operation.",
-      "evidence": ["tests.test_dm051_sealed.RecipientEncryptionTests.test_direct_recipient_and_nonrecipient_have_one_stable_failure", "tests.test_dm051_sealed.RecipientEncryptionTests.test_revoked_recipient_is_rejected_before_private_operation", "tests.test_dm051_sealed.RecipientEncryptionTests.test_two_recipients_independently_open_same_canonical_event", "tests.test_dm054_scopes.ScopeResolutionTests.test_body_and_tribe_fail_closed_without_external_authority", "tests.test_dm082_relationships.RelationshipContractTests.test_membership_reentry_requires_exact_terminal_predecessor", "tests.test_dm082_relationships.RelationshipContractTests.test_one_sided_consent_and_unaccepted_grant_are_inert"],
+      "evidence": ["tests.test_dm051_sealed.MembershipSealingTests.test_a_grant_cannot_be_smuggled_into_a_membership_proof", "tests.test_dm051_sealed.MembershipSealingTests.test_a_non_tribe_scope_cannot_use_the_membership_profile", "tests.test_dm051_sealed.MembershipSealingTests.test_membership_alone_seals_and_opens_across_beings", "tests.test_dm051_sealed.MembershipSealingTests.test_membership_failures_are_closed", "tests.test_dm051_sealed.RecipientEncryptionTests.test_direct_recipient_and_nonrecipient_have_one_stable_failure", "tests.test_dm051_sealed.RecipientEncryptionTests.test_revoked_recipient_is_rejected_before_private_operation", "tests.test_dm051_sealed.RecipientEncryptionTests.test_two_recipients_independently_open_same_canonical_event", "tests.test_dm054_scopes.ScopeResolutionTests.test_body_and_tribe_fail_closed_without_external_authority", "tests.test_dm082_relationships.RelationshipContractTests.test_membership_reentry_requires_exact_terminal_predecessor", "tests.test_dm082_relationships.RelationshipContractTests.test_one_sided_consent_and_unaccepted_grant_are_inert"],
       "cleanup": "Remove synthetic signed events, envelopes and isolated custody directories.",
       "platform": "all",
       "ci_lane": "complete",

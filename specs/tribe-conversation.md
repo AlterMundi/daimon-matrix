@@ -49,6 +49,23 @@ Conversation MUST NOT require a resource or operation grant, and MUST NOT create
 one. Grants stay directional, separate and unchanged; a tribe message discloses no
 resource and its delivery is not evidence about any resource.
 
+The sealing profile that implements this is
+`DisclosureAuthorization.from_membership_resolution_event`, and its authority
+artifact is a closed `dm.tribe.membership-proof/v1` carrying exactly `schema`,
+`tribe_ref`, `membership_ref`, `member_being_ref`, `membership_event_id`,
+`membership_event_hash` and `active`. The set is closed on purpose: a proof that
+tries to carry a grant, a resource or an operation is rejected rather than
+ignored, so resource authority cannot ride into a conversation envelope even by
+accident. `active` MUST be `true`.
+
+Two bindings make the proof unusable as a bearer token. The concrete credential
+sealed to MUST belong to the `member_being_ref` the proof names, so a proof cannot
+be replayed to admit a stranger's key; and the author supplies its own membership
+proof for the same `tribe_ref`, bound to its own being ref, so authoring is
+governed by the same rule as receiving. Both the author's proof and every
+recipient proof are bound into the authorization's evidence hash together with the
+resolution's content hash and the `tribe_ref`.
+
 A left or expelled member MUST NOT be in the audience of a message sent after its
 terminal took effect. A revoked or expired credential MUST be rejected before any
 private key operation is attempted.
@@ -174,11 +191,15 @@ here.
 ## 6. Single tribe in V0, multi-tribe without a fork
 
 V0 admits exactly one active `tribe_ref` per being and MUST fail closed on a
-second. Every artifact still carries the explicit `tribe_ref`, and no artifact
-MAY treat it as implicit or derivable from local configuration. Multi-tribe and
-parallel membership in several tribes therefore become additive: lifting the
-one-active-tribe check, with no format change, no migration and no reinterpretation
-of existing evidence.
+second. The `tribe_ref` is explicit in the membership proofs and therefore inside
+the authorization's evidence hash, and no artifact MAY treat it as implicit or
+derivable from local configuration. It is deliberately **not** added to the
+resolution event payload, whose published format is closed to
+`{message_id, schema, scope, targets}`: widening it would fork a delivered schema
+for no gain, because the authorization that actually gates decryption already
+binds the tribe. Multi-tribe and parallel membership in several tribes therefore
+become additive — lifting the one-active-tribe check, with no format change, no
+migration and no reinterpretation of existing evidence.
 
 ## 7. Admission is the onboarding path
 

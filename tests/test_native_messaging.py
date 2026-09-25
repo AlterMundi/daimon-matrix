@@ -1845,7 +1845,9 @@ class NativeSendRpcTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
 
-    def test_v2_reply_returns_sender_semantic_terminal_over_local_api(self):
+    def test_v2_reply_returns_sender_semantic_terminal_over_local_api(
+        self,
+    ) -> None:
         self.semantic_http = True
         self.test_application_response_uses_exact_received_context_and_reverse_grant(
             semantic_v2=True
@@ -1853,7 +1855,7 @@ class NativeSendRpcTests(unittest.TestCase):
 
     def test_application_response_uses_exact_received_context_and_reverse_grant(
         self,
-        semantic_v2=False,
+        semantic_v2: bool = False,
     ) -> None:
         from types import SimpleNamespace
 
@@ -2163,7 +2165,7 @@ class NativeMessagingTests(unittest.TestCase):
         calls: list[tuple[str, bytes]] = []
         providers = []
         ingresses = {}
-        transport = {}
+        transport: dict[str, Any] = {}
         receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
@@ -2258,7 +2260,7 @@ class NativeMessagingTests(unittest.TestCase):
             worker = threading.Thread(target=server.serve_forever)
             worker.start()
 
-            def stop():
+            def stop() -> None:
                 server.shutdown()
                 worker.join(timeout=5)
                 server.server_close()
