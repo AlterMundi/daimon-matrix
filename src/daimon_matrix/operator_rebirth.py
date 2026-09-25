@@ -137,6 +137,10 @@ DISTRIBUTED_RECOVERY_AUTHORIZATION_SHARE_DOMAIN: Final = (
 TRANSPORT_SCHEME: Final = "dm-peer-v1"
 MAX_TIME: Final = 2**53 - 1
 MAX_ARTIFACT_BYTES: Final = 1024 * 1024
+# Bundle generations this ceremony may target. The additional-embodiment
+# ceremony must follow the current runtime generation: refusing anything but
+# one frozen version made enrollment impossible on every migrated runtime.
+_BUNDLE_GENERATIONS: Final = frozenset({"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"})
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
 TARGET_PROFILE_SCHEMA: Final = "dm.operator.rebirth-target-profile/v1"
 PREPARATION_SCHEMA: Final = "dm.operator.rebirth-preparation/v1"
@@ -1994,7 +1998,7 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
         "relationships",
     }
     bundle = _closed(value, fields, "invalid_rebirth_runtime_bundle")
-    if bundle["schema"] not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}:
+    if bundle["schema"] not in _BUNDLE_GENERATIONS:
         raise RebirthError("unsupported_rebirth_runtime_bundle")
     if any(
         bundle[field] is not None
@@ -4240,8 +4244,13 @@ def _activate_target_runtime(
                 base_bundle, verified_activation, authority
             )
         )
-        if bundle.get("schema") != "dm.runtime.bundle/v7":
+        base_schema = (
+            base_bundle["schema"] if isinstance(base_bundle, Mapping) else None
+        )
+        if base_schema not in _BUNDLE_GENERATIONS:
             raise RebirthError("unsupported_rebirth_runtime_bundle")
+        if bundle.get("schema") != base_schema:
+            raise RebirthError("rebirth_bundle_generation_changed")
         bundle["local_origin"] = copy.deepcopy(origin)
         bundle["runtime_id"] = runtime_id
         bundle["runtime_label"] = profile["label"]

@@ -621,6 +621,97 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
             },
         )
 
+    def test_activation_preserves_current_v8_bundle_generation(self) -> None:
+        """One additional embodiment on a runtime that already migrated to v8.
+
+        Refusing every generation but v7 made enrollment impossible on any live
+        runtime, because the messaging-permissions migration had already advanced
+        them. The base generation is preserved exactly and the target still loads
+        with an empty ledger and the successor manifest.
+        """
+        root = self.root_path / "v8-target-runtime"
+        root.mkdir(mode=0o700)
+        password = b"fresh-v8-runtime-password-dm078"
+        base = self.base_runtime_bundle()
+        base["schema"] = "dm.runtime.bundle/v8"
+        preparation = create_target_preparation(
+            root / "preparation",
+            self.authority,
+            self.target_profile(),
+            lambda: bytearray(password),
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+        )
+        request = json.loads((root / "preparation/request.json").read_bytes())
+        activation = authorize_enrollment_request(
+            request,
+            self.authority,
+            root_seeds=self.root_seeds[:2],
+            issued_at_ms=NOW + 20,
+        )
+        receipt = activate_target_runtime(
+            root / "package",
+            root / "preparation",
+            preparation,
+            request,
+            activation,
+            base,
+            lambda: bytearray(password),
+        )
+        runtime_root = root / "package/runtime"
+        bundle = json.loads((runtime_root / "runtime.json").read_bytes())
+        self.assertEqual(bundle["schema"], "dm.runtime.bundle/v8")
+        self.assertEqual(bundle["manifest"]["revision"], 2)
+        self.assertEqual(len(bundle["authority_history"]), 1)
+        self.assertTrue(receipt["empty_writable_state"])
+        loaded = load_runtime(
+            runtime_root,
+            "runtime.json",
+            lambda: bytearray(password),
+            clock=lambda: NOW + 30,
+        )
+        self.assertEqual(
+            loaded.service.ledger.local_origin, activation["body"]["origin"]
+        )
+        self.assertEqual(loaded.service.ledger.events(), [])
+        self.assertEqual(
+            loaded.service.ledger.authority.manifest.being_ref,
+            self.authority.manifest.being_ref,
+        )
+
+    def test_activation_refuses_unknown_bundle_generation(self) -> None:
+        root = self.root_path / "unknown-generation"
+        root.mkdir(mode=0o700)
+        password = b"fresh-unknown-generation-password"
+        base = self.base_runtime_bundle()
+        base["schema"] = "dm.runtime.bundle/v9"
+        preparation = create_target_preparation(
+            root / "preparation",
+            self.authority,
+            self.target_profile(),
+            lambda: bytearray(password),
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+        )
+        request = json.loads((root / "preparation/request.json").read_bytes())
+        activation = authorize_enrollment_request(
+            request,
+            self.authority,
+            root_seeds=self.root_seeds[:2],
+            issued_at_ms=NOW + 20,
+        )
+        with self.assertRaises(RebirthError):
+            activate_target_runtime(
+                root / "package",
+                root / "preparation",
+                preparation,
+                request,
+                activation,
+                base,
+                lambda: bytearray(password),
+            )
+        self.assertFalse((root / "package").exists())
+
     def test_transition_matches_schema_and_canonical_round_trip(self) -> None:
         _, activation = self.activation()
         transition = activation["body"]["transition"]
