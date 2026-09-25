@@ -28,6 +28,7 @@ from .identity import (
     verify_incarnation_authorization,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
+from .labels import LabelError, LabelIndex
 from .ledger import Ledger
 from .local_api import LocalCapability
 from .native_egress import MandatoryEgressController, closed_visibility
@@ -87,6 +88,7 @@ from .sync import SyncEngine
 from .we_messaging import WeConversation
 from .weave import BeingManifest, EventSigner, RootAuthority, WeaveProtocolError
 
+LABELS_FILENAME: Final = "labels.json"
 BUNDLE_SCHEMA_V7: Final = "dm.runtime.bundle/v7"
 BUNDLE_SCHEMA_V8: Final = "dm.runtime.bundle/v8"
 MAX_BUNDLE_BYTES: Final = 4 * 1024 * 1024
@@ -112,6 +114,51 @@ VisibilityFactory = Callable[[VisibilityFactoryContext], MandatoryEgressControll
 
 class RuntimeError(ValueError):
     """Public authority, paths, or custody cannot safely host a runtime."""
+
+
+def load_label_index(root: Path, authority: RootAuthority) -> LabelIndex | None:
+    """Read the owner-local label registry if the owner put one there.
+
+    Labels are presentation and routing, never authority: they are derived from
+    signed manifest facts plus an owner-chosen name, and every id a label resolves
+    to is still validated against the root manifest and the signed audience by
+    whichever lane uses it. A tampered registry can therefore rename what an
+    operator sees or make a request fail; it cannot widen what anyone may do.
+    Absence is normal and means ids only. Presence with unsafe ownership, unsafe
+    permissions, unreadable bytes or an invalid registry fails closed rather than
+    silently renaming a being.
+    """
+    path = root / LABELS_FILENAME
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exception:
+        raise RuntimeError("runtime_labels_registry_rejected") from exception
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise RuntimeError("runtime_labels_registry_rejected")
+    try:
+        registry = json.loads(path.read_bytes())
+    except (OSError, ValueError) as exception:
+        raise RuntimeError("runtime_labels_registry_rejected") from exception
+    being_ref = authority.manifest.being_ref
+    entries = [
+        {
+            "being_ref": being_ref,
+            "body_ref": row["body_ref"],
+            "embodiment_id": row["embodiment_id"],
+        }
+        for row in authority.manifest.value["embodiments"]
+    ]
+    try:
+        return LabelIndex(entries, registry)
+    except (LabelError, KeyError, TypeError) as exception:
+        raise RuntimeError("runtime_labels_registry_rejected") from exception
 
 
 class _RuntimeDeliveryCustody:
@@ -1447,6 +1494,7 @@ def load_runtime(
         clock,
         runtime_id,
         runtime_label,
+        labels=load_label_index(root, active),
         communication=communication,
         router=router,
         scopes=scopes,

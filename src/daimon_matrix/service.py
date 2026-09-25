@@ -7,7 +7,7 @@ import hashlib
 import re
 import unicodedata
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, Final, cast
@@ -20,6 +20,7 @@ from .communication import (
 )
 from .curator import CuratorCoordinator, CuratorError
 from .human_review import HumanReviewCoordinator, HumanReviewError
+from .labels import LabelError, LabelIndex
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
@@ -441,6 +442,7 @@ class HostedWeave:
     relationships: RelationshipServiceContext | None = None
     peer_context: PeerClientContext | None = None
     we_lane: WeConversation | None = None
+    labels: LabelIndex | None = None
     messaging: MessagingServiceContext | None = None
     visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
@@ -2275,13 +2277,45 @@ class HostedWeave:
 
         return lane.converse(
             text=text,
-            addressees=cast(list[str], addressees),
+            addressees=self._we_addressees(cast(list[str], addressees)),
             request_id=converse_id,
             targets=cast(list[Mapping[str, Any]], resolved["targets"]),
             thread_id=_optional_text(params.get("thread_id"), 36),
             ttl_ms=ttl,
             deliver=deliver,
         )
+
+    def _we_addressees(self, requested: Sequence[str]) -> list[str]:
+        """Resolve labels to embodiment ids; plain ids pass through untouched.
+
+        A being-level label resolves to every embodiment of that being, so a
+        message can be addressed to a sibling without naming its harness or its
+        host. Labels authorize nothing: whatever comes out is still checked
+        against the signed audience by the lane, so a stale or tampered registry
+        can misname a body or fail a request, and cannot widen one.
+        """
+        if self.labels is None:
+            return list(requested)
+        resolved: list[str] = []
+        for row in requested:
+            try:
+                targets = self.labels.resolve(row)
+            except LabelError as exception:
+                if "." in row or "@" in row:
+                    raise ServiceError(str(exception)) from None
+                resolved.append(row)
+                continue
+            resolved.extend(target.embodiment_id for target in targets)
+        return resolved
+
+    def _we_label(self, embodiment_id: Any) -> str | None:
+        """Render one body by its owner-local label, or None without a registry."""
+        if self.labels is None or not isinstance(embodiment_id, str):
+            return None
+        try:
+            return self.labels.label_of(embodiment_id)
+        except LabelError:
+            return None
 
     def _we_conversation_page(self, params: Any) -> dict[str, Any]:
         """Read the being's own conversation. Nothing polls; a human asks."""
@@ -2310,6 +2344,14 @@ class HostedWeave:
             rows.append(entry)
         rows.sort(key=lambda row: (row["occurred_at_ms"], row["event_id"]))
         page = rows[:limit]
+        for entry in page:
+            entry["author_label"] = self._we_label(entry["author"])
+            if entry["kind"] == "message":
+                entry["addressee_labels"] = (
+                    None
+                    if self.labels is None
+                    else [self._we_label(row) for row in entry["addressees"]]
+                )
         return {
             "after": page[-1]["occurred_at_ms"] if page else after,
             "entries": page,

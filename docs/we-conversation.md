@@ -92,11 +92,20 @@ human asks:
 `we.conversation.page` sits in the observe profile. Neither is reachable without a
 capability that names it, and no capability is ever minted for the whole surface.
 
-Results name embodiments by id. Owner-local labels of the form
-`<being>.<harness>@<host>` are presentation over those ids: the label layer
-resolves and renders them, and a label authorizes nothing. Rendering the lane's
-results through a configured label registry is the one remaining piece of this
-surface, and it changes no authority and no wire format.
+Addressees may be given as embodiment ids or as owner-local labels of the form
+`<being>.<harness>@<host>`. A being-level label — just `<being>` — resolves to
+every embodiment of that being, which is how a message is addressed to a sibling
+without depending on which harness or host it happens to be running in today.
+Read results carry both the id and the rendered label.
+
+Labels come from an owner-local `labels.json` in the runtime state root, are
+derived from signed manifest facts plus an owner-chosen name, and authorize
+nothing: every id a label resolves to is still checked against the root manifest
+and the signed audience, so a stale or tampered registry can misname a body or
+fail a request and cannot widen one. The file is optional — without it the surface
+speaks ids — and when present it is refused unless it is a regular owner-only file
+with a valid closed registry. A label-shaped name that resolves to nothing fails
+loudly instead of being silently reinterpreted as an id.
 
 ## Human-request-only
 

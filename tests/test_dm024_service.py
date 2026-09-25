@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import sqlite3
 import unittest
 from contextlib import closing
+from dataclasses import replace
 from typing import Any
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
+from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import (
     LocalApiError,
@@ -21,7 +24,9 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
-from daimon_matrix.service import METHODS, HostedWeave
+from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
+from daimon_matrix.runtime import load_label_index
+from daimon_matrix.service import METHODS, HostedWeave, ServiceError
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 
 
@@ -315,6 +320,91 @@ class HostedServiceTests(RootLedgerFixture):
         refused = self.service_b.handle(wrong_transport)
         self.assertFalse(refused["ok"])
         self.assertEqual(refused["error"]["code"], "invalid_transport_binding")
+
+    def test_owner_label_registry_is_optional_and_fails_closed(self) -> None:
+        self.assertIsNone(load_label_index(self.root_path, self.authority))
+        registry = {
+            "beings": {self.state.being_ref: "compaii"},
+            "overrides": {},
+            "schema": LABEL_SCHEMA,
+        }
+        path = self.root_path / "labels.json"
+        path.write_text(json.dumps(registry))
+        path.chmod(0o600)
+        index = load_label_index(self.root_path, self.authority)
+        assert index is not None
+        self.assertEqual(index.label_of("embodiment:legion"), "compaii.cluster@legion")
+        # Group- or world-readable is refused rather than trusted.
+        path.chmod(0o640)
+        with self.assertRaises(HostedRuntimeError):
+            load_label_index(self.root_path, self.authority)
+        path.chmod(0o600)
+        path.write_text("{not json")
+        with self.assertRaises(HostedRuntimeError):
+            load_label_index(self.root_path, self.authority)
+        path.write_text(json.dumps({**registry, "beings": {}}))
+        with self.assertRaises(HostedRuntimeError):
+            load_label_index(self.root_path, self.authority)
+        path.unlink()
+        self.assertIsNone(load_label_index(self.root_path, self.authority))
+
+    def test_we_conversation_page_renders_owner_labels(self) -> None:
+        registry = {
+            "beings": {self.state.being_ref: "compaii"},
+            "overrides": {},
+            "schema": LABEL_SCHEMA,
+        }
+        entries = [
+            {
+                "being_ref": self.state.being_ref,
+                "body_ref": row["body_ref"],
+                "embodiment_id": row["embodiment_id"],
+            }
+            for row in self.manifest.value["embodiments"]
+        ]
+        labelled = replace(self.service_a, labels=LabelIndex(entries, registry))
+        message = self.append(
+            self.ledger_a,
+            "legion",
+            "communication",
+            payload={
+                "schema": MESSAGE_PAYLOAD_SCHEMA,
+                "body": {"addressee": ["embodiment:daimonmatrix"], "text": "hola"},
+                "intent": {
+                    "operation": "we.converse",
+                    "scope": "/we",
+                    "thread_id": "30000000-0000-4000-8000-000000000003",
+                },
+                "reply": None,
+            },
+        )
+        _, page = self.invoke(labelled, 63, "we.conversation.page", {})
+        row = page["result"]["entries"][0]
+        self.assertEqual(row["event_id"], message["event_id"])
+        self.assertEqual(row["author_label"], "compaii.cluster@legion")
+        self.assertEqual(row["addressee_labels"], ["compaii.cluster@daimonmatrix"])
+        # A being-level selector names every body; a full label names exactly one.
+        self.assertEqual(
+            sorted(labelled._we_addressees(["compaii"])),
+            ["embodiment:daimonmatrix", "embodiment:legion"],
+        )
+        self.assertEqual(
+            labelled._we_addressees(["compaii.cluster@daimonmatrix"]),
+            ["embodiment:daimonmatrix"],
+        )
+        # Plain ids keep working, and a label-shaped unknown name fails loudly
+        # instead of being silently reinterpreted as an id.
+        self.assertEqual(
+            labelled._we_addressees(["embodiment:legion"]), ["embodiment:legion"]
+        )
+        with self.assertRaises(ServiceError) as caught:
+            labelled._we_addressees(["nobody.hermes@legion"])
+        self.assertEqual(str(caught.exception), "label_unknown")
+        # Without a registry the same page carries no labels at all.
+        _, bare = self.invoke(self.service_a, 64, "we.conversation.page", {})
+        bare_row = bare["result"]["entries"][0]
+        self.assertIsNone(bare_row["author_label"])
+        self.assertIsNone(bare_row["addressee_labels"])
 
     def test_we_conversation_page_reads_only_the_we_lane(self) -> None:
         thread_id = "30000000-0000-4000-8000-000000000001"
