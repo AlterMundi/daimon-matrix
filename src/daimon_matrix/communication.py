@@ -37,6 +37,10 @@ SEMANTIC_RECEIPT_SCHEMA: Final = "dm.semantic-receipt/v1"
 PAGE_SCHEMA: Final = "dm.communication.page/v1"
 RESULT_SCHEMA: Final = "dm.communication.result/v1"
 STORE_SCHEMA_VERSION: Final = 1
+RECEIPTS_V2_SCHEMA_VERSION: Final = 2
+# One semantic leg per receiving body rather than per member. Gated so a store
+# that never opts in keeps its delivered identity derivation and its schema.
+LEGS_V3_SCHEMA_VERSION: Final = 3
 MAX_PAGE_SIZE: Final = 256
 MAX_TARGETS: Final = 256
 MAX_BODY_BYTES: Final = 192 * 1024
@@ -260,7 +264,7 @@ def _resolution_payload(
     if not isinstance(targets, list) or not 1 <= len(targets) <= MAX_TARGETS:
         raise CommunicationError("invalid_resolution_targets")
     normalized: list[Mapping[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for row in targets:
         target = _closed(
             row,
@@ -294,7 +298,20 @@ def _resolution_payload(
             "invalid_resolution_target",
             maximum=512,
         )
-        key = (str(recipient_type), recipient_id)
+        # One semantic recipient may legitimately be received by several bodies,
+        # each authoring its own receipt, so the author is part of what makes a
+        # target a duplicate. Whether a given store can hold several legs for one
+        # recipient is that store's own capability and is checked on admission;
+        # the resolution format is not the place to refuse it.
+        key = (
+            str(recipient_type),
+            recipient_id,
+            _text(
+                target["receipt_origin_embodiment_id"],
+                "invalid_resolution_target",
+                maximum=240,
+            ),
+        )
         if key in seen:
             raise CommunicationError("duplicate_semantic_recipient")
         seen.add(key)
@@ -389,13 +406,28 @@ def _foreign_receipt_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
     return payload
 
 
-def _leg_id(message_id: str, recipient_type: str, recipient_id: str) -> str:
+def _leg_id(
+    message_id: str,
+    recipient_type: str,
+    recipient_id: str,
+    receipt_origin_embodiment_id: str | None = None,
+) -> str:
+    """Derive one semantic leg identity.
+
+    Without a receipt author this is exactly the delivered derivation, so a store
+    that has not opted into per-body legs reproduces its existing identities
+    byte for byte. With one, two bodies of a single membership get two legs
+    instead of colliding on it, which is what lets every embodiment of a member
+    receive and receipt a tribe message in its own name.
+    """
     preimage = {
         "message_id": message_id,
         "recipient_id": recipient_id,
         "recipient_type": recipient_type,
         "schema": "dm.semantic-key/v1",
     }
+    if receipt_origin_embodiment_id is not None:
+        preimage["receipt_origin_embodiment_id"] = receipt_origin_embodiment_id
     return "dm:semantic-leg:v1:" + b64url(
         hashlib.sha256(
             b"daimon/semantic-leg/v1\x00" + canonical_bytes(preimage)
@@ -434,10 +466,14 @@ class CommunicationStore:
         token_factory: TokenFactory = secrets.token_bytes,
         foreign_authority_resolver: Callable[[str], EventAuthority] | None = None,
         receipts_v2: bool = False,
+        legs_v3: bool = False,
     ) -> None:
+        if legs_v3 and not receipts_v2:
+            raise CommunicationError("legs_v3_requires_receipts_v2")
         self.ledger = ledger
         self.foreign_authority_resolver = foreign_authority_resolver
         self.receipts_v2 = receipts_v2
+        self.legs_v3 = legs_v3
         self.clock = clock
         self.uuid_factory = uuid_factory
         self.token_factory = token_factory
@@ -576,6 +612,14 @@ class CommunicationStore:
             with suppress(FileNotFoundError):
                 temporary.unlink()
 
+    def _expected_schema_version(self) -> int:
+        """The one schema version this store's declared capabilities imply."""
+        if self.legs_v3:
+            return LEGS_V3_SCHEMA_VERSION
+        if self.receipts_v2:
+            return RECEIPTS_V2_SCHEMA_VERSION
+        return STORE_SCHEMA_VERSION
+
     def _meta(self, database: sqlite3.Connection) -> tuple[str, int, int]:
         rows = {
             str(row["key"]): str(row["value"])
@@ -588,9 +632,7 @@ class CommunicationStore:
             "mutation_counter",
             "schema_version",
             "sequence_highwater",
-        } or rows["schema_version"] != str(
-            2 if self.receipts_v2 else STORE_SCHEMA_VERSION
-        ):
+        } or rows["schema_version"] != str(self._expected_schema_version()):
             raise CommunicationError("communication_metadata_mismatch")
         try:
             counter = int(rows["mutation_counter"])
@@ -1085,10 +1127,28 @@ class CommunicationStore:
                     changed = True
                 elif bytes(existing_message["message_json"]) != raw_message:
                     raise CommunicationError("message_projection_conflict")
+                if not self.legs_v3:
+                    seen_recipients: set[tuple[str, str]] = set()
+                    for target in targets:
+                        pair = (
+                            str(target["recipient_type"]),
+                            str(target["recipient_id"]),
+                        )
+                        if pair in seen_recipients:
+                            # Refuse here rather than let the delivered UNIQUE
+                            # constraint escape as a database integrity error.
+                            raise CommunicationError("duplicate_semantic_recipient")
+                        seen_recipients.add(pair)
                 for target in targets:
                     recipient_type = str(target["recipient_type"])
                     recipient_id = str(target["recipient_id"])
-                    leg_id = _leg_id(message_event_id, recipient_type, recipient_id)
+                    receipt_origin = str(target["receipt_origin_embodiment_id"])
+                    leg_id = _leg_id(
+                        message_event_id,
+                        recipient_type,
+                        recipient_id,
+                        receipt_origin if self.legs_v3 else None,
+                    )
                     immutable = {
                         "message_id": message_event_id,
                         "thread_id": payload["intent"]["thread_id"],
@@ -1106,8 +1166,15 @@ class CommunicationStore:
                     ).hexdigest()
                     existing = database.execute(
                         "SELECT immutable_hash FROM communication_legs "
-                        "WHERE message_id=? AND recipient_type=? AND recipient_id=?",
-                        (message_event_id, recipient_type, recipient_id),
+                        "WHERE message_id=? AND recipient_type=? AND recipient_id=?"
+                        + (
+                            " AND receipt_origin_embodiment_id=?"
+                            if self.legs_v3
+                            else ""
+                        ),
+                        (message_event_id, recipient_type, recipient_id, receipt_origin)
+                        if self.legs_v3
+                        else (message_event_id, recipient_type, recipient_id),
                     ).fetchone()
                     if existing is not None:
                         if existing["immutable_hash"] != immutable_hash:
@@ -1201,7 +1268,10 @@ class CommunicationStore:
         expected = {}
         for target in targets:
             identifier = _leg_id(
-                message["event_id"], target["recipient_type"], target["recipient_id"]
+                message["event_id"],
+                target["recipient_type"],
+                target["recipient_id"],
+                str(target["receipt_origin_embodiment_id"]) if self.legs_v3 else None,
             )
             expected[identifier] = {
                 "message_id": message["event_id"],
@@ -2158,6 +2228,136 @@ class CommunicationStore:
             database.commit()
             self.receipts_v2 = True
 
+    def upgrade_legs_v3(self) -> None:
+        """Explicit offline successor: one semantic leg per receiving body.
+
+        Existing rows keep their stored `leg_id` and `sequence`, so nothing already
+        materialized is rewritten or re-derived and a leg from before the upgrade
+        stays addressable after it. SQLite cannot alter a UNIQUE constraint in
+        place and three child tables reference this one with `ON DELETE RESTRICT`
+        while every connection enforces foreign keys, so the table is rebuilt with
+        enforcement off, inside one transaction, and the result is verified before
+        the flag is raised.
+        """
+        self.initialize()
+        if self.legs_v3:
+            return
+        if not self.receipts_v2:
+            raise CommunicationError("legs_v3_requires_receipts_v2")
+        with self._database() as database:
+            # A no-op inside a transaction, so it has to precede BEGIN.
+            database.execute("PRAGMA foreign_keys=OFF")
+            try:
+                database.execute("BEGIN IMMEDIATE")
+                self._meta(database)
+                database.execute(
+                    """CREATE TABLE communication_legs_v3 (
+                        leg_id TEXT PRIMARY KEY,
+                        message_id TEXT NOT NULL
+                            REFERENCES communication_messages(message_id)
+                            ON DELETE RESTRICT,
+                        thread_id TEXT NOT NULL,
+                        recipient_type TEXT NOT NULL
+                            CHECK(recipient_type IN ('embodiment', 'relationship')),
+                        recipient_id TEXT NOT NULL,
+                        receipt_origin_embodiment_id TEXT NOT NULL,
+                        resolution_event_id TEXT NOT NULL,
+                        resolution_hash TEXT NOT NULL,
+                        evidence_cursor TEXT NOT NULL,
+                        immutable_hash TEXT NOT NULL,
+                        sequence INTEGER NOT NULL UNIQUE,
+                        state TEXT NOT NULL,
+                        terminal_receipt_event_id TEXT,
+                        terminal_receipt_hash TEXT,
+                        created_at_ms INTEGER NOT NULL,
+                        UNIQUE(message_id, recipient_type, recipient_id,
+                            receipt_origin_embodiment_id),
+                        CHECK(
+                            (state='accepted' AND terminal_receipt_event_id IS NULL
+                                AND terminal_receipt_hash IS NULL)
+                            OR
+                            (state IN ('delivered', 'failed:transport',
+                                'refused:policy', 'expired',
+                                'resolved:unroutable')
+                                AND terminal_receipt_event_id IS NOT NULL
+                                AND terminal_receipt_hash IS NOT NULL)
+                            OR
+                            state='quarantined'
+                        )
+                    )"""
+                )
+                rows = database.execute(
+                    "SELECT leg_id, message_id, thread_id, recipient_type, "
+                    "recipient_id, receipt_origin_embodiment_id, "
+                    "resolution_event_id, resolution_hash, evidence_cursor, "
+                    "immutable_hash, sequence, state, terminal_receipt_event_id, "
+                    "terminal_receipt_hash, created_at_ms FROM communication_legs "
+                    "ORDER BY sequence"
+                ).fetchall()
+                # Legs are a projection of signed events, not signed history, so
+                # an explicit offline successor may recompute their identifiers.
+                # Doing it here rather than tolerating two derivations forever is
+                # what keeps one identity rule true of every leg in the store.
+                renames: list[tuple[str, str]] = []
+                for row in rows:
+                    renewed = _leg_id(
+                        str(row["message_id"]),
+                        str(row["recipient_type"]),
+                        str(row["recipient_id"]),
+                        str(row["receipt_origin_embodiment_id"]),
+                    )
+                    carried = tuple(row[index] for index in range(1, 15))
+                    database.execute(
+                        "INSERT INTO communication_legs_v3 VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (renewed, *carried),
+                    )
+                    if renewed != str(row["leg_id"]):
+                        renames.append((str(row["leg_id"]), renewed))
+                renewed_ids = {new for _old, new in renames}
+                if len(renewed_ids) != len(renames) or renewed_ids & {
+                    str(row["leg_id"]) for row in rows
+                }:
+                    raise CommunicationError("communication_legs_migration_incomplete")
+                if int(
+                    database.execute(
+                        "SELECT COUNT(*) FROM communication_legs_v3"
+                    ).fetchone()[0]
+                ) != len(rows):
+                    raise CommunicationError("communication_legs_migration_incomplete")
+                database.execute("DROP TABLE communication_legs")
+                # Keep the rename from rewriting the child tables' references: they
+                # name this table, and it exists again by the end of the statement.
+                database.execute("PRAGMA legacy_alter_table=ON")
+                database.execute(
+                    "ALTER TABLE communication_legs_v3 RENAME TO communication_legs"
+                )
+                database.execute("PRAGMA legacy_alter_table=OFF")
+                for old_id, new_id in renames:
+                    for child in (
+                        "communication_queue",
+                        "communication_attempts",
+                        "communication_receipts",
+                        "communication_foreign_receipts",
+                    ):
+                        database.execute(
+                            f"UPDATE {child} SET leg_id=? WHERE leg_id=?",
+                            (new_id, old_id),
+                        )
+                database.execute(
+                    "UPDATE communication_meta SET value=? WHERE key='schema_version'",
+                    (str(LEGS_V3_SCHEMA_VERSION),),
+                )
+                database.commit()
+            except BaseException:
+                database.rollback()
+                raise
+            finally:
+                database.execute("PRAGMA foreign_keys=ON")
+            if database.execute("PRAGMA foreign_key_check").fetchall():
+                raise CommunicationError("communication_store_corrupt")
+            self.legs_v3 = True
+
     def _validate_foreign_receipt(
         self,
         database: sqlite3.Connection,
@@ -2255,7 +2455,12 @@ class CommunicationStore:
             or leg["immutable_hash"]
             != hashlib.sha256(canonical_bytes(immutable)).hexdigest()
             or leg["leg_id"]
-            != _leg_id(message["event_id"], "relationship", payload["recipient_id"])
+            != _leg_id(
+                message["event_id"],
+                "relationship",
+                payload["recipient_id"],
+                str(event["origin"]["embodiment_id"]) if self.legs_v3 else None,
+            )
             or stored is None
             or stored["thread_id"] != payload["thread_id"]
             or stored["event_hash"] != message["content_hash"]

@@ -1071,5 +1071,105 @@ class PublicBoundaryAndSchemaTests(LogicalCommunicationFixture):
             )
 
 
+MEMBERSHIP = "dm:membership:v1:" + "A" * 43
+
+
+class PerBodyLegTests(LogicalCommunicationFixture):
+    """One membership received by several bodies, and the store that allows it."""
+
+    def upgraded(self) -> CommunicationStore:
+        store = CommunicationStore(self.ledger_a, clock=lambda: NOW)
+        store.initialize()
+        store.upgrade_receipts_v2()
+        store.upgrade_legs_v3()
+        return store
+
+    def two_bodies(self) -> list[dict[str, Any]]:
+        return [
+            self.target(
+                MEMBERSHIP,
+                scope_kind="relationship",
+                recipient_type="relationship",
+                origin="embodiment:legion",
+            ),
+            self.target(
+                MEMBERSHIP,
+                scope_kind="relationship",
+                recipient_type="relationship",
+                origin="embodiment:daimonmatrix",
+            ),
+        ]
+
+    def test_a_legacy_store_refuses_two_bodies_for_one_membership(self) -> None:
+        """Refused with a closed error, never as a database integrity escape."""
+        with self.assertRaisesRegex(CommunicationError, "duplicate_semantic_recipient"):
+            self.append_message(self.two_bodies(), scope="/tribe")
+
+    def test_an_upgraded_store_holds_one_leg_per_receiving_body(self) -> None:
+        self.store = self.upgraded()
+        message, resolution, result = self.append_message(
+            self.two_bodies(), scope="/tribe"
+        )
+        legs = result["legs"]
+        self.assertEqual(len(legs), 2)
+        self.assertEqual({leg["recipient_id"] for leg in legs}, {MEMBERSHIP})
+        self.assertEqual(
+            sorted(leg["receipt_origin_embodiment_id"] for leg in legs),
+            ["embodiment:daimonmatrix", "embodiment:legion"],
+        )
+        self.assertEqual(len({leg["leg_id"] for leg in legs}), 2)
+        self.assertFalse(result["terminal"])
+        replay = self.store.accept(
+            message_event_id=message["event_id"],
+            resolution_event_id=resolution["event_id"],
+        )
+        self.assertEqual(
+            {leg["leg_id"] for leg in replay["legs"]},
+            {leg["leg_id"] for leg in legs},
+        )
+
+    def test_upgrade_recomputes_identities_and_keeps_the_projection_readable(
+        self,
+    ) -> None:
+        message, _resolution, before = self.append_message(
+            [self.target("embodiment:daimonmatrix")]
+        )
+        legacy = {leg["leg_id"]: leg["sequence"] for leg in before["legs"]}
+        self.assertTrue(legacy)
+        store = self.upgraded()
+        after = store.result(message["event_id"])
+        self.assertEqual(len(after["legs"]), len(legacy))
+        self.assertEqual(
+            {leg["sequence"] for leg in after["legs"]}, set(legacy.values())
+        )
+        self.assertNotEqual({leg["leg_id"] for leg in after["legs"]}, set(legacy))
+        with closing(sqlite3.connect(self.ledger_a.path)) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT value FROM communication_meta WHERE key='schema_version'"
+                ).fetchone()[0],
+                "3",
+            )
+            self.assertEqual(
+                database.execute("PRAGMA foreign_key_check").fetchall(), []
+            )
+
+    def test_upgrade_requires_receipts_v2_and_is_idempotent(self) -> None:
+        plain = CommunicationStore(self.ledger_a, clock=lambda: NOW)
+        plain.initialize()
+        with self.assertRaisesRegex(CommunicationError, "legs_v3_requires_receipts_v2"):
+            plain.upgrade_legs_v3()
+        self.assertFalse(plain.legs_v3)
+        store = self.upgraded()
+        self.assertTrue(store.legs_v3)
+        store.upgrade_legs_v3()
+        self.assertTrue(store.legs_v3)
+        reopened = CommunicationStore(
+            self.ledger_a, clock=lambda: NOW, receipts_v2=True, legs_v3=True
+        )
+        reopened.initialize()
+        self.assertTrue(reopened.legs_v3)
+
+
 if __name__ == "__main__":
     unittest.main()
