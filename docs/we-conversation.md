@@ -107,6 +107,23 @@ speaks ids — and when present it is refused unless it is a regular owner-only 
 with a valid closed registry. A label-shaped name that resolves to nothing fails
 loudly instead of being silently reinterpreted as an id.
 
+### Rollout consequence, stated plainly
+
+A capability profile is exactly the method set a stored capability has to match,
+and the runtime refuses to load a bundle whose capabilities drifted from it.
+`we.converse` joins the `weave` profile and `we.conversation.page` joins
+`observe`, so a runtime bundled before this change will not load until its
+operator capability set is re-minted by the owner-local offline upgrade path in
+`daimon_matrix.operator_runtime_upgrade`, which is deliberately not a
+model-facing tool.
+
+Putting the lane in its own new profile was considered and rejected: the bundle
+schemas pin the capability count at exactly twelve for both v7 and v8, so a new
+role would need a v9 bundle schema, its vectors and its ceremony, and would still
+leave every older bundle unable to reach the lane. Re-minting through the existing
+upgrade path is the smaller and already-tooled change. No capability is ever
+widened in place, and the lane is unreachable with an older capability.
+
 ## Human-request-only
 
 Reading, sending and replying on this lane happen only when a human asks. No inbox
