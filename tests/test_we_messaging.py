@@ -16,6 +16,7 @@ from daimon_matrix.sealed import (
     sender_descriptor,
 )
 from daimon_matrix.we_messaging import (
+    WeConversation,
     WeLaneError,
     open_we_conversation,
     seal_we_message,
@@ -360,6 +361,49 @@ class WeLaneTests(SealedFixture):
                 custody=self.custodies["daimonmatrix"],
                 at_ms=NOW + 2,
             )
+
+    def lane(self, label: str, *, at_ms: int) -> WeConversation:
+        return WeConversation(
+            self.ledger_b if label == "daimonmatrix" else self.ledger_a,
+            signer=self.signers[label],
+            custody=self.custodies[label],
+            clock=lambda: at_ms,
+        )
+
+    def test_intake_keeps_the_message_and_signs_one_receipt(self) -> None:
+        message, resolution, thread_id, payload, _opened = self.send_and_receive()
+        result = self.lane("daimonmatrix", at_ms=NOW + 5).intake(payload)
+        self.assertEqual(result["schema"], "dm.we.intake-result/v1")
+        self.assertEqual(result["recipient_embodiment_id"], REMOTE)
+        self.assertEqual(result["message_id"], message["event_id"])
+        receipt = result["receipt"]
+        self.assertEqual(receipt["origin"]["embodiment_id"], REMOTE)
+        self.assertEqual(receipt["subject"], "communication-receipt")
+        self.assertEqual(receipt["payload"]["recipient_id"], REMOTE)
+        self.assertEqual(receipt["payload"]["recipient_type"], "embodiment")
+        self.assertEqual(receipt["payload"]["thread_id"], thread_id)
+        self.assertEqual(receipt["payload"]["outcome"], "delivered")
+        for event in (message, resolution, receipt):
+            self.assertIsNotNone(self.ledger_b.event(event["event_id"]), event)
+
+    def test_an_exact_intake_retry_returns_the_same_receipt(self) -> None:
+        _message, _resolution, _thread, payload, _opened = self.send_and_receive()
+        first = self.lane("daimonmatrix", at_ms=NOW + 5).intake(payload)
+        second = self.lane("daimonmatrix", at_ms=NOW + 900).intake(payload)
+        self.assertEqual(second["receipt"]["event_id"], first["receipt"]["event_id"])
+        self.assertEqual(second["receipt_hash"], first["receipt_hash"])
+        receipts = [
+            event
+            for event in self.ledger_b.events()
+            if event["subject"] == "communication-receipt"
+        ]
+        self.assertEqual(len(receipts), 1)
+
+    def test_a_sender_cannot_intake_its_own_message(self) -> None:
+        _message, _resolution, _thread, payload, _opened = self.send_and_receive()
+        with self.assertRaises(WeLaneError) as caught:
+            self.lane("legion", at_ms=NOW + 5).intake(payload)
+        self.assertEqual(str(caught.exception), "we_lane_sender_is_local")
 
 
 if __name__ == "__main__":

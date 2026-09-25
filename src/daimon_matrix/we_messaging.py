@@ -24,11 +24,14 @@ is inventoried as intra-being in `docs/mandatory-telegram-visibility.md`.
 from __future__ import annotations
 
 import copy
+import hashlib
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from .canonical import b64url, unb64url
+from .canonical import b64url, canonical_bytes, unb64url
 from .communication import _message_payload, _resolution_payload
+from .ledger import Clock, Ledger, LedgerError
 from .sealed import (
     DeliveryCustody,
     DisclosureAuthorization,
@@ -40,7 +43,7 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
-from .weave import RootAuthority, verify_event
+from .weave import EventSigner, RootAuthority, WeaveProtocolError, verify_event
 
 WE_LANE_SCOPE: Final = "/we"
 WE_MESSAGE_CONTENT_TYPE: Final = "application/vnd.daimon.we-message+json"
@@ -384,3 +387,136 @@ def _closed_envelope(envelope: Mapping[str, Any]) -> Mapping[str, Any]:
     ):
         raise WeLaneError("we_lane_envelope_invalid")
     return envelope
+
+
+WE_RECEIPT_CLIENT_ID: Final = "dm.we.receipt/v1"
+WE_INTAKE_SCHEMA: Final = "dm.we.intake-result/v1"
+
+
+class WeConversation:
+    """One being's intra-being conversation over its own ledger.
+
+    Authority is root-validated same-being membership, so intake never consults a
+    relationship, a tribe or a grant. Nothing here runs by itself: the lane
+    installs no timer, poll or wakeup, and hearing a message never authorizes
+    answering it.
+    """
+
+    def __init__(
+        self,
+        ledger: Ledger,
+        *,
+        signer: EventSigner,
+        custody: DeliveryCustody,
+        clock: Clock,
+    ) -> None:
+        authority = ledger.authority
+        if (
+            not isinstance(authority, RootAuthority)
+            or authority.manifest.trust_mode != "root-bound"
+        ):
+            raise WeLaneError("we_lane_requires_root_authority")
+        self.ledger = ledger
+        self.authority = authority
+        self.signer = signer
+        self.custody = custody
+        self.clock = clock
+        self.local_embodiment_id = _text(
+            ledger.local_origin["embodiment_id"], "we_lane_origin_invalid"
+        )
+        rows = [
+            row
+            for row in authority.manifest.value["embodiments"]
+            if row["embodiment_id"] == self.local_embodiment_id
+            and row["status"] == "active"
+        ]
+        if len(rows) != 1:
+            raise WeLaneError("we_lane_embodiment_not_active")
+        self.local_credential_id = _text(
+            rows[0]["embodiment_credential_id"], "we_lane_credential_invalid"
+        )
+        ledger.initialize()
+
+    def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Open one delivered message, keep it, and author this body's receipt."""
+        now = _uint(self.clock(), "we_lane_clock_invalid")
+        opened = open_we_conversation(
+            payload,
+            authority=self.authority,
+            local_credential_id=self.local_credential_id,
+            custody=self.custody,
+            at_ms=now,
+        )
+        message = opened["message"]
+        sender = _text(message["origin"]["embodiment_id"], "we_lane_origin_invalid")
+        if sender == self.local_embodiment_id:
+            raise WeLaneError("we_lane_sender_is_local")
+        self._retain((message, opened["resolution"]), source=f"we:{sender}")
+        receipt = self._author_receipt(
+            message, opened["resolution"], observed_at_ms=now
+        )
+        return {
+            "schema": WE_INTAKE_SCHEMA,
+            "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "receipt": copy.deepcopy(dict(receipt)),
+            "receipt_hash": hashlib.sha256(canonical_bytes(receipt)).hexdigest(),
+            "recipient_embodiment_id": self.local_embodiment_id,
+        }
+
+    def _retain(self, events: Sequence[Mapping[str, Any]], *, source: str) -> None:
+        """Keep the message and its signed audience, once, in dependency order."""
+        pending = [
+            event
+            for event in events
+            if self.ledger.event(_text(event["event_id"], "we_lane_message_invalid"))
+            is None
+        ]
+        if not pending:
+            return
+        try:
+            self.ledger.ingest(pending, source=source)
+        except (LedgerError, WeaveProtocolError) as exception:
+            raise WeLaneError("we_lane_intake_rejected") from exception
+
+    def _author_receipt(
+        self,
+        message: Mapping[str, Any],
+        resolution: Mapping[str, Any],
+        *,
+        observed_at_ms: int,
+    ) -> Mapping[str, Any]:
+        """Sign this body's own receipt, so an exact retry returns the same one."""
+        occurred = _uint(message["occurred_at_ms"], "we_lane_message_invalid")
+        if observed_at_ms < occurred:
+            raise WeLaneError("we_lane_observation_time_invalid")
+        core = we_receipt_payload(
+            message=message,
+            resolution=resolution,
+            local_embodiment_id=self.local_embodiment_id,
+            observed_at_ms=observed_at_ms,
+        )
+        # The identity of a receipt must not depend on when the retry happened,
+        # so the operation id and request hash cover everything but the instant.
+        core.pop("observed_at_ms")
+        digest = hashlib.sha256(canonical_bytes(core)).hexdigest()
+        operation_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"{WE_RECEIPT_CLIENT_ID}:{digest}")
+        )
+        try:
+            return self.ledger.append_local_idempotent(
+                client_id=WE_RECEIPT_CLIENT_ID,
+                request_id=operation_id,
+                request_hash=digest,
+                kind="experience.observed",
+                subject="communication-receipt",
+                payload={**core, "observed_at_ms": observed_at_ms},
+                signer=self.signer,
+                sensitivity=_text(
+                    message["sensitivity"], "we_lane_message_invalid", maximum=32
+                ),
+                occurred_at_ms=observed_at_ms,
+                causal_parents=(_text(message["event_id"], "we_lane_message_invalid"),),
+            )
+        except (LedgerError, WeaveProtocolError) as exception:
+            raise WeLaneError("we_lane_receipt_rejected") from exception
