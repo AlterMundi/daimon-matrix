@@ -45,3 +45,14 @@ mirror. Do not send directly to Telegram as a fallback.
 No harness checks the inbox automatically. Codex and other harnesses use the
 same helper or its messaging-only MCP mode, exclusively on human request.
 There are no inbox hooks, pollers, notifications, wakeups or model invocations.
+
+## Foundation document
+
+Before any naming, scope or ontology decision, read the daimon-matrix foundation
+document: canonical living copy at
+https://hackmd.io/@nicoechaniz/daimon-matrix, pinned repository snapshot at
+`docs/foundation/daimon-matrix.md` with provenance in
+`docs/foundation/PROVENANCE.json`. It defines the scope taxonomy (`/me`, `/we`,
+`/here`, `/near`, `/all`, `/everyone`, `/tribe`, `/human`, `/realm`) that the
+runtime implements only partially. Do not invent scope names or paraphrase the
+vision from memory.
