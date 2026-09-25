@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
@@ -808,7 +809,7 @@ class MessagingChannel:
         policy: MessagingPeerPolicy,
         local_being_ref: str,
         local_credential_id: str,
-        authority_resolver: Callable[[str], RootAuthority],
+        authority_resolver: Callable[[str], RootAuthority | RootHistoryAuthority],
         relationships: RelationshipStore,
         custody: DeliveryCustody,
         inbox: MessagingInboxStore,
@@ -824,26 +825,69 @@ class MessagingChannel:
         self.inbox = inbox
         self.clock = clock
 
+    def _active(self, being_ref: str) -> RootAuthority:
+        """Current epoch for one being, whether or not history is supplied."""
+        authority = self.authority_resolver(being_ref)
+        return (
+            authority.active
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+
     def _local(self) -> RecipientTarget:
         return RecipientTarget(
-            self.authority_resolver(self.local_being_ref), self.local_credential_id
+            self._active(self.local_being_ref), self.local_credential_id
         )
 
     def _sender(self) -> RootAuthority:
-        return self.authority_resolver(self.policy.peer_being_ref)
+        return self._active(self.policy.peer_being_ref)
 
     def _card(self, card: Mapping[str, Any], at_ms: int) -> None:
+        """Verify one card against the epoch it pins, not against the newest one.
+
+        Enrolling another embodiment advances the being manifest. A card issued
+        before that advance pins the manifest it was issued under, and demanding
+        the current digest there would silently drop every member whose card
+        predates the advance, emptying tribe snapshots and refusing disclosure.
+        The pinned epoch is selected from verified history, the member is checked
+        in that epoch at the verification time, and the embodiment must still be
+        active now under the same body. Anything else fails closed.
+        """
         authority = self.authority_resolver(card["being_ref"])
         position = card["control_position"]
-        member = authority.manifest.member(
-            position["embodiment_id"], position["incarnation_id"]
-        )
-        target = RecipientTarget(authority, member["embodiment_credential_id"])
+        pinned = position["manifest_hash"]
+        epoch: RootAuthority
+        if isinstance(authority, RootHistoryAuthority):
+            try:
+                epoch = authority.select({"manifest_hash": pinned})
+            except Exception:
+                raise SealedDeliveryError() from None
+        else:
+            epoch = authority
+        if epoch.manifest.digest != pinned:
+            raise SealedDeliveryError()
+        try:
+            member = epoch.manifest.member(
+                position["embodiment_id"], position["incarnation_id"]
+            )
+        except Exception:
+            raise SealedDeliveryError() from None
+        target = RecipientTarget(epoch, member["embodiment_credential_id"])
         descriptor = recipient_descriptor(target, at_ms=at_ms)
+        active = (
+            authority.active if isinstance(authority, RootHistoryAuthority) else epoch
+        )
+        current = [
+            row
+            for row in active.manifest.value["embodiments"]
+            if row["embodiment_id"] == position["embodiment_id"]
+            and row["status"] == "active"
+        ]
         if (
-            authority.manifest.digest != position["manifest_hash"]
+            len(current) != 1
+            or current[0]["body_ref"] != member["body_ref"]
             or descriptor["encryption_kid"] != card["encryption_key"]["key_id"]
-            or authority.credentials[target.credential_id]["body"]["encryption_key"]
+            or epoch.credentials[target.credential_id]["body"]["encryption_key"]
             != card["encryption_key"]
         ):
             raise SealedDeliveryError()

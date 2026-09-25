@@ -1102,6 +1102,23 @@ def _compose(
             for event in application["relationship_events"]:
                 relationships.ingest(event)
 
+    def channel_authority(being_ref: str) -> RootAuthority | RootHistoryAuthority:
+        """History-preserving resolver for one channel, narrowed to root authorities.
+
+        The store resolver keeps verified epochs so a card issued before a manifest
+        advance still verifies against the epoch it pins. Anything else is refused
+        rather than silently treated as the current epoch.
+        """
+        resolver = relationships.authority_resolver
+        resolved = (
+            resolver(being_ref)
+            if resolver is not None
+            else resolve_authority(being_ref)
+        )
+        if not isinstance(resolved, (RootAuthority, RootHistoryAuthority)):
+            raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        return resolved
+
     def channel(row: Any, store: Path) -> MessagingChannel:
         policy = dict(row["policy"])
         policy["grant_refs"] = tuple(
@@ -1111,7 +1128,7 @@ def _compose(
             policy=MessagingPeerPolicy(**policy),
             local_being_ref=row["recipient_being_ref"],
             local_credential_id=row["recipient_credential_id"],
-            authority_resolver=resolve_authority,
+            authority_resolver=channel_authority,
             relationships=relationships,
             custody=custody,
             inbox=MessagingInboxStore(store),
