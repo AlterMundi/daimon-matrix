@@ -2203,10 +2203,21 @@ class CommunicationStore:
             != event["origin"]["embodiment_id"]
         ):
             raise CommunicationError("foreign_receipt_binding_mismatch")
+        # Select by the receipt author as well as the recipient. Under today's
+        # leg uniqueness this changes nothing: at most one row matches either
+        # way, and a leg whose author differs already failed the check below with
+        # the same closed error. Naming the author here is what keeps the lookup
+        # exact once one membership legitimately has several receiving bodies,
+        # each with its own leg.
         leg = database.execute(
             "SELECT * FROM communication_legs WHERE message_id=? "
-            "AND recipient_type='relationship' AND recipient_id=?",
-            (message["event_id"], payload["recipient_id"]),
+            "AND recipient_type='relationship' AND recipient_id=? "
+            "AND receipt_origin_embodiment_id=?",
+            (
+                message["event_id"],
+                payload["recipient_id"],
+                event["origin"]["embodiment_id"],
+            ),
         ).fetchone()
         if (
             leg is None
