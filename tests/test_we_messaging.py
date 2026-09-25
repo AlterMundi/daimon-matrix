@@ -224,7 +224,9 @@ class WeLaneTests(SealedFixture):
                 at_ms=NOW + 2,
             )
 
-    def send_and_receive(self, **kwargs: Any):
+    def send_and_receive(
+        self, **kwargs: Any
+    ) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any], dict[str, Any]]:
         message, resolution, thread_id = self.author(**kwargs)
         audience = we_audience(
             resolution, message_id=message["event_id"], local_embodiment_id=LEGION
