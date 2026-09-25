@@ -23,17 +23,24 @@ is inventoried as intra-being in `docs/mandatory-telegram-visibility.md`.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from .communication import _resolution_payload
+from .canonical import b64url, unb64url
+from .communication import _message_payload, _resolution_payload
 from .sealed import (
     DeliveryCustody,
     DisclosureAuthorization,
     RecipientTarget,
+    SealedDeliveryError,
+    _parse,
+    open_event,
+    recipient_descriptor,
     seal_event,
+    sender_descriptor,
 )
-from .weave import RootAuthority
+from .weave import RootAuthority, verify_event
 
 WE_LANE_SCOPE: Final = "/we"
 WE_MESSAGE_CONTENT_TYPE: Final = "application/vnd.daimon.we-message+json"
@@ -50,6 +57,20 @@ def _text(value: Any, code: str, *, maximum: int = 240) -> str:
     if not isinstance(value, str) or not value or len(value.encode()) > maximum:
         raise WeLaneError(code)
     return value
+
+
+def _uint(value: Any, code: str) -> int:
+    if type(value) is not int or value < 0:
+        raise WeLaneError(code)
+    return value
+
+
+def _recipient_sort_key(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(row["being_ref"]),
+        str(row["embodiment_id"]),
+        str(row["encryption_kid"]),
+    )
 
 
 def we_audience(
@@ -179,3 +200,187 @@ def _local_embodiment(authority: RootAuthority, credential_id: str) -> str:
         if member["embodiment_credential_id"] == text and member["status"] == "active":
             return str(member["embodiment_id"])
     raise WeLaneError("we_lane_credential_unknown")
+
+
+WE_CONVERSATION_SCHEMA: Final = "dm.we.conversation/v1"
+WE_RECEIPT_SCHEMA: Final = "dm.communication.receipt/v2"
+_ENVELOPE_FIELDS: Final = frozenset(
+    {
+        "schema",
+        "profile",
+        "delivery_id",
+        "event_id",
+        "event_hash",
+        "sensitivity",
+        "authorization_id",
+        "evidence_hash",
+        "sender",
+        "recipients",
+        "issued_at_ms",
+        "expires_at_ms",
+        "signature",
+    }
+)
+
+
+def we_conversation_payload(
+    *, envelope: bytes, resolution: Mapping[str, Any]
+) -> dict[str, Any]:
+    """One peer payload: the sealed message plus the audience it was frozen for.
+
+    The resolution travels outside the envelope on purpose. It is a signed event,
+    so the receiver authenticates the frozen audience before decrypting anything,
+    and the envelope's evidence hash must equal its content hash.
+    """
+    return {
+        "envelope": b64url(envelope),
+        "resolution": copy.deepcopy(dict(resolution)),
+        "schema": WE_CONVERSATION_SCHEMA,
+    }
+
+
+def open_we_conversation(
+    payload: Mapping[str, Any],
+    *,
+    authority: RootAuthority,
+    local_credential_id: str,
+    custody: DeliveryCustody,
+    at_ms: int,
+) -> dict[str, Any]:
+    """Authenticate, authorize and decrypt one intra-being message.
+
+    The receiver re-derives the disclosure authorization itself. Sender and the
+    whole audience come from the signed resolution and this being's own root
+    manifest, never from the wire, so a tampered recipient list cannot redirect
+    or widen who hears; only the identity of the still-encrypted message event is
+    read from the envelope header, and the opened event must verify against the
+    root and match that identity. A resolution that does not verify, an evidence
+    hash that does not bind it, an audience that excludes the local embodiment, a
+    message addressed to nobody inside that audience, or a sender that is not an
+    active sibling all fail closed.
+    """
+    if not isinstance(payload, Mapping) or set(payload) != {
+        "envelope",
+        "resolution",
+        "schema",
+    }:
+        raise WeLaneError("we_lane_payload_invalid")
+    if payload["schema"] != WE_CONVERSATION_SCHEMA:
+        raise WeLaneError("we_lane_payload_invalid")
+    raw = unb64url(
+        _text(payload["envelope"], "we_lane_envelope_invalid", maximum=1 << 22)
+    )
+    envelope = _closed_envelope(_parse(raw))
+    resolution = verify_event(payload["resolution"], authority)
+    message_id = _text(envelope["event_id"], "we_lane_message_invalid", maximum=64)
+    _resolution_payload(resolution, message_id=message_id, scope=WE_LANE_SCOPE)
+    if envelope["evidence_hash"] != resolution["content_hash"]:
+        raise WeLaneError("we_lane_evidence_unbound")
+    sender_embodiment = _text(
+        resolution["origin"]["embodiment_id"], "we_lane_origin_invalid"
+    )
+    audience = we_audience(
+        resolution, message_id=message_id, local_embodiment_id=sender_embodiment
+    )
+    local_embodiment = _local_embodiment(authority, local_credential_id)
+    if local_embodiment == sender_embodiment:
+        raise WeLaneError("we_lane_sender_is_local")
+    targets = we_recipient_targets(authority, audience)
+    authorized_at_ms = _uint(resolution["occurred_at_ms"], "we_lane_resolution_invalid")
+    try:
+        authorization = DisclosureAuthorization.synthetic(
+            event={
+                "content_hash": envelope["event_hash"],
+                "event_id": envelope["event_id"],
+                "sensitivity": envelope["sensitivity"],
+            },
+            sender=sender_descriptor(resolution, authority, at_ms=authorized_at_ms),
+            recipients=sorted(
+                (
+                    recipient_descriptor(target, at_ms=authorized_at_ms)
+                    for target in targets
+                ),
+                key=_recipient_sort_key,
+            ),
+            evidence_hash=resolution["content_hash"],
+            authorized_at_ms=authorized_at_ms,
+            expires_at_ms=envelope["expires_at_ms"],
+            authorization_id=envelope["authorization_id"],
+        )
+    except SealedDeliveryError as exception:
+        raise WeLaneError("we_lane_authorization_rejected") from exception
+    message = open_event(
+        raw,
+        sender_authority=authority,
+        local_target=RecipientTarget(authority, local_credential_id),
+        recipient_targets=targets,
+        authorization=authorization,
+        custody=custody,
+        at_ms=at_ms,
+    )
+    body = _message_payload(message)["body"]
+    addressees = body.get("addressee")
+    if not isinstance(addressees, list) or not addressees:
+        raise WeLaneError("we_lane_addressee_empty")
+    known = {row["recipient_id"] for row in audience}
+    if local_embodiment not in known:
+        raise WeLaneError("we_lane_not_in_audience")
+    validated = we_addressees(audience, [str(row) for row in addressees])
+    if message["origin"]["embodiment_id"] != sender_embodiment:
+        raise WeLaneError("we_lane_origin_invalid")
+    return {
+        "addressees": validated,
+        "audience": audience,
+        "authorization": authorization,
+        "message": message,
+        "resolution": resolution,
+    }
+
+
+def we_receipt_payload(
+    *,
+    message: Mapping[str, Any],
+    resolution: Mapping[str, Any],
+    local_embodiment_id: str,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """One recipient-authored intake receipt for the embodiment that heard it."""
+    thread_id = _message_payload(message)["intent"]["thread_id"]
+    return {
+        "message_being_ref": message["being_ref"],
+        "message_ref": {
+            "event_hash": message["content_hash"],
+            "event_id": message["event_id"],
+        },
+        "observed_at_ms": observed_at_ms,
+        "outcome": "delivered",
+        "recipient_id": _text(local_embodiment_id, "we_lane_origin_invalid"),
+        "recipient_type": "embodiment",
+        "resolution_ref": {
+            "event_hash": resolution["content_hash"],
+            "event_id": resolution["event_id"],
+        },
+        "schema": WE_RECEIPT_SCHEMA,
+        "thread_id": _text(thread_id, "we_lane_thread_invalid", maximum=64),
+    }
+
+
+def _closed_envelope(envelope: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(envelope, Mapping) or not set(envelope) >= _ENVELOPE_FIELDS:
+        raise WeLaneError("we_lane_envelope_invalid")
+    for name in (
+        "event_id",
+        "event_hash",
+        "sensitivity",
+        "authorization_id",
+        "evidence_hash",
+    ):
+        _text(envelope[name], "we_lane_envelope_invalid", maximum=256)
+    for name in ("issued_at_ms", "expires_at_ms"):
+        if type(envelope[name]) is not int or envelope[name] < 0:
+            raise WeLaneError("we_lane_envelope_invalid")
+    if not isinstance(envelope["sender"], Mapping) or not isinstance(
+        envelope["recipients"], list
+    ):
+        raise WeLaneError("we_lane_envelope_invalid")
+    return envelope
