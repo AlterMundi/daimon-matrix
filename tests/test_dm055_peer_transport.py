@@ -685,7 +685,7 @@ class PeerTransportTests(PeerTransportFixture):
         outage = [ConnectionError("synthetic-outage")]
         served_round_trip = round_trip
 
-        def round_trip(raw: bytes) -> bytes:
+        def flaky_round_trip(raw: bytes) -> bytes:
             if outage:
                 raise outage.pop()
             return served_round_trip(raw)
@@ -696,7 +696,7 @@ class PeerTransportTests(PeerTransportFixture):
             local_target=self.targets["legion"],
             custody=self.custodies["legion"],
             outbox=PeerOutbox(outbox_path),
-            round_trip=round_trip,
+            round_trip=flaky_round_trip,
             clock=lambda: self.now,
             egress=self.egress,
             egress_catalog_id="test-long-outage-peer-request",
@@ -734,7 +734,7 @@ class PeerTransportTests(PeerTransportFixture):
             local_target=self.targets["legion"],
             custody=self.custodies["legion"],
             outbox=PeerOutbox(outbox_path),
-            round_trip=round_trip,
+            round_trip=flaky_round_trip,
             clock=lambda: self.now,
             egress=self.egress,
             egress_catalog_id="test-long-outage-peer-request",
