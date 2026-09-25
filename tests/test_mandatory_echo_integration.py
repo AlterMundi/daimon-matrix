@@ -879,9 +879,18 @@ class CatalogMigrationTests(unittest.TestCase):
             resolve=self._resolve,
             authorize=self._authorize,
         )
+        # A `peer_outbox` catalog owns every intra-being request path, so the
+        # conversation lane joined the set this registry has to account for.
         validating.register_path("peer-scope-request", "migration-catalog")
         validating.register_path("peer-sync-request", "migration-catalog")
-        validating.validate_registry({"peer-scope-request", "peer-sync-request"})
+        validating.register_path("peer-converse-request", "migration-catalog")
+        validating.validate_registry(
+            {
+                "peer-scope-request",
+                "peer-sync-request",
+                "peer-converse-request",
+            }
+        )
 
     def test_nonempty_historical_native_store_refuses_empty_journal_migration(
         self,

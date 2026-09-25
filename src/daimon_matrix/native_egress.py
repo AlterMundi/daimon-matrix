@@ -470,19 +470,22 @@ def load_owner_visibility_file(
     )
 
 
-# One being's own `/we` lane: scope resolution and state convergence between its
-# embodiments. These paths never carry an inter-daimon logical message, so the
-# mandatory inter-daimon mirror does not apply to them. The lane is not a bypass
-# flag: it is derived from the catalog's own authoritative store tables, it stays
-# authorized and digest-bound, every operation is still journaled with a release
-# count, and every event remains in the being's ledger where an operator can read
-# it on request. Inter-daimon message and evidence egress keeps its confirmed echo.
+# One being's own `/we` lane: scope resolution, state convergence and sibling
+# conversation between its embodiments. These paths never carry an inter-daimon
+# logical message, so the mandatory inter-daimon mirror does not apply to them.
+# The lane is not a bypass flag: it is derived from the catalog's own
+# authoritative store tables, it stays authorized and digest-bound, every
+# operation is still journaled with a release count, and every event remains in
+# the being's ledger where an operator can read it on request. Inter-daimon
+# message and evidence egress keeps its confirmed echo.
 INTRA_BEING_LANE_PATHS: Final[frozenset[str]] = frozenset(
     {
         "peer-scope-request",
         "peer-sync-request",
         "peer-scope-response",
         "peer-sync-response",
+        "peer-converse-request",
+        "peer-converse-response",
     }
 )
 
@@ -497,6 +500,8 @@ PEER_EGRESS_PATHS: Final[frozenset[str]] = frozenset(
         "peer-sync-request",
         "peer-scope-response",
         "peer-sync-response",
+        "peer-converse-request",
+        "peer-converse-response",
     }
 )
 
@@ -1012,7 +1017,13 @@ class MandatoryEgressController:
         names = cls._table_names(database)
         mappings = {
             "communication_egress_requests": frozenset({"route-provider-request"}),
-            "peer_exchanges": frozenset({"peer-scope-response", "peer-sync-response"}),
+            "peer_exchanges": frozenset(
+                {
+                    "peer-scope-response",
+                    "peer-sync-response",
+                    "peer-converse-response",
+                }
+            ),
             "messaging_transport_stages": frozenset(
                 {"messaging-evidence-request", "messaging-message-request"}
             ),
@@ -1022,7 +1033,15 @@ class MandatoryEgressController:
         }
         matches = [paths for table, paths in mappings.items() if table in names]
         if "peer_outbox" in names or "peer_outbox_carriers" in names:
-            matches.append(frozenset({"peer-scope-request", "peer-sync-request"}))
+            matches.append(
+                frozenset(
+                    {
+                        "peer-scope-request",
+                        "peer-sync-request",
+                        "peer-converse-request",
+                    }
+                )
+            )
         if len(matches) != 1:
             raise NativeEgressError("egress_catalog_invalid")
         return matches[0]

@@ -88,14 +88,16 @@ tables, never by a caller-supplied flag, so no path can opt itself out.
 | `route-provider-request` | message routing submission | yes |
 | `peer-scope-request`, `peer-scope-response` | one being's own `/we` scope resolution | no |
 | `peer-sync-request`, `peer-sync-response` | one being's own `/we` state convergence | no |
+| `peer-converse-request`, `peer-converse-response` | one being's own `/we` sibling conversation | no |
 
-The four `peer-*` paths are the intra-being lane: they move one being's own scope
-resolution and ledger convergence between its embodiments, and they never carry a
-message authored for another being. Cross-being conversation travels the messaging
-paths above and keeps its confirmed echo. The intra-being lane is not a bypass: it
-remains authorized, digest-bound and journaled as egress operations, every event
-stays in the being's ledger, and an operator can read the projection on request.
-What it does not do is post one being's private state convergence to a shared human
+The six `peer-*` paths are the intra-being lane: they move one being's own scope
+resolution, ledger convergence and sibling conversation between its embodiments,
+and they never carry a message authored for another being. Cross-being
+conversation travels the messaging paths above and keeps its confirmed echo. The
+intra-being lane is not a bypass: it remains authorized, digest-bound and
+journaled as egress operations, every event stays in the being's ledger, and an
+operator can read the projection on request. What it does not do is post one
+being's own internal conversation or private state convergence to a shared human
 channel, and it does not depend on Telegram being reachable.
 
 ## 3. Fixed policy, trust and retained evidence

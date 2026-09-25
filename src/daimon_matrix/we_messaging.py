@@ -31,6 +31,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import b64url, canonical_bytes, unb64url
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
@@ -477,7 +478,12 @@ class WeConversation:
         custody: DeliveryCustody,
         clock: Clock,
     ) -> None:
-        authority = ledger.authority
+        history = ledger.authority
+        # A hosted ledger may carry accepted authority epochs; the lane speaks for
+        # the exact active epoch, the same one the messaging lane resolves to.
+        authority = (
+            history.active if isinstance(history, RootHistoryAuthority) else history
+        )
         if (
             not isinstance(authority, RootAuthority)
             or authority.manifest.trust_mode != "root-bound"

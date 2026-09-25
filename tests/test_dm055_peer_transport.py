@@ -52,7 +52,7 @@ from daimon_matrix.peer_transport import (
     seal_peer_payload,
 )
 from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
-from daimon_matrix.runtime import load_runtime
+from daimon_matrix.runtime import _RuntimeDeliveryCustody, load_runtime
 from daimon_matrix.scopes import (
     ScopeExchangeStore,
     ScopeResolver,
@@ -61,6 +61,11 @@ from daimon_matrix.scopes import (
 )
 from daimon_matrix.sealed import RecipientTarget
 from daimon_matrix.sync import SyncEngine
+from daimon_matrix.we_messaging import (
+    WE_MESSAGE_CONTENT_TYPE,
+    WE_RECEIPT_CONTENT_TYPE,
+    WeConversation,
+)
 from daimon_matrix.weave import BeingManifest, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
 from tests.test_dm024_runtime import PASSWORD as RUNTIME_PASSWORD
@@ -1052,6 +1057,101 @@ class PeerTransportTests(PeerTransportFixture):
         self.assertEqual(pages, 3)
         for event in events:
             self.assertEqual(self.ledger_a.event(event["event_id"]), event)
+
+    def test_real_conversation_handler_crosses_encrypted_boundary(self) -> None:
+        """One sibling message crosses the native carrier and comes back signed."""
+        server_state = self.root_path / "peer-converse-server"
+        client_state = self.root_path / "peer-converse-client"
+        server_state.mkdir(mode=0o700)
+        client_state.mkdir(mode=0o700)
+        scope_store_b = ScopeExchangeStore(self.ledger_b)
+        scope_store_b.initialize()
+        sibling = "embodiment:daimonmatrix"
+        receiver = WeConversation(
+            self.ledger_b,
+            signer=self.signers["daimonmatrix"],
+            custody=_RuntimeDeliveryCustody(self.custodies["daimonmatrix"]),
+            clock=lambda: self.now,
+        )
+        sender = WeConversation(
+            self.ledger_a,
+            signer=self.signers["legion"],
+            custody=_RuntimeDeliveryCustody(self.custodies["legion"]),
+            clock=lambda: self.now,
+        )
+        dispatcher = PeerDispatcher(
+            authority=self.authority,
+            local_origin=self.origins["daimonmatrix"],
+            local_target=self.targets["daimonmatrix"],
+            custody=self.custodies["daimonmatrix"],
+            store=PeerExchangeStore(
+                server_state / "exchange.sqlite", clock=lambda: self.now
+            ),
+            handlers=protocol_handlers(
+                resolver=ScopeResolver(self.ledger_b, clock=lambda: self.now),
+                signer=self.signers["daimonmatrix"],
+                scope_store=scope_store_b,
+                sync_engine=SyncEngine(self.ledger_b),
+                we_lane=receiver,
+            ),
+            clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-converse-response",
+        )
+        client = PeerClient(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(client_state / "outbox.sqlite"),
+            round_trip=dispatcher.dispatch,
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-converse-request",
+        )
+        request_id = "05500000-0000-4000-8000-000000000030"
+        resolved = ScopeResolver(self.ledger_a, clock=lambda: self.now).resolution(
+            scope="/we", request_id=request_id
+        )
+
+        def deliver(
+            embodiment_id: str, payload: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            self.assertEqual(embodiment_id, sibling)
+            return client.call(
+                payload,
+                recipient_target=self.targets["daimonmatrix"],
+                request_content_type=WE_MESSAGE_CONTENT_TYPE,
+                response_content_type=WE_RECEIPT_CONTENT_TYPE,
+                correlation_id=request_id,
+                deadline_ms=NOW + 30_000,
+            )
+
+        result = sender.converse(
+            text="hola hermano",
+            addressees=[sibling],
+            request_id=request_id,
+            targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        self.assertEqual(result["carrier"], sorted(["embodiment:legion", sibling]))
+        self.assertEqual(
+            [(row["state"], row["embodiment_id"]) for row in result["deliveries"]],
+            [("delivered", sibling)],
+        )
+        receipt_id = result["deliveries"][0]["receipt_event_id"]
+        # The hearing body kept the message, its audience and its own receipt.
+        self.assertIsNotNone(self.ledger_b.event(result["message_id"]))
+        self.assertIsNotNone(self.ledger_b.event(result["resolution_id"]))
+        heard = self.ledger_b.event(receipt_id)
+        assert heard is not None
+        self.assertEqual(heard["origin"]["embodiment_id"], sibling)
+        self.assertEqual(heard["payload"]["thread_id"], result["thread_id"])
+        # The sending body kept the sibling's receipt, so authorship stays visible.
+        retained = self.ledger_a.event(receipt_id)
+        assert retained is not None
+        self.assertEqual(retained["origin"]["embodiment_id"], sibling)
 
     def test_http_client_rejects_unsafe_url_and_wrong_response_contract(self) -> None:
         for url, timeout in (

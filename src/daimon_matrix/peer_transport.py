@@ -44,8 +44,14 @@ from .native_egress import (
     native_projection,
 )
 from .scopes import ScopeExchangeStore, ScopeResolver, serve_scope_request
-from .sealed import RecipientTarget, recipient_descriptor
+from .sealed import RecipientTarget, SealedDeliveryError, recipient_descriptor
 from .sync import SyncEngine
+from .we_messaging import (
+    WE_MESSAGE_CONTENT_TYPE,
+    WE_RECEIPT_CONTENT_TYPE,
+    WeConversation,
+    WeLaneError,
+)
 from .weave import EventSigner, RootAuthority, WeaveProtocolError
 
 SCHEMA: Final = "dm.peer-envelope/v1"
@@ -56,14 +62,35 @@ CEK_WRAP_DOMAIN: Final = b"daimon/peer-envelope/cek-wrap/v1\x00"
 MAX_ENVELOPE_BYTES: Final = 3 * 1024 * 1024
 MAX_PAYLOAD_BYTES: Final = 2 * 1024 * 1024
 MAX_TTL_MS: Final = 60_000
+SCOPE_REQUEST: Final = "application/vnd.daimon.scope-request+json"
+SCOPE_RESPONSE: Final = "application/vnd.daimon.scope-response+json"
+SYNC_REQUEST: Final = "application/vnd.daimon.sync-request+json"
+SYNC_DELTA: Final = "application/vnd.daimon.sync-delta+json"
 CONTENT_TYPES: Final = frozenset(
     {
-        "application/vnd.daimon.scope-request+json",
-        "application/vnd.daimon.scope-response+json",
-        "application/vnd.daimon.sync-request+json",
-        "application/vnd.daimon.sync-delta+json",
+        SCOPE_REQUEST,
+        SCOPE_RESPONSE,
+        SYNC_REQUEST,
+        SYNC_DELTA,
+        WE_MESSAGE_CONTENT_TYPE,
+        WE_RECEIPT_CONTENT_TYPE,
     }
 )
+# One egress path and one journal stage per carried kind, looked up exactly. The
+# carrier never infers them from a substring of a content type, so a new lane has
+# to name itself here rather than falling through to somebody else's path.
+REQUEST_EGRESS: Final = {
+    SCOPE_REQUEST: ("peer-scope-request", "scope"),
+    SYNC_REQUEST: ("peer-sync-request", "sync"),
+    WE_MESSAGE_CONTENT_TYPE: ("peer-converse-request", "converse"),
+}
+RESPONSE_EGRESS: Final = {
+    SCOPE_RESPONSE: ("peer-scope-response", "scope"),
+    SYNC_DELTA: ("peer-sync-response", "sync"),
+    WE_RECEIPT_CONTENT_TYPE: ("peer-converse-response", "converse"),
+}
+REQUEST_CONTENT_TYPES: Final = frozenset(REQUEST_EGRESS)
+RESPONSE_CONTENT_TYPES: Final = frozenset(RESPONSE_EGRESS)
 _SUITE: Final = Suite(KEM.X25519, KDF.HKDF_SHA256, AEAD.CHACHA20_POLY1305)
 
 
@@ -557,6 +584,7 @@ class PeerOutbox:
             )
             controller.register_path("peer-scope-request", catalog_id)
             controller.register_path("peer-sync-request", catalog_id)
+            controller.register_path("peer-converse-request", catalog_id)
             return
         if self._egress is not controller or self._egress_catalog_id != catalog_id:
             raise PeerTransportError()
@@ -1222,21 +1250,14 @@ class PeerDispatcher:
             resolve=lambda locator: store.resolve(locator),
             authorize=self._authorize_egress,
         )
-        egress.register_path("peer-scope-response", egress_catalog_id)
-        egress.register_path("peer-sync-response", egress_catalog_id)
-        request_types = {
-            "application/vnd.daimon.scope-request+json",
-            "application/vnd.daimon.sync-request+json",
-        }
-        response_types = {
-            "application/vnd.daimon.scope-response+json",
-            "application/vnd.daimon.sync-delta+json",
-        }
+        for response_path in RESPONSE_EGRESS.values():
+            egress.register_path(response_path[0], egress_catalog_id)
         if (
             not self.handlers
-            or not set(self.handlers) <= request_types
+            or not set(self.handlers) <= REQUEST_CONTENT_TYPES
             or any(
-                response not in response_types for response, _ in self.handlers.values()
+                response not in RESPONSE_CONTENT_TYPES
+                for response, _ in self.handlers.values()
             )
         ):
             raise PeerTransportError()
@@ -1315,9 +1336,7 @@ class PeerDispatcher:
                 egress=PeerEgressSpec(
                     controller=self.egress,
                     catalog_id=self.egress_catalog_id,
-                    path_id="peer-scope-response"
-                    if "scope-response" in response_type
-                    else "peer-sync-response",
+                    path_id=RESPONSE_EGRESS[response_type][0],
                     deadline_ms=opened.expires_at_ms,
                     authority_head=self.authority.state.head,
                     projection=lambda native: native_projection(
@@ -1327,7 +1346,7 @@ class PeerDispatcher:
                         recipient=opened.sender["credential_id"],
                         thread_id=opened.correlation_id,
                         kind="authorization-control",
-                        stage="scope" if "scope-response" in response_type else "sync",
+                        stage=RESPONSE_EGRESS[response_type][1],
                     ),
                 ),
                 logical_request=(
@@ -1436,16 +1455,8 @@ class PeerClient:
         deadline = _uint(deadline_ms)
         now = _uint(self.clock())
         if (
-            request_content_type
-            not in {
-                "application/vnd.daimon.scope-request+json",
-                "application/vnd.daimon.sync-request+json",
-            }
-            or response_content_type
-            not in {
-                "application/vnd.daimon.scope-response+json",
-                "application/vnd.daimon.sync-delta+json",
-            }
+            request_content_type not in REQUEST_CONTENT_TYPES
+            or response_content_type not in RESPONSE_CONTENT_TYPES
             or not now < deadline <= now + MAX_TTL_MS
         ):
             raise PeerTransportError()
@@ -1505,9 +1516,7 @@ class PeerClient:
         egress_spec = PeerEgressSpec(
             controller=self.egress,
             catalog_id=self.egress_catalog_id,
-            path_id="peer-scope-request"
-            if "scope-request" in request_content_type
-            else "peer-sync-request",
+            path_id=REQUEST_EGRESS[request_content_type][0],
             deadline_ms=deadline,
             authority_head=self.authority.state.head,
             projection=lambda native: native_projection(
@@ -1517,7 +1526,7 @@ class PeerClient:
                 recipient=current_target.authority.state.being_ref,
                 thread_id=correlation_id,
                 kind="authorization-control",
-                stage="scope" if "scope-request" in request_content_type else "sync",
+                stage=REQUEST_EGRESS[request_content_type][1],
             ),
             target_credential_id=current_recipient["credential_id"],
             target_embodiment_id=current_recipient["embodiment_id"],
@@ -1742,8 +1751,9 @@ def protocol_handlers(
     signer: EventSigner,
     scope_store: ScopeExchangeStore,
     sync_engine: SyncEngine,
+    we_lane: WeConversation | None = None,
 ) -> dict[str, tuple[str, PeerHandler]]:
-    """Bind native transport only to the existing scope and sync authorities."""
+    """Bind native transport only to the existing scope, sync and `/we` lanes."""
 
     def serve_scope(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         return serve_scope_request(resolver, signer, scope_store, payload)
@@ -1751,16 +1761,25 @@ def protocol_handlers(
     def serve_sync(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         return sync_engine.serve(payload)
 
-    return {
-        "application/vnd.daimon.scope-request+json": (
-            "application/vnd.daimon.scope-response+json",
-            serve_scope,
-        ),
-        "application/vnd.daimon.sync-request+json": (
-            "application/vnd.daimon.sync-delta+json",
-            serve_sync,
-        ),
+    handlers: dict[str, tuple[str, PeerHandler]] = {
+        SCOPE_REQUEST: (SCOPE_RESPONSE, serve_scope),
+        SYNC_REQUEST: (SYNC_DELTA, serve_sync),
     }
+    if we_lane is not None:
+
+        def serve_conversation(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            # A malformed or unauthorized conversation is one stable carrier
+            # refusal; the lane's own reasons stay inside the lane.
+            try:
+                return we_lane.intake(payload)
+            except (WeLaneError, SealedDeliveryError) as exception:
+                raise PeerTransportError() from exception
+
+        handlers[WE_MESSAGE_CONTENT_TYPE] = (
+            WE_RECEIPT_CONTENT_TYPE,
+            serve_conversation,
+        )
+    return handlers
 
 
 __all__ = [

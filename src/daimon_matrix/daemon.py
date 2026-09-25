@@ -390,9 +390,13 @@ def _enabled_egress_paths(runtime: HostedRuntime) -> set[str]:
     if runtime.service.router is not None:
         paths.add("route-provider-request")
     if runtime.peer_context is not None:
-        paths.update({"peer-scope-request", "peer-sync-request"})
+        paths.update(
+            {"peer-scope-request", "peer-sync-request", "peer-converse-request"}
+        )
     if runtime.peer_dispatcher is not None:
-        paths.update({"peer-scope-response", "peer-sync-response"})
+        paths.update(
+            {"peer-scope-response", "peer-sync-response", "peer-converse-response"}
+        )
     if runtime.messaging_http is not None:
         paths.update({"messaging-evidence-result", "messaging-message-result"})
     messaging = runtime.service.messaging

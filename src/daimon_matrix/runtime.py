@@ -84,6 +84,7 @@ from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
+from .we_messaging import WeConversation
 from .weave import BeingManifest, EventSigner, RootAuthority, WeaveProtocolError
 
 BUNDLE_SCHEMA_V7: Final = "dm.runtime.bundle/v7"
@@ -1397,6 +1398,14 @@ def load_runtime(
                     signer=signer,
                     scope_store=scope_exchange,
                     sync_engine=SyncEngine(ledger),
+                    # Sibling conversation rides the same authenticated peer keys,
+                    # so the sealed profile needs no second custody.
+                    we_lane=WeConversation(
+                        ledger,
+                        signer=signer,
+                        custody=_RuntimeDeliveryCustody(peer_custody),
+                        clock=clock,
+                    ),
                 ),
                 clock=clock,
                 egress=visibility,

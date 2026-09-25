@@ -201,6 +201,7 @@ def validate_projection(projection: dict[str, Any]) -> None:
                 "evidence-before-message",
                 "scope",
                 "sync",
+                "converse",
                 "transport-response",
                 "semantic-receipt",
             ):
