@@ -152,7 +152,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 70)
+        self.assertEqual(len(modules), 72)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -301,6 +301,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/authority_epochs.py",
                 "src/daimon_matrix/birth.py",
                 "src/daimon_matrix/canonical.py",
+                "src/daimon_matrix/chat_host.py",
                 "src/daimon_matrix/cli.py",
                 "src/daimon_matrix/client.py",
                 "src/daimon_matrix/cluster.py",
@@ -322,6 +323,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/human_review.py",
                 "src/daimon_matrix/hermes_body.py",
                 "src/daimon_matrix/keystore.py",
+                "src/daimon_matrix/labels.py",
                 "src/daimon_matrix/ledger.py",
                 "src/daimon_matrix/local_api.py",
                 "src/daimon_matrix/local_we.py",
@@ -378,6 +380,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/authority_epochs.py",
                 "daimon_matrix/birth.py",
                 "daimon_matrix/canonical.py",
+                "daimon_matrix/chat_host.py",
                 "daimon_matrix/cli.py",
                 "daimon_matrix/client.py",
                 "daimon_matrix/cluster.py",
@@ -399,6 +402,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/human_review.py",
                 "daimon_matrix/hermes_body.py",
                 "daimon_matrix/keystore.py",
+                "daimon_matrix/labels.py",
                 "daimon_matrix/ledger.py",
                 "daimon_matrix/local_api.py",
                 "daimon_matrix/local_we.py",
