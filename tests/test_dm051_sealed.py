@@ -48,6 +48,7 @@ from daimon_matrix.sealed import (
     RecipientTarget,
     SealedDeliveryConflict,
     SealedDeliveryError,
+    _parse,
     open_event,
     recipient_descriptor,
     seal_event,
@@ -937,6 +938,91 @@ class MembershipSealingTests(TribeMembershipFixture):
         message, resolution = self.author(scope="/we")
         with self.assertRaises(SealedDeliveryError):
             self.authorize(message, resolution)
+
+    def sealed_envelope(
+        self, message: Mapping[str, Any], authorization: DisclosureAuthorization
+    ) -> bytes:
+        return seal_event(
+            message,
+            sender_authority=self.founder.authority,
+            recipients=self.audience(),
+            authorization=authorization,
+            custody=self.sender_custody,
+            issued_at_ms=self.now,
+            expires_at_ms=self.now + 30_000,
+        )
+
+    def rebuild(
+        self,
+        envelope: Mapping[str, Any],
+        resolution: Mapping[str, Any],
+        *,
+        tribe_ref: str | None = None,
+        message_hash: str | None = None,
+    ) -> DisclosureAuthorization:
+        """What a receiver can do with the header, the resolution and its own proofs."""
+        return DisclosureAuthorization.from_membership_resolution_identity(
+            message_id=str(envelope["event_id"]),
+            message_hash=(
+                str(envelope["event_hash"]) if message_hash is None else message_hash
+            ),
+            sensitivity=str(envelope["sensitivity"]),
+            resolution_event=resolution,
+            sender_authority=self.founder.authority,
+            recipient_targets=self.audience(),
+            memberships=self.authorizer.proofs(
+                members=self.members, tribe_ref=self.tribe_ref
+            ),
+            sender_membership=self.sender_proof(),
+            tribe_ref=self.tribe_ref if tribe_ref is None else tribe_ref,
+            expires_at_ms=int(envelope["expires_at_ms"]),
+            authorization_id=str(envelope["authorization_id"]),
+        )
+
+    def test_a_receiver_rebuilds_the_exact_authorization_before_decrypting(
+        self,
+    ) -> None:
+        message, resolution = self.author()
+        sender_authorization = self.authorize(message, resolution)
+        raw = self.sealed_envelope(message, sender_authorization)
+        envelope = _parse(raw)
+        rebuilt = self.rebuild(envelope, resolution)
+        self.assertEqual(rebuilt.value, sender_authorization.value)
+        opened = open_event(
+            raw,
+            sender_authority=self.founder.authority,
+            local_target=self.target,
+            recipient_targets=self.audience(),
+            authorization=rebuilt,
+            custody=self.receiver_custody,
+            at_ms=self.now + 1,
+        )
+        self.assertEqual(opened["event_id"], message["event_id"])
+
+    def test_a_renamed_tribe_cannot_rebuild_the_authorization(self) -> None:
+        """The tribe ref is bound through the proofs, so renaming it fails closed."""
+        message, resolution = self.author()
+        raw = self.sealed_envelope(message, self.authorize(message, resolution))
+        envelope = _parse(raw)
+        with self.assertRaises(SealedDeliveryError):
+            self.rebuild(envelope, resolution, tribe_ref="dm:tribe:v1:" + "C" * 43)
+
+    def test_a_claimed_message_identity_that_is_not_the_event_fails(self) -> None:
+        """Claiming an identity is safe only because opening must match it."""
+        message, resolution = self.author()
+        raw = self.sealed_envelope(message, self.authorize(message, resolution))
+        envelope = _parse(raw)
+        forged = self.rebuild(envelope, resolution, message_hash="f" * 64)
+        with self.assertRaises(SealedDeliveryError):
+            open_event(
+                raw,
+                sender_authority=self.founder.authority,
+                local_target=self.target,
+                recipient_targets=self.audience(),
+                authorization=forged,
+                custody=self.receiver_custody,
+                at_ms=self.now + 1,
+            )
 
 
 class MembershipAuthorizerTests(TribeMembershipFixture):
