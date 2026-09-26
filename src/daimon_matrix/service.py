@@ -7,15 +7,20 @@ import hashlib
 import re
 import unicodedata
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
-from .communication import CommunicationError, CommunicationStore
+from .communication import (
+    MESSAGE_PAYLOAD_SCHEMA,
+    CommunicationError,
+    CommunicationStore,
+)
 from .curator import CuratorCoordinator, CuratorError
 from .human_review import HumanReviewCoordinator, HumanReviewError
+from .labels import LabelError, LabelIndex
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
@@ -63,6 +68,17 @@ from .scopes import ScopeError, ScopeResolver
 from .sources import SourceError, SourceServiceContext
 from .species import APPLICATION_EVENT_KIND, SpeciesError, SpeciesServiceContext
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
+from .we_messaging import (
+    DEFAULT_WE_TTL_MS,
+    MAX_ADDRESSEES,
+    MAX_TEXT_BYTES,
+    MAX_WE_TTL_MS,
+    WE_MESSAGE_CONTENT_TYPE,
+    WE_RECEIPT_CONTENT_TYPE,
+    WE_RECEIPT_SCHEMA,
+    WeConversation,
+    WeLaneError,
+)
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
 
 METHODS: Final = frozenset(
@@ -76,12 +92,13 @@ METHODS: Final = frozenset(
         "we.projection.get",
         "we.projection.rebuild",
         "we.sync.pull",
+        "we.conversation.page",
         "we.sync.request",
         "we.sync.serve",
         "we.sync.validate-receipt",
     }
 )
-PEER_METHODS: Final = frozenset({"we.sync.peer-pull"})
+PEER_METHODS: Final = frozenset({"we.converse", "we.sync.peer-pull"})
 MESSAGING_METHODS: Final = frozenset(
     {"messaging.inbox", "messaging.send", "messaging.delivery", "messaging.reply"}
 )
@@ -231,11 +248,14 @@ OBSERVE_METHODS: Final = frozenset(
         "we.heads",
         "we.observe",
         "we.preview",
+        "we.conversation.page",
         "we.projection.get",
         "we.sync.serve",
         "we.sync.validate-receipt",
     }
 )
+
+WE_CONVERSE_DEADLINE_MS: Final = 30_000
 
 OPERATOR_CAPABILITY_PROFILES: Final = {
     "observe": OBSERVE_METHODS,
@@ -260,6 +280,71 @@ class ServiceError(ValueError):
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+
+
+def _we_conversation_entry(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """One readable row of the being's own conversation, or None.
+
+    Membership in the lane is read off signed facts: a `/we` message intent, or a
+    receipt whose recipient is an embodiment rather than a relationship. Anything
+    else belongs to another lane and is left alone.
+    """
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    origin = event.get("origin")
+    author = origin.get("embodiment_id") if isinstance(origin, Mapping) else None
+    occurred = event.get("occurred_at_ms")
+    event_id = event.get("event_id")
+    if (
+        not isinstance(author, str)
+        or type(occurred) is not int
+        or not isinstance(event_id, str)
+    ):
+        return None
+    subject = event.get("subject")
+    if subject == "communication":
+        intent = payload.get("intent")
+        body = payload.get("body")
+        if (
+            payload.get("schema") != MESSAGE_PAYLOAD_SCHEMA
+            or not isinstance(intent, Mapping)
+            or intent.get("scope") != "/we"
+            or not isinstance(body, Mapping)
+        ):
+            return None
+        addressees = body.get("addressee")
+        return {
+            "addressees": (
+                [str(row) for row in addressees] if isinstance(addressees, list) else []
+            ),
+            "author": author,
+            "event_id": event_id,
+            "kind": "message",
+            "occurred_at_ms": occurred,
+            "text": body.get("text"),
+            "thread_id": intent.get("thread_id"),
+        }
+    if subject == "communication-receipt":
+        if (
+            payload.get("schema") != WE_RECEIPT_SCHEMA
+            or payload.get("recipient_type") != "embodiment"
+        ):
+            return None
+        reference = payload.get("message_ref")
+        message_id = (
+            reference.get("event_id") if isinstance(reference, Mapping) else None
+        )
+        return {
+            "author": author,
+            "event_id": event_id,
+            "kind": "receipt",
+            "message_id": message_id,
+            "occurred_at_ms": occurred,
+            "outcome": payload.get("outcome"),
+            "thread_id": payload.get("thread_id"),
+        }
+    return None
 
 
 def _closed(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -356,7 +441,10 @@ class HostedWeave:
     sources: SourceServiceContext | None = None
     relationships: RelationshipServiceContext | None = None
     peer_context: PeerClientContext | None = None
+    we_lane: WeConversation | None = None
+    labels: LabelIndex | None = None
     messaging: MessagingServiceContext | None = None
+    visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -781,6 +869,15 @@ class HostedWeave:
                 server=self.origin,
                 completed_at_ms=self.clock(),
                 error={"code": exception.code, "retryable": False},
+            )
+        except WeLaneError as exception:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": str(exception), "retryable": False},
             )
         except (LedgerError, LedgerStateError):
             response = create_response(
@@ -1970,6 +2067,18 @@ class HostedWeave:
                     (self.ledger.authority.manifest.digest,),
                 )
             )
+            visibility = (
+                {
+                    "pending": 0,
+                    "retryable": 0,
+                    "quarantined": 0,
+                    "oldest_pending_age_ms": None,
+                    "worker_state": "unavailable",
+                    "worker_failures": 0,
+                }
+                if self.visibility_status is None
+                else dict(self.visibility_status())
+            )
             return {
                 "schema": "dm.runtime.status/v1",
                 "being_ref": self.ledger.authority.manifest.being_ref,
@@ -1978,6 +2087,7 @@ class HostedWeave:
                 "ledger_schema_version": SCHEMA_VERSION,
                 "integrity": "ok",
                 "counts": self.ledger.status_counts(),
+                "visibility": visibility,
                 "authority_epoch": {
                     "schema": "dm.we.authority-epoch-status/v1",
                     "active_manifest_hash": self.ledger.authority.manifest.digest,
@@ -2072,6 +2182,10 @@ class HostedWeave:
                 self.ledger.authority,
                 expected_sender=self.origin,
             )
+        if method == "we.converse":
+            return self._we_converse(params)
+        if method == "we.conversation.page":
+            return self._we_conversation_page(params)
         if method == "we.observe":
             return self._observe(
                 params,
@@ -2110,6 +2224,140 @@ class HostedWeave:
             )
         except WeaveProtocolError as exception:
             raise ServiceError("invalid_transport_binding") from exception
+
+    def _we_converse(self, params: Any) -> dict[str, Any]:
+        """Send one intra-being message, because a human asked for it."""
+        required = {"addressees", "request_id", "text"}
+        if not isinstance(params, Mapping) or not required <= set(
+            params
+        ) <= required | {"thread_id", "ttl_ms"}:
+            raise ServiceError("invalid_params")
+        lane, peer_context, scopes = self.we_lane, self.peer_context, self.scopes
+        if lane is None or peer_context is None or scopes is None:
+            raise ServiceError("peer_transport_unavailable")
+        converse_id = _uuid(params["request_id"])
+        text = params["text"]
+        if (
+            not isinstance(text, str)
+            or not 1 <= len(text.encode("utf-8")) <= MAX_TEXT_BYTES
+        ):
+            raise ServiceError("invalid_params")
+        addressees = params["addressees"]
+        if (
+            not isinstance(addressees, list)
+            or not 1 <= len(addressees) <= MAX_ADDRESSEES
+            or any(
+                not isinstance(row, str) or not 1 <= len(row.encode("utf-8")) <= 240
+                for row in addressees
+            )
+        ):
+            raise ServiceError("invalid_params")
+        requested_ttl = params.get("ttl_ms")
+        ttl = (
+            DEFAULT_WE_TTL_MS
+            if requested_ttl is None
+            else _uint(requested_ttl, minimum=1, maximum=MAX_WE_TTL_MS)
+        )
+        # The audience is DM-054's, resolved from signed facts at send time, so a
+        # sibling enrolled after the last message is in this one automatically.
+        resolved = scopes.resolution(scope="/we", request_id=converse_id)
+
+        def deliver(
+            embodiment_id: str, payload: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            target, peer = peer_context.configured(embodiment_id)
+            return peer.call(
+                payload,
+                recipient_target=target,
+                request_content_type=WE_MESSAGE_CONTENT_TYPE,
+                response_content_type=WE_RECEIPT_CONTENT_TYPE,
+                correlation_id=converse_id,
+                deadline_ms=_uint(self.clock()) + WE_CONVERSE_DEADLINE_MS,
+            )
+
+        return lane.converse(
+            text=text,
+            addressees=self._we_addressees(cast(list[str], addressees)),
+            request_id=converse_id,
+            targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+            thread_id=_optional_text(params.get("thread_id"), 36),
+            ttl_ms=ttl,
+            deliver=deliver,
+        )
+
+    def _we_addressees(self, requested: Sequence[str]) -> list[str]:
+        """Resolve labels to embodiment ids; plain ids pass through untouched.
+
+        A being-level label resolves to every embodiment of that being, so a
+        message can be addressed to a sibling without naming its harness or its
+        host. Labels authorize nothing: whatever comes out is still checked
+        against the signed audience by the lane, so a stale or tampered registry
+        can misname a body or fail a request, and cannot widen one.
+        """
+        if self.labels is None:
+            return list(requested)
+        resolved: list[str] = []
+        for row in requested:
+            try:
+                targets = self.labels.resolve(row)
+            except LabelError as exception:
+                if "." in row or "@" in row:
+                    raise ServiceError(str(exception)) from None
+                resolved.append(row)
+                continue
+            resolved.extend(target.embodiment_id for target in targets)
+        return resolved
+
+    def _we_label(self, embodiment_id: Any) -> str | None:
+        """Render one body by its owner-local label, or None without a registry."""
+        if self.labels is None or not isinstance(embodiment_id, str):
+            return None
+        try:
+            return self.labels.label_of(embodiment_id)
+        except LabelError:
+            return None
+
+    def _we_conversation_page(self, params: Any) -> dict[str, Any]:
+        """Read the being's own conversation. Nothing polls; a human asks."""
+        if not isinstance(params, Mapping) or not set(params) <= {
+            "after",
+            "limit",
+            "thread_id",
+        }:
+            raise ServiceError("invalid_params")
+        requested_after = params.get("after")
+        after = 0 if requested_after is None else _uint(requested_after)
+        requested_limit = params.get("limit")
+        limit = (
+            64
+            if requested_limit is None
+            else _uint(requested_limit, minimum=1, maximum=256)
+        )
+        thread_id = _optional_text(params.get("thread_id"), 36)
+        rows: list[dict[str, Any]] = []
+        for event in self.ledger.events(include_incomplete=False):
+            entry = _we_conversation_entry(event)
+            if entry is None or entry["occurred_at_ms"] <= after:
+                continue
+            if thread_id is not None and entry["thread_id"] != thread_id:
+                continue
+            rows.append(entry)
+        rows.sort(key=lambda row: (row["occurred_at_ms"], row["event_id"]))
+        page = rows[:limit]
+        for entry in page:
+            entry["author_label"] = self._we_label(entry["author"])
+            if entry["kind"] == "message":
+                entry["addressee_labels"] = (
+                    None
+                    if self.labels is None
+                    else [self._we_label(row) for row in entry["addressees"]]
+                )
+        return {
+            "after": page[-1]["occurred_at_ms"] if page else after,
+            "entries": page,
+            "more": len(rows) > limit,
+            "schema": "dm.we.conversation-page/v1",
+        }
 
     def _observe(
         self,

@@ -267,6 +267,22 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "occurred_at_ms": args.occurred_at_ms,
             "event_id": args.event_id,
         }
+    if command == ("we", "converse"):
+        converse_params: dict[str, Any] = {
+            "addressees": list(args.addressee),
+            "request_id": args.request_id,
+            "text": args.text,
+        }
+        if args.thread_id is not None:
+            converse_params["thread_id"] = args.thread_id
+        if args.ttl_ms is not None:
+            converse_params["ttl_ms"] = args.ttl_ms
+        return "we.converse", converse_params
+    if command == ("we", "conversation-page"):
+        page_params: dict[str, Any] = {"after": args.after, "limit": args.limit}
+        if args.thread_id is not None:
+            page_params["thread_id"] = args.thread_id
+        return "we.conversation.page", page_params
     if command == ("we", "projection-get"):
         return "we.projection.get", {}
     if command == ("we", "projection-rebuild"):
@@ -722,6 +738,25 @@ def parser() -> argparse.ArgumentParser:
     )
     decide.add_argument("--occurred-at-ms", type=int)
     decide.add_argument("--event-id")
+    converse = we_commands.add_parser(
+        "converse", help="send one intra-being message to sibling embodiments"
+    )
+    converse.add_argument("--text", required=True)
+    converse.add_argument(
+        "--addressee",
+        action="append",
+        required=True,
+        help="sibling embodiment id; repeat for several",
+    )
+    converse.add_argument("--request-id", required=True)
+    converse.add_argument("--thread-id")
+    converse.add_argument("--ttl-ms", type=int)
+    conversation = we_commands.add_parser(
+        "conversation-page", help="read this being's own conversation on request"
+    )
+    conversation.add_argument("--after", type=int, default=0)
+    conversation.add_argument("--limit", type=int, default=64)
+    conversation.add_argument("--thread-id")
     we_commands.add_parser("projection-get", help="read validated disposable cache")
     we_commands.add_parser("projection-rebuild", help="rebuild disposable projection")
 

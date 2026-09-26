@@ -28,7 +28,12 @@ from typing import Any, Final, Protocol, cast
 from urllib.parse import urlsplit
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
-from .communication import CommunicationStore
+from .communication import CommunicationError, CommunicationStore
+from .native_egress import (
+    MandatoryEgressController,
+    NativeEgressError,
+    OperationBinding,
+)
 from .sealed import SealedDeliveryError, inspect_delivery
 
 ROUTE_PROFILE_SCHEMA: Final = "dm.route-profile/v1"
@@ -58,6 +63,18 @@ _ID_CHARS: Final = frozenset(
 
 Clock = Callable[[], int]
 RoundTrip = Callable[[bytes], bytes]
+
+
+@dataclass(frozen=True)
+class RouteEgressSpec:
+    controller: MandatoryEgressController
+    catalog_id: str
+    path_id: str
+    deadline_ms: int
+    authority_head: str
+    projection: Mapping[str, Any]
+
+
 IntakeValidator = Callable[[bytes], None]
 IntakeGate = Callable[[str, str], None]
 TerminalValidator = Callable[[str, str, str], None]
@@ -76,8 +93,11 @@ class RouteError(ValueError):
 class RouteAmbiguous(RouteError):
     """The effect may have happened but no authenticated result was received."""
 
-    def __init__(self) -> None:
-        super().__init__("route_result_unknown", retryable=True)
+    def __init__(
+        self, code: str = "route_result_unknown", *, fallback_allowed: bool = True
+    ) -> None:
+        super().__init__(code, retryable=True)
+        self.fallback_allowed = fallback_allowed
 
 
 def _closed(value: Any, fields: set[str], code: str) -> Mapping[str, Any]:
@@ -370,6 +390,10 @@ class Provider(Protocol):
 
     def deliver(self, submission: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
+    def prepare_submission(self, submission: Mapping[str, Any]) -> bytes: ...
+
+    def send_prepared(self, request: bytes) -> Mapping[str, Any]: ...
+
     def manifest(self) -> Mapping[str, Any]: ...
 
 
@@ -393,7 +417,8 @@ class OpaqueInbox:
                 "claim_id TEXT, consumer_id TEXT, lease_until_ms INTEGER);"
                 "CREATE TABLE IF NOT EXISTS inbox_requests ("
                 "request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, "
-                "delivery_id TEXT NOT NULL);"
+                "delivery_id TEXT NOT NULL, response BLOB, response_sha256 TEXT, "
+                "egress_path_id TEXT);"
                 "CREATE TABLE IF NOT EXISTS inbox_tombstones ("
                 "delivery_id TEXT PRIMARY KEY, recipient_id TEXT NOT NULL, "
                 "envelope_hash TEXT NOT NULL, received_at_ms INTEGER NOT NULL, "
@@ -427,6 +452,8 @@ class OpaqueInbox:
         request_hash: str,
         recipient_id: str,
         envelope: bytes,
+        response_factory: Callable[[Mapping[str, Any]], tuple[bytes, RouteEgressSpec]]
+        | None = None,
     ) -> dict[str, Any]:
         _uuid(request_id, "invalid_transport_request")
         _digest(request_hash, "invalid_transport_request")
@@ -498,10 +525,10 @@ class OpaqueInbox:
                     ).fetchone()
                 if request is None:
                     database.execute(
-                        "INSERT INTO inbox_requests VALUES (?, ?, ?)",
+                        "INSERT INTO inbox_requests "
+                        "(request_id, request_hash, delivery_id) VALUES (?, ?, ?)",
                         (request_id, request_hash, delivery_id),
                     )
-                database.commit()
                 assert row is not None
                 evidence = {
                     "delivery_id": delivery_id,
@@ -510,17 +537,121 @@ class OpaqueInbox:
                     "recipient_id": recipient_id,
                     "sequence": int(row["sequence"]),
                 }
-                return {
+                result = {
                     "schema": INBOX_ITEM_SCHEMA,
                     **evidence,
                     "evidence_ref": _opaque_evidence(evidence),
                     "replayed": replayed,
                     "state": "acked" if tombstone is not None else str(row["state"]),
                 }
+                if response_factory is not None:
+                    response, spec = response_factory(result)
+                    self._admit_response(
+                        database,
+                        request_id=request_id,
+                        request_hash=request_hash,
+                        response=response,
+                        spec=spec,
+                    )
+                    result["_egress_response"] = response
+                database.commit()
+                return result
             except BaseException:
                 if database.in_transaction:
                     database.rollback()
                 raise
+
+    def _admit_response(
+        self,
+        database: sqlite3.Connection,
+        *,
+        request_id: str,
+        request_hash: str,
+        response: bytes,
+        spec: RouteEgressSpec,
+    ) -> None:
+        digest = hashlib.sha256(response).hexdigest()
+        row = database.execute(
+            "SELECT request_hash, response, response_sha256, egress_path_id "
+            "FROM inbox_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        if row is None or row["request_hash"] != request_hash:
+            raise RouteError("transport_response_conflict")
+        if row["response"] is None:
+            if row["response_sha256"] is not None or row["egress_path_id"] is not None:
+                raise RouteError("transport_response_conflict")
+            database.execute(
+                "UPDATE inbox_requests SET response=?, response_sha256=?, "
+                "egress_path_id=? WHERE request_id=?",
+                (response, digest, spec.path_id, request_id),
+            )
+        elif (
+            bytes(row["response"]) != response
+            or row["response_sha256"] != digest
+            or row["egress_path_id"] != spec.path_id
+        ):
+            raise RouteError("transport_response_conflict")
+        spec.controller.admit_in_transaction(
+            database,
+            catalog_id=spec.catalog_id,
+            path_id=spec.path_id,
+            operation_id=request_id,
+            locator=request_id,
+            native_bytes=response,
+            projection=spec.projection,
+            deadline_ms=spec.deadline_ms,
+            authority_head=spec.authority_head,
+        )
+
+    def admit_response(
+        self,
+        *,
+        request_id: str,
+        request_hash: str,
+        delivery_id: str,
+        response: bytes,
+        spec: RouteEgressSpec,
+    ) -> None:
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            row = database.execute(
+                "SELECT request_hash, delivery_id FROM inbox_requests "
+                "WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                database.execute(
+                    "INSERT INTO inbox_requests "
+                    "(request_id, request_hash, delivery_id) VALUES (?, ?, ?)",
+                    (request_id, request_hash, delivery_id),
+                )
+            elif (
+                row["request_hash"] != request_hash or row["delivery_id"] != delivery_id
+            ):
+                raise RouteError("transport_request_conflict")
+            self._admit_response(
+                database,
+                request_id=request_id,
+                request_hash=request_hash,
+                response=response,
+                spec=spec,
+            )
+            database.commit()
+
+    def resolve_response(self, request_id: str) -> bytes:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT response, response_sha256 FROM inbox_requests "
+                "WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+        if row is None or not isinstance(row[0], bytes):
+            raise RouteError("transport_response_missing")
+        response = bytes(row[0])
+        if hashlib.sha256(response).hexdigest() != row[1]:
+            raise RouteError("transport_response_conflict")
+        return response
 
     def claim(
         self,
@@ -720,6 +851,10 @@ class TransportIngress:
         recipient_embodiment_id: str | None = None,
         inbox: OpaqueInbox,
         clock: Clock,
+        egress: MandatoryEgressController,
+        egress_catalog_id: str,
+        egress_authority_head: str | None = None,
+        egress_authorizer: Callable[[OperationBinding], bool] | None = None,
         hub: bool = False,
         presence_ref: str | None = None,
         fence_ref: str | None = None,
@@ -758,11 +893,53 @@ class TransportIngress:
         self.recipient_embodiment_id = concrete_recipient
         self.inbox = inbox
         self.clock = clock
+        if not isinstance(egress, MandatoryEgressController):
+            raise RouteError("transport_egress_required")
+        if egress_authority_head is None and egress_authorizer is None:
+            if getattr(egress, "_catalog_mode", None) != "synthetic":
+                raise RouteError("transport_egress_authority_required")
+            egress_authority_head = (
+                "synthetic-route-authority:"
+                + hashlib.sha256(egress_catalog_id.encode()).hexdigest()
+            )
+            expected_synthetic_head = egress_authority_head
+
+            def synthetic_authorizer(binding: OperationBinding) -> bool:
+                return binding.authority_head == expected_synthetic_head
+
+            egress_authorizer = synthetic_authorizer
+        if egress_authority_head is None or egress_authorizer is None:
+            raise RouteError("transport_egress_authority_required")
+        authority_head = _text(
+            egress_authority_head, "transport_egress_authority_required"
+        )
+        if not callable(egress_authorizer):
+            raise RouteError("transport_egress_authority_required")
+        self.egress = egress
+        self.egress_catalog_id = egress_catalog_id
+        self.egress_authority_head = authority_head
+        self.egress_authorizer = egress_authorizer
+        egress.register_catalog(
+            catalog_id=egress_catalog_id,
+            path=inbox.path,
+            resolve=lambda locator: inbox.resolve_response(locator),
+            authorize=self._authorize_egress,
+        )
+        egress.register_path("messaging-evidence-result", egress_catalog_id)
+        egress.register_path("messaging-message-result", egress_catalog_id)
         self.hub = hub
         self.presence_ref = presence_ref
         self.fence_ref = fence_ref
         self.intake_validator = intake_validator
         self.intake_gate = intake_gate
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        if binding.authority_head != self.egress_authority_head:
+            return False
+        try:
+            return self.egress_authorizer(binding) is True
+        except Exception:
+            return False
 
     def handle(self, raw: bytes) -> bytes:
         try:
@@ -849,11 +1026,62 @@ class TransportIngress:
                     self.intake_gate(self.presence_ref, self.fence_ref)
                 if self.intake_validator is not None:
                     self.intake_validator(envelope)
+
+                def accepted_response(
+                    item: Mapping[str, Any],
+                ) -> tuple[bytes, RouteEgressSpec]:
+                    outcome = "hub-accepted" if self.hub else "recipient-intake"
+                    intake_evidence: dict[str, Any] | None = None
+                    if not self.hub:
+                        intake_evidence = {
+                            "schema": "dm.transport-intake/v1",
+                            "delivery_id": submission["delivery_id"],
+                            "recipient_id": self.recipient_id,
+                            "recipient_body_ref": self.recipient_body_ref,
+                            "envelope_sha256": submission["envelope_sha256"],
+                            "accepted_at_ms": item["received_at_ms"],
+                            "evidence_ref": item["evidence_ref"],
+                            "presence_ref": self.presence_ref,
+                            "fence_ref": self.fence_ref,
+                        }
+                    response = self._response(
+                        request_id=request_id,
+                        request_hash=request_hash,
+                        status="accepted",
+                        outcome=outcome,
+                        evidence_ref=cast(str, item["evidence_ref"]),
+                        intake=intake_evidence,
+                    )
+                    stage = (
+                        "evidence"
+                        if str(submission["leg_id"]).endswith("evidence")
+                        else "message"
+                    )
+                    projection = {
+                        "event_id": submission["message_id"],
+                        "event_digest": submission["envelope_sha256"],
+                        "sender": self.recipient_id,
+                        "recipients": [sender_principal],
+                        "thread_id": submission["leg_id"],
+                        "reply_to": None,
+                        "kind": "transport-result",
+                        "content": {"stage": stage, "outcome": "accepted"},
+                    }
+                    return response, RouteEgressSpec(
+                        controller=self.egress,
+                        catalog_id=self.egress_catalog_id,
+                        path_id=f"messaging-{stage}-result",
+                        deadline_ms=expires,
+                        authority_head=self.egress_authority_head,
+                        projection=projection,
+                    )
+
                 intake = self.inbox.ingest(
                     request_id=request_id,
                     request_hash=request_hash,
                     recipient_id=self.recipient_id,
                     envelope=envelope,
+                    response_factory=accepted_response,
                 )
             except (RouteError, SealedDeliveryError, CanonicalError, ValueError):
                 evidence = _opaque_evidence(
@@ -864,7 +1092,7 @@ class TransportIngress:
                         "status": "refused",
                     }
                 )
-                return self._response(
+                response = self._response(
                     request_id=request_id,
                     request_hash=request_hash,
                     status="refused",
@@ -872,27 +1100,50 @@ class TransportIngress:
                     evidence_ref=evidence,
                     intake=None,
                 )
-            intake_evidence: dict[str, Any] | None = None
-            outcome = "hub-accepted" if self.hub else "recipient-intake"
-            if not self.hub:
-                intake_evidence = {
-                    "schema": "dm.transport-intake/v1",
-                    "delivery_id": submission["delivery_id"],
-                    "recipient_id": self.recipient_id,
-                    "recipient_body_ref": self.recipient_body_ref,
-                    "envelope_sha256": submission["envelope_sha256"],
-                    "accepted_at_ms": intake["received_at_ms"],
-                    "evidence_ref": intake["evidence_ref"],
-                    "presence_ref": self.presence_ref,
-                    "fence_ref": self.fence_ref,
+                refused_delivery = request_id
+                stage = "evidence"
+                if "submission" in value and isinstance(value["submission"], Mapping):
+                    refused_delivery = str(
+                        value["submission"].get("delivery_id", request_id)
+                    )
+                    if str(value["submission"].get("leg_id", "")).endswith("message"):
+                        stage = "message"
+                projection = {
+                    "event_id": request_id,
+                    "event_digest": request_hash,
+                    "sender": self.recipient_id,
+                    "recipients": [sender_principal],
+                    "thread_id": request_id,
+                    "reply_to": None,
+                    "kind": "transport-result",
+                    "content": {"stage": stage, "outcome": "refused"},
                 }
-            return self._response(
-                request_id=request_id,
-                request_hash=request_hash,
-                status="accepted",
-                outcome=outcome,
-                evidence_ref=cast(str, intake["evidence_ref"]),
-                intake=intake_evidence,
+                self.inbox.admit_response(
+                    request_id=request_id,
+                    request_hash=request_hash,
+                    delivery_id=refused_delivery,
+                    response=response,
+                    spec=RouteEgressSpec(
+                        controller=self.egress,
+                        catalog_id=self.egress_catalog_id,
+                        path_id=f"messaging-{stage}-result",
+                        deadline_ms=expires,
+                        authority_head=self.egress_authority_head,
+                        projection=projection,
+                    ),
+                )
+                return self.egress.release(
+                    self.egress.binding(self.egress_catalog_id, request_id),
+                    response,
+                    lambda result: result,
+                )
+            stored_response = intake.get("_egress_response")
+            if not isinstance(stored_response, bytes):
+                raise RouteError("transport_response_missing")
+            return self.egress.release(
+                self.egress.binding(self.egress_catalog_id, request_id),
+                stored_response,
+                lambda value: value,
             )
         except (
             RouteError,
@@ -1010,6 +1261,7 @@ class AuthenticatedProvider:
         sender_body_ref: str,
         round_trip: RoundTrip,
         clock: Clock,
+        egress: MandatoryEgressController,
         available: bool = True,
     ) -> None:
         for value in (
@@ -1031,6 +1283,9 @@ class AuthenticatedProvider:
         self._sender_body_ref = sender_body_ref
         self._round_trip = round_trip
         self._clock = clock
+        if not isinstance(egress, MandatoryEgressController):
+            raise RouteError("invalid_route_provider")
+        self._egress = egress
         self._available = available
 
     @property
@@ -1044,6 +1299,10 @@ class AuthenticatedProvider:
     @property
     def route_class(self) -> str:
         return self._route_class
+
+    @property
+    def egress(self) -> MandatoryEgressController:
+        return self._egress
 
     def inspect(self) -> Mapping[str, Any]:
         evidence = {
@@ -1182,7 +1441,28 @@ class AuthenticatedProvider:
         if not self._available:
             return self._result(value, "unavailable", "unavailable", None)
         try:
-            raw_response = self._round_trip(request)
+            raw_response = self._egress.release_registered(
+                request,
+                allowed_paths=frozenset(
+                    {
+                        "route-provider-request",
+                        "messaging-evidence-request",
+                        "messaging-message-request",
+                    }
+                ),
+                effect=self._round_trip,
+            )
+            result = self.validate_prepared_response(request, raw_response)
+            if response_sink is not None:
+                response_sink(raw_response)
+            return result
+        except RouteError as exception:
+            # Retain possible remote effects and exact retry bytes, but an
+            # invalid response must not authorize trying a different route.
+            raise RouteAmbiguous(exception.code, fallback_allowed=False) from exception
+        except NativeEgressError as exception:
+            # A local visibility/authority failure is not route unavailability.
+            raise RouteAmbiguous(fallback_allowed=False) from exception
         except (
             ConnectionError,
             OSError,
@@ -1190,10 +1470,6 @@ class AuthenticatedProvider:
             http.client.HTTPException,
         ) as exception:
             raise RouteAmbiguous() from exception
-        result = self.validate_prepared_response(request, raw_response)
-        if response_sink is not None:
-            response_sink(raw_response)
-        return result
 
     def validate_prepared_response(
         self, request: bytes, raw_response: bytes
@@ -1447,15 +1723,43 @@ class RouteCoordinator:
         providers: Mapping[str, Provider],
         *,
         clock: Clock,
+        egress: MandatoryEgressController | None = None,
+        egress_catalog_id: str | None = None,
     ) -> None:
         self.store = store
         self.profile = profile
         self.providers = dict(providers)
         self.clock = clock
+        if egress is None:
+            controllers = {
+                provider.egress
+                for provider in self.providers.values()
+                if isinstance(provider, AuthenticatedProvider)
+            }
+            if len(controllers) != 1:
+                raise RouteError("route_egress_required")
+            egress = controllers.pop()
+        if egress_catalog_id is None:
+            egress_catalog_id = (
+                "route-" + hashlib.sha256(profile.profile_id.encode()).hexdigest()[:24]
+            )
+        self.egress = egress
+        store.bind_egress(
+            egress,
+            catalog_id=egress_catalog_id,
+            authorize=self._authorize_egress,
+        )
         for binding in profile.routes:
             provider = self.providers.get(binding.provider_ref)
             if provider is None:
                 continue
+            if type(provider) not in {
+                AuthenticatedProvider,
+                LocalIPCProvider,
+                DirectHTTPProvider,
+                HubProvider,
+            }:
+                raise RouteError("route_provider_not_gated")
             if (
                 provider.provider_ref != binding.provider_ref
                 or provider.route_ref != binding.route_ref
@@ -1463,6 +1767,20 @@ class RouteCoordinator:
             ):
                 raise RouteError("route_provider_binding_mismatch")
             _provider_manifest(provider.manifest(), binding)
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        if not self.profile.enabled:
+            return False
+        try:
+            attempt = self.store.egress_attempt(binding.operation_id)
+        except (CommunicationError, ValueError):
+            return False
+        return binding.authority_head == self.profile.body_ref and any(
+            route.enabled
+            and route.provider_ref == attempt["provider_ref"]
+            and route.route_ref == attempt["route_ref"]
+            for route in self.profile.routes
+        )
 
     def _locality_gate(self, message_id: str) -> None:
         if not self.profile.principal_id.endswith("@localhost"):
@@ -1562,6 +1880,7 @@ class RouteCoordinator:
             raise RouteError("route_recipient_mismatch")
         delivery_id = cast(str, metadata["delivery_id"])
         envelope_hash = cast(str, metadata["envelope_sha256"])
+        projection = self.store.route_projection(leg_id=leg_id, envelope=metadata)
         evidence: list[dict[str, Any]] = []
         candidates = self.profile.candidates(recipient_id)
         if not candidates:
@@ -1595,12 +1914,6 @@ class RouteCoordinator:
                 "body_ref": binding.recipient_body_ref,
                 "deadline_ms": deadline_ms,
             }
-            self.store.record_attempt(attempt)
-            self.store.record_delivery(
-                attempt_id=attempt_id,
-                delivery_id=delivery_id,
-                envelope_hash=envelope_hash,
-            )
             submission = {
                 "schema": ROUTE_SUBMISSION_SCHEMA,
                 "attempt_id": attempt_id,
@@ -1612,9 +1925,28 @@ class RouteCoordinator:
                 "envelope": b64url(envelope),
                 "deadline_ms": deadline_ms,
             }
+            authenticated = cast(AuthenticatedProvider, provider)
+            request = AuthenticatedProvider.prepare_submission(
+                authenticated, submission
+            )
+            self.store.record_attempt(
+                attempt,
+                egress_request=request,
+                egress_projection=projection,
+                authority_head=self.profile.body_ref,
+            )
+            self.store.record_delivery(
+                attempt_id=attempt_id,
+                delivery_id=delivery_id,
+                envelope_hash=envelope_hash,
+            )
             try:
-                result = dict(provider.deliver(submission))
-            except RouteAmbiguous:
+                result = dict(
+                    AuthenticatedProvider.send_prepared(authenticated, request)
+                )
+            except RouteAmbiguous as exception:
+                if not exception.fallback_allowed:
+                    raise
                 evidence.append(
                     {
                         "provider_ref": binding.provider_ref,

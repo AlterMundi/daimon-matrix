@@ -29,7 +29,7 @@ MAX_REGISTRY_BYTES: Final = 512 * 1024
 MAX_SCENARIOS: Final = 128
 MAX_EVIDENCE_TESTS: Final = 4096
 REQUIRED_REGISTRY_SHA256: Final = (
-    "aa975f493e8989c781c472045faa57518015fbd5273af63ee9a4f2d9ba50113a"
+    "7a8f79f27b855481046c8f4432d55e1b2f6443c30c280098e6744b09ce309079"
 )
 REQUIRED_SCENARIO_IDS: Final = frozenset(
     {
@@ -134,6 +134,7 @@ REQUIRED_SCENARIO_IDS: Final = frozenset(
         "source_two_being_exchange",
         "sync_import_not_adoption",
         "sync_resume_cursor",
+        "tribe_conversation_membership_authority",
         "tribe_verified_snapshot",
     }
 )

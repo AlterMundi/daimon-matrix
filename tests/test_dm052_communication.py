@@ -24,6 +24,7 @@ from daimon_matrix.communication import (
     ROUTE_ATTEMPT_SCHEMA,
     CommunicationError,
     CommunicationStore,
+    SyntheticRouteProvider,
     dispatch_attempt,
 )
 from daimon_matrix.local_api import (
@@ -406,12 +407,12 @@ class LogicalMessageTests(LogicalCommunicationFixture):
         )
         self.assertEqual(self.store.conflicts()[0]["lane"], "delivery")
 
-    def test_route_ack_is_not_recipient_intake(self) -> None:
+    def test_synthetic_route_ack_is_not_recipient_intake(self) -> None:
         _message, _resolution, result = self.append_message(
             [self.target("embodiment:legion")]
         )
         attempt = self.attempt(result["legs"][0]["leg_id"], 4)
-        provider = FakeProvider()
+        provider = SyntheticRouteProvider(provider_ref="route:fake-direct")
         ack = dispatch_attempt(self.store, provider, attempt)
         self.assertEqual(ack["state"], "route-acked")
         self.assertEqual(
@@ -421,19 +422,27 @@ class LogicalMessageTests(LogicalCommunicationFixture):
         with self.assertRaisesRegex(CommunicationError, "terminal_result_incomplete"):
             self.store.result(result["message_id"], require_terminal=True)
 
-    def test_response_loss_retries_one_stable_provider_effect(self) -> None:
+    def test_legacy_dispatch_rejects_effectful_provider_before_effect(self) -> None:
         _message, _resolution, result = self.append_message(
             [self.target("embodiment:legion")]
         )
         attempt = self.attempt(result["legs"][0]["leg_id"], 5)
         provider = FakeProvider()
         provider.fail_after_effect = True
-        with self.assertRaisesRegex(CommunicationError, "route_result_unknown"):
-            dispatch_attempt(self.store, provider, attempt)
-        self.assertEqual(provider.effects, {attempt["attempt_id"]})
-        second = dispatch_attempt(self.store, provider, attempt)
-        self.assertEqual(second["state"], "route-acked")
-        self.assertEqual(provider.effects, {attempt["attempt_id"]})
+        with self.assertRaisesRegex(CommunicationError, "route_provider_not_gated"):
+            dispatch_attempt(self.store, provider, attempt)  # type: ignore[arg-type]
+        self.assertEqual(provider.effects, set())
+        with self.assertRaisesRegex(CommunicationError, "route_attempt_not_known"):
+            self.store.record_route_ack(
+                attempt_id=attempt["attempt_id"],
+                ack={
+                    "schema": "dm.route-ack/v1",
+                    "provider_ref": provider.provider_ref,
+                    "attempt_id": attempt["attempt_id"],
+                    "status": "accepted",
+                },
+                failed=False,
+            )
 
     def test_terminal_receipt_replay_and_conflict(self) -> None:
         _message, _resolution, result = self.append_message(
@@ -1060,6 +1069,130 @@ class PublicBoundaryAndSchemaTests(LogicalCommunicationFixture):
                 message_event_id=message["event_id"],
                 resolution_event_id=resolution["event_id"],
             )
+
+
+MEMBERSHIP = "dm:membership:v1:" + "A" * 43
+
+
+class PerBodyLegTests(LogicalCommunicationFixture):
+    """One membership received by several bodies, and the store that allows it."""
+
+    def upgraded(self) -> CommunicationStore:
+        store = CommunicationStore(self.ledger_a, clock=lambda: NOW)
+        store.initialize()
+        store.upgrade_receipts_v2()
+        store.upgrade_legs_v3()
+        return store
+
+    def two_bodies(self) -> list[dict[str, Any]]:
+        return [
+            self.target(
+                MEMBERSHIP,
+                scope_kind="relationship",
+                recipient_type="relationship",
+                origin="embodiment:legion",
+            ),
+            self.target(
+                MEMBERSHIP,
+                scope_kind="relationship",
+                recipient_type="relationship",
+                origin="embodiment:daimonmatrix",
+            ),
+        ]
+
+    def test_a_legacy_store_refuses_two_bodies_for_one_membership(self) -> None:
+        """Refused with a closed error, never as a database integrity escape."""
+        with self.assertRaisesRegex(CommunicationError, "duplicate_semantic_recipient"):
+            self.append_message(self.two_bodies(), scope="/tribe")
+
+    def test_an_upgraded_store_holds_one_leg_per_receiving_body(self) -> None:
+        self.store = self.upgraded()
+        message, resolution, result = self.append_message(
+            self.two_bodies(), scope="/tribe"
+        )
+        legs = result["legs"]
+        self.assertEqual(len(legs), 2)
+        self.assertEqual({leg["recipient_id"] for leg in legs}, {MEMBERSHIP})
+        self.assertEqual(
+            sorted(leg["receipt_origin_embodiment_id"] for leg in legs),
+            ["embodiment:daimonmatrix", "embodiment:legion"],
+        )
+        self.assertEqual(len({leg["leg_id"] for leg in legs}), 2)
+        self.assertFalse(result["terminal"])
+        replay = self.store.accept(
+            message_event_id=message["event_id"],
+            resolution_event_id=resolution["event_id"],
+        )
+        self.assertEqual(
+            {leg["leg_id"] for leg in replay["legs"]},
+            {leg["leg_id"] for leg in legs},
+        )
+
+    def test_upgrade_recomputes_identities_and_keeps_the_projection_readable(
+        self,
+    ) -> None:
+        message, _resolution, before = self.append_message(
+            [self.target("embodiment:daimonmatrix")]
+        )
+        legacy = {leg["leg_id"]: leg["sequence"] for leg in before["legs"]}
+        self.assertTrue(legacy)
+        store = self.upgraded()
+        after = store.result(message["event_id"])
+        self.assertEqual(len(after["legs"]), len(legacy))
+        self.assertEqual(
+            {leg["sequence"] for leg in after["legs"]}, set(legacy.values())
+        )
+        self.assertNotEqual({leg["leg_id"] for leg in after["legs"]}, set(legacy))
+        with closing(sqlite3.connect(self.ledger_a.path)) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT value FROM communication_meta WHERE key='schema_version'"
+                ).fetchone()[0],
+                "3",
+            )
+            self.assertEqual(
+                database.execute("PRAGMA foreign_key_check").fetchall(), []
+            )
+
+    def test_upgrade_requires_receipts_v2_and_is_idempotent(self) -> None:
+        plain = CommunicationStore(self.ledger_a, clock=lambda: NOW)
+        plain.initialize()
+        with self.assertRaisesRegex(CommunicationError, "legs_v3_requires_receipts_v2"):
+            plain.upgrade_legs_v3()
+        self.assertFalse(plain.legs_v3)
+        store = self.upgraded()
+        self.assertTrue(store.legs_v3)
+        store.upgrade_legs_v3()
+        self.assertTrue(store.legs_v3)
+        reopened = CommunicationStore(
+            self.ledger_a, clock=lambda: NOW, receipts_v2=True, legs_v3=True
+        )
+        reopened.initialize()
+        self.assertTrue(reopened.legs_v3)
+
+    def test_each_body_terminates_only_its_own_leg(self) -> None:
+        """A receipt closes the leg of the body that signed it, and no other."""
+        self.store = self.upgraded()
+        message, _resolution, result = self.append_message(
+            self.two_bodies(), scope="/tribe"
+        )
+        self.receipt(result, MEMBERSHIP, "delivered")
+        after_one = self.store.result(message["event_id"])
+        self.assertFalse(after_one["terminal"])
+        self.assertEqual(
+            {
+                leg["receipt_origin_embodiment_id"]: leg["state"]
+                for leg in after_one["legs"]
+            },
+            {"embodiment:daimonmatrix": "accepted", "embodiment:legion": "delivered"},
+        )
+        self.receipt(result, MEMBERSHIP, "delivered", remote=True)
+        terminal = self.store.result(message["event_id"], require_terminal=True)
+        self.assertTrue(terminal["terminal"])
+        self.assertEqual({leg["state"] for leg in terminal["legs"]}, {"delivered"})
+        self.assertEqual(
+            {leg["recipient_id"] for leg in terminal["legs"]}, {MEMBERSHIP}
+        )
 
 
 if __name__ == "__main__":

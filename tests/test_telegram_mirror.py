@@ -1,5 +1,6 @@
 """Offline native mirror tests; Telegram is always mocked."""
 
+import sys
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -331,6 +332,741 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(adapter.mirror_selected("selected"), {"status": "disabled"})
         resolver.assert_not_called()
         verifier.assert_not_called()
+
+
+class MandatoryPlainTests(unittest.TestCase):
+    def test_explicit_bot_api_rejection_is_not_ambiguous_acceptance(self):
+        import json
+
+        request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+        for code in (400, 401, 403, 404, 409, 429):
+            raw = json.dumps(
+                {
+                    "ok": False,
+                    "error_code": code,
+                    "description": "synthetic rejection",
+                    "parameters": {"retry_after": 2},
+                }
+            ).encode()
+            self.assertEqual(
+                mirror.classify_plain_response(raw, request, bot_id=123),
+                ("rejected", 2),
+            )
+        for raw in (
+            b'{"ok":false,"error_code":500,"description":"uncertain"}',
+            b'{"ok":false,"error_code":429,"description":"x","parameters":{"retry_after":true}}',
+            b'{"ok":false,"error_code":429,"description":"x","parameters":{"migrate_to_chat_id":-999}}',
+        ):
+            with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+                mirror.classify_plain_response(raw, request, bot_id=123)
+
+    def test_transport_rejects_boolean_aliases_before_network(self):
+        transport = mirror.PlainTelegramTransport(
+            token="123:TEST_ONLY", bot_id=123, chat_id=1, topic_id=1
+        )
+        request = mirror.plain_request("hello", chat_id=1, topic_id=1)
+        for malformed in (
+            {**request, "chat_id": True},
+            {**request, "message_thread_id": True},
+            {**request, "link_preview_options": {"is_disabled": 1}},
+        ):
+            with patch("urllib.request.OpenerDirector.open") as opened:
+                with self.assertRaisesRegex(ValueError, "^echo_request_invalid$"):
+                    transport.send(malformed)
+                opened.assert_not_called()
+
+    def test_invalid_evidence_is_closed_and_duplicate_keys_rejected(self) -> None:
+        import copy
+        import json
+
+        request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+        value = {
+            "ok": True,
+            "result": {
+                "message_id": 9,
+                "from": {"id": 123, "is_bot": True},
+                "chat": {"id": -123},
+                "text": "hello",
+            },
+        }
+        mutations = [
+            ("text", "other"),
+            ("message_id", True),
+            ("message_thread_id", None),
+            ("message_thread_id", 7),
+            ("is_topic_message", True),
+            ("from", {"id": 123, "is_bot": False}),
+            ("from", {"id": 999, "is_bot": True}),
+            ("chat", {"id": -999}),
+            (
+                "entities",
+                [
+                    {
+                        "type": "text_link",
+                        "offset": 0,
+                        "length": 5,
+                        "url": "https://example.org",
+                    }
+                ],
+            ),
+        ]
+        for field, bad in mutations:
+            altered = copy.deepcopy(value)
+            altered["result"][field] = bad
+            with (
+                self.subTest(field=field, bad=bad),
+                self.assertRaisesRegex(ValueError, "^echo_response_invalid$"),
+            ):
+                mirror.validate_plain_response(
+                    json.dumps(altered).encode(), request, bot_id=123
+                )
+        raw = (
+            json.dumps(value).replace('"ok": true', '"ok": false, "ok": true').encode()
+        )
+        with self.assertRaisesRegex(ValueError, "^echo_response_invalid$"):
+            mirror.validate_plain_response(raw, request, bot_id=123)
+
+    def test_real_http_transport_retains_response_and_sanitizes_truncation(
+        self,
+    ) -> None:
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        seen = []
+        truncate = [False]
+        reject = [False]
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                payload = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                seen.append(payload)
+                raw = json.dumps(
+                    {
+                        "ok": True,
+                        "result": {
+                            "message_id": 9,
+                            "from": {"id": 123, "is_bot": True},
+                            "chat": {"id": -123},
+                            "text": payload["text"],
+                        },
+                    }
+                ).encode()
+                if reject[0]:
+                    raw = (
+                        b'{"ok":false,"error_code":429,"description":"synthetic busy",'
+                        b'"parameters":{"retry_after":2}}'
+                    )
+                self.send_response(429 if reject[0] else 200)
+                self.send_header(
+                    "Content-Length", str(len(raw) + (100 if truncate[0] else 0))
+                )
+                self.end_headers()
+                self.wfile.write(raw)
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        original = mirror._plain_http_exchange
+
+        def local_exchange(url, payload):
+            self.assertEqual(
+                url, "https://api.telegram.org/bot123:TEST_ONLY/sendMessage"
+            )
+            return original(
+                f"http://127.0.0.1:{server.server_port}/sendMessage", payload
+            )
+
+        try:
+            with patch.object(mirror, "_plain_http_exchange", local_exchange):
+                transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+                raw = transport.send(request)
+                self.assertEqual(
+                    mirror.validate_plain_response(raw, request, bot_id=123)["result"][
+                        "text"
+                    ],
+                    "hello",
+                )
+                truncate[0] = True
+                with self.assertRaisesRegex(ValueError, "^echo_transport_ambiguous$"):
+                    transport.send(request)
+                with self.assertRaisesRegex(ValueError, "^echo_request_invalid$"):
+                    transport.send({**request, "chat_id": -999})
+                self.assertEqual(len(seen), 2)
+                truncate[0] = False
+                reject[0] = True
+                negative = transport.send(request)
+                self.assertEqual(
+                    mirror.classify_plain_response(negative, request, bot_id=123),
+                    ("rejected", 2),
+                )
+                self.assertEqual(len(seen), 3)
+                self.assertNotIn("TEST_ONLY", repr(transport))
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux PDEATHSIG/pidfd contract")
+    def test_parent_death_stops_local_http_executor(self):
+        import os
+        import signal
+        import subprocess
+        import sys
+        import threading
+        from contextlib import suppress
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        received, disconnected = threading.Event(), threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                received.set()
+                self.connection.settimeout(3)
+                try:
+                    if self.rfile.read(1) == b"":
+                        disconnected.set()
+                except TimeoutError:
+                    pass
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        code = """
+import subprocess
+from daimon_matrix import telegram_mirror as t
+original = subprocess.Popen
+def capture(*a, **kw):
+    child = original(*a, **kw)
+    print(child.pid, flush=True)
+    return child
+subprocess.Popen = capture
+t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
+""".replace("PORT", str(server.server_port))
+        pidfd = None
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ) as parent:
+                try:
+                    self.assertTrue(received.wait(3))
+                    pidfd = os.pidfd_open(int(parent.stdout.readline()))
+                    parent.kill()
+                    parent.wait()
+                    self.assertTrue(
+                        disconnected.wait(1), "orphan executor outlived its guard owner"
+                    )
+                finally:
+                    if pidfd is not None:
+                        with suppress(ProcessLookupError):
+                            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    if parent.poll() is None:
+                        parent.kill()
+                    parent.wait()
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_deadline_covers_dns_and_interruption_reaps_child(self):
+        import subprocess
+        import time
+
+        original = subprocess.Popen
+        children, partial = [], []
+
+        def launch(*args, **kwargs):
+            argv = args[0]
+            # Delay the real executor's resolver before any socket is opened.
+            code = (
+                "import runpy,socket,sys,time; "
+                "socket.getaddrinfo=lambda *a,**k: "
+                "(print('resolver-entered',flush=True),time.sleep(30))[1]; "
+                "runpy.run_path(sys.argv[1],run_name='__main__')"
+            )
+            child = original([argv[0], "-I", "-c", code, argv[2]], **kwargs)
+            children.append(child)
+            communicate = child.communicate
+
+            def observed(*a, **k):
+                try:
+                    return communicate(*a, **k)
+                except subprocess.TimeoutExpired as exc:
+                    partial.append(exc.output)
+                    raise
+
+            child.communicate = observed
+            return child
+
+        with (
+            # Include real interpreter startup on shared Intel runners. The
+            # resolver stalls for 30s: the total deadline must still kill it.
+            patch.object(mirror, "_PLAIN_HTTP_SECONDS", 2.0),
+            patch.object(subprocess, "Popen", launch),
+        ):
+            started = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                mirror._plain_http_exchange("http://127.0.0.1:1/", b"{}")
+            self.assertLess(time.monotonic() - started, 3.0)
+        self.assertIsNotNone(partial[0], "executor must reach the stalled resolver")
+        self.assertIn(b"resolver-entered", partial[0])
+        self.assertEqual(children[0].returncode, -9)
+        self.assertTrue(children[0].stdin.closed)
+        self.assertTrue(children[0].stdout.closed)
+
+        def interrupt(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+
+            def stop(*a, **k):
+                raise KeyboardInterrupt
+
+            child.communicate = stop
+            return child
+
+        with (
+            patch.object(subprocess, "Popen", interrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            mirror._plain_http_exchange("http://127.0.0.1:1/", b"{}")
+        self.assertEqual(children[-1].returncode, -9)
+        self.assertTrue(children[-1].stdin.closed)
+        self.assertTrue(children[-1].stdout.closed)
+
+    def test_total_deadline_slow_headers_body_and_chunk_framing(self):
+        import json
+        import threading
+        import time
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        seen = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                request = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                seen.append(request)
+                mode = request["text"]
+                raw = json.dumps(
+                    {
+                        "ok": True,
+                        "result": {
+                            "message_id": 1,
+                            "from": {"id": 123, "is_bot": True},
+                            "chat": {"id": -123},
+                            "text": request["text"],
+                        },
+                    }
+                ).encode()
+                try:
+                    if mode == "headers":
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        for _ in range(20):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.15)
+                        self.wfile.write(
+                            b"\r\nContent-Length: "
+                            + str(len(raw)).encode()
+                            + b"\r\n\r\n"
+                            + raw
+                        )
+                    elif mode == "chunks":
+                        self.wfile.write(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;"
+                        )
+                        for _ in range(20):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.15)
+                        self.wfile.write(b"\r\nx\r\n0\r\n\r\n")
+                    elif mode in ("framing", "chunk-success"):
+                        self.wfile.write(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        )
+                        self.wfile.write(
+                            hex(len(raw))[2:].encode() + b"\r\n" + raw + b"\r\n0\r\n"
+                        )
+                        self.wfile.write(
+                            (b"X-Trailer: " + b"a" * 1000 + b"\r\n")
+                            * (300 if mode == "framing" else 1)
+                            + b"\r\n"
+                        )
+                    else:
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(raw)))
+                        self.end_headers()
+                        if mode == "body":
+                            for byte in raw[:20]:
+                                self.wfile.write(bytes([byte]))
+                                self.wfile.flush()
+                                time.sleep(0.15)
+                            raw = raw[20:]
+                        self.wfile.write(raw)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # Expected: the local executor is killed, not abandoned.
+                self.close_connection = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        original = mirror._plain_http_exchange
+
+        def local_exchange(url, payload):
+            self.assertEqual(
+                url, "https://api.telegram.org/bot123:TEST_ONLY/sendMessage"
+            )
+            return original(
+                f"http://127.0.0.1:{server.server_port}/sendMessage", payload
+            )
+
+        try:
+            with (
+                patch.object(mirror, "_plain_http_exchange", local_exchange),
+                # Include interpreter/PTY startup on shared Intel Mac runners.
+                # Each slow response still takes >=3s, well beyond this total
+                # deadline; the production timeout is not changed.
+                patch.object(mirror, "_PLAIN_HTTP_SECONDS", 1.5),
+            ):
+                transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                for value in ("headers", "body", "chunks", "framing"):
+                    request = mirror.plain_request(value, chat_id=-123, topic_id=None)
+                    with self.subTest(mode=value):
+                        start = time.monotonic()
+                        with self.assertRaisesRegex(
+                            ValueError, "echo_transport_ambiguous"
+                        ):
+                            transport.send(request)
+                        self.assertLess(time.monotonic() - start, 2.5)
+                for value in ("success", "chunk-success"):
+                    request = mirror.plain_request(value, chat_id=-123, topic_id=None)
+                    self.assertEqual(
+                        mirror.classify_plain_response(
+                            transport.send(request), request, bot_id=123
+                        )[0],
+                        "confirmed",
+                    )
+                self.assertEqual(
+                    [request["text"] for request in seen],
+                    [
+                        "headers", "body", "chunks", "framing", "success",
+                        "chunk-success",
+                    ],
+                )
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_complete_plaintext_parts_and_verified_response(self) -> None:
+        import json
+
+        document = "<&😀\n" * 1600
+        parts = mirror.render_plain_parts(document)
+        self.assertGreater(len(parts), 1)
+        self.assertEqual("".join(p.split("\n", 1)[1] for p in parts), document)
+        self.assertTrue(all(len(p.encode("utf-16-le")) // 2 <= 4096 for p in parts))
+        request = mirror.plain_request(parts[0], chat_id=-123, topic_id=7)
+        self.assertNotIn("parse_mode", request)
+        raw = json.dumps(
+            {
+                "ok": True,
+                "result": {
+                    "message_id": 9,
+                    "from": {"id": 123, "is_bot": True},
+                    "chat": {"id": -123},
+                    "message_thread_id": 7,
+                    "is_topic_message": True,
+                    "text": parts[0],
+                },
+            }
+        ).encode()
+        self.assertEqual(
+            mirror.validate_plain_response(raw, request, bot_id=123)["result"][
+                "message_id"
+            ],
+            9,
+        )
+
+
+class TelegramQualificationTests(unittest.TestCase):
+    token = "123:TEST_ONLY_SECRET"
+    bot_id = 123
+    chat_id = -100123
+    topic_id = 7
+    probe_text = "dm-137 enrollment probe 6f47470e-89d0-4a1d-a1a3-8c6298450f16"
+
+    def get_me(self, *, bot_id: int = 123, is_bot: bool = True) -> bytes:
+        import json
+
+        return json.dumps(
+            {
+                "ok": True,
+                "result": {
+                    "id": bot_id,
+                    "is_bot": is_bot,
+                    "first_name": "Qualification fixture",
+                    "username": "qualification_fixture_bot",
+                },
+            }
+        ).encode()
+
+    def send_result(self, **changes: Any) -> bytes:
+        import json
+
+        result: dict[str, Any] = {
+            "message_id": 91,
+            "from": {"id": self.bot_id, "is_bot": True},
+            "chat": {"id": self.chat_id},
+            "message_thread_id": self.topic_id,
+            "is_topic_message": True,
+            "text": self.probe_text,
+        }
+        result.update(changes)
+        return json.dumps({"ok": True, "result": result}).encode()
+
+    def qualify(self) -> dict[str, Any]:
+        return mirror.qualify_telegram_destination(
+            token=self.token,
+            bot_id=self.bot_id,
+            chat_id=self.chat_id,
+            topic_id=self.topic_id,
+            probe_text=self.probe_text,
+        )
+
+    def test_success_uses_get_me_then_one_exact_probe_and_returns_closed_record(
+        self,
+    ) -> None:
+        import hashlib
+        import json
+
+        calls: list[tuple[str, bytes]] = []
+
+        def exchange(url: str, payload: bytes) -> tuple[int, bytes]:
+            calls.append((url, payload))
+            if len(calls) == 1:
+                return 200, self.get_me()
+            self.assertEqual(
+                json.loads(payload),
+                mirror.plain_request(
+                    self.probe_text, chat_id=self.chat_id, topic_id=self.topic_id
+                ),
+            )
+            return 200, self.send_result()
+
+        with (
+            patch.object(mirror, "_plain_http_exchange", side_effect=exchange),
+            patch(
+                "daimon_matrix.telegram_mirror.time.time_ns",
+                return_value=1_777_777_777_123_000_000,
+            ),
+        ):
+            qualification = self.qualify()
+
+        self.assertEqual(
+            [url for url, _ in calls],
+            [
+                f"https://api.telegram.org/bot{self.token}/getMe",
+                f"https://api.telegram.org/bot{self.token}/sendMessage",
+            ],
+        )
+        self.assertEqual(calls[0][1], b"{}")
+        self.assertEqual(
+            json.loads(calls[1][1]),
+            mirror.plain_request(
+                self.probe_text,
+                chat_id=self.chat_id,
+                topic_id=self.topic_id,
+            ),
+        )
+        self.assertEqual(
+            qualification,
+            {
+                "schema": "dm.messaging.telegram-qualification/v1",
+                "qualified_at_ms": 1_777_777_777_123,
+                "token_sha256": hashlib.sha256(self.token.encode()).hexdigest(),
+                "get_me_bot_id": self.bot_id,
+                "probe_chat_id": self.chat_id,
+                "probe_topic_id": self.topic_id,
+                "probe_message_id": 91,
+                "probe_text_sha256": hashlib.sha256(
+                    self.probe_text.encode()
+                ).hexdigest(),
+            },
+        )
+        serialized = json.dumps(qualification, sort_keys=True)
+        for forbidden in (
+            self.token,
+            self.probe_text,
+            "api.telegram.org",
+            "first_name",
+            "username",
+            "result",
+        ):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_wrong_token_prefix_or_get_me_identity_fails_before_probe(self) -> None:
+        with patch.object(mirror, "_plain_http_exchange") as exchange:
+            with self.assertRaisesRegex(ValueError, "^telegram_qualification_failed$"):
+                mirror.qualify_telegram_destination(
+                    token="999:TEST_ONLY_SECRET",
+                    bot_id=self.bot_id,
+                    chat_id=self.chat_id,
+                    topic_id=self.topic_id,
+                    probe_text=self.probe_text,
+                )
+            exchange.assert_not_called()
+
+        for raw in (
+            self.get_me(bot_id=999),
+            self.get_me(is_bot=False),
+            b'{"ok":true,"result":{"id":true,"is_bot":true}}',
+        ):
+            with (
+                self.subTest(raw=raw),
+                patch.object(
+                    mirror, "_plain_http_exchange", return_value=(200, raw)
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                exchange.assert_called_once()
+
+    def test_wrong_probe_destination_topic_sender_or_text_never_qualifies(self) -> None:
+        import copy
+        import json
+
+        valid = json.loads(self.send_result())["result"]
+        mutations = (
+            {"chat": {"id": -999}},
+            {"message_thread_id": 8},
+            {"is_topic_message": False},
+            {"from": {"id": 999, "is_bot": True}},
+            {"from": {"id": self.bot_id, "is_bot": False}},
+            {"text": "different probe"},
+            {"message_id": 0},
+            {"message_id": True},
+        )
+        for mutation in mutations:
+            response = copy.deepcopy(valid)
+            response.update(mutation)
+            raw = json.dumps({"ok": True, "result": response}).encode()
+            with (
+                self.subTest(mutation=mutation),
+                patch.object(
+                    mirror,
+                    "_plain_http_exchange",
+                    side_effect=[(200, self.get_me()), (200, raw)],
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                self.assertEqual(exchange.call_count, 2)
+
+        missing_topic = copy.deepcopy(valid)
+        del missing_topic["message_thread_id"]
+        with (
+            patch.object(
+                mirror,
+                "_plain_http_exchange",
+                side_effect=[
+                    (200, self.get_me()),
+                    (
+                        200,
+                        json.dumps({"ok": True, "result": missing_topic}).encode(),
+                    ),
+                ],
+            ),
+            self.assertRaisesRegex(ValueError, "^telegram_qualification_failed$"),
+        ):
+            self.qualify()
+
+    def test_malformed_truncated_or_http_mismatched_results_never_qualify(self) -> None:
+        import http.client
+
+        malformed_get_me = (
+            (200, b"{"),
+            (200, b'{"ok":true}'),
+            (200, b'{"ok":true,"ok":true,"result":{"id":123,"is_bot":true}}'),
+            (206, self.get_me()),
+        )
+        for response in malformed_get_me:
+            with (
+                self.subTest(response=response),
+                patch.object(
+                    mirror, "_plain_http_exchange", return_value=response
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                exchange.assert_called_once()
+
+        for failure in (
+            (200, b"{"),
+            (206, self.send_result()),
+            http.client.IncompleteRead(b'{"ok":true'),
+        ):
+            with (
+                self.subTest(failure=failure),
+                patch.object(
+                    mirror,
+                    "_plain_http_exchange",
+                    side_effect=[(200, self.get_me()), failure],
+                ) as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    self.qualify()
+                self.assertEqual(exchange.call_count, 2)
+
+    def test_invalid_probe_is_rejected_without_network(self) -> None:
+        for probe in ("", "x" * 4097):
+            with (
+                self.subTest(probe=probe),
+                patch.object(mirror, "_plain_http_exchange") as exchange,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "^telegram_qualification_failed$"
+                ):
+                    mirror.qualify_telegram_destination(
+                        token=self.token,
+                        bot_id=self.bot_id,
+                        chat_id=self.chat_id,
+                        topic_id=self.topic_id,
+                        probe_text=probe,
+                    )
+                exchange.assert_not_called()
 
 
 if __name__ == "__main__":

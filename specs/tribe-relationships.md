@@ -16,6 +16,17 @@ founded Tribe is an explicit collective whose members accepted invitations
 from its current founder. A grant is directional authority over exact
 resources and operations. These are three independent facts.
 
+Conversation authority has exactly three bases, and none of them implies
+another: active signed **tribe membership** in one exact `tribe_ref`
+(`specs/tribe-conversation.md`), accepted **bilateral relationship consent**
+between two distinct beings (§4, reused as an audience of one rather than
+retired), and **root-validated same-being membership** between embodiments of
+one being (`docs/we-conversation.md`). A being may be a tribe member with no
+bilateral relationship to another member, and two beings may hold an accepted
+relationship while sharing no tribe. Same-being membership involves no second
+will, so it records no consent and creates no relationship. A grant is a fourth,
+separate thing: conversation never requires one and never confers one.
+
 The following never create a relationship, membership, or grant:
 
 - `/me`, `/we`, co-embodiment, body or incarnation membership;

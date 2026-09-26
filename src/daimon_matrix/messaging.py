@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
@@ -30,6 +31,7 @@ from .messaging_store import (
     MessagingInboxStore,
     MessagingOutboxStore,
 )
+from .native_egress import MandatoryEgressController, OperationBinding
 from .relationship_store import RelationshipStore, RelationshipView
 from .routes import ROUTE_SUBMISSION_SCHEMA, AuthenticatedProvider, RouteError
 from .sealed import (
@@ -95,6 +97,8 @@ class MessagingSender:
         custody: DeliveryCustody,
         outbox: MessagingOutboxStore,
         clock: Callable[[], int],
+        egress: MandatoryEgressController,
+        egress_catalog_id: str,
     ) -> None:
         self.communication: CommunicationStore | None = None
         self.context = context
@@ -103,6 +107,25 @@ class MessagingSender:
         self.custody = custody
         self.outbox = outbox
         self.clock = clock
+        if not isinstance(egress, MandatoryEgressController):
+            raise ValueError("messaging_egress_required")
+        self.egress = egress
+        outbox.bind_egress(
+            egress,
+            catalog_id=egress_catalog_id,
+            owner=context.policy.peer_being_ref,
+            authorize=self._authorize_egress,
+        )
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        try:
+            owner, send_id, _phase = binding.locator.split("\0")
+            now = self.clock()
+            self._bind(now)
+            self.outbox._check_time(owner, send_id, now)
+            return binding.authority_head == self.context._sender().state.head
+        except (ValueError, KeyError, TypeError):
+            return False
 
     def _bind(self, now: int) -> None:
         policy, authority = self.context.policy, self.context._sender()
@@ -212,7 +235,6 @@ class MessagingSender:
                 raise ValueError("messaging_text_required")
             if not 0 < _uint(policy.max_ttl_ms) <= MAX_TTL_MS:
                 raise ValueError("messaging_ttl_invalid")
-            self.outbox._check_time(policy.peer_being_ref, send_id, now)
             # Lock order: relationship writer exclusion -> outbox -> Ledger ->
             # communication store. No provider/network I/O is performed here.
             with context.relationships.authorization_view(
@@ -232,7 +254,6 @@ class MessagingSender:
         if not 0 < _uint(policy.max_ttl_ms) <= MAX_TTL_MS:
             raise ValueError("messaging_ttl_invalid")
         owner = policy.peer_being_ref
-        self.outbox._check_time(owner, send_id, now)
         policy_hash = context._policy_hash(now, _authority_view)
         payload: dict[str, Any] = {
             "schema": MESSAGE_PAYLOAD_SCHEMA,
@@ -309,21 +330,50 @@ class MessagingSender:
                 "request_hash": request_hash,
                 "origin": dict(self.ledger.local_origin),
                 "policy_hash": policy_hash,
+                "logical_send_id": send_id,
+                "carrier_generation": 1,
                 "issued_at_ms": now,
                 "expires_at_ms": now + policy.max_ttl_ms,
                 "message_authorization_id": str(uuid.uuid4()),
                 "evidence_authorization_id": str(uuid.uuid4()),
             },
         )
+        carrier_send_id, plan = self.outbox._carrier(
+            owner,
+            send_id,
+            plan,
+            now=now,
+            max_ttl_ms=policy.max_ttl_ms,
+        )
         issued, expires = plan["issued_at_ms"], plan["expires_at_ms"]
         if now >= expires:
             raise ValueError("messaging_authorization_expired")
         if now < issued:
             raise ValueError("messaging_authorization_not_yet_valid")
-        cached = self.outbox._prepared(owner, send_id)
+        cached = self.outbox._prepared(owner, carrier_send_id)
         if cached is not None:
             return cached
-        if semantic_reply:
+        logical_cached = self.outbox._prepared(owner, send_id)
+        reuse_logical_events = carrier_send_id != send_id and logical_cached is not None
+        message: dict[str, Any] | None = None
+        resolution: dict[str, Any] | None = None
+        if reuse_logical_events:
+            if logical_cached is None:
+                raise ValueError("messaging_outbox_missing")
+            prior_message = self.ledger.event(_parse(logical_cached[1])["event_id"])
+            prior_evidence = self.ledger.event(_parse(logical_cached[0])["event_id"])
+            if prior_message is None or prior_evidence is None:
+                raise ValueError("messaging_outbox_missing")
+            message = verify_event(prior_message, self.ledger.authority)
+            verified_prior_evidence = verify_event(
+                prior_evidence, self.ledger.authority
+            )
+            resolution = verify_event(
+                verified_prior_evidence["payload"]["resolution_event"],
+                self.ledger.authority,
+            )
+            payload = dict(message["payload"])
+        elif semantic_reply:
             payload["body"]["semantic_receipt"] = self._receipt(
                 channel,
                 received,
@@ -365,33 +415,36 @@ class MessagingSender:
                 causal_parents=parents,
             )
 
-        message = append("communication", payload)
         target = context._local()
-        resolution = append(
-            "communication-resolution",
-            {
-                "schema": RESOLUTION_PAYLOAD_SCHEMA,
-                "message_id": message["event_id"],
-                "scope": "/tribe",
-                "targets": [
-                    {
-                        "evidence_cursor": policy_hash,
-                        "receipt_origin_embodiment_id": recipient_descriptor(
-                            target, at_ms=now
-                        )["embodiment_id"],
-                        "recipient_id": policy.membership_ref,
-                        "recipient_type": "relationship",
-                        "scope_kind": "relationship",
-                    }
-                ],
-            },
-            (message["event_id"],),
-        )
-        if self.communication is not None:
-            self.communication.accept(
-                message_event_id=message["event_id"],
-                resolution_event_id=resolution["event_id"],
+        if not reuse_logical_events:
+            message = append("communication", payload)
+            resolution = append(
+                "communication-resolution",
+                {
+                    "schema": RESOLUTION_PAYLOAD_SCHEMA,
+                    "message_id": message["event_id"],
+                    "scope": "/tribe",
+                    "targets": [
+                        {
+                            "evidence_cursor": policy_hash,
+                            "receipt_origin_embodiment_id": recipient_descriptor(
+                                target, at_ms=now
+                            )["embodiment_id"],
+                            "recipient_id": policy.membership_ref,
+                            "recipient_type": "relationship",
+                            "scope_kind": "relationship",
+                        }
+                    ],
+                },
+                (message["event_id"],),
             )
+            if self.communication is not None:
+                self.communication.accept(
+                    message_event_id=message["event_id"],
+                    resolution_event_id=resolution["event_id"],
+                )
+        if message is None or resolution is None:
+            raise ValueError("messaging_outbox_missing")
         authorization = DisclosureAuthorization.from_relationship_resolution_event(
             event=message,
             resolution_event=resolution,
@@ -413,7 +466,7 @@ class MessagingSender:
                 "message_hash": message["content_hash"],
                 "resolution_event": resolution,
                 "message_authorization_id": plan["message_authorization_id"],
-                "message_authorized_at_ms": issued,
+                "message_authorized_at_ms": resolution["occurred_at_ms"],
                 "message_expires_at_ms": expires,
             },
             (resolution["event_id"],),
@@ -439,7 +492,7 @@ class MessagingSender:
             )
             for event, auth in ((evidence, bootstrap), (message, authorization))
         )
-        return self.outbox._commit(owner, send_id, (envelopes[0], envelopes[1]))
+        return self.outbox._commit(owner, carrier_send_id, (envelopes[0], envelopes[1]))
 
 
 class MessagingDelivery:
@@ -569,16 +622,21 @@ class MessagingDelivery:
             response_to=response_to,
         )
         owner = self.sender.context.policy.peer_being_ref
+        carrier_send_id = self.sender.outbox._carrier_for_envelopes(
+            owner, send_id, envelopes
+        )
         phases = ("evidence", "message")
         submissions = {}
         bindings = {}
+        projections = {}
         for phase, provider, envelope in zip(
             phases, self.providers, envelopes, strict=True
         ):
             metadata = _parse(envelope)
             attempt_id = str(
                 uuid.uuid5(
-                    uuid.UUID(send_id), f"dm.messaging.transport/v1:{owner}:{phase}"
+                    uuid.UUID(carrier_send_id),
+                    f"dm.messaging.transport/v1:{owner}:{phase}",
                 )
             )
             submissions[phase] = {
@@ -603,12 +661,30 @@ class MessagingDelivery:
                     canonical_bytes(submissions[phase])
                 ).hexdigest(),
             }
+            event = self.sender.ledger.event(metadata["event_id"])
+            if event is None:
+                raise ValueError("messaging_outbox_missing")
+            projections[phase] = {
+                "event_id": metadata["event_id"],
+                "event_digest": event["content_hash"],
+                "sender": owner,
+                "recipients": [self.sender.context.local_being_ref],
+                "thread_id": thread_id,
+                "reply_to": None,
+                "kind": "message" if phase == "message" else "authorization-control",
+                "content": {"text": text}
+                if phase == "message"
+                else {"stage": "evidence-before-message"},
+            }
         providers = dict(zip(phases, self.providers, strict=True))
         stages = self.sender.outbox._transport_stages(
             owner,
-            send_id,
+            carrier_send_id,
             bindings,
             lambda phase: providers[phase].prepare_submission(submissions[phase]),
+            projections=projections,
+            deadline_ms=max(item["deadline_ms"] for item in submissions.values()),
+            authority_head=self.sender.context._sender().state.head,
             create=transmit,
         )
         # Validate BOTH retained requests before any network I/O, including when
@@ -655,14 +731,16 @@ class MessagingDelivery:
             status = stage["transport_status"]
             if transmit and status in {"prepared", "pending"}:
                 now = self.sender.clock()
-                self.sender.outbox._check_time(owner, send_id, now)
+                self.sender.outbox._check_time(owner, carrier_send_id, now)
                 with self.sender.context.relationships.authorization_view(
                     at_ms=now, card_verifier=self.sender.context._card
                 ) as view:
                     self.sender.context._disclosure_from_view(view, at_ms=now)
                     if authorize is not None:
                         authorize()
-                    status = self.sender.outbox._transport_status(owner, send_id, phase)
+                    status = self.sender.outbox._transport_status(
+                        owner, carrier_send_id, phase
+                    )
                 if status == "pending":
                     proofs: list[bytes] = []
                     try:
@@ -675,7 +753,7 @@ class MessagingDelivery:
                         # the request. Keep the committed pending state across restart.
                         result = None
                     now = self.sender.clock()
-                    self.sender.outbox._check_time(owner, send_id, now)
+                    self.sender.outbox._check_time(owner, carrier_send_id, now)
                     with self.sender.context.relationships.authorization_view(
                         at_ms=now, card_verifier=self.sender.context._card
                     ) as view:
@@ -690,7 +768,7 @@ class MessagingDelivery:
                         }:
                             status = self.sender.outbox._transport_status(
                                 owner,
-                                send_id,
+                                carrier_send_id,
                                 phase,
                                 result=result,
                                 response=proofs[0],
@@ -731,7 +809,7 @@ class MessagingChannel:
         policy: MessagingPeerPolicy,
         local_being_ref: str,
         local_credential_id: str,
-        authority_resolver: Callable[[str], RootAuthority],
+        authority_resolver: Callable[[str], RootAuthority | RootHistoryAuthority],
         relationships: RelationshipStore,
         custody: DeliveryCustody,
         inbox: MessagingInboxStore,
@@ -747,26 +825,69 @@ class MessagingChannel:
         self.inbox = inbox
         self.clock = clock
 
+    def _active(self, being_ref: str) -> RootAuthority:
+        """Current epoch for one being, whether or not history is supplied."""
+        authority = self.authority_resolver(being_ref)
+        return (
+            authority.active
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+
     def _local(self) -> RecipientTarget:
         return RecipientTarget(
-            self.authority_resolver(self.local_being_ref), self.local_credential_id
+            self._active(self.local_being_ref), self.local_credential_id
         )
 
     def _sender(self) -> RootAuthority:
-        return self.authority_resolver(self.policy.peer_being_ref)
+        return self._active(self.policy.peer_being_ref)
 
     def _card(self, card: Mapping[str, Any], at_ms: int) -> None:
+        """Verify one card against the epoch it pins, not against the newest one.
+
+        Enrolling another embodiment advances the being manifest. A card issued
+        before that advance pins the manifest it was issued under, and demanding
+        the current digest there would silently drop every member whose card
+        predates the advance, emptying tribe snapshots and refusing disclosure.
+        The pinned epoch is selected from verified history, the member is checked
+        in that epoch at the verification time, and the embodiment must still be
+        active now under the same body. Anything else fails closed.
+        """
         authority = self.authority_resolver(card["being_ref"])
         position = card["control_position"]
-        member = authority.manifest.member(
-            position["embodiment_id"], position["incarnation_id"]
-        )
-        target = RecipientTarget(authority, member["embodiment_credential_id"])
+        pinned = position["manifest_hash"]
+        epoch: RootAuthority
+        if isinstance(authority, RootHistoryAuthority):
+            try:
+                epoch = authority.select({"manifest_hash": pinned})
+            except Exception:
+                raise SealedDeliveryError() from None
+        else:
+            epoch = authority
+        if epoch.manifest.digest != pinned:
+            raise SealedDeliveryError()
+        try:
+            member = epoch.manifest.member(
+                position["embodiment_id"], position["incarnation_id"]
+            )
+        except Exception:
+            raise SealedDeliveryError() from None
+        target = RecipientTarget(epoch, member["embodiment_credential_id"])
         descriptor = recipient_descriptor(target, at_ms=at_ms)
+        active = (
+            authority.active if isinstance(authority, RootHistoryAuthority) else epoch
+        )
+        current = [
+            row
+            for row in active.manifest.value["embodiments"]
+            if row["embodiment_id"] == position["embodiment_id"]
+            and row["status"] == "active"
+        ]
         if (
-            authority.manifest.digest != position["manifest_hash"]
+            len(current) != 1
+            or current[0]["body_ref"] != member["body_ref"]
             or descriptor["encryption_kid"] != card["encryption_key"]["key_id"]
-            or authority.credentials[target.credential_id]["body"]["encryption_key"]
+            or epoch.credentials[target.credential_id]["body"]["encryption_key"]
             != card["encryption_key"]
         ):
             raise SealedDeliveryError()

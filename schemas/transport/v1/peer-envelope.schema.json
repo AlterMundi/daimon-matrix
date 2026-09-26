@@ -32,7 +32,9 @@
         "application/vnd.daimon.scope-request+json",
         "application/vnd.daimon.scope-response+json",
         "application/vnd.daimon.sync-request+json",
-        "application/vnd.daimon.sync-delta+json"
+        "application/vnd.daimon.sync-delta+json",
+        "application/vnd.daimon.we-message+json",
+        "application/vnd.daimon.we-receipt+json"
       ]
     },
     "issued_at_ms": {"$ref": "#/$defs/uint"},

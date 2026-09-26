@@ -646,6 +646,47 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         _object_schema({}),
         False,
     ),
+    "we_converse": (
+        "we.converse",
+        _object_schema(
+            {
+                "text": {"type": "string", "minLength": 1, "maxLength": 65536},
+                "addressees": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 240},
+                },
+                "request_id": _UUID,
+                "thread_id": _NULLABLE_UUID,
+                "ttl_ms": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 1, "maximum": 86_400_000},
+                        {"type": "null"},
+                    ]
+                },
+            },
+            ("text", "addressees", "request_id"),
+        ),
+        False,
+    ),
+    "we_conversation_page": (
+        "we.conversation.page",
+        _object_schema(
+            {
+                "after": {
+                    "anyOf": [
+                        {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
+                        {"type": "null"},
+                    ]
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 256},
+                "thread_id": _NULLABLE_UUID,
+            },
+            (),
+        ),
+        True,
+    ),
     "we_sync_request": (
         "we.sync.request",
         _object_schema(
@@ -810,7 +851,9 @@ _DEFAULTS: Final[dict[str, Any]] = {
     "selected_candidate_id": None,
     "subject": None,
     "supersedes": None,
+    "thread_id": None,
     "tribe_ref": None,
+    "ttl_ms": None,
 }
 
 
@@ -948,6 +991,14 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         },
         "we.projection.get": set(),
         "we.projection.rebuild": set(),
+        "we.converse": {
+            "addressees",
+            "request_id",
+            "text",
+            "thread_id",
+            "ttl_ms",
+        },
+        "we.conversation.page": {"after", "limit", "thread_id"},
         "we.sync.request": {"limit", "request_id"},
         "we.sync.peer-pull": {
             "limit",
