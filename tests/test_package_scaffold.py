@@ -152,7 +152,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 73)
+        self.assertEqual(len(modules), 74)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -367,6 +367,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/synthetic_relationships.py",
                 "src/daimon_matrix/synthetic_species.py",
                 "src/daimon_matrix/synthetic_sources.py",
+                "src/daimon_matrix/tribe_conversation.py",
                 "src/daimon_matrix/we_messaging.py",
                 "src/daimon_matrix/weave.py",
             },
@@ -447,6 +448,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/synthetic_relationships.py",
                 "daimon_matrix/synthetic_species.py",
                 "daimon_matrix/synthetic_sources.py",
+                "daimon_matrix/tribe_conversation.py",
                 "daimon_matrix/we_messaging.py",
                 "daimon_matrix/weave.py",
                 "daimon_matrix-0.1.0rc1.dist-info/METADATA",

@@ -54,6 +54,11 @@ from daimon_matrix.sealed import (
     sealing_plan_hash,
     sender_descriptor,
 )
+from daimon_matrix.tribe_conversation import (
+    DECLARATION_KIND,
+    MembershipAuthorizer,
+    TribeConversationError,
+)
 from daimon_matrix.weave import BeingManifest, RootAuthority, create_event
 from tests import test_native_messaging as native
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
@@ -911,6 +916,198 @@ class MembershipSealingTests(unittest.TestCase):
         message, resolution = self.author(scope="/we")
         with self.assertRaises(SealedDeliveryError):
             self.authorize(message, resolution)
+
+    def test_authorizer_proofs_are_exactly_what_the_profile_accepts(self) -> None:
+        """The two halves meet: history-derived proofs seal a real tribe message."""
+        events = self.pair.sender_relationships.events()
+        authorizer = MembershipAuthorizer(events)
+        proofs = authorizer.proofs(
+            members=[
+                {
+                    "embodiment_id": self.member.origin["embodiment_id"],
+                    "membership_ref": self.membership_ref,
+                    "principal_id": self.member.state.being_ref,
+                    "state": "active",
+                    "tribe_ref": self.tribe_ref,
+                }
+            ],
+            tribe_ref=self.tribe_ref,
+        )
+        declaration = next(
+            event
+            for event in events
+            if event["kind"] == DECLARATION_KIND
+            and event["payload"].get("tribe_ref") == self.tribe_ref
+        )
+        message, resolution = self.author()
+        authorization = DisclosureAuthorization.from_membership_resolution_event(
+            event=message,
+            resolution_event=resolution,
+            sender_authority=self.sender.authority,
+            recipient_targets=[self.target],
+            memberships=proofs,
+            sender_membership=authorizer.proof(
+                membership_ref=declaration["event_id"],
+                tribe_ref=self.tribe_ref,
+                principal_id=self.sender.state.being_ref,
+            ),
+            tribe_ref=self.tribe_ref,
+            expires_at_ms=self.now + 30_000,
+        )
+        self.assertEqual(
+            [row["being_ref"] for row in authorization.value["recipients"]],
+            [self.member.state.being_ref],
+        )
+        raw = seal_event(
+            message,
+            sender_authority=self.sender.authority,
+            recipients=[self.target],
+            authorization=authorization,
+            custody=self.pair.sender_custody,
+            issued_at_ms=self.now,
+            expires_at_ms=self.now + 30_000,
+        )
+        opened = open_event(
+            raw,
+            sender_authority=self.sender.authority,
+            local_target=self.target,
+            recipient_targets=[self.target],
+            authorization=authorization,
+            custody=self.pair.receiver_custody,
+            at_ms=self.now + 1,
+        )
+        self.assertEqual(opened["event_id"], message["event_id"])
+
+
+class MembershipAuthorizerTests(unittest.TestCase):
+    """Membership proofs come from signed history, or the member is not proved."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="dm051-membership-auth-")
+        self.addCleanup(temporary.cleanup)
+        self.pair = native.Pair(Path(temporary.name))
+        self.events = self.pair.sender_relationships.events()
+        self.authorizer = MembershipAuthorizer(self.events)
+        self.tribe_ref = self.pair.policy.tribe_ref
+        self.membership_ref = self.pair.policy.membership_ref
+        self.member_being = self.pair.recipient.state.being_ref
+        self.founder_being = self.pair.sender.state.being_ref
+        self.declaration = next(
+            event
+            for event in self.events
+            if event["kind"] == DECLARATION_KIND
+            and event["payload"].get("tribe_ref") == self.tribe_ref
+        )
+
+    def member(
+        self,
+        *,
+        being_ref: str,
+        membership_ref: str | None = None,
+        state: str = "active",
+        embodiment_id: str = "embodiment:member",
+    ) -> dict[str, Any]:
+        return {
+            "embodiment_id": embodiment_id,
+            "membership_ref": (
+                self.membership_ref if membership_ref is None else membership_ref
+            ),
+            "principal_id": being_ref,
+            "state": state,
+            "tribe_ref": self.tribe_ref,
+        }
+
+    def test_an_active_membership_is_proved_from_signed_history(self) -> None:
+        proofs = self.authorizer.proofs(
+            members=[self.member(being_ref=self.member_being)],
+            tribe_ref=self.tribe_ref,
+        )
+        self.assertEqual(set(proofs), {self.membership_ref})
+        proof = proofs[self.membership_ref]
+        source = next(
+            event for event in self.events if event["event_id"] == self.membership_ref
+        )
+        self.assertEqual(proof["schema"], MEMBERSHIP_PROOF_SCHEMA)
+        self.assertIs(proof["active"], True)
+        self.assertEqual(proof["member_being_ref"], self.member_being)
+        self.assertEqual(proof["tribe_ref"], self.tribe_ref)
+        self.assertEqual(proof["membership_event_id"], source["event_id"])
+        self.assertEqual(proof["membership_event_hash"], source["content_hash"])
+
+    def test_the_founder_is_proved_from_the_declaration(self) -> None:
+        """A declaration names no being ref, so the principal must be one."""
+        proofs = self.authorizer.proofs(
+            members=[
+                self.member(
+                    being_ref=self.founder_being,
+                    membership_ref=self.declaration["event_id"],
+                    embodiment_id="embodiment:founder",
+                )
+            ],
+            tribe_ref=self.tribe_ref,
+        )
+        self.assertEqual(
+            proofs[self.declaration["event_id"]]["member_being_ref"],
+            self.founder_being,
+        )
+        with self.assertRaises(TribeConversationError) as caught:
+            self.authorizer.proof(
+                membership_ref=self.declaration["event_id"],
+                tribe_ref=self.tribe_ref,
+                principal_id="compaii@legion",
+            )
+        self.assertEqual(str(caught.exception), "membership_being_ref_invalid")
+
+    def test_a_snapshot_that_renames_a_member_conflicts(self) -> None:
+        with self.assertRaises(TribeConversationError) as caught:
+            self.authorizer.proofs(
+                members=[self.member(being_ref=self.founder_being)],
+                tribe_ref=self.tribe_ref,
+            )
+        self.assertEqual(str(caught.exception), "membership_proof_conflict")
+
+    def test_a_member_the_history_cannot_prove_is_absent_not_guessed(self) -> None:
+        with self.assertRaises(TribeConversationError) as caught:
+            self.authorizer.proofs(
+                members=[
+                    self.member(
+                        being_ref=self.member_being,
+                        membership_ref="dm:membership:v1:" + "A" * 43,
+                    )
+                ],
+                tribe_ref=self.tribe_ref,
+            )
+        self.assertEqual(str(caught.exception), "membership_proof_unavailable")
+
+    def test_removed_members_are_skipped_and_an_empty_audience_fails_closed(
+        self,
+    ) -> None:
+        for state in ("left", "expelled"):
+            with self.subTest(state=state):
+                with self.assertRaises(TribeConversationError) as caught:
+                    self.authorizer.proofs(
+                        members=[self.member(being_ref=self.member_being, state=state)],
+                        tribe_ref=self.tribe_ref,
+                    )
+                self.assertEqual(str(caught.exception), "tribe_audience_empty")
+
+    def test_a_proof_carries_no_grant_resource_or_operation(self) -> None:
+        proofs = self.authorizer.proofs(
+            members=[self.member(being_ref=self.member_being)],
+            tribe_ref=self.tribe_ref,
+        )
+        self.assertEqual(
+            set(proofs[self.membership_ref]),
+            {
+                "active",
+                "member_being_ref",
+                "membership_event_hash",
+                "membership_event_id",
+                "membership_ref",
+                "schema",
+                "tribe_ref",
+            },
+        )
 
 
 if __name__ == "__main__":
