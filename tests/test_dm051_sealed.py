@@ -59,7 +59,9 @@ from daimon_matrix.synthetic_relationships import _Journey
 from daimon_matrix.tribe_conversation import (
     ACCEPTANCE_KIND,
     DECLARATION_KIND,
+    TRIBE_CONVERSE_RESULT_SCHEMA,
     MembershipAuthorizer,
+    TribeConversation,
     TribeConversationError,
 )
 from daimon_matrix.weave import BeingManifest, RootAuthority, create_event
@@ -1119,6 +1121,186 @@ class MembershipAuthorizerTests(TribeMembershipFixture):
         with self.assertRaises(TribeConversationError) as caught:
             self.authorizer.proofs(members=[only, dict(only)], tribe_ref=self.tribe_ref)
         self.assertEqual(str(caught.exception), "membership_proof_duplicated")
+
+
+class TribeConversationLaneTests(TribeMembershipFixture):
+    """One tribe message: authored once, sealed once, receipted per body."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.founder_ledger = Ledger(
+            Path(self.journey.root) / "founder-tribe.sqlite3",
+            authority=self.founder.authority,
+            local_origin=self.founder.origin,
+            clock=lambda: self.now,
+        )
+        self.member_ledger = Ledger(
+            Path(self.journey.root) / "member-tribe.sqlite3",
+            authority=self.member.authority,
+            local_origin=self.member.origin,
+            clock=lambda: self.now,
+        )
+        self.sender_lane = self.lane_for(
+            "founder", self.founder_ledger, self.sender_custody, self.journey.store
+        )
+        self.receiver_lane = self.lane_for(
+            "member", self.member_ledger, self.receiver_custody, self.journey.peer_store
+        )
+
+    def lane_for(
+        self,
+        label: str,
+        ledger: Ledger,
+        custody: KeystoreDeliveryCustody,
+        relationships: Any,
+        *,
+        at_ms: int | None = None,
+    ) -> TribeConversation:
+        identity = self.journey.identities[label]
+        return TribeConversation(
+            ledger,
+            signer=identity.signer,
+            custody=custody,
+            clock=lambda: self.now if at_ms is None else at_ms,
+            relationships=relationships,
+            card_verifier=self.journey.card_verifier,
+            authority_resolver=lambda ref: self.journey.authorities[ref],
+        )
+
+    def test_one_message_reaches_the_member_and_comes_back_signed(self) -> None:
+        delivered: list[str] = []
+
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            delivered.append(embodiment_id)
+            return self.receiver_lane.intake(payload)
+
+        result = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=carry,
+        )
+        self.assertEqual(result["schema"], TRIBE_CONVERSE_RESULT_SCHEMA)
+        self.assertEqual(result["tribe_ref"], self.tribe_ref)
+        # The author is inside the sealed carrier set but is not delivered to.
+        self.assertEqual(delivered, [self.member.origin["embodiment_id"]])
+        self.assertEqual(
+            sorted(
+                (row["state"], row["embodiment_id"]) for row in result["deliveries"]
+            ),
+            sorted(
+                [
+                    ("author", self.founder.origin["embodiment_id"]),
+                    ("delivered", self.member.origin["embodiment_id"]),
+                ]
+            ),
+        )
+        receipt_id = next(
+            row["receipt_event_id"]
+            for row in result["deliveries"]
+            if row["state"] == "delivered"
+        )
+        # The hearing body signed its own receipt into its own ledger. The foreign
+        # message is deliberately not there: it cannot verify against this being's
+        # root, and retention of foreign material belongs to the host's stores.
+        heard = self.member_ledger.event(receipt_id)
+        assert heard is not None
+        self.assertEqual(
+            heard["origin"]["embodiment_id"], self.member.origin["embodiment_id"]
+        )
+        self.assertEqual(heard["payload"]["recipient_type"], "relationship")
+        self.assertEqual(heard["payload"]["recipient_id"], self.membership_ref)
+        self.assertIsNone(self.member_ledger.event(result["message_id"]))
+        # The author kept its own message and resolution, and gets the member's
+        # verified receipt back so authorship stays visible per body.
+        self.assertIsNotNone(self.founder_ledger.event(result["message_id"]))
+        self.assertIsNotNone(self.founder_ledger.event(result["resolution_id"]))
+        self.assertIsNone(self.founder_ledger.event(receipt_id))
+        returned = next(
+            row["receipt"]
+            for row in result["deliveries"]
+            if row["state"] == "delivered"
+        )
+        self.assertEqual(returned["event_id"], receipt_id)
+        self.assertEqual(returned["being_ref"], self.member.state.being_ref)
+
+    def test_an_exact_retry_says_it_once(self) -> None:
+        request_id = str(uuid.uuid4())
+
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            return self.receiver_lane.intake(payload)
+
+        first = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=request_id,
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=carry,
+        )
+        second = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=request_id,
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=carry,
+        )
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["resolution_id"], first["resolution_id"])
+        self.assertEqual(second["thread_id"], first["thread_id"])
+        messages = [
+            event
+            for event in self.founder_ledger.events()
+            if event["subject"] == "communication"
+        ]
+        self.assertEqual(len(messages), 1)
+        receipts = [
+            event
+            for event in self.member_ledger.events()
+            if event["subject"] == "communication-receipt"
+        ]
+        self.assertEqual(len(receipts), 1)
+
+    def test_a_non_member_cannot_intake_the_message(self) -> None:
+        delegate = self.journey.identities["delegate"]
+        delegate_ledger = Ledger(
+            Path(self.journey.root) / "delegate-tribe.sqlite3",
+            authority=delegate.authority,
+            local_origin=delegate.origin,
+            clock=lambda: self.now,
+        )
+        outsider = self.lane_for(
+            "delegate",
+            delegate_ledger,
+            self.journey.custody("delegate"),
+            self.journey.peer_store,
+        )
+        sealed: list[Mapping[str, Any]] = []
+
+        def capture(
+            embodiment_id: str, payload: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            sealed.append(payload)
+            return self.receiver_lane.intake(payload)
+
+        self.sender_lane.converse(
+            text="hola tribu",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=capture,
+        )
+        self.assertEqual(len(sealed), 1)
+        with self.assertRaises(TribeConversationError):
+            outsider.intake(sealed[0])
+        self.assertEqual(
+            [
+                event
+                for event in delegate_ledger.events()
+                if event["subject"] == "communication-receipt"
+            ],
+            [],
+        )
 
 
 if __name__ == "__main__":
