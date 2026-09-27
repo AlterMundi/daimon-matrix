@@ -688,10 +688,21 @@ def load_runtime(
                 raise OperatorCapabilityError("invalid_operator_capability_identity")
         except (KeyError, OperatorCapabilityError) as exception:
             raise RuntimeError("invalid_operator_capability_profile") from exception
+        # Subset, not equality, and the direction matters. A capability that lists
+        # a method its profile no longer contains is refused, so removing or
+        # renaming a method still invalidates every bundle that carried it. A
+        # capability that simply predates a method added later is accepted, because
+        # holding less authority than the profile allows is not a violation — it is
+        # least authority. Demanding exact equality instead meant that adding any
+        # method made every live bundle unloadable, with no tool able to refresh a
+        # signed capability in place: bundles are immutable and advance only by
+        # rebirth. The call still fails closed at dispatch, since a method absent
+        # from the capability is not authorized for that client.
         if (
             dict(profile_value) != expected_profile
             or slot != expected_slot
-            or frozenset(capability.methods) != expected_methods
+            or not capability.methods
+            or not frozenset(capability.methods) <= expected_methods
             or role in clients
         ):
             raise RuntimeError("invalid_operator_capability_profile")

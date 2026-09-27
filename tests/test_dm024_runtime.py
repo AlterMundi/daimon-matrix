@@ -196,6 +196,7 @@ class RuntimeFixture(RootLedgerFixture):
         secrets: dict[str, bytes] | None = None,
         state_name: str = "hosted",
         now_ms: int = NOW,
+        drop_method: tuple[str, str] | None = None,
     ) -> tuple[Path, dict[str, Any], Any]:
         state_root = self.root_path / state_name
         state_root.mkdir(mode=0o700)
@@ -206,11 +207,19 @@ class RuntimeFixture(RootLedgerFixture):
             self.origins["legion"],
             signing_descriptor(self.signing_seeds["legion"])["key_id"],
         )
+
+        def methods_for(profile: str) -> list[str]:
+            """A bundle may legitimately predate a method added to its profile."""
+            held = set(OPERATOR_CAPABILITY_PROFILES[profile])
+            if drop_method is not None and drop_method[0] == profile:
+                held -= {drop_method[1]}
+            return sorted(held)
+
         operator_capabilities = {
             profile: create_capability(
                 seed(f"dm024-operator-{profile}"),
                 client_id=f"client:operator:{runtime_label}:{profile}",
-                methods=sorted(OPERATOR_CAPABILITY_PROFILES[profile]),
+                methods=methods_for(profile),
                 not_before_ms=now_ms - 60_000,
                 not_after_ms=now_ms + 60_000,
             )
@@ -423,6 +432,44 @@ class RuntimeBundleTests(RuntimeFixture):
                         clock=lambda: NOW,
                         egress=synthetic_visibility(clock=lambda: NOW),
                     )
+
+    def test_a_bundle_that_predates_a_new_method_still_loads(self) -> None:
+        """Least authority is not drift: holding less than the profile is fine.
+
+        Bundles are immutable and advance only by rebirth, and no tool can refresh
+        a signed capability in place, so requiring the stored method set to equal
+        the current profile would make every live bundle unloadable the moment a
+        method was added. What must stay forbidden is the other direction, which
+        the widening case covers: a method the profile no longer names is refused.
+        """
+        dropped = "we.conversation.page"
+        self.assertIn(dropped, OPERATOR_CAPABILITY_PROFILES[OBSERVE_PROFILE])
+        state_root, _bundle, capability = self.make_bundle(
+            state_name="predates-method",
+            drop_method=(OBSERVE_PROFILE, dropped),
+        )
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
+        )
+        held = next(
+            held
+            for held in runtime.service.capabilities.values()
+            if held.client_id == capability.client_id
+        )
+        self.assertNotIn(dropped, held.methods)
+        request = create_request(
+            capability,
+            request_id="30000000-0000-4000-8000-000000000009",
+            issued_at_ms=NOW,
+            method="runtime.status",
+            params={},
+            nonce=b"r" * 16,
+        )
+        self.assertEqual(runtime.service.handle(request)["result"]["integrity"], "ok")
 
     def test_bundle_loads_exact_authority_and_custody(self) -> None:
         state_root, bundle, capability = self.make_bundle()
