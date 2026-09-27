@@ -244,3 +244,19 @@ the body through forward Matrix/Cluster evidence. Preserve handle, Matrix
 ledger and receipt high-waters. Never delete/import Codex memory, restore a
 rollout as continuity, rewrite a pending outcome or re-enable expired body
 evidence.
+
+## Neutral territory binding
+
+A Codex body shares host-common ground with every other body of the same
+being: `~/.agents/skills` (Codex scans it natively) and
+`~/.agents/memory/<being>/agent-memory` (being-level memory pool). The
+binding artifacts — env lines, per-platform service environment, surface
+check and content-addressed manifest — are rendered by
+`daimon_matrix.neutral_binding` (`dm.neutral-binding/v1`) from a closed plan,
+never hand-written; the per-body client follows the same rule (no hand-rolled
+scripts). Memory retrieval from a Codex body is human-request-only: no
+auto-load, no inbox polling, no timers. Authorship per embodiment stays in
+the signed event origin and the projection `source_instance`, not in the
+harness or this binding. Procedure and lifecycle policy:
+`docs/runbooks/neutral-territory.md`. The binding grants no authority and
+changes no DM-040 invariant.

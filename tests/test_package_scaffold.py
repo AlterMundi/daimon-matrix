@@ -152,7 +152,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 74)
+        self.assertEqual(len(modules), 75)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -164,6 +164,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/human_execution_frontend.py",
                 "src/daimon_matrix/mandatory_echo.py",
                 "src/daimon_matrix/native_egress.py",
+                "src/daimon_matrix/neutral_binding.py",
                 "src/daimon_matrix/operator_execution.py",
                 "src/daimon_matrix/review_runner.py",
             }
@@ -345,6 +346,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/memory_projection.py",
                 "src/daimon_matrix/multihost.py",
                 "src/daimon_matrix/native_egress.py",
+                "src/daimon_matrix/neutral_binding.py",
                 "src/daimon_matrix/peer_transport.py",
                 "src/daimon_matrix/publication.py",
                 "src/daimon_matrix/projections.py",
@@ -426,6 +428,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/memory_projection.py",
                 "daimon_matrix/multihost.py",
                 "daimon_matrix/native_egress.py",
+                "daimon_matrix/neutral_binding.py",
                 "daimon_matrix/peer_transport.py",
                 "daimon_matrix/publication.py",
                 "daimon_matrix/projections.py",

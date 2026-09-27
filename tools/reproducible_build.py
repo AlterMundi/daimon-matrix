@@ -80,6 +80,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/memory_projection.py"),
     Path("src/daimon_matrix/multihost.py"),
     Path("src/daimon_matrix/native_egress.py"),
+    Path("src/daimon_matrix/neutral_binding.py"),
     Path("src/daimon_matrix/peer_transport.py"),
     Path("src/daimon_matrix/publication.py"),
     Path("src/daimon_matrix/projections.py"),
