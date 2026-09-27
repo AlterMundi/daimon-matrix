@@ -1,0 +1,8 @@
+#!/bin/sh
+# Frozen-value drift is the cheapest possible red head to prevent and the most
+# annoying to discover, because it surfaces in the slowest CI job. Install with:
+#   git config core.hooksPath .githooks
+set -e
+PYTHON="${FROZEN_CHECK_PYTHON:-python3}"
+if [ -x "../venv/bin/python" ]; then PYTHON="../venv/bin/python"; fi
+exec "$PYTHON" tools/check_frozen_invariants.py
