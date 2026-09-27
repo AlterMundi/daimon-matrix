@@ -69,6 +69,7 @@ from .identity import (
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
 from .ledger import Ledger
+from .native_egress import closed_visibility
 from .operator_capabilities import (
     HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
@@ -4524,6 +4525,7 @@ def restore_recovery_ledger(
             "runtime.json",
             password_reader,
             clock=clock,
+            egress=closed_visibility(clock=clock, catalog_mode="migrate"),
         )
         target_authority = hosted.service.ledger.authority
         source_origin = _origin(source_bundle["local_origin"])

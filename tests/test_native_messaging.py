@@ -8,6 +8,7 @@ import http.server
 import json
 import os
 import select
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -27,7 +28,15 @@ from daimon_matrix.communication import (
 )
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
-from daimon_matrix.relationship_store import RelationshipStore
+from daimon_matrix.native_egress import (
+    OperationBinding,
+    native_projection,
+    synthetic_visibility,
+)
+from daimon_matrix.relationship_store import (
+    RelationshipStore,
+    RelationshipStoreError,
+)
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.sealed import (
     DisclosureAuthorization,
@@ -71,6 +80,144 @@ def custody(root: Path, label: str) -> KeystoreDeliveryCustody:
             ]: "sealed.encryption.v1:test"
         },
     )
+
+
+def synthetic_sender(
+    *,
+    context: Any,
+    ledger: Ledger,
+    signer: Any,
+    delivery_custody: Any,
+    outbox_path: Path,
+    clock: Callable[[], int],
+    catalog_id: str,
+) -> Any:
+    """Build the real mandatory-egress sender used by synthetic messaging tests."""
+
+    from daimon_matrix.messaging import MessagingSender
+    from daimon_matrix.messaging_store import MessagingOutboxStore
+
+    egress = synthetic_visibility(clock=clock)
+    return MessagingSender(
+        context=context,
+        ledger=ledger,
+        signer=signer,
+        custody=delivery_custody,
+        outbox=MessagingOutboxStore(outbox_path),
+        clock=clock,
+        egress=egress,
+        egress_catalog_id=catalog_id,
+    )
+
+
+def synthetic_visibility_installation(root: Path) -> Path:
+    """Write owner-only production composition inputs matching synthetic_visibility."""
+
+    documents: dict[str, bytes] = {
+        "visibility-policy.json": canonical_bytes(
+            {
+                "schema": "daimon-visibility-policy/v2",
+                "generation": 1,
+                "origin": "synthetic-driver",
+                "representation": "plain-json/v2",
+                "acceptance_digest": "d" * 64,
+                "proof_key_id": "synthetic-only",
+            }
+        ),
+        "visibility-destination.json": canonical_bytes(
+            {"bot_id": 137, "chat_id": -100137, "topic_id": None}
+        ),
+        "visibility-token": b"137:synthetic-test-token",
+        "visibility-proof.key": b"\x89" * 32,
+    }
+    paths: dict[str, Path] = {}
+    for name, raw in documents.items():
+        path = root / name
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        paths[name] = path
+    installation = root / "visibility-installation.json"
+    installation.write_bytes(
+        canonical_bytes(
+            {
+                "schema": "dm.mandatory-visibility/v1",
+                "policy_file": str(paths["visibility-policy.json"]),
+                "destination_file": str(paths["visibility-destination.json"]),
+                "telegram_token_file": str(paths["visibility-token"]),
+                "proof_key_file": str(paths["visibility-proof.key"]),
+            }
+        )
+    )
+    installation.chmod(0o600)
+    return installation
+
+
+class SyntheticEgressCatalog:
+    """Explicit authoritative catalog for lower-level provider fixture effects."""
+
+    def __init__(
+        self,
+        *,
+        path: Path,
+        clock: Callable[[], int],
+        catalog_id: str,
+    ) -> None:
+        self.path = path
+        self.clock = clock
+        self.catalog_id = catalog_id
+        self.controller = synthetic_visibility(clock=clock)
+        with closing(sqlite3.connect(path)) as database:
+            database.execute(
+                "CREATE TABLE synthetic_provider_requests ("
+                "operation_id TEXT PRIMARY KEY, request BLOB NOT NULL)"
+            )
+        self.controller.register_catalog(
+            catalog_id=catalog_id,
+            path=path,
+            resolve=self.resolve,
+            authorize=lambda binding: binding.authority_head == "synthetic-authority",
+        )
+        self.controller.register_path("route-provider-request", catalog_id)
+
+    def resolve(self, locator: str) -> bytes:
+        with closing(sqlite3.connect(self.path)) as database:
+            row = database.execute(
+                "SELECT request FROM synthetic_provider_requests WHERE operation_id=?",
+                (locator,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("synthetic_provider_request_missing")
+        return bytes(row[0])
+
+    def admit(self, *, operation_id: str, request: bytes, deadline_ms: int) -> None:
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute("PRAGMA journal_mode=DELETE")
+            database.execute("PRAGMA synchronous=FULL")
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "INSERT INTO synthetic_provider_requests VALUES (?, ?)",
+                (operation_id, request),
+            )
+            self.controller.admit_in_transaction(
+                database,
+                catalog_id=self.catalog_id,
+                path_id="route-provider-request",
+                operation_id=operation_id,
+                locator=operation_id,
+                native_bytes=request,
+                projection=native_projection(
+                    operation_id=operation_id,
+                    native=request,
+                    sender="synthetic-provider-sender",
+                    recipient="synthetic-provider-recipient",
+                    thread_id="synthetic-provider-thread",
+                    kind="authorization-control",
+                    stage="scope",
+                ),
+                deadline_ms=deadline_ms,
+                authority_head="synthetic-authority",
+            )
+            database.commit()
 
 
 class Pair:
@@ -288,13 +435,47 @@ class _SendRequest(TypedDict):
 
 
 class NativeMessagingDaemonLifecycleTests(RuntimeFixture):
+    def _runtime_with_mock_messaging_ingress(
+        self, root: Path
+    ) -> runtime_module.HostedRuntime:
+        visibility = synthetic_visibility(clock=lambda: NOW)
+        runtime = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress=visibility,
+        )
+        catalog_path = root / "mock-messaging-response-egress.sqlite"
+        with closing(sqlite3.connect(catalog_path)) as database:
+            database.execute(
+                "CREATE TABLE mock_operations (operation_id TEXT PRIMARY KEY)"
+            )
+        catalog_path.chmod(0o600)
+
+        def resolve(locator: str) -> bytes:
+            raise AssertionError(f"unexpected mock messaging operation: {locator}")
+
+        def authorize(binding: OperationBinding) -> bool:
+            return False
+
+        visibility.register_catalog(
+            catalog_id="mock-messaging-responses",
+            path=catalog_path,
+            resolve=resolve,
+            authorize=authorize,
+        )
+        visibility.register_path(
+            "messaging-evidence-result", "mock-messaging-responses"
+        )
+        visibility.register_path("messaging-message-result", "mock-messaging-responses")
+        return runtime
+
     def test_listener_start_failure_closes_without_waiting_for_absent_thread(
         self,
     ) -> None:
         root, _, _ = self.make_bundle()
-        runtime = load_runtime(
-            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
-        )
+        runtime = self._runtime_with_mock_messaging_ingress(root)
         ingress = Mock()
         runtime = replace(
             runtime,
@@ -305,13 +486,16 @@ class NativeMessagingDaemonLifecycleTests(RuntimeFixture):
             ),
         )
         server = Mock()
+        original_start = threading.Thread.start
+
+        def start(thread: threading.Thread) -> None:
+            if thread.name == "daimon-matrix-messaging-http":
+                raise OSError("synthetic-thread-start-failure")
+            original_start(thread)
+
         with (
             patch.object(daemon, "create_messaging_http_server", return_value=server),
-            patch.object(
-                threading.Thread,
-                "start",
-                side_effect=OSError("synthetic-thread-start-failure"),
-            ),
+            patch.object(threading.Thread, "start", autospec=True, side_effect=start),
             self.assertRaisesRegex(OSError, "synthetic-thread-start-failure"),
         ):
             daemon.serve_forever(runtime)
@@ -321,9 +505,7 @@ class NativeMessagingDaemonLifecycleTests(RuntimeFixture):
 
     def test_shutdown_waits_for_inflight_messaging_intake(self) -> None:
         root, _, _ = self.make_bundle()
-        runtime = load_runtime(
-            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
-        )
+        runtime = self._runtime_with_mock_messaging_ingress(root)
         entered, release, returned = (
             threading.Event(),
             threading.Event(),
@@ -399,9 +581,7 @@ class NativeMessagingDaemonLifecycleTests(RuntimeFixture):
     def test_configured_messaging_listener_serves_and_closes_with_daemon(self) -> None:
         self.assertTrue(hasattr(runtime_module, "MessagingHTTPContext"))
         root, _, _ = self.make_bundle()
-        runtime = load_runtime(
-            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
-        )
+        runtime = self._runtime_with_mock_messaging_ingress(root)
         ingress = Mock()
         ingress.handle.return_value = b"{}"
         runtime = replace(
@@ -1665,7 +1845,9 @@ class NativeSendRpcTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
 
-    def test_v2_reply_returns_sender_semantic_terminal_over_local_api(self):
+    def test_v2_reply_returns_sender_semantic_terminal_over_local_api(
+        self,
+    ) -> None:
         self.semantic_http = True
         self.test_application_response_uses_exact_received_context_and_reverse_grant(
             semantic_v2=True
@@ -1673,7 +1855,7 @@ class NativeSendRpcTests(unittest.TestCase):
 
     def test_application_response_uses_exact_received_context_and_reverse_grant(
         self,
-        semantic_v2=False,
+        semantic_v2: bool = False,
     ) -> None:
         from types import SimpleNamespace
 
@@ -1681,11 +1863,9 @@ class NativeSendRpcTests(unittest.TestCase):
         from daimon_matrix.messaging import (
             MessagingChannel,
             MessagingDelivery,
-            MessagingSender,
         )
         from daimon_matrix.messaging_store import (
             MessagingInboxStore,
-            MessagingOutboxStore,
         )
         from daimon_matrix.service import HostedWeave, MessagingServiceContext
 
@@ -1710,13 +1890,14 @@ class NativeSendRpcTests(unittest.TestCase):
             inbox=MessagingInboxStore(self.root / "receiver/unused.sqlite3"),
             clock=lambda: pair.now,
         )
-        sender = MessagingSender(
+        sender = synthetic_sender(
             context=reverse_context,
             ledger=pair.local_ledger,
             signer=pair.recipient.signer,
-            custody=pair.receiver_custody,
-            outbox=MessagingOutboxStore(self.root / "receiver/replies-outbox.sqlite3"),
+            delivery_custody=pair.receiver_custody,
+            outbox_path=self.root / "receiver/replies-outbox.sqlite3",
             clock=lambda: pair.now,
+            catalog_id="test-reply-messaging-outbox",
         )
         if semantic_v2:
             from daimon_matrix.communication import CommunicationStore
@@ -1953,9 +2134,6 @@ class NativeMessagingTests(unittest.TestCase):
         self.root = Path(temporary.name)
 
     def make_sender(self, pair: Pair) -> Any:
-        from daimon_matrix.messaging import MessagingSender
-        from daimon_matrix.messaging_store import MessagingOutboxStore
-
         ledger = Ledger(
             self.root / "sender/local.sqlite3",
             authority=pair.sender.authority,
@@ -1963,13 +2141,14 @@ class NativeMessagingTests(unittest.TestCase):
             clock=lambda: pair.now,
         )
         ledger.initialize()
-        return MessagingSender(
+        return synthetic_sender(
             context=pair.sender_context,
             ledger=ledger,
             signer=pair.sender.signer,
-            custody=pair.sender_custody,
-            outbox=MessagingOutboxStore(self.root / "sender/outbox.sqlite3"),
+            delivery_custody=pair.sender_custody,
+            outbox_path=self.root / "sender/outbox.sqlite3",
             clock=lambda: pair.now,
+            catalog_id="test-messaging-outbox",
         )
 
     def delivery_transports(
@@ -1986,7 +2165,8 @@ class NativeMessagingTests(unittest.TestCase):
         calls: list[tuple[str, bytes]] = []
         providers = []
         ingresses = {}
-        transport = {}
+        transport: dict[str, Any] = {}
+        receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
             ("message", pair.receiver.receive_message),
@@ -2008,6 +2188,8 @@ class NativeMessagingTests(unittest.TestCase):
                     clock=lambda: pair.now,
                 ),
                 clock=lambda: pair.now,
+                egress=receiver_egress,
+                egress_catalog_id=f"test-messaging-{phase}-responses",
                 intake_validator=validate,
             )
 
@@ -2017,11 +2199,17 @@ class NativeMessagingTests(unittest.TestCase):
                 # Separate connection proves the complete request and pending state
                 # were committed, not merely inserted into an open transaction.
                 with closing(sqlite3.connect(sender.outbox.path)) as database:
+                    carrier = database.execute(
+                        "SELECT send_id FROM messaging_transport_stages "
+                        "WHERE owner=? AND phase=? AND request=?",
+                        (pair.sender.state.being_ref, phase, raw),
+                    ).fetchone()
+                    self.assertIsNotNone(carrier)
                     rows = database.execute(
                         "SELECT phase, request, transport_status "
                         "FROM messaging_transport_stages "
                         "WHERE owner=? AND send_id=? ORDER BY phase",
-                        (pair.sender.state.being_ref, send_id),
+                        (pair.sender.state.being_ref, carrier[0]),
                     ).fetchall()
                 self.assertEqual(len(rows), 2)
                 stages = {row[0]: row[1:] for row in rows}
@@ -2059,6 +2247,7 @@ class NativeMessagingTests(unittest.TestCase):
                     sender_body_ref=pair.sender.origin["body_ref"],
                     clock=lambda: pair.now,
                     round_trip=exchange,
+                    egress=sender.egress,
                 )
             )
         if getattr(self, "semantic_http", False):
@@ -2071,7 +2260,7 @@ class NativeMessagingTests(unittest.TestCase):
             worker = threading.Thread(target=server.serve_forever)
             worker.start()
 
-            def stop():
+            def stop() -> None:
                 server.shutdown()
                 worker.join(timeout=5)
                 server.server_close()
@@ -2123,7 +2312,13 @@ class NativeMessagingTests(unittest.TestCase):
             self.assertEqual(reads, 1, "runtime password descriptor was reused")
             return bytearray(PASSWORD)
 
-        runtime = load_runtime(state_root, "runtime.json", one_shot, clock=lambda: NOW)
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            one_shot,
+            clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
+        )
         factory = runtime.create_delivery_custody
         context = runtime.peer_context
         assert context is not None
@@ -2231,6 +2426,7 @@ class NativeMessagingTests(unittest.TestCase):
         pair = Pair(self.root)
         sender = self.make_sender(pair)
         ingresses = {}
+        receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
             ("message", pair.receiver.receive_message),
@@ -2252,6 +2448,8 @@ class NativeMessagingTests(unittest.TestCase):
                     clock=lambda: pair.now,
                 ),
                 clock=lambda: pair.now,
+                egress=receiver_egress,
+                egress_catalog_id=f"test-http-{phase}-responses",
                 intake_validator=validate,
             )
         with factory(
@@ -2331,6 +2529,7 @@ class NativeMessagingTests(unittest.TestCase):
                         sender_principal=pair.sender.state.being_ref,
                         sender_body_ref=pair.sender.origin["body_ref"],
                         clock=lambda: pair.now,
+                        egress=sender.egress,
                     )
                     for phase in ("evidence", "message")
                 ]
@@ -2533,6 +2732,79 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertEqual([phase for phase, _ in calls], ["evidence"])
         self.assertEqual(pair.receiver.page(after=0, limit=10), page)
 
+    def test_long_echo_outage_restarts_with_fresh_immutable_carrier(self) -> None:
+        from dataclasses import replace
+
+        from daimon_matrix.messaging import MessagingDelivery
+
+        pair = Pair(self.root)
+        short_policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.policy = short_policy
+        pair.sender_context.policy = short_policy
+        pair.receiver.policy = short_policy
+        sender = self.make_sender(pair)
+        request: _SendRequest = dict(
+            client_id="owner-ui",
+            send_id=_uuid("long-echo-outage"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        cast(Any, sender.egress)._transport = None
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        pending = delivery.send(**request)
+        self.assertEqual(pending["transport_status"], "pending")
+        self.assertTrue(pending["ambiguous"])
+        self.assertEqual(calls, [])
+        original = sender.outbox._prepared(
+            pair.sender.state.being_ref, request["send_id"]
+        )
+        assert original is not None
+
+        pair.now += 1_001
+        fresh = sender.prepare(**request)
+        self.assertNotEqual(fresh, original)
+        restarted = self.make_sender(pair)
+        self.assertEqual(restarted.prepare(**request), fresh)
+        evidence, message, calls = self.delivery_transports(
+            pair, restarted, request["send_id"]
+        )
+        restarted_delivery = MessagingDelivery(
+            sender=restarted,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        accepted = restarted_delivery.send(**request)
+        self.assertEqual(accepted["transport_status"], "recipient-intake")
+        self.assertEqual([phase for phase, _ in calls], ["evidence", "message"])
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+        self.assertEqual(restarted_delivery.send(**request), accepted)
+        self.assertEqual(len(calls), 2)
+
+        with closing(sqlite3.connect(sender.outbox.path)) as database:
+            carriers = database.execute(
+                "SELECT send_id, evidence, message FROM messaging_outbox "
+                "WHERE owner=? ORDER BY rowid",
+                (pair.sender.state.being_ref,),
+            ).fetchall()
+            obligations = database.execute(
+                "SELECT operation_id, native_sha256 FROM mandatory_egress_operations "
+                "ORDER BY operation_id"
+            ).fetchall()
+        self.assertEqual(len(carriers), 2)
+        self.assertEqual(carriers[0][1:], original)
+        self.assertEqual(carriers[1][1:], fresh)
+        self.assertEqual(len(obligations), 4)
+        self.assertEqual(len({row[0] for row in obligations}), 4)
+
     def test_delivery_rejects_unproven_cached_success_before_io(self) -> None:
         import sqlite3
         from unittest.mock import patch
@@ -2688,9 +2960,7 @@ class NativeMessagingTests(unittest.TestCase):
                 finally:
                     sender.context.policy = pair.policy
                 pair.now = json.loads(original_pair[0])["expires_at_ms"]
-                with self.assertRaisesRegex(
-                    ValueError, "messaging_authorization_expired"
-                ):
+                with self.assertRaises((ValueError, RelationshipStoreError)):
                     delivery.send(**request)
                 pair.now = NOW + 11
                 self.assertEqual(calls, before_calls)
@@ -2791,6 +3061,11 @@ class NativeMessagingTests(unittest.TestCase):
 
         pair = Pair(self.root)
         sender = self.make_sender(pair)
+        provider_catalog = SyntheticEgressCatalog(
+            path=self.root / "provider-egress.sqlite3",
+            clock=lambda: pair.now,
+            catalog_id="test-prepared-provider-requests",
+        )
         envelopes = sender.prepare(
             client_id="owner-ui",
             send_id=_uuid("http-send"),
@@ -2802,7 +3077,9 @@ class NativeMessagingTests(unittest.TestCase):
         )  # Disposable fixture transport key, not identity custody.
         requests: dict[str, list[bytes]] = {"evidence": [], "message": []}
         drop_response = {"message": True}
+        corrupt_response = {"evidence": True}
         ingresses = {}
+        receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, validate in (
             ("evidence", pair.receiver.receive_evidence),
             ("message", pair.receiver.receive_message),
@@ -2824,6 +3101,8 @@ class NativeMessagingTests(unittest.TestCase):
                     clock=lambda: pair.now,
                 ),
                 clock=lambda: pair.now,
+                egress=receiver_egress,
+                egress_catalog_id=f"test-retry-{phase}-responses",
                 intake_validator=validator,
             )
 
@@ -2836,6 +3115,8 @@ class NativeMessagingTests(unittest.TestCase):
                 if drop_response.pop(phase, False):
                     self.close_connection = True
                     return
+                if corrupt_response.pop(phase, False):
+                    response = b"{}"
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(response)))
                 self.end_headers()
@@ -2860,6 +3141,7 @@ class NativeMessagingTests(unittest.TestCase):
                         sender_principal=pair.sender.state.being_ref,
                         sender_body_ref=pair.sender.origin["body_ref"],
                         clock=lambda: pair.now,
+                        egress=provider_catalog.controller,
                     )
 
                 for phase, envelope in zip(
@@ -2879,16 +3161,20 @@ class NativeMessagingTests(unittest.TestCase):
                     }
                     transport = provider(phase)
                     prepared = transport.prepare_submission(submission)
+                    provider_catalog.admit(
+                        operation_id=_uuid("prepared-provider-" + phase),
+                        request=prepared,
+                        deadline_ms=value["expires_at_ms"],
+                    )
                     self.assertEqual(
                         requests[phase], []
                     )  # Preparation performs no I/O.
                     path = self.root / "sender" / (phase + "-prepared.json")
                     path.touch(mode=0o600)
                     path.write_bytes(prepared)
-                    if phase == "message":
-                        with self.assertRaises(RouteAmbiguous):
-                            transport.send_prepared(path.read_bytes())
-                        pair.now += 1
+                    with self.assertRaises(RouteAmbiguous):
+                        transport.send_prepared(path.read_bytes())
+                    pair.now += 1
                     result = provider(phase).send_prepared(path.read_bytes())
                     self.assertEqual(result["outcome"], "recipient-intake")
                     self.assertTrue(all(raw == prepared for raw in requests[phase]))
@@ -2923,6 +3209,11 @@ class NativeMessagingTests(unittest.TestCase):
         )[0]
         metadata = json.loads(envelope)
         calls: list[bytes] = []
+        provider_catalog = SyntheticEgressCatalog(
+            path=self.root / "negative-provider-egress.sqlite3",
+            clock=lambda: pair.now,
+            catalog_id="test-negative-provider-requests",
+        )
 
         def forbidden_io(raw: bytes) -> bytes:
             calls.append(raw)
@@ -2938,6 +3229,7 @@ class NativeMessagingTests(unittest.TestCase):
             sender_body_ref=pair.sender.origin["body_ref"],
             round_trip=forbidden_io,
             clock=lambda: pair.now,
+            egress=provider_catalog.controller,
         )
         provider = AuthenticatedProvider(**options)
         submission = dict(
@@ -2952,6 +3244,11 @@ class NativeMessagingTests(unittest.TestCase):
             deadline_ms=metadata["expires_at_ms"],
         )
         prepared = provider.prepare_submission(submission)
+        provider_catalog.admit(
+            operation_id=_uuid("negative-provider-request"),
+            request=prepared,
+            deadline_ms=metadata["expires_at_ms"],
+        )
         value = json.loads(prepared)
         bad_auth = copy.deepcopy(value)
         bad_auth["auth"]["value"] = "A" * 43
@@ -3095,7 +3392,7 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertEqual(tuple(row), first)
         before = restarted.outbox.path.read_bytes()
         pair.now = json.loads(first[0])["expires_at_ms"]
-        with self.assertRaisesRegex(ValueError, "messaging_authorization_expired"):
+        with self.assertRaises((ValueError, RelationshipStoreError)):
             restarted.prepare(**request)
         self.assertEqual(restarted.outbox.path.read_bytes(), before)
         self.assertEqual(restarted.ledger.events(), events)

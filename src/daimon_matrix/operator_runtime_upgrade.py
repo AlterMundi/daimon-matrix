@@ -185,12 +185,30 @@ def _locks(source: Path) -> Iterator[None]:
 
 def _validate(root: Path, code: Path, password: bytes) -> None:
     script = """
-import os,sys,time
+import os,shutil,sys,tempfile,time
 sys.path.insert(0,sys.argv[1])
 from pathlib import Path
 from daimon_matrix.runtime import load_runtime
 password=os.read(int(sys.argv[3]),4097)
-load_runtime(Path(sys.argv[2]),'runtime.json',lambda:bytearray(password),clock=lambda:time.time_ns()//1000000)
+clock=lambda:time.time_ns()//1000000
+options={}
+try:
+    from daimon_matrix.native_egress import closed_visibility
+except ModuleNotFoundError as exc:
+    if exc.name != 'daimon_matrix.native_egress':
+        raise
+else:
+    options['egress']=closed_visibility(clock=clock,catalog_mode='migrate')
+with tempfile.TemporaryDirectory(prefix='dm-runtime-validate-') as scratch:
+    clone=Path(scratch)/'runtime'
+    shutil.copytree(Path(sys.argv[2]),clone)
+    load_runtime(
+        clone,
+        'runtime.json',
+        lambda:bytearray(password),
+        clock=clock,
+        **options,
+    )
 """
     read, write = os.pipe()
     try:
@@ -272,20 +290,24 @@ def stage(
             bundle.get("schema") != "dm.runtime.bundle/v7"
             or bundle["keystore"]["filename"] != "custody.json"
             or signing_slot != f"runtime.signing.v1:{label}"
-            or len(bundle["capabilities"]) != 2
-            or len({row["secret_slot"] for row in bundle["capabilities"]}) != 2
+            or len(bundle["capabilities"]) not in (1, 2)
+            or len({row["secret_slot"] for row in bundle["capabilities"]})
+            != len(bundle["capabilities"])
             or f"runtime.capability.v1:{label}"
             not in {row["secret_slot"] for row in bundle["capabilities"]}
             # The independently named observer must be the other distinct row,
             # even when the signing label itself begins with "status:".
-            or not any(
-                isinstance(row["secret_slot"], str)
-                and row["secret_slot"] != f"runtime.capability.v1:{label}"
-                and row["secret_slot"].startswith("runtime.capability.v1:status:")
-                and row["secret_slot"] != "runtime.capability.v1:status:"
-                and row["descriptor"]["methods"]
-                == sorted(profiles.HOST_CAPABILITY_PROFILES["status"])
-                for row in bundle["capabilities"]
+            or (
+                len(bundle["capabilities"]) == 2
+                and not any(
+                    isinstance(row["secret_slot"], str)
+                    and row["secret_slot"] != f"runtime.capability.v1:{label}"
+                    and row["secret_slot"].startswith("runtime.capability.v1:status:")
+                    and row["secret_slot"] != "runtime.capability.v1:status:"
+                    and row["descriptor"]["methods"]
+                    == sorted(profiles.HOST_CAPABILITY_PROFILES["status"])
+                    for row in bundle["capabilities"]
+                )
             )
             or {"runtime_id", "runtime_label", "operator_capability_binding"}
             & bundle.keys()
@@ -299,6 +321,12 @@ def stage(
         ):
             raise UpgradeError("upgrade_identity_or_revision_conflict")
         _forward_authorization(bundle, expires_at_ms)
+        if len(bundle["capabilities"]) == 1:
+            # An original enrollment need not have a host observer. Validate
+            # the complete pinned legacy contract before creating a transaction:
+            # dropping a row from a two-capability bundle without retiring its
+            # custody slot must still fail, without leaving staged artifacts.
+            _validate(source, legacy_source, password)
         transaction.mkdir(mode=0o700)
         _sync(transaction.parent)
         _copy(snapshot, transaction / "checkpoint")

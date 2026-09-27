@@ -33,6 +33,7 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.relationships import (
     RelationshipError,
     VerifiedTribeSnapshot,
@@ -707,6 +708,7 @@ class HostedScopeSurfaceTests(ScopeFixture):
             self.root_path,
             (info.st_dev, info.st_ino),
             self.root_path / "dm054.sock",
+            synthetic_visibility(clock=lambda: self.now),
         )
         request = create_request(
             capability,

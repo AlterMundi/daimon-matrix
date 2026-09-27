@@ -1,0 +1,11 @@
+{
+  "schema": "dm.foundation.provenance/v1",
+  "snapshot": "docs/foundation/daimon-matrix.md",
+  "canonical_url": "https://hackmd.io/@nicoechaniz/daimon-matrix",
+  "canonical_download": "https://hackmd.io/@nicoechaniz/daimon-matrix/download",
+  "authority": "The canonical URL is the living editorial original. This snapshot is the pinned normative artifact for the commit that carries it. Drift is reconciled by one explicit commit updating both this record and the snapshot; neither side is edited silently and no runtime fetches the remote document.",
+  "retrieved_at": "2026-09-25T02:40:45Z",
+  "body_sha256": "08263116b0f1143c5d5f1a2a99df7e37f5acf7bc3371a362c1386e27b2dd57a6",
+  "snapshot_sha256_with_front_matter": "802d7086707a1c27d80e5d7d6e4a0219d8e1f070a55eff9dff0f1ed8111d6b31",
+  "front_matter": "The snapshot retains HackMD YAML front matter. Comparisons strip a leading '---' block through the second '---' line and then leading newlines, exactly as the foundation-drift workflow does."
+}

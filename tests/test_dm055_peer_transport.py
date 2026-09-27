@@ -30,10 +30,15 @@ from daimon_matrix.identity import (
     verify_successor,
 )
 from daimon_matrix.keystore import EncryptedKeystore
+from daimon_matrix.native_egress import (
+    MandatoryEgressController,
+    synthetic_visibility,
+)
 from daimon_matrix.peer_transport import (
     MAX_ENVELOPE_BYTES,
     KeystorePeerCustody,
     PeerClient,
+    PeerClientContext,
     PeerDispatcher,
     PeerExchangeStore,
     PeerOutbox,
@@ -47,7 +52,7 @@ from daimon_matrix.peer_transport import (
     seal_peer_payload,
 )
 from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
-from daimon_matrix.runtime import load_runtime
+from daimon_matrix.runtime import _RuntimeDeliveryCustody, load_runtime
 from daimon_matrix.scopes import (
     ScopeExchangeStore,
     ScopeResolver,
@@ -56,6 +61,11 @@ from daimon_matrix.scopes import (
 )
 from daimon_matrix.sealed import RecipientTarget
 from daimon_matrix.sync import SyncEngine
+from daimon_matrix.we_messaging import (
+    WE_MESSAGE_CONTENT_TYPE,
+    WE_RECEIPT_CONTENT_TYPE,
+    WeConversation,
+)
 from daimon_matrix.weave import BeingManifest, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
 from tests.test_dm024_runtime import PASSWORD as RUNTIME_PASSWORD
@@ -69,6 +79,8 @@ class PeerTransportFixture(RootLedgerFixture):
     def setUp(self) -> None:
         super().setUp()
         self.now = NOW
+        self.egress = synthetic_visibility(clock=lambda: self.now)
+        self.receiver_egress = synthetic_visibility(clock=lambda: self.now)
         self.targets: dict[str, RecipientTarget] = {}
         self.custodies: dict[str, KeystorePeerCustody] = {}
         for label in ("legion", "daimonmatrix"):
@@ -359,6 +371,8 @@ class PeerTransportTests(PeerTransportFixture):
                 )
             },
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
         raw = self.envelope()
         first = dispatcher.dispatch(raw)
@@ -473,6 +487,8 @@ class PeerTransportTests(PeerTransportFixture):
                 )
             },
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
         raw = self.envelope()
         with self.assertRaisesRegex(RuntimeError, "synthetic handler failure"):
@@ -491,6 +507,7 @@ class PeerTransportTests(PeerTransportFixture):
         effects = 0
         requests: list[bytes] = []
         lose_first_response = True
+        corrupt_second_response = True
 
         def serve(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             nonlocal effects
@@ -512,15 +529,20 @@ class PeerTransportTests(PeerTransportFixture):
                 )
             },
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
 
         def unreliable_round_trip(raw: bytes) -> bytes:
-            nonlocal lose_first_response
+            nonlocal corrupt_second_response, lose_first_response
             requests.append(raw)
             response = dispatcher.dispatch(raw)
             if lose_first_response:
                 lose_first_response = False
                 raise ConnectionError("synthetic response loss")
+            if corrupt_second_response:
+                corrupt_second_response = False
+                return b"{}"
             return response
 
         client = PeerClient(
@@ -531,6 +553,8 @@ class PeerTransportTests(PeerTransportFixture):
             outbox=PeerOutbox(client_state / "outbox.sqlite"),
             round_trip=unreliable_round_trip,
             clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-peer-request",
         )
 
         def invoke() -> Mapping[str, Any]:
@@ -554,6 +578,8 @@ class PeerTransportTests(PeerTransportFixture):
             outbox=PeerOutbox(client_state / "outbox.sqlite"),
             round_trip=unreliable_round_trip,
             clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-peer-request",
         )
         dispatcher = PeerDispatcher(
             authority=self.authority,
@@ -570,12 +596,18 @@ class PeerTransportTests(PeerTransportFixture):
                 )
             },
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
+        with self.assertRaises(PeerTransportAmbiguous):
+            invoke()
+        self.now += 1_000
         response = invoke()
         self.assertEqual(response["echo"], "/me")
         self.assertEqual(effects, 1)
-        self.assertEqual(len(requests), 2)
+        self.assertEqual(len(requests), 3)
         self.assertEqual(requests[0], requests[1])
+        self.assertEqual(requests[0], requests[2])
 
         envelope = json.loads(requests[0])
         legacy_plan = {
@@ -603,12 +635,322 @@ class PeerTransportTests(PeerTransportFixture):
         self.now += 1_000
         self.assertEqual(invoke()["echo"], "/me")
         self.assertEqual(effects, 1)
-        self.assertEqual(len(requests), 3)
-        self.assertEqual(requests[0], requests[2])
+        self.assertEqual(len(requests), 4)
+        self.assertEqual(requests[0], requests[3])
         self.now = envelope["expires_at_ms"]
-        with self.assertRaisesRegex(PeerTransportError, "peer_transport_rejected"):
+        response = invoke()
+        self.assertEqual(response["echo"], "/me")
+        self.assertEqual(effects, 1)
+        self.assertEqual(len(requests), 5)
+        self.assertNotEqual(requests[0], requests[4])
+        self.assertEqual(json.loads(requests[4])["expires_at_ms"], self.now + 30_000)
+
+    def test_long_echo_outage_creates_fresh_peer_carrier_after_restart(self) -> None:
+        server_state = self.root_path / "peer-long-outage-server"
+        client_state = self.root_path / "peer-long-outage-client"
+        server_state.mkdir(mode=0o700)
+        client_state.mkdir(mode=0o700)
+        effects = 0
+        requests: list[bytes] = []
+
+        def serve(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            nonlocal effects
+            effects += 1
+            return {"schema": "dm.scope.response/v1", "echo": payload["scope"]}
+
+        dispatcher = PeerDispatcher(
+            authority=self.authority,
+            local_origin=self.origins["daimonmatrix"],
+            local_target=self.targets["daimonmatrix"],
+            custody=self.custodies["daimonmatrix"],
+            store=PeerExchangeStore(
+                server_state / "exchange.sqlite", clock=lambda: self.now
+            ),
+            handlers={
+                "application/vnd.daimon.scope-request+json": (
+                    "application/vnd.daimon.scope-response+json",
+                    serve,
+                )
+            },
+            clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-long-outage-peer-response",
+        )
+
+        def round_trip(raw: bytes) -> bytes:
+            requests.append(raw)
+            return dispatcher.dispatch(raw)
+
+        outbox_path = client_state / "outbox.sqlite"
+        # The intra-being /we lane carries no inter-daimon message, so a Telegram
+        # outage must not block it: the mirror transport stays down for the whole
+        # test. A transport failure exercises the same carrier regeneration across
+        # the deadline and the restart that this test protects.
+        self.egress._transport = None
+        outage = [ConnectionError("synthetic-outage")]
+        served_round_trip = round_trip
+
+        def flaky_round_trip(raw: bytes) -> bytes:
+            if outage:
+                raise outage.pop()
+            return served_round_trip(raw)
+
+        client = PeerClient(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(outbox_path),
+            round_trip=flaky_round_trip,
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-long-outage-peer-request",
+            endpoint_identity="synthetic://peer-a/dm-peer/v1",
+        )
+
+        def invoke() -> Mapping[str, Any]:
+            return client.call(
+                {"schema": "dm.scope.request/v1", "scope": "/me"},
+                recipient_target=self.targets["daimonmatrix"],
+                request_content_type="application/vnd.daimon.scope-request+json",
+                response_content_type="application/vnd.daimon.scope-response+json",
+                correlation_id="05500000-0000-4000-8000-000000000060",
+                deadline_ms=self.now + 10,
+            )
+
+        with self.assertRaises(PeerTransportAmbiguous):
             invoke()
-        self.assertEqual(len(requests), 3)
+        self.assertEqual(requests, [])
+        with closing(sqlite3.connect(outbox_path)) as database:
+            original = database.execute(
+                "SELECT request FROM peer_outbox_carriers ORDER BY generation"
+            ).fetchone()[0]
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM mandatory_egress_operations"
+                ).fetchone(),
+                (1,),
+            )
+
+        self.now += 11
+        client = PeerClient(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(outbox_path),
+            round_trip=flaky_round_trip,
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-long-outage-peer-request",
+            endpoint_identity="synthetic://peer-a/dm-peer/v1",
+        )
+        self.assertEqual(invoke()["echo"], "/me")
+        self.assertEqual(effects, 1)
+        self.assertEqual(len(requests), 1)
+        self.assertNotEqual(requests[0], original)
+        with closing(sqlite3.connect(outbox_path)) as database:
+            carriers = database.execute(
+                "SELECT generation, egress_operation_id, request, egress_path_id "
+                "FROM peer_outbox_carriers "
+                "ORDER BY generation"
+            ).fetchall()
+            operations = database.execute(
+                "SELECT operation_id, native_sha256 "
+                "FROM mandatory_egress_operations ORDER BY operation_id"
+            ).fetchall()
+            logical_request_id = database.execute(
+                "SELECT request_id FROM peer_outbox"
+            ).fetchone()[0]
+            self.assertEqual([row[0] for row in carriers], [1, 2])
+            self.assertEqual([row[3] for row in carriers], ["peer-scope-request"] * 2)
+            self.assertEqual(carriers[0][2], original)
+            self.assertEqual(
+                sorted(operations),
+                sorted(
+                    (
+                        row[1],
+                        hashlib.sha256(row[2]).hexdigest(),
+                    )
+                    for row in carriers
+                ),
+            )
+            self.assertNotIn(logical_request_id, {row[0] for row in operations})
+            # Both operations still journal their projection, but no obligation is
+            # ever confirmed and the mirror transport was down the whole time: the
+            # lane carries one being's own state, not an inter-daimon message.
+            self.assertEqual(
+                database.execute("SELECT count(*) FROM echo_v2_obligations").fetchone(),
+                (2,),
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM echo_v2_obligations WHERE record LIKE "
+                    "'%confirmed%'"
+                ).fetchone(),
+                (0,),
+            )
+        reopened_outbox = PeerOutbox(outbox_path)
+        reopened = MandatoryEgressController(
+            policy=cast(Any, self.egress)._policy,
+            proof_key=b"\x89" * 32,
+            transport=None,
+            clock=lambda: self.now,
+            catalog_mode="validate",
+        )
+        reopened.register_catalog(
+            catalog_id="test-long-outage-peer-request",
+            path=outbox_path,
+            resolve=lambda locator: reopened_outbox.resolve(locator),
+            authorize=lambda binding: True,
+        )
+        reopened.register_path("peer-scope-request", "test-long-outage-peer-request")
+        reopened.register_path("peer-sync-request", "test-long-outage-peer-request")
+        with closing(sqlite3.connect(server_state / "exchange.sqlite")) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT egress_path_id FROM peer_exchanges WHERE state='responded'"
+                ).fetchone(),
+                ("peer-scope-response",),
+            )
+
+    def test_endpoint_swap_cannot_release_confirmed_old_peer_bytes(self) -> None:
+        state = self.root_path / "peer-endpoint-binding"
+        state.mkdir(mode=0o700)
+        calls: dict[str, list[bytes]] = {"a": [], "b": []}
+
+        def endpoint(label: str) -> Callable[[bytes], bytes]:
+            def exchange(raw: bytes) -> bytes:
+                calls[label].append(raw)
+                raise ConnectionError("synthetic response loss")
+
+            return exchange
+
+        def context(url: str, exchange: Callable[[bytes], bytes]) -> PeerClientContext:
+            return PeerClientContext(
+                authority=self.authority,
+                local_origin=self.origins["legion"],
+                local_target=self.targets["legion"],
+                custody=self.custodies["legion"],
+                outbox=PeerOutbox(state / "outbox.sqlite"),
+                clock=lambda: self.now,
+                egress=self.egress,
+                egress_catalog_id="test-endpoint-bound-peer-request",
+                endpoints={"embodiment:daimonmatrix": (url, 1.0)},
+                round_trip_factory=lambda configured, _timeout: exchange,
+            )
+
+        target, first = context(
+            "https://peer-a.example/dm-peer/v1", endpoint("a")
+        ).configured("embodiment:daimonmatrix")
+
+        def invoke(client: PeerClient, current_target: RecipientTarget) -> None:
+            client.call(
+                {"schema": "dm.scope.request/v1", "scope": "/me"},
+                recipient_target=current_target,
+                request_content_type="application/vnd.daimon.scope-request+json",
+                response_content_type="application/vnd.daimon.scope-response+json",
+                correlation_id="05500000-0000-4000-8000-000000000061",
+                deadline_ms=self.now + 30_000,
+            )
+
+        with self.assertRaises(PeerTransportAmbiguous):
+            invoke(first, target)
+        self.assertEqual(len(calls["a"]), 1)
+
+        target, swapped = context(
+            "https://peer-b.example/dm-peer/v1", endpoint("b")
+        ).configured("embodiment:daimonmatrix")
+        with self.assertRaises(PeerTransportError):
+            invoke(swapped, target)
+        self.assertEqual(calls["b"], [])
+
+    def test_revoked_current_target_blocks_old_confirmed_peer_bytes(self) -> None:
+        state = self.root_path / "peer-revoked-target-binding"
+        state.mkdir(mode=0o700)
+        calls: list[bytes] = []
+
+        def lose_response(raw: bytes) -> bytes:
+            calls.append(raw)
+            raise ConnectionError("synthetic response loss")
+
+        first_context = PeerClientContext(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(state / "outbox.sqlite"),
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-revoked-target-peer-request",
+            endpoints={
+                "embodiment:daimonmatrix": (
+                    "https://peer.example/dm-peer/v1",
+                    1.0,
+                )
+            },
+            round_trip_factory=lambda _configured, _timeout: lose_response,
+        )
+        target, first = first_context.configured("embodiment:daimonmatrix")
+
+        def invoke(client: PeerClient, current_target: RecipientTarget) -> None:
+            client.call(
+                {"schema": "dm.scope.request/v1", "scope": "/me"},
+                recipient_target=current_target,
+                request_content_type="application/vnd.daimon.scope-request+json",
+                response_content_type="application/vnd.daimon.scope-response+json",
+                correlation_id="05500000-0000-4000-8000-000000000062",
+                deadline_ms=self.now + 30_000,
+            )
+
+        with self.assertRaises(PeerTransportAmbiguous):
+            invoke(first, target)
+        self.assertEqual(len(calls), 1)
+
+        revocation = create_revocation(
+            self.state,
+            self.root_seeds,
+            embodiment_id="embodiment:daimonmatrix",
+            cutoff_incarnation_sequence=0,
+            revocation_generation=1,
+        )
+        revoked_state = verify_successor(revocation, self.state)
+        revoked_manifest = BeingManifest.from_value(
+            {
+                **self.manifest.value,
+                "control_head": revoked_state.head,
+                "revision": 2,
+            }
+        )
+        revoked = RootAuthority(
+            revoked_manifest,
+            revoked_state,
+            self.credentials,
+            self.incarnations,
+        )
+        revoked_context = PeerClientContext(
+            authority=revoked,
+            local_origin=self.origins["legion"],
+            local_target=RecipientTarget(revoked, self.targets["legion"].credential_id),
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(state / "outbox.sqlite"),
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-revoked-target-peer-request",
+            endpoints={
+                "embodiment:daimonmatrix": (
+                    "https://peer.example/dm-peer/v1",
+                    1.0,
+                )
+            },
+            round_trip_factory=lambda _configured, _timeout: lose_response,
+        )
+        revoked_target, restarted = revoked_context.configured(
+            "embodiment:daimonmatrix"
+        )
+        with self.assertRaises(PeerTransportError):
+            invoke(restarted, revoked_target)
+        self.assertEqual(len(calls), 1)
 
     def test_envelope_matches_closed_schema(self) -> None:
         schema = json.loads(
@@ -645,6 +987,8 @@ class PeerTransportTests(PeerTransportFixture):
                 sync_engine=sync_b,
             ),
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
         client = PeerClient(
             authority=self.authority,
@@ -654,6 +998,8 @@ class PeerTransportTests(PeerTransportFixture):
             outbox=PeerOutbox(client_state / "outbox.sqlite"),
             round_trip=dispatcher.dispatch,
             clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-peer-request",
         )
 
         scope_request = create_scope_request(
@@ -712,6 +1058,101 @@ class PeerTransportTests(PeerTransportFixture):
         for event in events:
             self.assertEqual(self.ledger_a.event(event["event_id"]), event)
 
+    def test_real_conversation_handler_crosses_encrypted_boundary(self) -> None:
+        """One sibling message crosses the native carrier and comes back signed."""
+        server_state = self.root_path / "peer-converse-server"
+        client_state = self.root_path / "peer-converse-client"
+        server_state.mkdir(mode=0o700)
+        client_state.mkdir(mode=0o700)
+        scope_store_b = ScopeExchangeStore(self.ledger_b)
+        scope_store_b.initialize()
+        sibling = "embodiment:daimonmatrix"
+        receiver = WeConversation(
+            self.ledger_b,
+            signer=self.signers["daimonmatrix"],
+            custody=_RuntimeDeliveryCustody(self.custodies["daimonmatrix"]),
+            clock=lambda: self.now,
+        )
+        sender = WeConversation(
+            self.ledger_a,
+            signer=self.signers["legion"],
+            custody=_RuntimeDeliveryCustody(self.custodies["legion"]),
+            clock=lambda: self.now,
+        )
+        dispatcher = PeerDispatcher(
+            authority=self.authority,
+            local_origin=self.origins["daimonmatrix"],
+            local_target=self.targets["daimonmatrix"],
+            custody=self.custodies["daimonmatrix"],
+            store=PeerExchangeStore(
+                server_state / "exchange.sqlite", clock=lambda: self.now
+            ),
+            handlers=protocol_handlers(
+                resolver=ScopeResolver(self.ledger_b, clock=lambda: self.now),
+                signer=self.signers["daimonmatrix"],
+                scope_store=scope_store_b,
+                sync_engine=SyncEngine(self.ledger_b),
+                we_lane=receiver,
+            ),
+            clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-converse-response",
+        )
+        client = PeerClient(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(client_state / "outbox.sqlite"),
+            round_trip=dispatcher.dispatch,
+            clock=lambda: self.now,
+            egress=self.egress,
+            egress_catalog_id="test-converse-request",
+        )
+        request_id = "05500000-0000-4000-8000-000000000030"
+        resolved = ScopeResolver(self.ledger_a, clock=lambda: self.now).resolution(
+            scope="/we", request_id=request_id
+        )
+
+        def deliver(
+            embodiment_id: str, payload: Mapping[str, Any]
+        ) -> Mapping[str, Any]:
+            self.assertEqual(embodiment_id, sibling)
+            return client.call(
+                payload,
+                recipient_target=self.targets["daimonmatrix"],
+                request_content_type=WE_MESSAGE_CONTENT_TYPE,
+                response_content_type=WE_RECEIPT_CONTENT_TYPE,
+                correlation_id=request_id,
+                deadline_ms=NOW + 30_000,
+            )
+
+        result = sender.converse(
+            text="hola hermano",
+            addressees=[sibling],
+            request_id=request_id,
+            targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        self.assertEqual(result["carrier"], sorted(["embodiment:legion", sibling]))
+        self.assertEqual(
+            [(row["state"], row["embodiment_id"]) for row in result["deliveries"]],
+            [("delivered", sibling)],
+        )
+        receipt_id = result["deliveries"][0]["receipt_event_id"]
+        # The hearing body kept the message, its audience and its own receipt.
+        self.assertIsNotNone(self.ledger_b.event(result["message_id"]))
+        self.assertIsNotNone(self.ledger_b.event(result["resolution_id"]))
+        heard = self.ledger_b.event(receipt_id)
+        assert heard is not None
+        self.assertEqual(heard["origin"]["embodiment_id"], sibling)
+        self.assertEqual(heard["payload"]["thread_id"], result["thread_id"])
+        # The sending body kept the sibling's receipt, so authorship stays visible.
+        retained = self.ledger_a.event(receipt_id)
+        assert retained is not None
+        self.assertEqual(retained["origin"]["embodiment_id"], sibling)
+
     def test_http_client_rejects_unsafe_url_and_wrong_response_contract(self) -> None:
         for url, timeout in (
             ("http://127.0.0.1:bad/dm-peer/v1", 1),
@@ -758,7 +1199,7 @@ class PeerTransportTests(PeerTransportFixture):
             )
             with self.assertRaises(PeerTransportAmbiguous):
                 exchange(b"opaque")
-            with self.assertRaisesRegex(PeerTransportError, "peer_transport_rejected"):
+            with self.assertRaises(PeerTransportAmbiguous):
                 exchange(b"opaque")
         finally:
             server.shutdown()
@@ -790,6 +1231,8 @@ class PeerTransportTests(PeerTransportFixture):
                 )
             },
             clock=lambda: self.now,
+            egress=self.receiver_egress,
+            egress_catalog_id="test-peer-response",
         )
 
         class Handler(BaseHTTPRequestHandler):
@@ -826,6 +1269,8 @@ class PeerTransportTests(PeerTransportFixture):
                     f"http://{host}:{port}/dm-peer/v1", timeout_seconds=3
                 ),
                 clock=lambda: self.now,
+                egress=self.egress,
+                egress_catalog_id="test-peer-request-822",
             )
             response = client.call(
                 {"schema": "dm.scope.request/v1", "scope": "/me"},
@@ -896,6 +1341,7 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
             "runtime.json",
             one_shot_password,
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         self.assertEqual(password_reads, 1)
         self.assertIsNotNone(runtime.peer_dispatcher)
@@ -948,6 +1394,8 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                     f"http://{host}:{port}/dm-peer/v1", timeout_seconds=3
                 ),
                 clock=lambda: NOW,
+                egress=self.egress,
+                egress_catalog_id="test-peer-request-944",
             )
             request = create_scope_request(
                 ScopeResolver(self.ledger_b, clock=lambda: NOW),
@@ -1019,6 +1467,7 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
             "runtime.json",
             lambda: bytearray(RUNTIME_PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         self.assertIsNone(runtime.peer_dispatcher)
         self.assertIsNone(runtime.peer_context)
@@ -1059,6 +1508,7 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
                         "runtime.json",
                         lambda: bytearray(RUNTIME_PASSWORD),
                         clock=lambda: NOW,
+                        egress=synthetic_visibility(clock=lambda: NOW),
                     )
 
     def test_http_server_bounds_connections_before_handler_threads(self) -> None:
@@ -1097,6 +1547,7 @@ class PeerRuntimeBundleTests(PeerTransportFixture, RuntimeFixture):
             "runtime.json",
             lambda: bytearray(RUNTIME_PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         runtime = replace(runtime, peer_listen=("127.0.0.1", 0))
         with patch("daimon_matrix.daemon.MAX_IN_FLIGHT", 1):

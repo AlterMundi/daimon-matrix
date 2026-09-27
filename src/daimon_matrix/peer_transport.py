@@ -37,9 +37,21 @@ from cryptography.hazmat.primitives.hpke import AEAD, KDF, KEM, Suite
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .identity import VerificationError, key_id, verify_embodiment_credential
+from .native_egress import (
+    MandatoryEgressController,
+    NativeEgressError,
+    OperationBinding,
+    native_projection,
+)
 from .scopes import ScopeExchangeStore, ScopeResolver, serve_scope_request
-from .sealed import RecipientTarget, recipient_descriptor
+from .sealed import RecipientTarget, SealedDeliveryError, recipient_descriptor
 from .sync import SyncEngine
+from .we_messaging import (
+    WE_MESSAGE_CONTENT_TYPE,
+    WE_RECEIPT_CONTENT_TYPE,
+    WeConversation,
+    WeLaneError,
+)
 from .weave import EventSigner, RootAuthority, WeaveProtocolError
 
 SCHEMA: Final = "dm.peer-envelope/v1"
@@ -50,14 +62,35 @@ CEK_WRAP_DOMAIN: Final = b"daimon/peer-envelope/cek-wrap/v1\x00"
 MAX_ENVELOPE_BYTES: Final = 3 * 1024 * 1024
 MAX_PAYLOAD_BYTES: Final = 2 * 1024 * 1024
 MAX_TTL_MS: Final = 60_000
+SCOPE_REQUEST: Final = "application/vnd.daimon.scope-request+json"
+SCOPE_RESPONSE: Final = "application/vnd.daimon.scope-response+json"
+SYNC_REQUEST: Final = "application/vnd.daimon.sync-request+json"
+SYNC_DELTA: Final = "application/vnd.daimon.sync-delta+json"
 CONTENT_TYPES: Final = frozenset(
     {
-        "application/vnd.daimon.scope-request+json",
-        "application/vnd.daimon.scope-response+json",
-        "application/vnd.daimon.sync-request+json",
-        "application/vnd.daimon.sync-delta+json",
+        SCOPE_REQUEST,
+        SCOPE_RESPONSE,
+        SYNC_REQUEST,
+        SYNC_DELTA,
+        WE_MESSAGE_CONTENT_TYPE,
+        WE_RECEIPT_CONTENT_TYPE,
     }
 )
+# One egress path and one journal stage per carried kind, looked up exactly. The
+# carrier never infers them from a substring of a content type, so a new lane has
+# to name itself here rather than falling through to somebody else's path.
+REQUEST_EGRESS: Final = {
+    SCOPE_REQUEST: ("peer-scope-request", "scope"),
+    SYNC_REQUEST: ("peer-sync-request", "sync"),
+    WE_MESSAGE_CONTENT_TYPE: ("peer-converse-request", "converse"),
+}
+RESPONSE_EGRESS: Final = {
+    SCOPE_RESPONSE: ("peer-scope-response", "scope"),
+    SYNC_DELTA: ("peer-sync-response", "sync"),
+    WE_RECEIPT_CONTENT_TYPE: ("peer-converse-response", "converse"),
+}
+REQUEST_CONTENT_TYPES: Final = frozenset(REQUEST_EGRESS)
+RESPONSE_CONTENT_TYPES: Final = frozenset(RESPONSE_EGRESS)
 _SUITE: Final = Suite(KEM.X25519, KDF.HKDF_SHA256, AEAD.CHACHA20_POLY1305)
 
 
@@ -107,9 +140,34 @@ class PeerClaim:
     response: bytes | None
 
 
+@dataclass(frozen=True)
+class PeerEgressSpec:
+    controller: MandatoryEgressController
+    catalog_id: str
+    path_id: str
+    deadline_ms: int
+    authority_head: str
+    projection: Callable[[bytes], Mapping[str, Any]]
+    target_credential_id: str = ""
+    target_embodiment_id: str = ""
+    endpoint_identity: str = ""
+
+
+@dataclass(frozen=True)
+class PeerCarrier:
+    logical_request_id: str
+    generation: int
+    envelope_id: str
+    egress_operation_id: str
+    request: bytes
+    deadline_ms: int
+
+
 Clock = Callable[[], int]
 PeerHandler = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 RoundTrip = Callable[[bytes], bytes]
+TargetResolver = Callable[[str], RecipientTarget]
+RoundTripFactory = Callable[[str, float], RoundTrip]
 _RESPONSE_NAMESPACE: Final = uuid.UUID("58ada7dc-a3d3-4019-8979-bd8712b59965")
 _REQUEST_NAMESPACE: Final = uuid.UUID("34013d25-dd27-4a45-9cad-78a09bf661dc")
 
@@ -246,7 +304,13 @@ class PeerExchangeStore:
                 "envelope_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, "
                 "state TEXT NOT NULL CHECK(state IN ('processing','responded')), "
                 "claim_id TEXT, lease_until_ms INTEGER, response BLOB, "
-                "response_sha256 TEXT)"
+                "response_sha256 TEXT, egress_path_id TEXT)"
+            )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS peer_exchange_effects ("
+                "correlation_id TEXT PRIMARY KEY, content_type TEXT NOT NULL, "
+                "request_payload_sha256 TEXT NOT NULL, response_payload BLOB NOT NULL, "
+                "response_payload_sha256 TEXT NOT NULL)"
             )
 
     @contextmanager
@@ -296,7 +360,7 @@ class PeerExchangeStore:
             if row is None:
                 database.execute(
                     "INSERT INTO peer_exchanges "
-                    "VALUES(?,?, 'processing', ?, ?, NULL, NULL)",
+                    "VALUES(?,?, 'processing', ?, ?, NULL, NULL, NULL)",
                     (envelope_id, request_sha256, claim_id, now + lease_ms),
                 )
                 database.commit()
@@ -337,7 +401,14 @@ class PeerExchangeStore:
             database.commit()
             return PeerClaim(envelope_id, request_sha256, claim_id, None)
 
-    def finish(self, claim: PeerClaim, response: bytes) -> bytes:
+    def finish(
+        self,
+        claim: PeerClaim,
+        response: bytes,
+        *,
+        egress: PeerEgressSpec | None = None,
+        logical_request: tuple[str, str, str, bytes] | None = None,
+    ) -> bytes:
         if claim.claim_id is None or claim.response is not None:
             raise PeerTransportError()
         if not response or len(response) > MAX_ENVELOPE_BYTES:
@@ -360,14 +431,97 @@ class PeerExchangeStore:
             ):
                 database.rollback()
                 raise PeerTransportConflict()
+            egress_path_id = None if egress is None else egress.path_id
             database.execute(
                 "UPDATE peer_exchanges SET state='responded', claim_id=NULL, "
-                "lease_until_ms=NULL, response=?, response_sha256=? "
-                "WHERE envelope_id=?",
-                (response, digest, claim.envelope_id),
+                "lease_until_ms=NULL, response=?, response_sha256=?, "
+                "egress_path_id=? WHERE envelope_id=?",
+                (response, digest, egress_path_id, claim.envelope_id),
             )
+            if egress is not None:
+                egress.controller.admit_in_transaction(
+                    database,
+                    catalog_id=egress.catalog_id,
+                    path_id=egress.path_id,
+                    operation_id=claim.envelope_id,
+                    locator=claim.envelope_id,
+                    native_bytes=response,
+                    projection=egress.projection(response),
+                    deadline_ms=egress.deadline_ms,
+                    authority_head=egress.authority_head,
+                )
+            if logical_request is not None:
+                (
+                    correlation_id,
+                    content_type,
+                    request_payload_sha256,
+                    response_payload,
+                ) = logical_request
+                response_payload_sha256 = hashlib.sha256(response_payload).hexdigest()
+                existing = database.execute(
+                    "SELECT * FROM peer_exchange_effects WHERE correlation_id=?",
+                    (correlation_id,),
+                ).fetchone()
+                if existing is None:
+                    database.execute(
+                        "INSERT INTO peer_exchange_effects VALUES (?,?,?,?,?)",
+                        (
+                            correlation_id,
+                            content_type,
+                            request_payload_sha256,
+                            response_payload,
+                            response_payload_sha256,
+                        ),
+                    )
+                elif (
+                    existing["content_type"] != content_type
+                    or existing["request_payload_sha256"] != request_payload_sha256
+                    or bytes(existing["response_payload"]) != response_payload
+                    or existing["response_payload_sha256"] != response_payload_sha256
+                ):
+                    database.rollback()
+                    raise PeerTransportConflict()
             database.commit()
         return bytes(response)
+
+    def logical_response(
+        self, correlation_id: str, content_type: str, request_payload_sha256: str
+    ) -> Mapping[str, Any] | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT * FROM peer_exchange_effects WHERE correlation_id=?",
+                (_uuid(correlation_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        raw = bytes(row["response_payload"])
+        if (
+            row["content_type"] != content_type
+            or row["request_payload_sha256"] != request_payload_sha256
+            or hashlib.sha256(raw).hexdigest() != row["response_payload_sha256"]
+        ):
+            raise PeerTransportConflict()
+        try:
+            value = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise PeerTransportError() from None
+        if not isinstance(value, Mapping) or canonical_bytes(value) != raw:
+            raise PeerTransportError()
+        return copy.deepcopy(dict(value))
+
+    def resolve(self, envelope_id: str) -> bytes:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT response, response_sha256 FROM peer_exchanges "
+                "WHERE envelope_id=? AND state='responded'",
+                (envelope_id,),
+            ).fetchone()
+        if row is None or not isinstance(row[0], bytes):
+            raise PeerTransportError()
+        response = bytes(row[0])
+        if hashlib.sha256(response).hexdigest() != row[1]:
+            raise PeerTransportError()
+        return response
 
     def abort(self, claim: PeerClaim) -> None:
         if claim.claim_id is None:
@@ -387,12 +541,64 @@ class PeerOutbox:
 
     def __init__(self, path: Path) -> None:
         self.path = _safe_database_path(path)
+        self._egress: MandatoryEgressController | None = None
+        self._egress_catalog_id: str | None = None
+        self._egress_authorize: Callable[[OperationBinding], bool] | None = None
         with self._database() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS peer_outbox ("
                 "request_id TEXT PRIMARY KEY, plan_sha256 TEXT NOT NULL, "
                 "request BLOB NOT NULL, request_sha256 TEXT NOT NULL)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS peer_outbox_carriers ("
+                "logical_request_id TEXT NOT NULL, generation INTEGER NOT NULL, "
+                "envelope_id TEXT NOT NULL UNIQUE, "
+                "egress_operation_id TEXT NOT NULL UNIQUE, "
+                "request BLOB NOT NULL, request_sha256 TEXT NOT NULL, "
+                "deadline_ms INTEGER NOT NULL, target_credential_id TEXT NOT NULL, "
+                "target_embodiment_id TEXT NOT NULL, endpoint_identity TEXT NOT NULL, "
+                "endpoint_sha256 TEXT NOT NULL, authority_head TEXT NOT NULL, "
+                "egress_path_id TEXT NOT NULL, "
+                "PRIMARY KEY(logical_request_id, generation))"
+            )
+
+    def bind_egress(
+        self,
+        controller: MandatoryEgressController,
+        *,
+        catalog_id: str,
+        authorize: Callable[[OperationBinding], bool],
+    ) -> None:
+        """Register during composition; post-close clients reuse this binding."""
+
+        if self._egress is None:
+            self._egress = controller
+            self._egress_catalog_id = catalog_id
+            self._egress_authorize = authorize
+            controller.register_catalog(
+                catalog_id=catalog_id,
+                path=self.path,
+                resolve=lambda locator: self.resolve(locator),
+                authorize=self._authorize_bound_egress,
+            )
+            controller.register_path("peer-scope-request", catalog_id)
+            controller.register_path("peer-sync-request", catalog_id)
+            controller.register_path("peer-converse-request", catalog_id)
+            return
+        if self._egress is not controller or self._egress_catalog_id != catalog_id:
+            raise PeerTransportError()
+        self._egress_authorize = authorize
+
+    def _authorize_bound_egress(self, binding: OperationBinding) -> bool:
+        authorize = self._egress_authorize
+        return authorize is not None and authorize(binding) is True
+
+    def require_egress(
+        self, controller: MandatoryEgressController, catalog_id: str
+    ) -> None:
+        if self._egress is not controller or self._egress_catalog_id != catalog_id:
+            raise PeerTransportError()
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
@@ -422,6 +628,7 @@ class PeerOutbox:
         factory: Callable[[], bytes],
         *,
         compatible_plan_sha256: Callable[[bytes], str] | None = None,
+        egress: PeerEgressSpec | None = None,
     ) -> bytes:
         request_id = _uuid(request_id)
         if len(plan_sha256) != 64 or any(
@@ -458,6 +665,8 @@ class PeerOutbox:
                     if not compatible:
                         database.rollback()
                         raise PeerTransportConflict()
+                if egress is not None:
+                    self._admit_egress(database, request_id, request, egress)
                 database.commit()
                 return request
             request = factory()
@@ -473,8 +682,175 @@ class PeerOutbox:
                     hashlib.sha256(request).hexdigest(),
                 ),
             )
+            if egress is not None:
+                self._admit_egress(database, request_id, request, egress)
             database.commit()
             return bytes(request)
+
+    def resolve(self, request_id: str) -> bytes:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT request, request_sha256 FROM peer_outbox_carriers "
+                "WHERE egress_operation_id=?",
+                (request_id,),
+            ).fetchone()
+        if row is None:
+            raise PeerTransportError()
+        request = bytes(row[0])
+        if hashlib.sha256(request).hexdigest() != row[1]:
+            raise PeerTransportError()
+        return request
+
+    def carrier_binding(self, locator: str) -> Mapping[str, Any]:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT * FROM peer_outbox_carriers WHERE egress_operation_id=?",
+                (locator,),
+            ).fetchone()
+        if row is None:
+            raise PeerTransportError()
+        return dict(row)
+
+    def get_or_create_carrier(
+        self,
+        request_id: str,
+        plan_sha256: str,
+        factory: Callable[[int, str], bytes],
+        *,
+        now_ms: int,
+        compatible_plan_sha256: Callable[[bytes], str] | None,
+        egress: PeerEgressSpec,
+    ) -> PeerCarrier:
+        request_id = _uuid(request_id)
+        _uint(now_ms)
+        if len(plan_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in plan_sha256
+        ):
+            raise PeerTransportError()
+        endpoint_sha256 = hashlib.sha256(egress.endpoint_identity.encode()).hexdigest()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            logical = database.execute(
+                "SELECT * FROM peer_outbox WHERE request_id=?", (request_id,)
+            ).fetchone()
+            carriers = database.execute(
+                "SELECT * FROM peer_outbox_carriers WHERE logical_request_id=? "
+                "ORDER BY generation",
+                (request_id,),
+            ).fetchall()
+            if logical is not None:
+                stored = bytes(logical["request"])
+                if hashlib.sha256(stored).hexdigest() != logical["request_sha256"]:
+                    database.rollback()
+                    raise PeerTransportError()
+                if logical["plan_sha256"] != plan_sha256:
+                    try:
+                        compatible = (
+                            compatible_plan_sha256 is not None
+                            and compatible_plan_sha256(stored) == logical["plan_sha256"]
+                        )
+                    except Exception:
+                        database.rollback()
+                        raise
+                    if not compatible:
+                        database.rollback()
+                        raise PeerTransportConflict()
+            latest = carriers[-1] if carriers else None
+            if latest is not None and now_ms < int(latest["deadline_ms"]):
+                if (
+                    latest["target_credential_id"] != egress.target_credential_id
+                    or latest["target_embodiment_id"] != egress.target_embodiment_id
+                    or latest["endpoint_identity"] != egress.endpoint_identity
+                    or latest["endpoint_sha256"] != endpoint_sha256
+                    or latest["authority_head"] != egress.authority_head
+                    or latest["egress_path_id"] != egress.path_id
+                ):
+                    database.rollback()
+                    raise PeerTransportConflict()
+                database.commit()
+                return self._carrier_from_row(latest)
+            generation = 1 if latest is None else int(latest["generation"]) + 1
+            envelope_id = (
+                request_id
+                if generation == 1
+                else str(
+                    uuid.uuid5(
+                        _REQUEST_NAMESPACE,
+                        f"{request_id}:carrier-generation:{generation}",
+                    )
+                )
+            )
+            request = factory(generation, envelope_id)
+            if not request or len(request) > MAX_ENVELOPE_BYTES:
+                database.rollback()
+                raise PeerTransportError()
+            request_sha256 = hashlib.sha256(request).hexdigest()
+            egress_operation_id = f"{request_id}:g{generation}"
+            if logical is None:
+                database.execute(
+                    "INSERT INTO peer_outbox VALUES(?,?,?,?)",
+                    (request_id, plan_sha256, request, request_sha256),
+                )
+            database.execute(
+                "INSERT INTO peer_outbox_carriers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    request_id,
+                    generation,
+                    envelope_id,
+                    egress_operation_id,
+                    request,
+                    request_sha256,
+                    egress.deadline_ms,
+                    egress.target_credential_id,
+                    egress.target_embodiment_id,
+                    egress.endpoint_identity,
+                    endpoint_sha256,
+                    egress.authority_head,
+                    egress.path_id,
+                ),
+            )
+            self._admit_egress(database, egress_operation_id, request, egress)
+            database.commit()
+            row = database.execute(
+                "SELECT * FROM peer_outbox_carriers WHERE egress_operation_id=?",
+                (egress_operation_id,),
+            ).fetchone()
+            if row is None:
+                raise PeerTransportError()
+            return self._carrier_from_row(row)
+
+    @staticmethod
+    def _carrier_from_row(row: sqlite3.Row) -> PeerCarrier:
+        request = bytes(row["request"])
+        if hashlib.sha256(request).hexdigest() != row["request_sha256"]:
+            raise PeerTransportError()
+        return PeerCarrier(
+            logical_request_id=str(row["logical_request_id"]),
+            generation=int(row["generation"]),
+            envelope_id=str(row["envelope_id"]),
+            egress_operation_id=str(row["egress_operation_id"]),
+            request=request,
+            deadline_ms=int(row["deadline_ms"]),
+        )
+
+    @staticmethod
+    def _admit_egress(
+        database: sqlite3.Connection,
+        request_id: str,
+        request: bytes,
+        spec: PeerEgressSpec,
+    ) -> None:
+        spec.controller.admit_in_transaction(
+            database,
+            catalog_id=spec.catalog_id,
+            path_id=spec.path_id,
+            operation_id=request_id,
+            locator=request_id,
+            native_bytes=request,
+            projection=spec.projection(request),
+            deadline_ms=spec.deadline_ms,
+            authority_head=spec.authority_head,
+        )
 
 
 def _closed(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -854,6 +1230,8 @@ class PeerDispatcher:
         store: PeerExchangeStore,
         handlers: Mapping[str, tuple[str, PeerHandler]],
         clock: Clock,
+        egress: MandatoryEgressController,
+        egress_catalog_id: str,
     ) -> None:
         self.authority = authority
         self.local_origin = copy.deepcopy(dict(local_origin))
@@ -862,25 +1240,41 @@ class PeerDispatcher:
         self.store = store
         self.handlers = dict(handlers)
         self.clock = clock
-        request_types = {
-            "application/vnd.daimon.scope-request+json",
-            "application/vnd.daimon.sync-request+json",
-        }
-        response_types = {
-            "application/vnd.daimon.scope-response+json",
-            "application/vnd.daimon.sync-delta+json",
-        }
+        if not isinstance(egress, MandatoryEgressController):
+            raise PeerTransportError()
+        self.egress = egress
+        self.egress_catalog_id = egress_catalog_id
+        egress.register_catalog(
+            catalog_id=egress_catalog_id,
+            path=store.path,
+            resolve=lambda locator: store.resolve(locator),
+            authorize=self._authorize_egress,
+        )
+        for response_path in RESPONSE_EGRESS.values():
+            egress.register_path(response_path[0], egress_catalog_id)
         if (
             not self.handlers
-            or not set(self.handlers) <= request_types
+            or not set(self.handlers) <= REQUEST_CONTENT_TYPES
             or any(
-                response not in response_types for response, _ in self.handlers.values()
+                response not in RESPONSE_CONTENT_TYPES
+                for response, _ in self.handlers.values()
             )
         ):
             raise PeerTransportError()
         _origin_descriptor(authority, self.local_origin, at_ms=_uint(clock()))
         if local_target.authority.manifest.digest != authority.manifest.digest:
             raise PeerTransportError()
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        try:
+            _origin_descriptor(
+                self.authority,
+                self.local_origin,
+                at_ms=_uint(self.clock()),
+            )
+        except (PeerTransportError, ValueError):
+            return False
+        return binding.authority_head == self.authority.state.head
 
     def dispatch(self, raw: bytes) -> bytes:
         opened = open_peer_payload(
@@ -899,9 +1293,23 @@ class PeerDispatcher:
         request_hash = hashlib.sha256(raw).hexdigest()
         claim = self.store.begin(opened.envelope_id, request_hash)
         if claim.response is not None:
-            return claim.response
+            return self.egress.release(
+                self.egress.binding(self.egress_catalog_id, opened.envelope_id),
+                claim.response,
+                lambda response: response,
+            )
         try:
-            response_payload = handler(opened.payload)
+            request_payload_sha256 = hashlib.sha256(
+                canonical_bytes(opened.payload)
+            ).hexdigest()
+            response_payload = self.store.logical_response(
+                opened.correlation_id,
+                opened.content_type,
+                request_payload_sha256,
+            )
+            if response_payload is None:
+                response_payload = handler(opened.payload)
+            response_payload_bytes = canonical_bytes(response_payload)
             now = _uint(self.clock())
             if now >= opened.expires_at_ms:
                 raise PeerTransportError()
@@ -922,7 +1330,37 @@ class PeerDispatcher:
                 correlation_id=opened.correlation_id,
                 reply_to=opened.envelope_id,
             )
-            return self.store.finish(claim, response)
+            persisted = self.store.finish(
+                claim,
+                response,
+                egress=PeerEgressSpec(
+                    controller=self.egress,
+                    catalog_id=self.egress_catalog_id,
+                    path_id=RESPONSE_EGRESS[response_type][0],
+                    deadline_ms=opened.expires_at_ms,
+                    authority_head=self.authority.state.head,
+                    projection=lambda native: native_projection(
+                        operation_id=opened.envelope_id,
+                        native=native,
+                        sender=self.authority.state.being_ref,
+                        recipient=opened.sender["credential_id"],
+                        thread_id=opened.correlation_id,
+                        kind="authorization-control",
+                        stage=RESPONSE_EGRESS[response_type][1],
+                    ),
+                ),
+                logical_request=(
+                    opened.correlation_id,
+                    opened.content_type,
+                    request_payload_sha256,
+                    response_payload_bytes,
+                ),
+            )
+            return self.egress.release(
+                self.egress.binding(self.egress_catalog_id, opened.envelope_id),
+                persisted,
+                lambda value: value,
+            )
         except Exception:
             self.store.abort(claim)
             raise
@@ -941,6 +1379,11 @@ class PeerClient:
         outbox: PeerOutbox,
         round_trip: RoundTrip,
         clock: Clock,
+        egress: MandatoryEgressController,
+        egress_catalog_id: str,
+        endpoint_identity: str = "in-process://peer/dm-peer/v1",
+        target_resolver: TargetResolver | None = None,
+        egress_prebound: bool = False,
     ) -> None:
         self.authority = authority
         self.local_origin = copy.deepcopy(dict(local_origin))
@@ -949,9 +1392,54 @@ class PeerClient:
         self.outbox = outbox
         self.round_trip = round_trip
         self.clock = clock
+        self.endpoint_identity = _text(endpoint_identity, 1024)
+        self.target_resolver = target_resolver or self._target
+        if not isinstance(egress, MandatoryEgressController):
+            raise PeerTransportError()
+        self.egress = egress
+        self.egress_catalog_id = egress_catalog_id
+        if egress_prebound:
+            outbox.require_egress(egress, egress_catalog_id)
+        else:
+            outbox.bind_egress(
+                egress,
+                catalog_id=egress_catalog_id,
+                authorize=self._authorize_egress,
+            )
         _origin_descriptor(authority, self.local_origin, at_ms=_uint(clock()))
         if local_target.authority.manifest.digest != authority.manifest.digest:
             raise PeerTransportError()
+
+    def _target(self, embodiment_id: str) -> RecipientTarget:
+        rows = [
+            row
+            for row in self.authority.manifest.value["embodiments"]
+            if row["embodiment_id"] == embodiment_id and row["status"] == "active"
+        ]
+        if len(rows) != 1:
+            raise PeerTransportError()
+        return RecipientTarget(
+            self.authority, cast(str, rows[0]["embodiment_credential_id"])
+        )
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        try:
+            now = _uint(self.clock())
+            _origin_descriptor(self.authority, self.local_origin, at_ms=now)
+            carrier = self.outbox.carrier_binding(binding.locator)
+            target = self.target_resolver(str(carrier["target_embodiment_id"]))
+            descriptor = recipient_descriptor(target, at_ms=now)
+            return (
+                binding.authority_head == self.authority.state.head
+                and carrier["authority_head"] == self.authority.state.head
+                and carrier["endpoint_identity"] == self.endpoint_identity
+                and carrier["endpoint_sha256"]
+                == hashlib.sha256(self.endpoint_identity.encode()).hexdigest()
+                and descriptor["credential_id"] == carrier["target_credential_id"]
+                and descriptor["embodiment_id"] == carrier["target_embodiment_id"]
+            )
+        except (PeerTransportError, ValueError, KeyError, TypeError):
+            return False
 
     def call(
         self,
@@ -967,35 +1455,42 @@ class PeerClient:
         deadline = _uint(deadline_ms)
         now = _uint(self.clock())
         if (
-            request_content_type
-            not in {
-                "application/vnd.daimon.scope-request+json",
-                "application/vnd.daimon.sync-request+json",
-            }
-            or response_content_type
-            not in {
-                "application/vnd.daimon.scope-response+json",
-                "application/vnd.daimon.sync-delta+json",
-            }
+            request_content_type not in REQUEST_CONTENT_TYPES
+            or response_content_type not in RESPONSE_CONTENT_TYPES
             or not now < deadline <= now + MAX_TTL_MS
         ):
             raise PeerTransportError()
-        envelope_id = str(
+        try:
+            requested_recipient = recipient_descriptor(recipient_target, at_ms=now)
+            current_target = self.target_resolver(requested_recipient["embodiment_id"])
+            current_recipient = recipient_descriptor(current_target, at_ms=now)
+        except PeerTransportError:
+            raise
+        except ValueError:
+            raise PeerTransportError() from None
+        if current_recipient != requested_recipient:
+            raise PeerTransportError()
+        logical_request_id = str(
             uuid.uuid5(
                 _REQUEST_NAMESPACE,
                 f"{correlation_id}:{recipient_target.credential_id}",
             )
         )
+        endpoint_sha256 = hashlib.sha256(self.endpoint_identity.encode()).hexdigest()
         plan = {
-            "schema": "dm.peer-call-plan/v2",
+            "schema": "dm.peer-call-plan/v3",
             "being_ref": self.authority.state.being_ref,
             "manifest_hash": self.authority.manifest.digest,
+            "authority_head": self.authority.state.head,
             "correlation_id": correlation_id,
-            "envelope_id": envelope_id,
+            "logical_request_id": logical_request_id,
             "request_content_type": request_content_type,
             "response_content_type": response_content_type,
             "sender": self.local_origin,
-            "recipient_credential_id": recipient_target.credential_id,
+            "recipient_credential_id": current_recipient["credential_id"],
+            "recipient_embodiment_id": current_recipient["embodiment_id"],
+            "endpoint_identity": self.endpoint_identity,
+            "endpoint_sha256": endpoint_sha256,
             "payload": copy.deepcopy(dict(payload)),
         }
         plan_hash = hashlib.sha256(canonical_bytes(plan)).hexdigest()
@@ -1004,54 +1499,94 @@ class PeerClient:
             value = _parse(request)
             expires_at_ms = _uint(value.get("expires_at_ms"))
             legacy_plan = {
-                **plan,
                 "schema": "dm.peer-call-plan/v1",
+                "being_ref": self.authority.state.being_ref,
+                "manifest_hash": self.authority.manifest.digest,
+                "correlation_id": correlation_id,
+                "envelope_id": logical_request_id,
                 "deadline_ms": expires_at_ms,
+                "request_content_type": request_content_type,
+                "response_content_type": response_content_type,
+                "sender": self.local_origin,
+                "recipient_credential_id": current_recipient["credential_id"],
+                "payload": copy.deepcopy(dict(payload)),
             }
             return hashlib.sha256(canonical_bytes(legacy_plan)).hexdigest()
 
-        raw_request = self.outbox.get_or_create(
-            envelope_id,
+        egress_spec = PeerEgressSpec(
+            controller=self.egress,
+            catalog_id=self.egress_catalog_id,
+            path_id=REQUEST_EGRESS[request_content_type][0],
+            deadline_ms=deadline,
+            authority_head=self.authority.state.head,
+            projection=lambda native: native_projection(
+                operation_id=logical_request_id,
+                native=native,
+                sender=self.authority.state.being_ref,
+                recipient=current_target.authority.state.being_ref,
+                thread_id=correlation_id,
+                kind="authorization-control",
+                stage=REQUEST_EGRESS[request_content_type][1],
+            ),
+            target_credential_id=current_recipient["credential_id"],
+            target_embodiment_id=current_recipient["embodiment_id"],
+            endpoint_identity=self.endpoint_identity,
+        )
+        carrier = self.outbox.get_or_create_carrier(
+            logical_request_id,
             plan_hash,
-            lambda: seal_peer_payload(
+            lambda _generation, carrier_envelope_id: seal_peer_payload(
                 payload,
                 content_type=request_content_type,
                 sender_authority=self.authority,
                 sender_origin=self.local_origin,
-                recipient_target=recipient_target,
+                recipient_target=current_target,
                 custody=self.custody,
                 issued_at_ms=now,
                 expires_at_ms=deadline,
                 correlation_id=correlation_id,
-                envelope_id=envelope_id,
+                envelope_id=carrier_envelope_id,
             ),
+            now_ms=now,
             compatible_plan_sha256=legacy_plan_hash,
+            egress=egress_spec,
         )
-        persisted_deadline = _uint(_parse(raw_request).get("expires_at_ms"))
-        if now >= persisted_deadline:
+        raw_request = carrier.request
+        if now >= carrier.deadline_ms:
             raise PeerTransportError()
         try:
-            raw_response = self.round_trip(raw_request)
-        except PeerTransportError:
+            raw_response = self.egress.release(
+                self.egress.binding(
+                    self.egress_catalog_id, carrier.egress_operation_id
+                ),
+                raw_request,
+                self.round_trip,
+            )
+        except (PeerTransportError, NativeEgressError):
             raise
         except (ConnectionError, OSError, TimeoutError) as exception:
             raise PeerTransportAmbiguous() from exception
-        response = open_peer_payload(
-            raw_response,
-            authority=self.authority,
-            local_target=self.local_target,
-            custody=self.custody,
-            at_ms=_uint(self.clock()),
-        )
-        expected_recipient = recipient_descriptor(recipient_target, at_ms=now)
-        if (
-            response.content_type != response_content_type
-            or response.correlation_id != correlation_id
-            or response.reply_to != envelope_id
-            or response.sender["credential_id"] != expected_recipient["credential_id"]
-            or response.sender["embodiment_id"] != expected_recipient["embodiment_id"]
-        ):
-            raise PeerTransportError()
+        try:
+            response = open_peer_payload(
+                raw_response,
+                authority=self.authority,
+                local_target=self.local_target,
+                custody=self.custody,
+                at_ms=_uint(self.clock()),
+            )
+            expected_recipient = current_recipient
+            if (
+                response.content_type != response_content_type
+                or response.correlation_id != correlation_id
+                or response.reply_to != carrier.envelope_id
+                or response.sender["credential_id"]
+                != expected_recipient["credential_id"]
+                or response.sender["embodiment_id"]
+                != expected_recipient["embodiment_id"]
+            ):
+                raise PeerTransportError()
+        except PeerTransportError as exception:
+            raise PeerTransportAmbiguous() from exception
         return copy.deepcopy(dict(response.payload))
 
 
@@ -1065,7 +1600,42 @@ class PeerClientContext:
     custody: PeerCustody
     outbox: PeerOutbox
     clock: Clock
+    egress: MandatoryEgressController
+    egress_catalog_id: str
     endpoints: Mapping[str, tuple[str, float]] = field(default_factory=dict)
+    round_trip_factory: RoundTripFactory = field(
+        default=lambda endpoint, timeout: http_peer_round_trip(
+            endpoint, timeout_seconds=timeout
+        )
+    )
+
+    def __post_init__(self) -> None:
+        self.outbox.bind_egress(
+            self.egress,
+            catalog_id=self.egress_catalog_id,
+            authorize=self._authorize_egress,
+        )
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        try:
+            now = _uint(self.clock())
+            _origin_descriptor(self.authority, self.local_origin, at_ms=now)
+            carrier = self.outbox.carrier_binding(binding.locator)
+            embodiment_id = str(carrier["target_embodiment_id"])
+            endpoint = self.endpoints[embodiment_id][0]
+            target = self.target(embodiment_id)
+            descriptor = recipient_descriptor(target, at_ms=now)
+            return (
+                binding.authority_head == self.authority.state.head
+                and carrier["authority_head"] == self.authority.state.head
+                and carrier["endpoint_identity"] == endpoint
+                and carrier["endpoint_sha256"]
+                == hashlib.sha256(endpoint.encode()).hexdigest()
+                and descriptor["credential_id"] == carrier["target_credential_id"]
+                and descriptor["embodiment_id"] == embodiment_id
+            )
+        except (PeerTransportError, ValueError, KeyError, TypeError):
+            return False
 
     def target(self, embodiment_id: str) -> RecipientTarget:
         embodiment_id = _text(embodiment_id)
@@ -1080,7 +1650,10 @@ class PeerClientContext:
             self.authority, cast(str, rows[0]["embodiment_credential_id"])
         )
 
-    def client(self, round_trip: RoundTrip) -> PeerClient:
+    def client(
+        self, embodiment_id: str, endpoint: str, round_trip: RoundTrip
+    ) -> PeerClient:
+        self.target(embodiment_id)
         return PeerClient(
             authority=self.authority,
             local_origin=self.local_origin,
@@ -1089,6 +1662,11 @@ class PeerClientContext:
             outbox=self.outbox,
             round_trip=round_trip,
             clock=self.clock,
+            egress=self.egress,
+            egress_catalog_id=self.egress_catalog_id,
+            endpoint_identity=endpoint,
+            target_resolver=self.target,
+            egress_prebound=True,
         )
 
     def configured(self, embodiment_id: str) -> tuple[RecipientTarget, PeerClient]:
@@ -1099,9 +1677,8 @@ class PeerClientContext:
         if configuration is None:
             raise PeerTransportError()
         endpoint, timeout_seconds = configuration
-        return target, self.client(
-            http_peer_round_trip(endpoint, timeout_seconds=timeout_seconds)
-        )
+        round_trip = self.round_trip_factory(endpoint, timeout_seconds)
+        return target, self.client(embodiment_id, endpoint, round_trip)
 
 
 def http_peer_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
@@ -1156,7 +1733,7 @@ def http_peer_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
                 or not 1 <= len(body) <= MAX_ENVELOPE_BYTES
                 or declared != len(body)
             ):
-                raise PeerTransportError()
+                raise PeerTransportAmbiguous()
             return body
         except PeerTransportError:
             raise
@@ -1174,8 +1751,9 @@ def protocol_handlers(
     signer: EventSigner,
     scope_store: ScopeExchangeStore,
     sync_engine: SyncEngine,
+    we_lane: WeConversation | None = None,
 ) -> dict[str, tuple[str, PeerHandler]]:
-    """Bind native transport only to the existing scope and sync authorities."""
+    """Bind native transport only to the existing scope, sync and `/we` lanes."""
 
     def serve_scope(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         return serve_scope_request(resolver, signer, scope_store, payload)
@@ -1183,16 +1761,25 @@ def protocol_handlers(
     def serve_sync(payload: Mapping[str, Any]) -> Mapping[str, Any]:
         return sync_engine.serve(payload)
 
-    return {
-        "application/vnd.daimon.scope-request+json": (
-            "application/vnd.daimon.scope-response+json",
-            serve_scope,
-        ),
-        "application/vnd.daimon.sync-request+json": (
-            "application/vnd.daimon.sync-delta+json",
-            serve_sync,
-        ),
+    handlers: dict[str, tuple[str, PeerHandler]] = {
+        SCOPE_REQUEST: (SCOPE_RESPONSE, serve_scope),
+        SYNC_REQUEST: (SYNC_DELTA, serve_sync),
     }
+    if we_lane is not None:
+
+        def serve_conversation(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            # A malformed or unauthorized conversation is one stable carrier
+            # refusal; the lane's own reasons stay inside the lane.
+            try:
+                return we_lane.intake(payload)
+            except (WeLaneError, SealedDeliveryError) as exception:
+                raise PeerTransportError() from exception
+
+        handlers[WE_MESSAGE_CONTENT_TYPE] = (
+            WE_RECEIPT_CONTENT_TYPE,
+            serve_conversation,
+        )
+    return handlers
 
 
 __all__ = [

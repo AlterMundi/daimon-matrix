@@ -9,26 +9,40 @@ import os
 import secrets
 import signal
 import socket
+import socketserver
 import stat
 import struct
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
-from typing import Final, cast
+from typing import Any, Final, cast
 
-from .canonical import canonical_bytes
+from .canonical import canonical_bytes, unb64url
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
+from .messaging_config import _public_identity, verify_public_binding
+from .native_egress import (
+    MandatoryEgressController,
+    NativeEgressError,
+    load_owner_visibility_file,
+)
 from .peer_transport import MAX_ENVELOPE_BYTES, PeerTransportBusy, PeerTransportError
 from .routes import MAX_TRANSPORT_BYTES, RouteError, TransportIngress
-from .runtime import HostedRuntime, RuntimeError, load_runtime
+from .runtime import (
+    HostedRuntime,
+    RuntimeError,
+    VisibilityFactory,
+    VisibilityFactoryContext,
+    load_runtime,
+)
 
 DEFAULT_TIMEOUT_SECONDS: Final = 5.0
 MAX_WORKERS: Final = 8
 MAX_IN_FLIGHT: Final = 16
+EGRESS_SCAN_SECONDS: Final = 0.25
 FaultHook = Callable[[str], None]
 
 
@@ -200,6 +214,15 @@ class _BoundedPeerHTTPServer(http.server.ThreadingHTTPServer):
         self._peer_slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
         super().__init__(server_address, handler)
 
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind calls getfqdn(), which can block indefinitely
+        # in macOS reverse DNS even for an explicit loopback/VPN listen address.
+        # These authenticated transports do not use a DNS name for routing,
+        # identity, or authorization. Bind numerically and retain HTTP metadata.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = str(self.server_address[0])
+        self.server_port = self.server_address[1]
+
     def process_request(
         self,
         request: socket.socket | tuple[bytes, socket.socket],
@@ -362,6 +385,45 @@ def create_peer_http_server(runtime: HostedRuntime) -> http.server.ThreadingHTTP
     return _BoundedPeerHTTPServer(runtime.peer_listen, Handler)
 
 
+def _enabled_egress_paths(runtime: HostedRuntime) -> set[str]:
+    paths: set[str] = set()
+    if runtime.service.router is not None:
+        paths.add("route-provider-request")
+    if runtime.peer_context is not None:
+        paths.update(
+            {"peer-scope-request", "peer-sync-request", "peer-converse-request"}
+        )
+    if runtime.peer_dispatcher is not None:
+        paths.update(
+            {"peer-scope-response", "peer-sync-response", "peer-converse-response"}
+        )
+    if runtime.messaging_http is not None:
+        paths.update({"messaging-evidence-result", "messaging-message-result"})
+    messaging = runtime.service.messaging
+    if messaging is not None and messaging.deliveries:
+        paths.update({"messaging-evidence-request", "messaging-message-request"})
+    return paths
+
+
+def _run_egress_worker(
+    controller: MandatoryEgressController, stop: threading.Event
+) -> None:
+    """Advance bounded visibility work only; never release native traffic."""
+
+    try:
+        while not stop.is_set():
+            try:
+                result = controller.run_worker_batch(limit=32)
+                controller.worker_succeeded()
+                delay = 0.01 if result["processed"] == 32 else EGRESS_SCAN_SECONDS
+            except (NativeEgressError, OSError, ValueError):
+                controller.worker_failed()
+                delay = 1.0
+            stop.wait(delay)
+    finally:
+        controller.worker_stopped()
+
+
 def serve_forever(
     runtime: HostedRuntime,
     *,
@@ -383,7 +445,17 @@ def serve_forever(
     peer_thread: threading.Thread | None = None
     messaging_server: http.server.ThreadingHTTPServer | None = None
     messaging_thread: threading.Thread | None = None
+    egress_thread: threading.Thread | None = None
     try:
+        runtime.egress.validate_registry(_enabled_egress_paths(runtime))
+        runtime.egress.worker_started()
+        egress_thread = threading.Thread(
+            target=_run_egress_worker,
+            args=(runtime.egress, stopping),
+            name="daimon-matrix-telegram-visibility",
+            daemon=True,
+        )
+        egress_thread.start()
         if runtime.peer_dispatcher is not None:
             peer_server = create_peer_http_server(runtime)
             peer_thread = threading.Thread(
@@ -439,6 +511,7 @@ def serve_forever(
                     continue
                 workers.submit(run, connection)
     finally:
+        stopping.set()
         if messaging_server is not None:
             # shutdown waits for serve_forever: never call it after start failed.
             if messaging_thread is not None and messaging_thread.ident is not None:
@@ -451,6 +524,13 @@ def serve_forever(
             peer_server.server_close()
         if peer_thread is not None:
             peer_thread.join(timeout=2)
+        if egress_thread is not None:
+            if egress_thread.ident is None:
+                runtime.egress.worker_stopped()
+            else:
+                egress_thread.join(timeout=15)
+                if egress_thread.is_alive():
+                    _log("visibility_worker_stop_degraded")
         listener.close()
         if created is not None:
             try:
@@ -481,11 +561,65 @@ def _password_reader(descriptor: int) -> Callable[[], bytearray]:
     return read
 
 
+def _visibility_factory(
+    installation_path: Path, *, clock: Callable[[], int]
+) -> VisibilityFactory:
+    """Bind one installation to the verified runtime bundle and authorities."""
+
+    def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
+        owner_identity = _public_identity(
+            context.authority,
+            context.origin,
+            context.runtime_id,
+            context.runtime_label,
+            clock(),
+        )
+
+        def verify_owner(document: Any, binding: Any) -> None:
+            verify_public_binding(
+                owner_identity,
+                context.signer_public_key,
+                document,
+                binding,
+            )
+
+        def verify_participant(participant: str, document: Any, binding: Any) -> None:
+            authority = context.authorities.get(participant)
+            if authority is None or not isinstance(binding, Mapping):
+                raise ValueError()
+            body = binding.get("body")
+            if not isinstance(body, Mapping):
+                raise ValueError()
+            identity = _public_identity(
+                authority,
+                body["origin"],
+                body["runtime_id"],
+                body["runtime_label"],
+                clock(),
+            )
+            credential = authority.credentials[identity["credential_id"]]
+            public_key = unb64url(
+                credential["body"]["signing_key"]["public"], length=32
+            )
+            verify_public_binding(identity, public_key, document, binding)
+
+        return load_owner_visibility_file(
+            installation_path,
+            expected_application_sha256=context.bundle_sha256,
+            verify_owner_binding=verify_owner,
+            verify_participant_binding=verify_participant,
+            clock=clock,
+        )
+
+    return factory
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--bundle", default="runtime.json")
     parser.add_argument("--password-fd", type=int, required=True)
+    parser.add_argument("--visibility-installation", type=Path, required=True)
     parser.add_argument("--ready-fd", type=int)
     return parser
 
@@ -497,11 +631,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         root = _state_root(args.state_root)
         lock_descriptor = acquire_lock(root)
+
+        def clock() -> int:
+            return time.time_ns() // 1_000_000
+
         runtime = load_runtime(
             root,
             args.bundle,
             _password_reader(args.password_fd),
-            clock=lambda: time.time_ns() // 1_000_000,
+            clock=clock,
+            egress_factory=_visibility_factory(
+                args.visibility_installation, clock=clock
+            ),
         )
 
         def request_stop(_number: int, _frame: object) -> None:

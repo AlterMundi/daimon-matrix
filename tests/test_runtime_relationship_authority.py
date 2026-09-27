@@ -3,6 +3,7 @@
 import unittest
 
 from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_rebirth import authority_from_document
 from daimon_matrix.runtime import load_runtime
 from tests.test_dm024_runtime import PASSWORD
@@ -30,6 +31,7 @@ def ordinary(test, runtime, spec, *, authorities=None):
         lambda: bytearray(PASSWORD),
         clock=lambda: test.pair.now,
         relationship_authorities=authorities,
+        egress=runtime.egress,
     )
 
 
@@ -147,11 +149,11 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
         import threading
         from unittest.mock import patch
 
-        from daimon_matrix.messaging import MessagingChannel, MessagingSender
+        from daimon_matrix.messaging import MessagingChannel
         from daimon_matrix.messaging_config import load_application
-        from daimon_matrix.messaging_store import MessagingOutboxStore
         from daimon_matrix.operator_messaging import prepare
         from daimon_matrix.synthetic_relationships import _uuid
+        from tests.test_native_messaging import synthetic_sender
 
         runtime, spec, sources = shared_fixture(self)
         target = self.root / "admission-race"
@@ -169,13 +171,14 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
             inbox=self.pair.receiver.inbox,
             clock=lambda: self.pair.now,
         )
-        sender = MessagingSender(
+        sender = synthetic_sender(
             context=reverse,
             ledger=self.pair.local_ledger,
             signer=self.pair.recipient.signer,
-            custody=self.pair.receiver_custody,
-            outbox=MessagingOutboxStore(self.root / "admission-race-outbox.sqlite"),
+            delivery_custody=self.pair.receiver_custody,
+            outbox_path=self.root / "admission-race-outbox.sqlite",
             clock=lambda: self.pair.now,
+            catalog_id="test-admission-race-messaging-outbox",
         )
         evidence, _ = sender.prepare(
             client_id="client:race",
@@ -397,12 +400,11 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
             request_hash,
             verify_response,
         )
-        from daimon_matrix.messaging import MessagingChannel, MessagingSender
+        from daimon_matrix.messaging import MessagingChannel
         from daimon_matrix.messaging_config import load_application
-        from daimon_matrix.messaging_store import MessagingOutboxStore
         from daimon_matrix.operator_messaging import prepare
         from daimon_matrix.synthetic_relationships import _uuid
-        from tests.test_native_messaging import NOW
+        from tests.test_native_messaging import NOW, synthetic_sender
 
         runtime, spec, sources = shared_fixture(self)
         target = self.root / "app"
@@ -420,13 +422,14 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
             inbox=self.pair.receiver.inbox,
             clock=lambda: self.pair.now,
         )
-        sender = MessagingSender(
+        sender = synthetic_sender(
             context=reverse,
             ledger=self.pair.local_ledger,
             signer=self.pair.recipient.signer,
-            custody=self.pair.receiver_custody,
-            outbox=MessagingOutboxStore(self.root / "reverse-outbox.sqlite"),
+            delivery_custody=self.pair.receiver_custody,
+            outbox_path=self.root / "reverse-outbox.sqlite",
             clock=lambda: self.pair.now,
+            catalog_id="test-reverse-messaging-outbox",
         )
         evidence, message = sender.prepare(
             client_id="client:reverse",
@@ -585,6 +588,7 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
                 lambda: bytearray(PASSWORD),
                 clock=lambda: self.pair.now,
                 relationship_authorities=public,
+                egress=synthetic_visibility(clock=lambda: self.pair.now),
             )
 
     def test_historical_event_authority_is_not_current_card_authority(self):
@@ -711,6 +715,7 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
             lambda: bytearray(PASSWORD),
             clock=lambda: self.pair.now,
             relationship_authorities=public,
+            egress=synthetic_visibility(clock=lambda: self.pair.now),
         )
         app = config.load_application(fresh, target)
         self.assertTrue(

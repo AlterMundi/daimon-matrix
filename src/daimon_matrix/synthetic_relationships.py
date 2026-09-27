@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import sqlite3
 import stat
 import threading
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +37,12 @@ from .identity import (
 )
 from .keystore import EncryptedKeystore
 from .ledger import Ledger
+from .native_egress import (
+    MandatoryEgressController,
+    OperationBinding,
+    native_projection,
+    synthetic_visibility,
+)
 from .relationship_store import RelationshipStore, RelationshipStoreError
 from .relationships import (
     ACCEPTANCE_SCHEMA,
@@ -207,6 +215,98 @@ def _identity(label: str) -> _Identity:
 
 def _event_ref(event: Mapping[str, Any]) -> dict[str, str]:
     return {"event_id": event["event_id"], "event_hash": event["content_hash"]}
+
+
+class _SyntheticProviderCatalog:
+    """Durably admit synthetic provider probes before crossing the real seam."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        catalog_id: str,
+        controller: MandatoryEgressController,
+        authority_head: str,
+    ) -> None:
+        self.path = root / f"{catalog_id}.sqlite3"
+        self.catalog_id = catalog_id
+        self.controller = controller
+        self.authority_head = authority_head
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute(
+                "CREATE TABLE synthetic_provider_requests ("
+                "operation_id TEXT PRIMARY KEY, request BLOB NOT NULL)"
+            )
+        controller.register_catalog(
+            catalog_id=catalog_id,
+            path=self.path,
+            resolve=self._resolve,
+            authorize=self._authorize,
+        )
+        controller.register_path("route-provider-request", catalog_id)
+
+    def _resolve(self, locator: str) -> bytes:
+        with closing(sqlite3.connect(self.path)) as database:
+            row = database.execute(
+                "SELECT request FROM synthetic_provider_requests WHERE operation_id=?",
+                (locator,),
+            ).fetchone()
+        if row is None:
+            raise SyntheticRelationshipError("synthetic_provider_request_missing")
+        return bytes(row[0])
+
+    def _authorize(self, binding: OperationBinding) -> bool:
+        return binding.authority_head == self.authority_head
+
+    def deliver(
+        self,
+        provider: AuthenticatedProvider,
+        submission: Mapping[str, Any],
+        *,
+        sender: str,
+        recipient: str,
+        thread_id: str,
+    ) -> Mapping[str, Any]:
+        request = provider.prepare_submission(submission)
+        operation_id = cast(str, submission["attempt_id"])
+        with closing(sqlite3.connect(self.path)) as database:
+            database.row_factory = sqlite3.Row
+            database.execute("PRAGMA journal_mode=DELETE")
+            database.execute("PRAGMA synchronous=FULL")
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "INSERT INTO synthetic_provider_requests VALUES (?, ?) "
+                "ON CONFLICT(operation_id) DO NOTHING",
+                (operation_id, request),
+            )
+            row = database.execute(
+                "SELECT request FROM synthetic_provider_requests WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None or bytes(row["request"]) != request:
+                database.rollback()
+                raise SyntheticRelationshipError("synthetic_provider_request_conflict")
+            self.controller.admit_in_transaction(
+                database,
+                catalog_id=self.catalog_id,
+                path_id="route-provider-request",
+                operation_id=operation_id,
+                locator=operation_id,
+                native_bytes=request,
+                projection=native_projection(
+                    operation_id=operation_id,
+                    native=request,
+                    sender=sender,
+                    recipient=recipient,
+                    thread_id=thread_id,
+                    kind="authorization-control",
+                    stage="evidence-before-message",
+                ),
+                deadline_ms=cast(int, submission["deadline_ms"]),
+                authority_head=self.authority_head,
+            )
+            database.commit()
+        return provider.send_prepared(request)
 
 
 class _Journey:
@@ -674,6 +774,21 @@ class _Journey:
             expires_at_ms=NOW + 20_000,
         )
         route_secret = _seed("relationship-route-secret")
+        founder_visibility = synthetic_visibility(clock=lambda: self.now)
+        member_visibility = synthetic_visibility(clock=lambda: self.now)
+        hub_visibility = synthetic_visibility(clock=lambda: self.now)
+        founder_probe_catalog = _SyntheticProviderCatalog(
+            self.root,
+            catalog_id="synthetic-founder-provider-probes",
+            controller=founder_visibility,
+            authority_head=founder.origin["body_ref"],
+        )
+        hub_probe_catalog = _SyntheticProviderCatalog(
+            self.root,
+            catalog_id="synthetic-hub-provider-probes",
+            controller=hub_visibility,
+            authority_head="cluster:synthetic:hub-forwarder",
+        )
         route_directory = self.root / "relationship-route"
         route_directory.mkdir(mode=0o700)
         inbox = OpaqueInbox(route_directory / "inbox.sqlite3", clock=lambda: self.now)
@@ -721,6 +836,8 @@ class _Journey:
             recipient_body_ref=member.origin["body_ref"],
             inbox=inbox,
             clock=lambda: self.now,
+            egress=member_visibility,
+            egress_catalog_id="synthetic-relationship-ingress",
             intake_validator=validate_intake,
         )
 
@@ -753,6 +870,7 @@ class _Journey:
                 sender_body_ref=founder.origin["body_ref"],
                 endpoint=f"http://{host}:{port}/dm-route",
                 clock=lambda: self.now,
+                egress=founder_visibility,
             )
             profile = RouteProfile.from_value(
                 {
@@ -784,6 +902,8 @@ class _Journey:
                 profile,
                 {provider.provider_ref: provider},
                 clock=lambda: self.now,
+                egress=founder_visibility,
+                egress_catalog_id="synthetic-relationship-routes",
             )
             dispatched = coordinator.dispatch(
                 leg_id=semantic_leg["leg_id"],
@@ -1036,7 +1156,7 @@ class _Journey:
             "deadline_ms": NOW + 19_000,
         }
         opened_before_stale_attempts = len(opened_events)
-        stale_direct = AuthenticatedProvider(
+        stale_direct_provider = AuthenticatedProvider(
             provider_ref="provider:synthetic-relationship",
             route_ref="route:synthetic-relationship",
             route_class="direct-anyvpn",
@@ -1046,7 +1166,15 @@ class _Journey:
             sender_body_ref=founder.origin["body_ref"],
             round_trip=ingress.handle,
             clock=lambda: self.now,
-        ).deliver(stale_submission)
+            egress=founder_visibility,
+        )
+        stale_direct = founder_probe_catalog.deliver(
+            stale_direct_provider,
+            stale_submission,
+            sender=founder.origin["principal_id"],
+            recipient=relationship_recipient_id,
+            thread_id=semantic_leg["leg_id"],
+        )
 
         hub_directory = self.root / "relationship-hub"
         hub_directory.mkdir(mode=0o700)
@@ -1061,13 +1189,15 @@ class _Journey:
             recipient_body_ref=member.origin["body_ref"],
             inbox=hub_inbox,
             clock=lambda: self.now,
+            egress=hub_visibility,
+            egress_catalog_id="synthetic-hub-ingress",
             hub=True,
         )
         hub_submission = {
             **stale_submission,
             "attempt_id": _uuid("stale-hub-attempt"),
         }
-        stale_hub = AuthenticatedProvider(
+        stale_hub_provider = AuthenticatedProvider(
             provider_ref="provider:synthetic-hub",
             route_ref="route:synthetic-hub",
             route_class="hub",
@@ -1077,7 +1207,15 @@ class _Journey:
             sender_body_ref=founder.origin["body_ref"],
             round_trip=hub_ingress.handle,
             clock=lambda: self.now,
-        ).deliver(hub_submission)
+            egress=founder_visibility,
+        )
+        stale_hub = founder_probe_catalog.deliver(
+            stale_hub_provider,
+            hub_submission,
+            sender=founder.origin["principal_id"],
+            recipient=relationship_recipient_id,
+            thread_id=semantic_leg["leg_id"],
+        )
         hub_claim = hub_inbox.claim(
             recipient_id=relationship_recipient_id,
             consumer_id="consumer:synthetic-hub-forwarder",
@@ -1085,7 +1223,7 @@ class _Journey:
             limit=1,
             lease_until_ms=NOW + 18_000,
         )
-        forwarded_stale = AuthenticatedProvider(
+        forwarded_provider = AuthenticatedProvider(
             provider_ref="provider:synthetic-relationship",
             route_ref="route:synthetic-relationship",
             route_class="direct-anyvpn",
@@ -1095,11 +1233,17 @@ class _Journey:
             sender_body_ref="cluster:synthetic:hub-forwarder",
             round_trip=ingress.handle,
             clock=lambda: self.now,
-        ).deliver(
+            egress=hub_visibility,
+        )
+        forwarded_stale = hub_probe_catalog.deliver(
+            forwarded_provider,
             {
                 **stale_submission,
                 "attempt_id": _uuid("stale-hub-forward-attempt"),
-            }
+            },
+            sender="synthetic-hub-forwarder@loopback",
+            recipient=relationship_recipient_id,
+            thread_id=semantic_leg["leg_id"],
         )
         if (
             stale_direct["outcome"] != "refused"

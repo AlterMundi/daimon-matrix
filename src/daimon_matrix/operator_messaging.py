@@ -22,13 +22,15 @@ import re
 import secrets
 import shutil
 import stat
+import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import FrameType
 from typing import Any, cast
 
-from .canonical import canonical_bytes
+from .authority_epochs import RootHistoryAuthority
+from .canonical import canonical_bytes, unb64url
 from .local_api import create_messaging_capability
 from .messaging_config import (
     APPLICATION_SCHEMA,
@@ -37,6 +39,8 @@ from .messaging_config import (
     _capability_state_chain,
     _compose,
     _directory,
+    _public_identity,
+    _read_publication,
     _validate_store_schema,
     capability_state_record,
     config_digest,
@@ -48,10 +52,126 @@ from .messaging_config import (
     read_publication,
     validate_shape,
     verify_binding,
+    verify_public_binding,
 )
 from .messaging_store import MessagingInboxStore
-from .runtime import HostedRuntime
+from .native_egress import (
+    VISIBILITY_SCHEMA_VERSION,
+    MandatoryEgressController,
+    load_owner_visibility_file,
+)
+from .operator_rebirth import authority_from_document
+from .runtime import HostedRuntime, VisibilityFactory, VisibilityFactoryContext
 from .service import MESSAGING_METHODS
+
+
+def _visibility_factory(
+    application: Mapping[str, Any],
+    installation_path: Path,
+    *,
+    clock: Callable[[], int],
+    catalog_mode: str,
+) -> VisibilityFactory:
+    """Bind an owner installation to the selected app and current authorities."""
+
+    validate_shape(application)
+    application_sha256 = config_digest(application)
+    authorities = {}
+    for document in application["authorities"]:
+        authority = authority_from_document(document)
+        being_ref = authority.manifest.being_ref
+        if being_ref in authorities:
+            raise MessagingConfigError("messaging_visibility_installation_rejected")
+        authorities[being_ref] = authority
+
+    def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
+        owner_identity = _public_identity(
+            context.authority,
+            context.origin,
+            context.runtime_id,
+            context.runtime_label,
+            clock(),
+        )
+        selected_owner = authorities.get(owner_identity["being_ref"])
+        # The application pins the current public authority, not the wrapper
+        # that additionally verifies events from earlier credential epochs.
+        current_authority = (
+            context.authority.active
+            if isinstance(context.authority, RootHistoryAuthority)
+            else context.authority
+        )
+        if selected_owner != current_authority:
+            raise MessagingConfigError("messaging_visibility_installation_rejected")
+
+        def verify_owner(document: Any, binding: Any) -> None:
+            verify_public_binding(
+                owner_identity,
+                context.signer_public_key,
+                document,
+                binding,
+            )
+
+        def verify_participant(participant: str, document: Any, binding: Any) -> None:
+            authority = authorities[participant]
+            body = binding["body"]
+            identity = _public_identity(
+                authority,
+                body["origin"],
+                body["runtime_id"],
+                body["runtime_label"],
+                clock(),
+            )
+            credential = authority.credentials[identity["credential_id"]]
+            public_key = unb64url(
+                credential["body"]["signing_key"]["public"], length=32
+            )
+            verify_public_binding(identity, public_key, document, binding)
+
+        return load_owner_visibility_file(
+            installation_path,
+            expected_application_sha256=application_sha256,
+            verify_owner_binding=verify_owner,
+            verify_participant_binding=verify_participant,
+            clock=clock,
+            catalog_mode=cast(Any, catalog_mode),
+        )
+
+    return factory
+
+
+def host_visibility_factory(
+    app_directory: Path | str,
+    installation_path: Path | str,
+    *,
+    clock: Callable[[], int],
+) -> VisibilityFactory:
+    """Verify an existing app and installation for a host under its runtime lock.
+
+    Pass this factory to load_runtime together with read_application_authorities;
+    then load_application before readiness. No signing, migration or network I/O.
+    Unlike the bare daemon, the installation binds the messaging application,
+    not the runtime bundle. An invalid publication fails before opening stores.
+    """
+
+    def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
+        identity = _public_identity(
+            context.authority,
+            context.origin,
+            context.runtime_id,
+            context.runtime_label,
+            clock(),
+        )
+        application, _ = _read_publication(
+            _directory(app_directory),
+            lambda value, binding: verify_public_binding(
+                identity, context.signer_public_key, value, binding
+            ),
+        )
+        return _visibility_factory(
+            application, Path(installation_path), clock=clock, catalog_mode="validate"
+        )(context)
+
+    return factory
 
 
 def _write(root: Path, name: str, raw: bytes) -> None:
@@ -246,18 +366,31 @@ def _replace_capability_state(
 
 
 def _publish(staging: Path, target: Path) -> None:
-    # Linux renameat2 NOREPLACE: another provisioner must never be overwritten.
+    # Never emulate exclusive publication with exists()+rename(): another
+    # provisioner could create even an empty destination between those calls.
+    if sys.platform not in {"linux", "darwin"}:
+        raise MessagingConfigError("messaging_exclusive_publication_unsupported")
     libc = ctypes.CDLL(None, use_errno=True)
-    rename = libc.renameat2
-    rename.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
+    if sys.platform == "darwin":
+        # Apple's <sys/stdio.h>: renamex_np(..., RENAME_EXCL=0x4).
+        rename = getattr(libc, "renamex_np", None)
+        arguments = (os.fsencode(staging), os.fsencode(target), 0x4)
+        types = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    else:
+        rename = getattr(libc, "renameat2", None)
+        arguments = (-100, os.fsencode(staging), -100, os.fsencode(target), 1)
+        types = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+    if rename is None:
+        raise MessagingConfigError("messaging_exclusive_publication_unsupported")
+    rename.argtypes = types
     rename.restype = ctypes.c_int
-    if rename(-100, os.fsencode(staging), -100, os.fsencode(target), 1) != 0:
+    if rename(*arguments) != 0:
         raise MessagingConfigError("messaging_destination_exists_or_unavailable")
 
 
@@ -776,7 +909,14 @@ def prepare(
         persisted = read_document(staging / "application.json")
         verify_binding(runtime, persisted, read_document(staging / "binding.json"))
         _initialize_capability_state(runtime, cap.descriptor)
+        existing_catalogs = runtime.egress.registered_catalog_ids()
         _compose(runtime, staging, persisted, initialize=True)
+        if runtime.egress.catalog_mode == "migrate" and runtime.egress.release_enabled:
+            new_catalogs = runtime.egress.registered_catalog_ids() - existing_catalogs
+            runtime.egress.migrate_registered_catalogs(
+                new_catalogs, version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs(new_catalogs)
         _write(staging, "publication.json", _publication(runtime, persisted, ".", None))
         load_application(runtime, staging)
         _sync(staging)
@@ -824,17 +964,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from . import daemon
     from .messaging_config import read_document
+    from .native_egress import closed_visibility
     from .runtime import load_runtime
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("prepare", "renew", "revoke", "recover", "diagnostics", "run"),
+        choices=(
+            "prepare",
+            "migrate-visibility",
+            "renew",
+            "revoke",
+            "recover",
+            "diagnostics",
+            "run",
+        ),
     )
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--bundle", default="runtime.json")
     parser.add_argument("--app-dir", type=Path, required=True)
     parser.add_argument("--password-fd", type=int, required=True)
+    parser.add_argument("--visibility-installation", type=Path)
+    parser.add_argument("--visibility-schema-version", type=int)
     parser.add_argument(
         "--spec",
         type=Path,
@@ -871,13 +1022,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError()
         elif args.spec is not None or args.secret_dir is not None:
             raise ValueError()
+        if args.command != "prepare" and args.visibility_installation is None:
+            raise ValueError()
+        if args.command == "migrate-visibility":
+            if (
+                args.visibility_schema_version != VISIBILITY_SCHEMA_VERSION
+                or args.ready_fd is not None
+            ):
+                raise ValueError()
+        elif args.visibility_schema_version is not None:
+            raise ValueError()
         root = daemon._state_root(args.state_root)
         lock = daemon.acquire_lock(root)
+
+        def clock() -> int:
+            return time.time_ns() // 1000000
+
+        if args.command == "prepare":
+            visibility = closed_visibility(clock=clock, catalog_mode="migrate")
+            visibility_factory = None
+        else:
+            assert args.visibility_installation is not None
+            selected_application, _selected_metadata = _read_publication(
+                _directory(args.app_dir), lambda _document, _binding: None
+            )
+            visibility = None
+            visibility_factory = _visibility_factory(
+                selected_application,
+                args.visibility_installation,
+                clock=clock,
+                catalog_mode=(
+                    "migrate" if args.command == "migrate-visibility" else "validate"
+                ),
+            )
         runtime = load_runtime(
             root,
             args.bundle,
             daemon._password_reader(args.password_fd),
-            clock=lambda: time.time_ns() // 1000000,
+            clock=clock,
+            egress=visibility,
+            egress_factory=visibility_factory,
         )
         if args.command == "prepare":
             assert args.spec is not None and args.secret_dir is not None
@@ -890,6 +1074,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for r in spec[d]["routes"].values()
             }
             result = prepare(runtime, args.app_dir, spec, secret_sources=sources)
+        elif args.command == "migrate-visibility":
+            application, _metadata = read_publication(runtime, _directory(args.app_dir))
+            runtime = load_application(runtime, args.app_dir)
+            runtime.egress.migrate_registered_catalogs(
+                version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs()
+            result = {
+                "status": "visibility-migrated",
+                "visibility_schema_version": VISIBILITY_SCHEMA_VERSION,
+                "application_sha256": config_digest(application),
+                "catalog_count": len(runtime.egress.registered_catalog_ids()),
+            }
         elif args.command in {"renew", "revoke", "recover"}:
             operation = {
                 "renew": renew,

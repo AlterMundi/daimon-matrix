@@ -9,13 +9,15 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import b64url, canonical_bytes, unb64url
 from .identity import verify_embodiment_credential, verify_incarnation_authorization
+from .mandatory_echo import TABLE_SQL as ECHO_TABLE_SQL
+from .native_egress import OPERATION_TABLE_SQL, OperationBinding
 from .runtime import HostedRuntime
 from .weave import RootAuthority
 
@@ -121,11 +123,68 @@ def _verify_public_binding(
         raise MessagingConfigError("messaging_binding_rejected") from None
 
 
+def verify_public_binding(
+    identity: Mapping[str, Any], public_key: bytes, document: Any, binding: Any
+) -> None:
+    """Narrow public verifier for detached operator-binding/v1 documents."""
+
+    _verify_public_binding(dict(identity), public_key, document, binding)
+
+
 def verify_binding(runtime: HostedRuntime, application: Any, binding: Any) -> None:
     try:
         _verify_public_binding(
             _identity(runtime), runtime.service.signer.public_key, application, binding
         )
+    except Exception:
+        raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def verify_binding_within_history(
+    runtime: HostedRuntime, value: Any, binding: Any
+) -> None:
+    """Verify one append-only owner-local record against its own verified epoch.
+
+    Enrolling another embodiment advances the being manifest, while every record
+    this runtime already authenticated names the manifest digest it was written
+    under. Demanding the current digest there would invalidate an append-only
+    journal that the same runtime signing key produced, so adding one body would
+    force a rewrite of authenticated history. The record is instead verified
+    exactly against the verified epoch whose manifest digest it names, at the time
+    it claims: an unknown digest, a changed body, an expired credential or a bad
+    signature still fails closed. Current-state documents such as an application
+    publication or a visibility installation keep requiring the current epoch.
+    """
+    try:
+        if not isinstance(binding, Mapping) or set(binding) != {
+            "schema",
+            "body",
+            "signature",
+        }:
+            raise ValueError()
+        body = binding["body"]
+        if not isinstance(body, Mapping):
+            raise ValueError()
+        authority = runtime.service.ledger.authority
+        epoch: RootAuthority
+        if isinstance(authority, RootHistoryAuthority):
+            epoch = authority.select(body)
+        else:
+            if authority.manifest.digest != body.get("manifest_hash"):
+                raise ValueError()
+            epoch = cast(RootAuthority, authority)
+        occurred_at = body.get("occurred_at_ms")
+        at_ms = occurred_at if type(occurred_at) is int else runtime.service.clock()
+        identity = _public_identity(
+            epoch,
+            runtime.service.origin,
+            runtime.service.runtime_id,
+            runtime.service.runtime_label,
+            at_ms,
+        )
+        credential = epoch.credentials[identity["credential_id"]]
+        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+        _verify_public_binding(identity, public_key, value, binding)
     except Exception:
         raise MessagingConfigError("messaging_binding_rejected") from None
 
@@ -580,7 +639,7 @@ def _capability_state_chain(
                 "occurred_at_ms",
             }:
                 raise ValueError()
-            verify_binding(runtime, body, record["binding"])
+            verify_binding_within_history(runtime, body, record["binding"])
             if (
                 body["schema"] != CAPABILITY_STATE_SCHEMA
                 or body["journal_identity"] != identity
@@ -751,7 +810,8 @@ _STORE_SCHEMA_SQL = {
         state TEXT NOT NULL CHECK(state IN ('pending','acked')), claim_id TEXT,
         consumer_id TEXT, lease_until_ms INTEGER);
         CREATE TABLE IF NOT EXISTS inbox_requests (request_id TEXT PRIMARY KEY,
-        request_hash TEXT NOT NULL, delivery_id TEXT NOT NULL);
+        request_hash TEXT NOT NULL, delivery_id TEXT NOT NULL, response BLOB,
+        response_sha256 TEXT, egress_path_id TEXT);
         CREATE TABLE IF NOT EXISTS inbox_tombstones (delivery_id TEXT PRIMARY KEY,
         recipient_id TEXT NOT NULL, envelope_hash TEXT NOT NULL, received_at_ms
         INTEGER NOT NULL, sequence INTEGER NOT NULL UNIQUE);
@@ -759,6 +819,11 @@ _STORE_SCHEMA_SQL = {
         request_hash TEXT NOT NULL, result_json BLOB NOT NULL);
     """,
 }
+
+_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY = dict(_STORE_SCHEMA_SQL)
+_EGRESS_SCHEMA_SQL = ";".join((OPERATION_TABLE_SQL, *ECHO_TABLE_SQL.values(), ""))
+for _egress_store in ("outbox", "opaque"):
+    _STORE_SCHEMA_SQL[_egress_store] += _EGRESS_SCHEMA_SQL
 
 _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
     ",\n        admission_version INTEGER NOT NULL DEFAULT 1\n        "
@@ -768,7 +833,11 @@ _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
 
 
 def _validate_store_schema(
-    name: str, path: Path, *, require_inbox_admission: bool = False
+    name: str,
+    path: Path,
+    *,
+    require_inbox_admission: bool = False,
+    allow_missing_visibility: bool = False,
 ) -> None:
     """Inspect published state without DDL, recovery, or sidecar creation."""
     import re
@@ -815,7 +884,10 @@ def _validate_store_schema(
             # No store constructor is used even for these references.
             expected.executescript(_STORE_SCHEMA_SQL[schema])
             expected_catalogs = [catalog(expected)]
-            if schema == "inbox" and not require_inbox_admission:
+            if allow_missing_visibility and schema in {"outbox", "opaque"}:
+                legacy.executescript(_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY[schema])
+                expected_catalogs.append(catalog(legacy))
+            elif schema == "inbox" and not require_inbox_admission:
                 legacy.executescript(_LEGACY_INBOX_SCHEMA_SQL)
                 expected_catalogs.append(catalog(legacy))
             if (
@@ -871,6 +943,8 @@ def _compose(
     from .service import MESSAGING_METHODS, MessagingServiceContext
 
     service = runtime.service
+    if not runtime.egress.release_enabled and runtime.egress.catalog_mode != "migrate":
+        raise MessagingConfigError("messaging_visibility_required")
     # The ordinary RPC store has its own resolver/card and authorization contract.
     # Silently replacing it or maintaining a second history loses revocations.
     shared = application.get("relationship_mode")
@@ -1017,6 +1091,7 @@ def _compose(
                 name,
                 path,
                 require_inbox_admission=application["schema"] == APPLICATION_SCHEMA_V2,
+                allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
             )
     if shared is None:
         relationships = RelationshipStore(
@@ -1027,6 +1102,23 @@ def _compose(
             for event in application["relationship_events"]:
                 relationships.ingest(event)
 
+    def channel_authority(being_ref: str) -> RootAuthority | RootHistoryAuthority:
+        """History-preserving resolver for one channel, narrowed to root authorities.
+
+        The store resolver keeps verified epochs so a card issued before a manifest
+        advance still verifies against the epoch it pins. Anything else is refused
+        rather than silently treated as the current epoch.
+        """
+        resolver = relationships.authority_resolver
+        resolved = (
+            resolver(being_ref)
+            if resolver is not None
+            else resolve_authority(being_ref)
+        )
+        if not isinstance(resolved, (RootAuthority, RootHistoryAuthority)):
+            raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        return resolved
+
     def channel(row: Any, store: Path) -> MessagingChannel:
         policy = dict(row["policy"])
         policy["grant_refs"] = tuple(
@@ -1036,7 +1128,7 @@ def _compose(
             policy=MessagingPeerPolicy(**policy),
             local_being_ref=row["recipient_being_ref"],
             local_credential_id=row["recipient_credential_id"],
-            authority_resolver=resolve_authority,
+            authority_resolver=channel_authority,
             relationships=relationships,
             custody=custody,
             inbox=MessagingInboxStore(store),
@@ -1063,6 +1155,8 @@ def _compose(
         custody=custody,
         outbox=MessagingOutboxStore(stores["outbox"]),
         clock=service.clock,
+        egress=runtime.egress,
+        egress_catalog_id="messaging-outbox",
     )
     sender._bind(service.clock())
     communication = service.communication
@@ -1077,6 +1171,13 @@ def _compose(
     elif communication.receipts_v2:
         raise MessagingConfigError("messaging_semantic_migration_required")
     providers, ingresses = {}, {}
+    ingress_authority_head = service.origin["body_ref"]
+    if not isinstance(ingress_authority_head, str):
+        raise MessagingConfigError("messaging_identity_rejected")
+
+    def authorize_ingress_egress(binding: OperationBinding) -> bool:
+        return binding.authority_head == ingress_authority_head
+
     for phase in ("evidence", "message"):
         row = outgoing["routes"][phase]
         providers[phase] = DirectHTTPProvider(
@@ -1086,6 +1187,7 @@ def _compose(
             sender_principal=identity["being_ref"],
             sender_body_ref=service.origin["body_ref"],
             clock=service.clock,
+            egress=runtime.egress,
         )
         row = incoming["routes"][phase]
         ingresses[phase] = TransportIngress(
@@ -1096,6 +1198,10 @@ def _compose(
             recipient_embodiment_id=service.origin["embodiment_id"],
             inbox=OpaqueInbox(stores["opaque-" + phase], clock=service.clock),
             clock=service.clock,
+            egress=runtime.egress,
+            egress_catalog_id=f"messaging-{phase}-responses",
+            egress_authority_head=ingress_authority_head,
+            egress_authorizer=authorize_ingress_egress,
             intake_validator=getattr(receiver, "receive_" + phase),
         )
     delivery = MessagingDelivery(

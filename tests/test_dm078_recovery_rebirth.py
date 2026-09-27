@@ -41,6 +41,7 @@ from daimon_matrix.identity import (
 )
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_capabilities import (
     HOST_PROFILE_NAMES,
     OBSERVE_PROFILE,
@@ -629,6 +630,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             "runtime.json",
             lambda: bytearray(runtime_password),
             clock=lambda: NOW + 50,
+            egress=synthetic_visibility(clock=lambda: NOW + 50),
         )
         assert isinstance(hosted.service.ledger.authority, RootHistoryAuthority)
         assert set(hosted.service.ledger.authority.accepted_manifest_hashes) == {
@@ -933,6 +935,7 @@ class TestRecoveryRebirthAuthority(RootLedgerFixture):
             "runtime.json",
             lambda: bytearray(target_password),
             clock=lambda: NOW + 30,
+            egress=synthetic_visibility(clock=lambda: NOW + 30),
         )
         assert hosted.service.ledger.events() == [old_event]
         assert receipt["empty_writable_state"] is True

@@ -76,7 +76,12 @@ from current being-manifest, relationship and grant evidence. `/we` and direct
 targets use stable embodiment IDs, so incarnation, body and recipient-key
 rotation do not create another semantic leg. Relationship targets use their
 stable relationship principal identifier. The signed target list is sorted and
-duplicates fail closed.
+duplicates fail closed, where a duplicate is two targets agreeing on recipient
+type, recipient **and receipt author**: one semantic recipient may be received by
+several of a member's embodiments, but never twice by the same one. A store that
+has not been upgraded to per-body legs keeps the delivered narrower rule and
+refuses several bodies for one recipient with the same closed error, rather than
+letting its own uniqueness constraint surface as a database failure.
 
 ## Same-ledger projections
 
@@ -86,10 +91,21 @@ canonical `events` table. The logical tables retain:
 
 1. the message projection and exact signed resolution reference;
 2. one content-derived semantic leg for `(message_id, recipient_type,
-   recipient_id)`;
+   recipient_id)`, and in a store upgraded to per-body legs for
+   `(message_id, recipient_type, recipient_id,
+   receipt_origin_embodiment_id)`, so that several embodiments of one member each
+   hold their own leg and each authors its own receipt;
 3. any number of disposable route attempts and DM-051 delivery IDs; and
 4. one terminal receipt projection whose authority remains its signed
    `dm.we.v1` receipt event.
+
+The upgrade is an explicit offline successor, like the receipts V2 one: it
+preserves every stored row, its sequence and its state, recomputes leg identities
+under the widened derivation together with the queue, attempt and receipt rows that
+reference them, and verifies referential integrity before it reports success. Legs
+are a projection of signed events rather than signed history, so recomputing their
+identifiers in that successor is legitimate, and it is what keeps a single identity
+rule true of every leg in the store instead of tolerating two forever.
 
 Creating the same message or leg again returns the stored projection. Changed
 immutable bytes conflict. Direct and hub attempts, retry, forwarding, batching

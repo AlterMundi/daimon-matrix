@@ -238,3 +238,19 @@ Before a session exists, rollback may remove only the exact unused synthetic
 profile. After any pending/active state, disable admission and retire forward
 through Matrix/Cluster evidence; never delete a human profile, import Hermes
 memory or treat a restored database as continuity.
+
+## Neutral territory binding
+
+A Hermes body attaches to the host-common territory (`~/.agents/skills` via
+the upstream `skills.external_dirs` mechanism, `~/.agents/memory/<being>/`
+via `HMK_AGENT_MEMORY_BASE` published through the Hermes env file and, where
+applicable, a systemd drop-in or LaunchAgent entry). The artifacts are
+rendered by `daimon_matrix.neutral_binding` (`dm.neutral-binding/v1`) from a
+closed plan; the Hermes-only integration mechanisms (the `hmk-memory`
+prefetch plugin, `wiki-protocol-gate`) remain harness-local differences and
+are preserved explicitly, never normalized into other harnesses. Promoted
+skills move (single source), and local copies must not shadow the neutral
+surface. Procedure, migration and rollback:
+`docs/runbooks/neutral-territory.md`. The binding grants no authority and
+changes no DM-041 invariant; native Hermes memory remains disabled inside
+Matrix-rendered profiles exactly as before.

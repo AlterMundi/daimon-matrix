@@ -468,6 +468,42 @@ load_runtime(
                 self.assertEqual(files(self.source), before)
                 self.assertFalse(self.transaction.exists())
 
+    def test_single_capability_legacy_preserves_identity_and_monotonic_rollback(self):
+        # Legion's original enrollment predates the optional host observer.
+        # Construct that valid shape using unrelated fixture custody only.
+        store = EncryptedKeystore(self.source / "custody.json")
+        old = store.open(lambda: bytearray(PASSWORD))
+        observer = self.bundle["capabilities"].pop()
+        original_secrets = {
+            k: v for k, v in old.secrets.items() if k != observer["secret_slot"]
+        }
+        updated = store.rotate(
+            lambda: bytearray(PASSWORD),
+            lambda: bytearray(PASSWORD),
+            expected_counter=old.counter,
+            control_head=old.control_head,
+            secrets=original_secrets,
+        )
+        self.bundle["keystore"]["counter"] = updated.counter
+        (self.source / "runtime.json").write_bytes(upgrade.canonical_bytes(self.bundle))
+        upgrade._validate(self.source, LEGACY, PASSWORD)
+        before = files(self.source)
+        ready = self.stage()
+        self.assertEqual(files(self.source), before)
+        self.assertEqual(ready["counter_after"], updated.counter + 1)
+        upgrade.publish(**self.publish_args())
+        current = json.loads((self.source / "runtime.json").read_bytes())
+        for field in ("manifest", "local_origin", "control_head"):
+            self.assertEqual(current[field], self.bundle[field])
+        reverse = upgrade.stage_rollback(**self.publish_args())
+        self.assertEqual(reverse["counter_after"], updated.counter + 2)
+        upgrade.publish_rollback(**self.rollback_args())
+        upgrade._validate(self.source, LEGACY, PASSWORD)
+        restored = store.open(lambda: bytearray(PASSWORD))
+        self.assertEqual(restored.secrets, original_secrets)
+        self.assertEqual(restored.counter, updated.counter + 2)
+        self.assertEqual(files(self.transaction / "checkpoint"), before)
+
     def test_monotonic_rollback_restores_real_legacy_contract(self):
         self.stage()
         args = self.publish_args()

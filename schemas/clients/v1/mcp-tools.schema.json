@@ -10,8 +10,8 @@
     "protocol": {"const": "2026-07-28"},
     "tools": {
       "type": "array",
-      "minItems": 67,
-      "maxItems": 67,
+      "minItems": 69,
+      "maxItems": 69,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -46,7 +46,8 @@
               "we_heads", "we_diff", "we_preview",
               "we_projection_get", "we_observe", "we_decide",
               "we_projection_rebuild", "we_sync_request", "we_sync_peer_pull", "we_sync_serve",
-              "we_sync_pull", "we_sync_validate_receipt"
+              "we_sync_pull", "we_sync_validate_receipt",
+              "we_converse", "we_conversation_page"
             ]
           },
           "method": {
@@ -77,7 +78,8 @@
               "we.heads", "we.diff", "we.preview",
               "we.projection.get", "we.observe", "we.decide",
               "we.projection.rebuild", "we.sync.request", "we.sync.peer-pull", "we.sync.serve",
-              "we.sync.pull", "we.sync.validate-receipt"
+              "we.sync.pull", "we.sync.validate-receipt",
+              "we.converse", "we.conversation.page"
             ]
           },
           "input_schema": {

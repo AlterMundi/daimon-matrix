@@ -83,6 +83,11 @@ route is unavailable, the leg remains DM-052 `accepted` and dispatch reports
 candidate reports `route_unroutable` to the policy layer, which must author any
 terminal `resolved:unroutable` receipt.
 
+Possible remote effects and permission to fall back are separate decisions.
+Malformed/tampered post-send responses remain ambiguous and retain the exact
+prepared request for an explicit same-route retry, but do not authorize automatic
+fallback. Local visibility or current-authority failures also stop fallback.
+
 Attempt and transport request UUIDs derive deterministically from the semantic
 leg, delivery, opaque route and caller-supplied deadline. An ambiguous response
 leaves the original attempt accepted. Retrying with that deadline repeats the

@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_bytes
+from .native_egress import MandatoryEgressController, OperationBinding
 from .relationship_store import _prepare_path
 
 
@@ -23,6 +25,9 @@ class MessagingOutboxStore:
 
     def __init__(self, path: Path) -> None:
         self.path = path.absolute()
+        self._egress: MandatoryEgressController | None = None
+        self._egress_catalog: str | None = None
+        self._egress_authorizers: dict[str, Callable[[OperationBinding], bool]] = {}
         with self._database() as database:
             database.execute("""
                 CREATE TABLE IF NOT EXISTS messaging_outbox (
@@ -52,6 +57,54 @@ class MessagingOutboxStore:
                 )
             """)
 
+    def bind_egress(
+        self,
+        controller: MandatoryEgressController,
+        *,
+        catalog_id: str,
+        owner: str,
+        authorize: Callable[[OperationBinding], bool],
+    ) -> None:
+        if self._egress is None:
+            self._egress = controller
+            self._egress_catalog = catalog_id
+            controller.register_catalog(
+                catalog_id=catalog_id,
+                path=self.path,
+                resolve=self._resolve_egress,
+                authorize=lambda binding: self._authorize_egress(binding),
+            )
+            controller.register_path("messaging-evidence-request", catalog_id)
+            controller.register_path("messaging-message-request", catalog_id)
+        elif self._egress is not controller or self._egress_catalog != catalog_id:
+            raise ValueError("messaging_egress_already_bound")
+        if owner in self._egress_authorizers:
+            raise ValueError("messaging_egress_already_bound")
+        self._egress_authorizers[owner] = authorize
+
+    def _authorize_egress(self, binding: OperationBinding) -> bool:
+        try:
+            owner, _send_id, _phase = binding.locator.split("\0")
+            authorize = self._egress_authorizers[owner]
+        except (ValueError, KeyError):
+            return False
+        return authorize(binding) is True
+
+    def _resolve_egress(self, locator: str) -> bytes:
+        try:
+            owner, send_id, phase = locator.split("\0")
+        except ValueError:
+            raise ValueError("messaging_egress_locator_invalid") from None
+        with self._database() as database:
+            row = database.execute(
+                "SELECT request FROM messaging_transport_stages "
+                "WHERE owner=? AND send_id=? AND phase=?",
+                (owner, send_id, phase),
+            ).fetchone()
+        if row is None:
+            raise ValueError("messaging_transport_missing")
+        return bytes(row[0])
+
     def _transport_stages(
         self,
         owner: str,
@@ -59,9 +112,14 @@ class MessagingOutboxStore:
         bindings: Mapping[str, Mapping[str, Any]],
         prepare: Callable[[str], bytes],
         *,
+        projections: Mapping[str, Mapping[str, Any]],
+        deadline_ms: int,
+        authority_head: str,
         create: bool = True,
     ) -> dict[str, dict[str, Any]]:
         """Bind both stages atomically; local-only prepare is not called on retry."""
+        if self._egress is None or self._egress_catalog is None:
+            raise ValueError("messaging_egress_unbound")
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             if (
@@ -116,6 +174,17 @@ class MessagingOutboxStore:
                     "response": None if row is None else row["response"],
                     "result_sha256": None if row is None else row["result_sha256"],
                 }
+                self._egress.admit_in_transaction(
+                    database,
+                    catalog_id=self._egress_catalog,
+                    path_id=f"messaging-{phase}-request",
+                    operation_id=f"{send_id}:{phase}",
+                    locator="\0".join((owner, send_id, phase)),
+                    native_bytes=raw,
+                    projection=projections[phase],
+                    deadline_ms=deadline_ms,
+                    authority_head=authority_head,
+                )
         return stages
 
     def _transport_status(
@@ -194,6 +263,92 @@ class MessagingOutboxStore:
                 (owner, send_id, canonical_bytes(plan)),
             )
         return plan
+
+    def _carrier(
+        self,
+        owner: str,
+        logical_send_id: str,
+        logical_plan: Mapping[str, Any],
+        *,
+        now: int,
+        max_ttl_ms: int,
+    ) -> tuple[str, dict[str, Any]]:
+        """Return the live immutable carrier or durably reserve its successor."""
+
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            rows = database.execute(
+                "SELECT send_id, plan FROM messaging_outbox WHERE owner=?",
+                (owner,),
+            ).fetchall()
+            carriers: list[tuple[int, str, dict[str, Any]]] = []
+            for row in rows:
+                plan = dict(json.loads(row["plan"]))
+                row_logical_id = plan.get("logical_send_id", row["send_id"])
+                if row_logical_id != logical_send_id:
+                    continue
+                generation = int(plan.get("carrier_generation", 1))
+                carriers.append((generation, str(row["send_id"]), plan))
+            if not carriers:
+                raise ValueError("messaging_outbox_missing")
+            carriers.sort(key=lambda item: item[0])
+            if [item[0] for item in carriers] != list(range(1, len(carriers) + 1)):
+                raise ValueError("messaging_carrier_conflict")
+            generation, carrier_send_id, carrier_plan = carriers[-1]
+            if now < int(carrier_plan["issued_at_ms"]):
+                raise ValueError("messaging_authorization_not_yet_valid")
+            if now < int(carrier_plan["expires_at_ms"]):
+                return carrier_send_id, carrier_plan
+
+            generation += 1
+            carrier_send_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"dm.messaging.carrier/v1:{logical_send_id}:{generation}",
+                )
+            )
+            carrier_plan = dict(logical_plan)
+            carrier_plan.update(
+                {
+                    "logical_send_id": logical_send_id,
+                    "carrier_generation": generation,
+                    "issued_at_ms": now,
+                    "expires_at_ms": now + max_ttl_ms,
+                    "message_authorization_id": str(
+                        uuid.uuid5(uuid.UUID(carrier_send_id), "message-authorization")
+                    ),
+                    "evidence_authorization_id": str(
+                        uuid.uuid5(uuid.UUID(carrier_send_id), "evidence-authorization")
+                    ),
+                }
+            )
+            database.execute(
+                "INSERT INTO messaging_outbox (owner, send_id, plan) VALUES (?, ?, ?)",
+                (owner, carrier_send_id, canonical_bytes(carrier_plan)),
+            )
+            return carrier_send_id, carrier_plan
+
+    def _carrier_for_envelopes(
+        self,
+        owner: str,
+        logical_send_id: str,
+        envelopes: tuple[bytes, bytes],
+    ) -> str:
+        with self._database() as database:
+            rows = database.execute(
+                "SELECT send_id, plan FROM messaging_outbox "
+                "WHERE owner=? AND evidence=? AND message=?",
+                (owner, *envelopes),
+            ).fetchall()
+        matches = [
+            str(row["send_id"])
+            for row in rows
+            if json.loads(row["plan"]).get("logical_send_id", row["send_id"])
+            == logical_send_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("messaging_carrier_conflict")
+        return matches[0]
 
     def _check_client(self, owner: str, send_id: str, client_id: str) -> None:
         with self._database() as database:

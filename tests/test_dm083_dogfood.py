@@ -30,6 +30,7 @@ from daimon_matrix.local_api import (
     create_capability,
     create_request,
 )
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_bootstrap import (
     PROFILE_SCHEMA,
     BootstrapError,
@@ -305,6 +306,9 @@ class DM083OperatorBootstrapTests(unittest.TestCase):
                     "runtime.json",
                     _runtime_password_reader(password),
                     clock=lambda: time.time_ns() // 1_000_000,
+                    egress=synthetic_visibility(
+                        clock=lambda: time.time_ns() // 1_000_000
+                    ),
                 )
 
             beta_output = root / "independent-beta-ceremony"

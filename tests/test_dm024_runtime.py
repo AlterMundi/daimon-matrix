@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import socket
@@ -10,10 +11,12 @@ import sys
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jsonschema import (  # type: ignore[import-untyped]
     Draft202012Validator,
     FormatChecker,
@@ -41,6 +44,12 @@ from daimon_matrix.local_api import (
     request_hash,
     verify_response,
 )
+from daimon_matrix.messaging_config import (
+    BINDING_DOMAIN,
+    _public_identity,
+    config_digest,
+)
+from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.operator_capabilities import (
     HOST_CAPABILITY_PROFILES,
     HOST_PROFILE_NAMES,
@@ -59,11 +68,124 @@ from daimon_matrix.scopes import BODY_SNAPSHOT_SCHEMA
 from daimon_matrix.service import (
     OPERATOR_CAPABILITY_PROFILES,
 )
-from daimon_matrix.weave import BeingManifest
+from daimon_matrix.weave import BeingManifest, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed, transport
 
 PASSWORD = b"dm024-descriptor-only-password"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def signed_runtime_visibility_installation(
+    fixture: Any, root: Path, bundle: Mapping[str, Any], now_ms: int
+) -> Path:
+    authority = RootAuthority(
+        fixture.manifest,
+        fixture.state,
+        fixture.credentials,
+        fixture.incarnations,
+    )
+    identity = _public_identity(
+        authority,
+        fixture.origins["legion"],
+        bundle["runtime_id"],
+        bundle["runtime_label"],
+        now_ms,
+    )
+
+    def binding(document: Any) -> dict[str, Any]:
+        body = {**identity, "application_sha256": config_digest(document)}
+        signature = Ed25519PrivateKey.from_private_bytes(
+            fixture.signing_seeds["legion"]
+        ).sign(BINDING_DOMAIN + canonical_bytes(body))
+        return {
+            "schema": "dm.messaging.operator-binding/v1",
+            "body": body,
+            "signature": b64url(signature),
+        }
+
+    being_ref = authority.manifest.being_ref
+    scope = {
+        "mode": "all-inter-daimon-communications",
+        "channels": [
+            {
+                "channel_id": "runtime-control-only",
+                "direction": "outgoing",
+                "local_being_ref": being_ref,
+                "peer_being_ref": being_ref,
+                "bootstrap_policy": {},
+                "relationship_disclosure": {},
+            }
+        ],
+        "projected_content": "complete-plaintext-content-and-metadata",
+    }
+    disclosure = {
+        "schema": "dm.messaging.visibility-disclosure/v1",
+        "issued_at_ms": now_ms,
+        "destination": {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "plain-json/v2",
+        },
+        "scope": scope,
+        "scope_sha256": config_digest(scope),
+        "participants": [being_ref],
+        "risk": (
+            "all-inter-daimon-communication-will-be-posted-as-plaintext-"
+            "to-the-fixed-telegram-destination"
+        ),
+    }
+    acceptance_set = {
+        "schema": "dm.messaging.visibility-acceptance-set/v1",
+        "disclosure_sha256": config_digest(disclosure),
+        "bindings": [binding(disclosure)],
+    }
+    token = b"137:SIGNED_RUNTIME_TEST_ONLY"
+    proof_key = b"\x89" * 32
+    for name, raw in (("telegram.token", token), ("echo-proof.key", proof_key)):
+        path = root / name
+        path.write_bytes(raw)
+        path.chmod(0o600)
+    document = {
+        "schema": "dm.messaging.visibility-installation/v1",
+        "generation": 1,
+        "runtime_id": bundle["runtime_id"],
+        "application_sha256": config_digest(bundle),
+        "disclosure": disclosure,
+        "acceptance_set": acceptance_set,
+        "policy": {
+            "schema": "daimon-visibility-policy/v2",
+            "generation": 1,
+            "origin": "owner-signed-installation",
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "plain-json/v2",
+            "acceptance_digest": config_digest(acceptance_set),
+            "proof_key_id": "sha256:" + hashlib.sha256(proof_key).hexdigest(),
+        },
+        "secrets": {
+            "telegram_token_file": "telegram.token",
+            "telegram_token_sha256": hashlib.sha256(token).hexdigest(),
+            "proof_key_file": "echo-proof.key",
+        },
+        "telegram_qualification": {
+            "schema": "dm.messaging.telegram-qualification/v1",
+            "qualified_at_ms": now_ms,
+            "token_sha256": hashlib.sha256(token).hexdigest(),
+            "get_me_bot_id": 137,
+            "probe_chat_id": -100137,
+            "probe_topic_id": None,
+            "probe_message_id": 1,
+            "probe_text_sha256": "b" * 64,
+        },
+    }
+    installation = root / "visibility-installation.json"
+    installation.write_bytes(
+        canonical_bytes({"document": document, "binding": binding(document)})
+    )
+    installation.chmod(0o600)
+    return installation
 
 
 class RuntimeFixture(RootLedgerFixture):
@@ -74,6 +196,7 @@ class RuntimeFixture(RootLedgerFixture):
         secrets: dict[str, bytes] | None = None,
         state_name: str = "hosted",
         now_ms: int = NOW,
+        drop_method: tuple[str, str] | None = None,
     ) -> tuple[Path, dict[str, Any], Any]:
         state_root = self.root_path / state_name
         state_root.mkdir(mode=0o700)
@@ -84,11 +207,19 @@ class RuntimeFixture(RootLedgerFixture):
             self.origins["legion"],
             signing_descriptor(self.signing_seeds["legion"])["key_id"],
         )
+
+        def methods_for(profile: str) -> list[str]:
+            """A bundle may legitimately predate a method added to its profile."""
+            held = set(OPERATOR_CAPABILITY_PROFILES[profile])
+            if drop_method is not None and drop_method[0] == profile:
+                held -= {drop_method[1]}
+            return sorted(held)
+
         operator_capabilities = {
             profile: create_capability(
                 seed(f"dm024-operator-{profile}"),
                 client_id=f"client:operator:{runtime_label}:{profile}",
-                methods=sorted(OPERATOR_CAPABILITY_PROFILES[profile]),
+                methods=methods_for(profile),
                 not_before_ms=now_ms - 60_000,
                 not_after_ms=now_ms + 60_000,
             )
@@ -299,7 +430,46 @@ class RuntimeBundleTests(RuntimeFixture):
                         "runtime.json",
                         lambda: bytearray(PASSWORD),
                         clock=lambda: NOW,
+                        egress=synthetic_visibility(clock=lambda: NOW),
                     )
+
+    def test_a_bundle_that_predates_a_new_method_still_loads(self) -> None:
+        """Least authority is not drift: holding less than the profile is fine.
+
+        Bundles are immutable and advance only by rebirth, and no tool can refresh
+        a signed capability in place, so requiring the stored method set to equal
+        the current profile would make every live bundle unloadable the moment a
+        method was added. What must stay forbidden is the other direction, which
+        the widening case covers: a method the profile no longer names is refused.
+        """
+        dropped = "we.conversation.page"
+        self.assertIn(dropped, OPERATOR_CAPABILITY_PROFILES[OBSERVE_PROFILE])
+        state_root, _bundle, capability = self.make_bundle(
+            state_name="predates-method",
+            drop_method=(OBSERVE_PROFILE, dropped),
+        )
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
+        )
+        held = next(
+            held
+            for held in runtime.service.capabilities.values()
+            if held.client_id == capability.client_id
+        )
+        self.assertNotIn(dropped, held.methods)
+        request = create_request(
+            capability,
+            request_id="30000000-0000-4000-8000-000000000009",
+            issued_at_ms=NOW,
+            method="runtime.status",
+            params={},
+            nonce=b"r" * 16,
+        )
+        self.assertEqual(runtime.service.handle(request)["result"]["integrity"], "ok")
 
     def test_bundle_loads_exact_authority_and_custody(self) -> None:
         state_root, bundle, capability = self.make_bundle()
@@ -308,6 +478,7 @@ class RuntimeBundleTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         request = create_request(
             capability,
@@ -364,6 +535,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
         path.chmod(0o600)
@@ -376,6 +548,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
         signing_slot = "runtime.signing.v1:local"
@@ -394,6 +567,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
     def test_runtime_rejects_expired_and_revoked_capabilities(self) -> None:
@@ -404,6 +578,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW + 60_000,
+                egress=synthetic_visibility(clock=lambda: NOW + 60_000),
             )
 
         revoked_root, revoked_bundle, capability = self.make_bundle(
@@ -426,6 +601,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
     def test_explicit_cluster_reader_and_verified_tribe_snapshot_load(self) -> None:
@@ -475,6 +651,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
         def body_reader(
@@ -498,6 +675,7 @@ class RuntimeBundleTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
             body_reader=body_reader,
             tribe_verifier=lambda _value: None,
         )
@@ -579,6 +757,7 @@ class RuntimeBundleTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         self.assertIsNotNone(runtime.service.router)
         self.assertNotIn(route_secret, canonical_bytes(bundle))
@@ -595,6 +774,7 @@ class RuntimeBundleTests(RuntimeFixture):
                 "runtime.json",
                 lambda: bytearray(PASSWORD),
                 clock=lambda: NOW,
+                egress=synthetic_visibility(clock=lambda: NOW),
             )
 
 
@@ -606,6 +786,7 @@ class UnixDaemonTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
 
         class Fault(Exception):
@@ -677,6 +858,7 @@ class UnixDaemonTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         stop = threading.Event()
         thread = threading.Thread(
@@ -765,6 +947,7 @@ class UnixDaemonTests(RuntimeFixture):
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
         )
         runtime.socket_path.write_bytes(b"not a socket")
         runtime.socket_path.chmod(0o600)
@@ -774,6 +957,9 @@ class UnixDaemonTests(RuntimeFixture):
 
     def test_separate_process_unlocks_only_via_descriptor_without_leak(self) -> None:
         state_root, bundle, capability, now_ms = self.make_process_bundle()
+        visibility_installation = signed_runtime_visibility_installation(
+            self, self.root_path, bundle, now_ms
+        )
         password_read, password_write = os.pipe()
         ready_read, ready_write = os.pipe()
         environment = os.environ.copy()
@@ -785,6 +971,8 @@ class UnixDaemonTests(RuntimeFixture):
             str(state_root),
             "--password-fd",
             str(password_read),
+            "--visibility-installation",
+            str(visibility_installation),
             "--ready-fd",
             str(ready_write),
         ]

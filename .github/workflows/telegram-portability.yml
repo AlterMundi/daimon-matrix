@@ -1,0 +1,113 @@
+name: Telegram executor portability
+
+on:
+  push:
+    paths:
+      - .github/workflows/telegram-portability.yml
+      - src/daimon_matrix/telegram_mirror.py
+      - src/daimon_matrix/daemon.py
+      - tests/test_telegram*py
+      - tests/test_mandatory_echo*py
+      - tests/test_operator_first_embodiment.py
+      - tests/test_dm025_client.py
+      - tools/prepare_chat_identity.py
+      - tools/install_agent_chat.py
+      - tools/chat_link.py
+      - tests/test_chat_link.py
+      - src/daimon_matrix/agent_chat.py
+      - src/daimon_matrix/chat_host.py
+      - tests/test_chat_host.py
+      - src/daimon_matrix/agent_chat_assets/**
+      - tests/test_agent_chat.py
+      - tests/test_prepare_chat_identity.py
+      - src/daimon_matrix/operator_messaging.py
+      - src/daimon_matrix/operator_runtime_upgrade.py
+      - tests/test_operator_runtime_upgrade.py
+      - pyproject.toml
+      - provenance/hermes-agent-0.19.0.json
+  pull_request:
+    paths:
+      - .github/workflows/telegram-portability.yml
+      - src/daimon_matrix/telegram_mirror.py
+      - src/daimon_matrix/daemon.py
+      - tests/test_telegram*py
+      - tests/test_mandatory_echo*py
+      - tests/test_operator_first_embodiment.py
+      - tests/test_dm025_client.py
+      - tools/prepare_chat_identity.py
+      - tools/install_agent_chat.py
+      - tools/chat_link.py
+      - tests/test_chat_link.py
+      - src/daimon_matrix/agent_chat.py
+      - src/daimon_matrix/chat_host.py
+      - tests/test_chat_host.py
+      - src/daimon_matrix/agent_chat_assets/**
+      - tests/test_agent_chat.py
+      - tests/test_prepare_chat_identity.py
+      - src/daimon_matrix/operator_messaging.py
+      - src/daimon_matrix/operator_runtime_upgrade.py
+      - tests/test_operator_runtime_upgrade.py
+      - pyproject.toml
+      - provenance/hermes-agent-0.19.0.json
+
+permissions:
+  contents: read
+
+jobs:
+  local-http:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-15-intel]
+        python: ["3.11", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install .
+      - name: Verify installed package provenance
+        run: |
+          python - <<'PY'
+          import importlib.metadata
+          import pathlib
+          import daimon_matrix
+          installed = pathlib.Path(daimon_matrix.__file__).resolve()
+          assert pathlib.Path.cwd().resolve() not in installed.parents, installed
+          assert importlib.metadata.version("daimon-matrix") == "0.1.0rc1"
+          print(installed)
+          PY
+      - name: Installed peer enrollment and foreground transport lifecycle
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: python -W error::ResourceWarning -m unittest tests.test_chat_link tests.test_chat_host -v
+      - name: Real HTTP, deadlines, interruption and hard parent death
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_telegram_mirror.MandatoryPlainTests
+          tests.test_telegram_mirror.TelegramQualificationTests
+          tests.test_telegram_executor_portability
+          tests.test_mandatory_echo tests.test_mandatory_echo_integration -v
+      # V1 is a separate, optional Linux-only selective adapter, not the V2
+      # mandatory echo used by onboarding. It opens SQLite via /proc/self/fd.
+      - name: Legacy selective adapter (Linux contract only)
+        if: runner.os == 'Linux'
+        run: python -W error::ResourceWarning -m unittest tests.test_telegram_mirror.MirrorTests -v
+      - name: Installed first enrollment and authenticated local client smoke
+        env:
+          # AF_UNIX paths are bounded; use the runner's short, real temp directory.
+          TMPDIR: ${{ runner.temp }}
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_operator_first_embodiment.FirstEmbodimentTests.test_distributed_genesis_becomes_a_loadable_first_runtime
+          tests.test_prepare_chat_identity
+          tests.test_agent_chat
+          tests.test_operator_messaging.ExclusivePublicationTests
+          tests.test_operator_messaging.ProvisioningTests.test_host_visibility_accepts_current_authority_with_history_wrapper
+          tests.test_operator_messaging.ProvisioningTests.test_host_visibility_uses_signed_application_not_runtime_digest
+          tests.test_dm025_client.LocalClientTests -v
+      - name: Installed legacy host migration and rollback
+        if: runner.os == 'Linux' && matrix.python == '3.11'
+        run: python -W error::ResourceWarning -m unittest tests.test_operator_runtime_upgrade -v

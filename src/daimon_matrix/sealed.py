@@ -323,6 +323,262 @@ class DisclosureAuthorization:
             authorization_id=authorization_id,
         )
 
+    @classmethod
+    def from_membership_resolution_event(
+        cls,
+        *,
+        event: Mapping[str, Any],
+        resolution_event: Mapping[str, Any],
+        sender_authority: RootAuthority,
+        recipient_targets: Sequence[RecipientTarget],
+        memberships: Mapping[str, Mapping[str, Any]],
+        sender_membership: Mapping[str, Any],
+        tribe_ref: str,
+        expires_at_ms: int,
+        authorization_id: str | None = None,
+    ) -> DisclosureAuthorization:
+        """Bind verified tribe membership to concrete recipient credentials.
+
+        Participation authority is active signed membership in one exact tribe, and
+        nothing else. No grant, resource or operation is consulted, required or
+        implied, and none may be synthesized to fill a field: conversation is not
+        resource disclosure, and a tribe channel never widens resource authority.
+        Grants stay directional, separate and unchanged.
+
+        Every membership proof names the member being, and the concrete credential
+        sealed to must belong to that being, so a proof cannot be replayed to admit
+        a stranger's key. Several bodies of one member are ordinary: each is its own
+        recipient and each authors its own receipt.
+        """
+
+        try:
+            message = verify_event(event, sender_authority)
+            if _message_payload(message)["reply"] is not None:
+                raise _reject()
+        except (CommunicationError, WeaveProtocolError) as exception:
+            raise _reject() from exception
+        identity, resolution, targets = _membership_identity(
+            message, resolution_event, sender_authority
+        )
+        if resolution["origin"] != message["origin"]:
+            raise _reject()
+        return _membership_authorization(
+            DisclosureAuthorization,
+            identity=identity,
+            resolution=resolution,
+            targets=targets,
+            sender_authority=sender_authority,
+            recipient_targets=recipient_targets,
+            memberships=memberships,
+            sender_membership=sender_membership,
+            tribe_ref=tribe_ref,
+            expires_at_ms=expires_at_ms,
+            authorization_id=authorization_id,
+        )
+
+    @classmethod
+    def from_membership_resolution_identity(
+        cls,
+        *,
+        message_id: str,
+        message_hash: str,
+        sensitivity: str,
+        resolution_event: Mapping[str, Any],
+        sender_authority: RootAuthority,
+        recipient_targets: Sequence[RecipientTarget],
+        memberships: Mapping[str, Mapping[str, Any]],
+        sender_membership: Mapping[str, Any],
+        tribe_ref: str,
+        expires_at_ms: int,
+        authorization_id: str | None = None,
+    ) -> DisclosureAuthorization:
+        """Rebuild the same authorization before the message can be decrypted.
+
+        A receiver cannot verify an event it has not opened yet, so it reconstructs
+        the authorization from the signed resolution, its own independently derived
+        membership proofs, and the identity the envelope claims. Claiming is safe
+        because `open_event` still requires the opened event to verify against the
+        root and to match that identity exactly, and requires the envelope's
+        evidence hash to equal the one recomputed here from local proofs. The sender
+        comes from the resolution's own verified origin, so an envelope cannot name
+        an author the resolution does not.
+        """
+
+        identity: dict[str, Any] = {
+            "content_hash": _hex_hash(message_hash),
+            "event_id": _uuid(message_id),
+            "sensitivity": _text(sensitivity, maximum=32),
+        }
+        if identity["sensitivity"] not in {"personal", "private", "shareable"}:
+            raise _reject()
+        try:
+            resolution = verify_event(resolution_event, sender_authority)
+            _payload, targets = _resolution_payload(
+                resolution, message_id=identity["event_id"], scope=TRIBE_SCOPE
+            )
+        except (CommunicationError, WeaveProtocolError) as exception:
+            raise _reject() from exception
+        return _membership_authorization(
+            cls,
+            identity=identity,
+            resolution=resolution,
+            targets=targets,
+            sender_authority=sender_authority,
+            recipient_targets=recipient_targets,
+            memberships=memberships,
+            sender_membership=sender_membership,
+            tribe_ref=tribe_ref,
+            expires_at_ms=expires_at_ms,
+            authorization_id=authorization_id,
+        )
+
+
+def _membership_identity(
+    message: Mapping[str, Any],
+    resolution_event: Mapping[str, Any],
+    sender_authority: RootAuthority,
+) -> tuple[dict[str, Any], Mapping[str, Any], list[Mapping[str, Any]]]:
+    """Verify both events and confirm they describe one `/tribe` message."""
+    try:
+        resolution = verify_event(resolution_event, sender_authority)
+        message_payload = _message_payload(message)
+        intent = cast(Mapping[str, Any], message_payload["intent"])
+        scope = cast(str, intent["scope"])
+        if scope != TRIBE_SCOPE:
+            raise _reject()
+        _payload, targets = _resolution_payload(
+            resolution,
+            message_id=cast(str, message["event_id"]),
+            scope=scope,
+        )
+    except (CommunicationError, WeaveProtocolError) as exception:
+        raise _reject() from exception
+    identity = {
+        "content_hash": message["content_hash"],
+        "event_id": message["event_id"],
+        "sensitivity": message["sensitivity"],
+    }
+    return identity, resolution, targets
+
+
+def _membership_authorization(
+    authorization_class: type[DisclosureAuthorization],
+    *,
+    identity: Mapping[str, Any],
+    resolution: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+    sender_authority: RootAuthority,
+    recipient_targets: Sequence[RecipientTarget],
+    memberships: Mapping[str, Mapping[str, Any]],
+    sender_membership: Mapping[str, Any],
+    tribe_ref: str,
+    expires_at_ms: int,
+    authorization_id: str | None,
+) -> DisclosureAuthorization:
+    """The one membership-to-credential binding both entry points share."""
+    tribe = _text(tribe_ref, maximum=240)
+    occurred_at_ms = cast(int, resolution["occurred_at_ms"])
+    author = _membership_proof(sender_membership, tribe_ref=tribe, membership_ref=None)
+    if author["member_being_ref"] != sender_authority.manifest.being_ref:
+        raise _reject()
+    target_by_embodiment: dict[str, RecipientTarget] = {}
+    for candidate in recipient_targets:
+        descriptor = recipient_descriptor(candidate, at_ms=occurred_at_ms)
+        embodiment_id = cast(str, descriptor["embodiment_id"])
+        if embodiment_id in target_by_embodiment:
+            raise _reject()
+        target_by_embodiment[embodiment_id] = candidate
+    recipients: list[dict[str, Any]] = []
+    proof: dict[str, Any] = {}
+    for raw_target in targets:
+        target = _closed(
+            raw_target,
+            {
+                "evidence_cursor",
+                "receipt_origin_embodiment_id",
+                "recipient_id",
+                "recipient_type",
+                "scope_kind",
+            },
+        )
+        membership_ref = _text(target["recipient_id"], maximum=240)
+        embodiment_id = _text(target["receipt_origin_embodiment_id"], maximum=240)
+        if (
+            target["scope_kind"] != "relationship"
+            or target["recipient_type"] != "relationship"
+        ):
+            raise _reject()
+        row = memberships.get(membership_ref)
+        if row is None:
+            raise _reject()
+        member = _membership_proof(row, tribe_ref=tribe, membership_ref=membership_ref)
+        concrete = target_by_embodiment.get(embodiment_id)
+        if concrete is None:
+            raise _reject()
+        descriptor = recipient_descriptor(concrete, at_ms=occurred_at_ms)
+        if (
+            descriptor["embodiment_id"] != embodiment_id
+            or descriptor["being_ref"] != member["member_being_ref"]
+        ):
+            raise _reject()
+        recipients.append(descriptor)
+        proof[membership_ref] = copy.deepcopy(dict(member))
+    if len(recipients) != len(target_by_embodiment) or set(proof) != set(memberships):
+        raise _reject()
+    evidence_hash = hashlib.sha256(
+        canonical_bytes(
+            {
+                "schema": "dm.tribe-delivery-evidence/v1",
+                "resolution_event_hash": resolution["content_hash"],
+                "tribe_ref": tribe,
+                "sender_membership": copy.deepcopy(dict(author)),
+                "memberships": proof,
+            }
+        )
+    ).hexdigest()
+    return authorization_class.synthetic(
+        event=identity,
+        sender=sender_descriptor(resolution, sender_authority, at_ms=occurred_at_ms),
+        recipients=sorted(recipients, key=_recipient_key),
+        evidence_hash=evidence_hash,
+        authorized_at_ms=occurred_at_ms,
+        expires_at_ms=expires_at_ms,
+        authorization_id=authorization_id,
+    )
+
+
+TRIBE_SCOPE: Final = "/tribe"
+MEMBERSHIP_PROOF_SCHEMA: Final = "dm.tribe.membership-proof/v1"
+
+
+def _membership_proof(
+    value: Any, *, tribe_ref: str, membership_ref: str | None
+) -> Mapping[str, Any]:
+    """Validate one closed active-membership proof. It carries no grant."""
+    proof = _closed(
+        value,
+        {
+            "active",
+            "member_being_ref",
+            "membership_event_hash",
+            "membership_event_id",
+            "membership_ref",
+            "schema",
+            "tribe_ref",
+        },
+    )
+    if proof["schema"] != MEMBERSHIP_PROOF_SCHEMA or proof["active"] is not True:
+        raise _reject()
+    if proof["tribe_ref"] != tribe_ref:
+        raise _reject()
+    if membership_ref is not None and proof["membership_ref"] != membership_ref:
+        raise _reject()
+    _text(proof["membership_ref"], maximum=240)
+    _text(proof["member_being_ref"], maximum=240)
+    _uuid(proof["membership_event_id"])
+    _hex_hash(proof["membership_event_hash"])
+    return proof
+
 
 def _reject() -> SealedDeliveryError:
     return SealedDeliveryError()
