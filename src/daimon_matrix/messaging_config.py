@@ -1231,6 +1231,7 @@ def _compose(
             )
         },
         capability_guard=capability_guard,
+        labels=service.labels,
     )
     return replace(
         runtime,

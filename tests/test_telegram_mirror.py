@@ -1,5 +1,6 @@
 """Offline native mirror tests; Telegram is always mocked."""
 
+import json
 import sys
 import tempfile
 import unittest
@@ -773,7 +774,11 @@ t._plain_http_exchange("http://127.0.0.1:PORT/", b"{}")
                 self.assertEqual(
                     [request["text"] for request in seen],
                     [
-                        "headers", "body", "chunks", "framing", "success",
+                        "headers",
+                        "body",
+                        "chunks",
+                        "framing",
+                        "success",
                         "chunk-success",
                     ],
                 )
@@ -1067,6 +1072,121 @@ class TelegramQualificationTests(unittest.TestCase):
                         probe_text=probe,
                     )
                 exchange.assert_not_called()
+
+
+class CompactEchoRenderTests(unittest.TestCase):
+    """Compact representation: speech is human-readable, chatter is suppressed."""
+
+    def projection(self, **overrides: Any) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "event_id": "evt-0123456789abcdef",
+            "event_digest": "a" * 64,
+            "sender": "compaii",
+            "recipients": ["oliva"],
+            "thread_id": "thread-1",
+            "reply_to": None,
+            "kind": "message",
+            "content": {"text": "Hola <b>Oliva</b> & \u00f1and\u00fa \U0001f680"},
+        }
+        value.update(overrides)
+        return value
+
+    def test_speech_renders_names_and_complete_escaped_text(self) -> None:
+        parts = mirror.render_echo_parts(self.projection(), "compact-html/v1")
+        self.assertEqual(len(parts), 1)
+        self.assertIn("<b>Daimon Matrix \u00b7 compaii \u2192 oliva</b>", parts[0])
+        self.assertIn(
+            "Hola &lt;b&gt;Oliva&lt;/b&gt; &amp; \u00f1and\u00fa \U0001f680",
+            parts[0],
+        )
+        self.assertNotIn("event_digest", parts[0])
+        self.assertEqual(
+            parts, mirror.render_echo_parts(self.projection(), "compact-html/v1")
+        )
+
+    def test_long_text_chunks_without_truncation(self) -> None:
+        import html as html_module
+
+        text = "l\u00ednea\n" * 3000
+        parts = mirror.render_echo_parts(
+            self.projection(content={"text": text}), "compact-html/v1"
+        )
+        self.assertGreater(len(parts), 1)
+        self.assertIn("part 1/", parts[0])
+        self.assertTrue(
+            all(len(part.encode("utf-16-le")) // 2 <= 4096 for part in parts)
+        )
+        self.assertEqual(
+            "".join(part.split("</b>\n", 1)[1] for part in parts),
+            html_module.escape(text),
+        )
+
+    def test_reply_shows_bounded_reference(self) -> None:
+        reply = self.projection(
+            kind="reply",
+            reply_to={"event_id": "e" * 64, "event_digest": "b" * 64},
+        )
+        parts = mirror.render_echo_parts(reply, "compact-html/v1")
+        self.assertIn("\u21a9 reply to " + "e" * 16 + "\u2026", parts[0])
+        self.assertNotIn("e" * 17, parts[0])
+
+    def test_opaque_being_refs_shorten_deterministically(self) -> None:
+        ref = "dm:being:v1:" + "A" * 43
+        parts = mirror.render_echo_parts(self.projection(sender=ref), "compact-html/v1")
+        self.assertIn("being:AAAAAAAA\u2026AAAAAA", parts[0])
+        self.assertNotIn("A" * 43, parts[0])
+
+    def test_failures_visible_acks_and_control_suppressed(self) -> None:
+        reply_to = {"event_id": "x" * 40, "event_digest": "b" * 64}
+        failed = self.projection(
+            kind="semantic-receipt",
+            reply_to=reply_to,
+            content={"outcome": "failed:transport"},
+        )
+        parts = mirror.render_echo_parts(failed, "compact-html/v1")
+        self.assertEqual(len(parts), 1)
+        self.assertIn("\u26a0", parts[0])
+        self.assertIn("failed:transport", parts[0])
+        self.assertIn("compaii \u2192 oliva", parts[0])
+        delivered = self.projection(
+            kind="semantic-receipt", reply_to=reply_to, content={"outcome": "delivered"}
+        )
+        self.assertEqual(mirror.render_echo_parts(delivered, "compact-html/v1"), [])
+        accepted = self.projection(
+            kind="transport-result", content={"stage": "message", "outcome": "accepted"}
+        )
+        self.assertEqual(mirror.render_echo_parts(accepted, "compact-html/v1"), [])
+        refused = self.projection(
+            kind="transport-result", content={"stage": "message", "outcome": "refused"}
+        )
+        parts = mirror.render_echo_parts(refused, "compact-html/v1")
+        self.assertEqual(len(parts), 1)
+        self.assertIn("transport refused (message)", parts[0])
+        control = self.projection(
+            kind="authorization-control", content={"stage": "scope"}
+        )
+        self.assertEqual(mirror.render_echo_parts(control, "compact-html/v1"), [])
+
+    def test_plain_representation_is_unchanged(self) -> None:
+        projection = self.projection()
+        expected = mirror.render_plain_parts(
+            json.dumps(dict(projection), ensure_ascii=False, sort_keys=True, indent=2)
+        )
+        self.assertEqual(
+            mirror.render_echo_parts(projection, "plain-json/v2"), expected
+        )
+
+    def test_unknown_representation_fails_closed(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            mirror.render_echo_parts(self.projection(), "compact-html/v9")
+        self.assertEqual(str(caught.exception), "echo_representation_unknown")
+
+    def test_oversize_speech_fails_closed(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            mirror.render_echo_parts(
+                self.projection(content={"text": "x" * 70000}), "compact-html/v1"
+            )
+        self.assertEqual(str(caught.exception), "echo_projection_invalid")
 
 
 if __name__ == "__main__":

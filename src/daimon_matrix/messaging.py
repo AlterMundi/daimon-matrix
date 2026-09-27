@@ -25,6 +25,7 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
+from .labels import LabelError, LabelIndex
 from .ledger import Ledger
 from .messaging_store import (
     MessagingInboxError,
@@ -54,6 +55,23 @@ from .sealed import (
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
+
+
+def _display_identity(being_ref: str, labels: LabelIndex | None) -> str:
+    """Owner-approved human name for one being ref, or the ref itself.
+
+    Presentation for the mandatory echo only: the name comes from the
+    owner-local labels registry, never from message content, and a being
+    without a registry name keeps its exact ref (the compact renderer
+    shortens it deterministically). Labels authorize nothing.
+    """
+    if labels is None:
+        return being_ref
+    try:
+        name = labels.being_name_of_ref(being_ref)
+    except LabelError:
+        return being_ref
+    return being_ref if name is None else name
 
 
 @dataclass(frozen=True)
@@ -622,6 +640,7 @@ class MessagingDelivery:
             response_to=response_to,
         )
         owner = self.sender.context.policy.peer_being_ref
+        labels = getattr(self.sender.context, "labels", None)
         carrier_send_id = self.sender.outbox._carrier_for_envelopes(
             owner, send_id, envelopes
         )
@@ -667,8 +686,10 @@ class MessagingDelivery:
             projections[phase] = {
                 "event_id": metadata["event_id"],
                 "event_digest": event["content_hash"],
-                "sender": owner,
-                "recipients": [self.sender.context.local_being_ref],
+                "sender": _display_identity(owner, labels),
+                "recipients": [
+                    _display_identity(self.sender.context.local_being_ref, labels)
+                ],
                 "thread_id": thread_id,
                 "reply_to": None,
                 "kind": "message" if phase == "message" else "authorization-control",

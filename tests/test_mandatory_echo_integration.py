@@ -965,5 +965,138 @@ class CatalogMigrationTests(unittest.TestCase):
         self.assertNotIn("echo_v2_obligations", self._tables())
 
 
+COMPACT_POLICY = {**POLICY, "representation": "compact-html/v1"}
+
+
+def speech_projection(operation_id: str) -> dict[str, object]:
+    return {
+        **control_projection(operation_id),
+        "kind": "message",
+        "content": {"text": "Hola <b>hermano</b>"},
+    }
+
+
+class CompactEchoGateTests(unittest.TestCase):
+    """The peer-egress gate under the compact representation: suppression is a
+    policy discharge, never a pretended acknowledgment; speech still posts."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "native.sqlite"
+        self.now = 1_900_000_000_000
+        self.current = True
+        self.transport = TelegramTransport()
+        self.owner_key = Ed25519PrivateKey.generate()
+        self.owner_identity = SignedVisibilityInstallationTests._identity(
+            "dm:being:owner", "owner-runtime"
+        )
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute(
+                "CREATE TABLE native_operations ("
+                "operation_id TEXT PRIMARY KEY, payload BLOB NOT NULL)"
+            )
+        self.controller = MandatoryEgressController(
+            policy=COMPACT_POLICY,
+            proof_key=b"k" * 32,
+            transport=self.transport,
+            clock=lambda: self.now,
+            catalog_mode="synthetic",
+            installation_digest="1" * 64,
+            owner_actor="dm:being:owner",
+            verify_owner_binding=self._verify_owner,
+        )
+        self.controller.register_catalog(
+            catalog_id="integration-native",
+            path=self.path,
+            resolve=self._resolve,
+            authorize=lambda _binding: self.current,
+        )
+        self.controller.register_path("peer-scope-request", "integration-native")
+        self.controller.register_path("messaging-message-request", "integration-native")
+
+    def _resolve(self, locator: str) -> bytes:
+        with closing(sqlite3.connect(self.path)) as database:
+            row = database.execute(
+                "SELECT payload FROM native_operations WHERE operation_id=?",
+                (locator,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("missing")
+        return bytes(row[0])
+
+    def _verify_owner(self, document: object, binding: object) -> None:
+        verify_public_binding(
+            self.owner_identity,
+            self.owner_key.public_key().public_bytes_raw(),
+            document,
+            binding,
+        )
+
+    def _admit(
+        self,
+        operation_id: str,
+        projection: dict[str, object] | None = None,
+        path_id: str = "peer-scope-request",
+    ) -> OperationBinding:
+        payload = b"native-request"
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute("PRAGMA journal_mode=DELETE")
+            database.execute("PRAGMA synchronous=FULL")
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "INSERT INTO native_operations VALUES (?, ?)", (operation_id, payload)
+            )
+            binding = self.controller.admit_in_transaction(
+                database,
+                catalog_id="integration-native",
+                path_id=path_id,
+                operation_id=operation_id,
+                locator=operation_id,
+                native_bytes=payload,
+                projection=(
+                    control_projection(operation_id)
+                    if projection is None
+                    else projection
+                ),
+                deadline_ms=self.now + 600_000,
+                authority_head="authority-head-1",
+            )
+            database.commit()
+        return binding
+
+    def test_suppressed_control_discharges_the_gate_without_posting(self) -> None:
+        binding = self._admit("compact-ctl-op")
+        native_calls: list[bytes] = []
+        self.controller.release(binding, b"native-request", native_calls.append)
+        self.assertEqual(native_calls, [b"native-request"])
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.controller.inspect(binding)["state"], "suppressed")
+
+    def test_speech_posts_compact_html_and_confirms(self) -> None:
+        binding = self._admit(
+            "compact-msg-op",
+            projection=speech_projection("compact-msg-op"),
+            path_id="messaging-message-request",
+        )
+        native_calls: list[bytes] = []
+        self.controller.release(binding, b"native-request", native_calls.append)
+        self.assertEqual(native_calls, [b"native-request"])
+        self.assertEqual(len(self.transport.calls), 1)
+        text = self.transport.calls[0]["text"]
+        assert isinstance(text, str)
+        self.assertTrue(text.startswith("<b>Daimon Matrix"))
+        self.assertIn("Hola &lt;b&gt;hermano&lt;/b&gt;", text)
+        self.assertNotIn("event_digest", text)
+        self.assertNotIn("authorization-control", text)
+        self.assertEqual(self.controller.inspect(binding)["state"], "confirmed")
+
+    def test_authority_still_gates_suppressed_releases(self) -> None:
+        binding = self._admit("compact-ctl-op-2")
+        self.current = False
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(binding, b"native-request", lambda _raw: None)
+
+
 if __name__ == "__main__":
     unittest.main()

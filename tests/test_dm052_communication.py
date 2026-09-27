@@ -1195,5 +1195,33 @@ class PerBodyLegTests(LogicalCommunicationFixture):
         )
 
 
+class CompactEchoDisplayIdentityTests(unittest.TestCase):
+    """Echo projection display names come from the owner registry, never from
+    message content; unknown beings keep their exact ref."""
+
+    def test_registry_names_win_and_unknown_refs_pass_through(self) -> None:
+        from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
+        from daimon_matrix.messaging import _display_identity
+
+        being = "dm:being:v1:" + "A" * 43
+        other = "dm:being:v1:" + "B" * 43
+        unknown = "dm:being:v1:" + "Z" * 43
+        index = LabelIndex(
+            [],
+            {
+                "schema": LABEL_SCHEMA,
+                "beings": {being: "compaii", other: "oliva"},
+                "overrides": {},
+            },
+        )
+        self.assertEqual(index.being_name_of_ref(being), "compaii")
+        self.assertEqual(index.being_name_of_ref(other), "oliva")
+        self.assertIsNone(index.being_name_of_ref(unknown))
+        self.assertEqual(_display_identity(being, index), "compaii")
+        self.assertEqual(_display_identity(unknown, index), unknown)
+        self.assertEqual(_display_identity(being, None), being)
+        self.assertEqual(_display_identity("not-a-ref", index), "not-a-ref")
+
+
 if __name__ == "__main__":
     unittest.main()

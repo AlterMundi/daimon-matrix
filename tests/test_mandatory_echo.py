@@ -1197,5 +1197,112 @@ worker.advance("synthetic-op", sys.argv[2])
             self.worker.require_confirmed("synthetic-op", binding)
 
 
+def compact_policy():
+    return {**policy(), "representation": "compact-html/v1"}
+
+
+def control_source():
+    return {
+        **projection(),
+        "kind": "authorization-control",
+        "content": {"stage": "scope"},
+    }
+
+
+class CompactEchoJournalTests(unittest.TestCase):
+    """Compact representation at the journal: honest suppression, exact proofs."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "native-outbox.db"
+        self.db = sqlite3.connect(self.path, timeout=0, isolation_level=None)
+        self.addCleanup(self.db.close)
+        self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA journal_mode=DELETE")
+        self.db.execute("CREATE TABLE native_outbox (operation_id TEXT PRIMARY KEY)")
+        self.db.execute("BEGIN IMMEDIATE")
+        echo.EchoJournal.initialize(
+            self.db, catalog_id="synthetic-catalog", authentication_key=b"k" * 32
+        )
+        self.db.commit()
+        self.journal = echo.EchoJournal(
+            self.db, catalog_id="synthetic-catalog", authentication_key=b"k" * 32
+        )
+        self.transport = Transport()
+        self.source = projection()
+        self.worker = echo.MandatoryEcho(
+            self.journal,
+            transport=self.transport,
+            resolve=lambda operation_id: self.source,
+            authorize=lambda binding: True,
+        )
+
+    def admit_with(self, source, pol, operation_id="synthetic-op"):
+        self.source = source
+        self.db.execute("BEGIN IMMEDIATE")
+        self.db.execute("INSERT INTO native_outbox VALUES (?)", (operation_id,))
+        digest = self.journal.admit(operation_id, source, pol)
+        self.db.commit()
+        return digest
+
+    def test_speech_admits_compact_parts_and_confirms(self):
+        digest = self.admit_with(projection(), compact_policy())
+        status = self.worker.inspect("synthetic-op", digest)
+        self.assertEqual(status["part_count"], 1)
+        self.assertEqual(status["state"], "queued")
+        self.worker.advance("synthetic-op", digest)
+        status = self.worker.inspect("synthetic-op", digest)
+        self.assertEqual(status["state"], "confirmed")
+        posted = self.transport.calls[0]["text"]
+        self.assertTrue(posted.startswith("<b>Daimon Matrix"))
+        self.assertNotIn("event_digest", posted)
+        record = self.worker.require_confirmed("synthetic-op", digest)
+        self.assertEqual(record["parts"][0]["text"], posted)
+
+    def test_control_event_is_suppressed_never_acknowledged(self):
+        digest = self.admit_with(control_source(), compact_policy())
+        status = self.worker.inspect("synthetic-op", digest)
+        self.assertEqual(status["state"], "suppressed")
+        self.assertEqual(status["part_count"], 0)
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(
+            self.worker.advance("synthetic-op", digest)["state"], "suppressed"
+        )
+        self.assertEqual(self.transport.calls, [])
+        record = self.worker.require_discharged("synthetic-op", digest)
+        self.assertEqual(record["parts"], [])
+        with self.assertRaises(echo.EchoError) as caught:
+            self.worker.require_confirmed("synthetic-op", digest)
+        self.assertEqual(str(caught.exception), "echo_not_confirmed")
+
+    def test_suppression_requires_the_compact_representation(self):
+        # Under plain-json the same control event still renders its JSON part:
+        # it is queued, not discharged, until it is actually posted.
+        digest = self.admit_with(control_source(), policy())
+        status = self.worker.inspect("synthetic-op", digest)
+        self.assertEqual(status["state"], "queued")
+        self.assertEqual(status["part_count"], 1)
+        with self.assertRaises(echo.EchoError) as caught:
+            self.worker.require_discharged("synthetic-op", digest)
+        self.assertEqual(str(caught.exception), "echo_not_discharged")
+
+    def test_plain_history_renders_byte_identical_json(self):
+        source = projection()
+        digest = self.admit_with(source, policy())
+        self.worker.advance("synthetic-op", digest)
+        record = self.worker.require_confirmed("synthetic-op", digest)
+        expected = json.dumps(source, ensure_ascii=False, sort_keys=True, indent=2)
+        self.assertIn("Daimon Matrix visibility v2", record["parts"][0]["text"])
+        self.assertIn(expected.splitlines()[0], record["parts"][0]["text"])
+
+    def test_policy_representation_is_a_closed_enum(self):
+        echo.validate_policy(compact_policy())
+        for bad in ("HTML", "compact-html/v2", "plain-json/v3", ""):
+            with self.assertRaises(echo.EchoError) as caught:
+                echo.validate_policy({**policy(), "representation": bad})
+            self.assertEqual(str(caught.exception), "echo_policy_invalid")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,13 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext, supp
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
-from .telegram_mirror import classify_plain_response, plain_request, render_plain_parts
+from .telegram_mirror import (
+    COMPACT_REPRESENTATION,
+    REPRESENTATIONS,
+    classify_plain_response,
+    plain_request,
+    render_echo_parts,
+)
 
 SCHEMA = "daimon-echo-proof/v2"
 MAX_RECORDS = 4096
@@ -118,7 +124,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
         )
         if (
             policy["schema"] != "daimon-visibility-policy/v2"
-            or policy["representation"] != "plain-json/v2"
+            or policy["representation"] not in REPRESENTATIONS
         ):
             raise ValueError
         if (
@@ -208,9 +214,9 @@ def validate_projection(projection: dict[str, Any]) -> None:
                 raise ValueError
         else:
             raise ValueError
-        render_plain_parts(
-            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-        )
+        render_echo_parts(
+            projection, "plain-json/v2"
+        )  # feasibility bound: compact rendering is a subset of these fields
     except Exception:
         raise EchoError("echo_projection_invalid") from None
 
@@ -292,10 +298,8 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
         validate_policy(binding["policy"])
         if _hash(binding) != record["binding_digest"]:
             raise ValueError
-        texts = render_plain_parts(
-            json.dumps(
-                binding["projection"], ensure_ascii=False, sort_keys=True, indent=2
-            )
+        texts = render_echo_parts(
+            binding["projection"], binding["policy"]["representation"]
         )
         parts = record["parts"]
         if type(parts) is not list or len(parts) != len(texts):
@@ -502,9 +506,7 @@ class EchoJournal:
             "projection": _copy(projection),
         }
         digest = _hash(binding)
-        texts = render_plain_parts(
-            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-        )
+        texts = render_echo_parts(projection, policy["representation"])
         if self.db.execute(
             "SELECT 1 FROM echo_v2_obligations WHERE operation_id=?", (operation_id,)
         ).fetchone():
@@ -610,7 +612,9 @@ def _status(record: dict[str, Any]) -> dict[str, Any]:
     ]
     completed = outcomes.count("confirmed")
     state = (
-        "confirmed"
+        "suppressed"
+        if not outcomes
+        else "confirmed"
         if completed == len(outcomes)
         else "ambiguous"
         if "ambiguous" in outcomes
@@ -699,6 +703,25 @@ class MandatoryEcho:
             raise EchoError("echo_not_confirmed")
         return record
 
+    def require_discharged(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, Any]:
+        """Confirmed posts, or suppression explicitly dictated by the bound
+        compact representation. Suppression is a policy outcome, never an
+        acknowledged Telegram post; the journal records zero parts and the
+        state names it. Not a reusable bearer grant."""
+        record = self._journal._load(operation_id, expected_binding_digest)
+        self._current(record)
+        status = _status(record)
+        if status["state"] == "confirmed":
+            return record
+        if (
+            status["state"] == "suppressed"
+            and record["binding"]["policy"]["representation"] == COMPACT_REPRESENTATION
+        ):
+            return record
+        raise EchoError("echo_not_discharged")
+
     def _checkpoint(self, point: str) -> None:
         """Private fault-injection seam; no runtime configuration or model API."""
 
@@ -759,7 +782,7 @@ class MandatoryEcho:
                 for a in p["attempts"]
             ):
                 return state  # Lost-return retry of an already admitted decision.
-            if state["state"] == "confirmed" or self._transport is None:
+            if state["state"] in {"confirmed", "suppressed"} or self._transport is None:
                 return state
             if state["state"] == "ambiguous" and authorization is None:
                 return state

@@ -231,6 +231,21 @@ class LabelIndex:
             raise LabelError("label_unknown")
         return target.label
 
+    def being_name_of_ref(self, being_ref: str) -> str | None:
+        """Human name of one being from the owner registry, or None.
+
+        Presentation only: a missing name is never invented, and a name never
+        authorizes anything.
+        """
+        try:
+            ref = _text(being_ref, "label_unknown")
+        except LabelError:
+            return None
+        for name, stored in sorted(self._by_being.items()):
+            if stored == ref:
+                return name
+        return None
+
     def being_ref_of_name(self, being_name: str) -> str:
         name = _text(being_name, "label_unknown")
         being_ref = self._by_being.get(name)

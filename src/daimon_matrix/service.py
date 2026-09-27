@@ -420,6 +420,7 @@ class MessagingServiceContext:
     client_channels: Mapping[str, frozenset[str]]
     deliveries: Mapping[str, MessagingDelivery] = dataclass_field(default_factory=dict)
     capability_guard: Callable[[LocalCapability], None] | None = None
+    labels: LabelIndex | None = None
 
 
 @dataclass(frozen=True)
