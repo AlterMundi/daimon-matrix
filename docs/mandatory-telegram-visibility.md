@@ -53,7 +53,15 @@ surrogates, unsupported kinds, unknown fields, attachments, raw secret/control
 payloads and arbitrary metadata are rejected. There is no prose secret detector:
 free-form text is externally visible by contract and may not contain secrets.
 
-The representation is `plain-json/v2`: Python JSON serialization with
+The policy `representation` field is a closed enum selecting one versioned
+presentation of the same authenticated projection registry: `plain-json/v2`
+(diagnostic) or `compact-html/v1` (human-facing). Rendering is a pure function
+of the projection and the representation bound in the policy, and every
+admitted record re-derives its exact parts from its own binding during proof
+validation; switching representations never retroactively changes an admitted
+operation, a pending obligation or an exact retry.
+
+`plain-json/v2` is Python JSON serialization with
 `ensure_ascii=False`, `sort_keys=True`, `indent=2`, no normalization/truncation.
 It displays the **entire projection**, including content, identity and digest
 correlations. JSON escaping is reversible and is not a content summary. The
@@ -68,6 +76,33 @@ and caller-supplied entities are absent; link previews are explicitly disabled.
 Returned text must equal the complete expected part. Only bounded automatic
 plain-text entities (`mention`, `hashtag`, `cashtag`, `bot_command`, `url`,
 `email`, `phone_number`) are accepted; hidden links/custom formatting are not.
+
+`compact-html/v1` renders the same registry for humans following the
+conversation:
+
+- Speech (`message`, `reply`): one header `Daimon Matrix · <sender> →
+  <recipient>` (plus ` · ↩ reply to <bounded event ref>` for replies), then
+  the complete `content.text`, HTML-escaped, line breaks preserved, chunked
+  with the same 3,000-unit / 32-part / 4,096-unit limits and `· part i/n`
+  markers. Text never chooses its own sender label: sender and recipient come
+  from the approved projection fields — the owner-local labels registry name
+  when enrolled, otherwise the exact identity ref, which the renderer shortens
+  deterministically (presentation, never an alias or authority).
+- Actionable failures stay visible and distinguishable from speech: a
+  `semantic-receipt` with a failed outcome, or a refused `transport-result`,
+  renders one `⚠` warning line with the outcome and bounded refs.
+- Successful `semantic-receipt` (`delivered`), accepted `transport-result`
+  and every `authorization-control` event render ZERO parts. Suppression is
+  an explicit, representation-bound outcome: the journal records zero parts,
+  status reports `suppressed`, and the egress gate discharges the obligation
+  on that state alone. A suppressed event is never presented as an
+  acknowledged Telegram post; `require_confirmed` still refuses it, and only
+  `require_discharged` accepts the state explicitly dictated by the bound
+  compact representation.
+- Digests, internal ids and authorization/control payloads do not appear in
+  ordinary speech posts. The complete canonical local records (journal,
+  projections, receipts) remain available for diagnosis and audit under both
+  representations.
 If Telegram normalizes an unsupported input, it fails closed as ambiguous.
 
 Transport bookkeeping, the local echo journal/state and Telegram's HTTP/TLS
@@ -104,8 +139,8 @@ channel, and it does not depend on Telegram being reachable.
 
 `daimon-visibility-policy/v2` is an exact object containing `generation`,
 `origin`, numeric `bot_id`, nonzero numeric `chat_id`, explicit `topic_id`
-(integer or `null`), `representation: plain-json/v2`, `acceptance_digest` and
-`proof_key_id`. Generation/bot/chat magnitudes are below 2^52; topics are positive
+(integer or `null`), `representation` (closed enum: `plain-json/v2` or
+`compact-html/v1`), `acceptance_digest` and `proof_key_id`. Generation/bot/chat magnitudes are below 2^52; topics are positive
 and below 2^31. Origin and proof-key identifiers are at most 128 characters.
 The schema field is required. There are no token, destination override, per-send
 visibility switch or private-key fields. The parent MUST authenticate this policy
@@ -207,6 +242,30 @@ Runtime/owner/root and the installed callbacks remain trusted. Authentication
 detects row edits and swaps without the key, but does not prevent whole-store
 rollback, deletion followed by unauthorized fresh admission, or compromised
 runtime/key forgery. Independent monotonic witnesses are not implemented.
+
+### Switching the representation (operator procedure)
+
+The representation lives inside the co-signed visibility disclosure, and the
+`acceptance_digest` binds it, so a mode switch is a two-party re-enrollment —
+never an in-place edit and never an in-memory override:
+
+1. Re-run link enrollment with `tools/chat_link.py offer --representation
+   compact-html/v1` (or `plain-json/v2` to go back). The flag applies to the
+   NEW enrollment; an existing signed installation keeps its representation
+   until re-enrolled.
+2. Every participant runtime re-signs the disclosure through the normal
+   offer/accept/finish chain; restart the service against the re-enrolled
+   installation.
+3. Verify: a human-requested speech message posts in the new presentation;
+   control events journal `suppressed` with zero parts; older obligations
+   still validate under their original representation.
+
+Peer compatibility assessment: the representation is sender-side
+presentation only. It does not change the native wire protocol, the semantic
+receipts, or the evidence a peer validates, so a compact host and a verbose
+host interoperate unchanged; each side mirrors its own sends under its own
+enrolled representation. Historical records stay valid indefinitely because
+proof validation re-renders from each record's own bound policy.
 
 ## 4. Integration API and exact transaction order
 

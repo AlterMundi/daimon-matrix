@@ -1724,16 +1724,20 @@ class MandatoryEgressController:
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
                 for _ in range(len(state.get("parts", [])) + 1):
-                    if state.get("state") in {"confirmed", "ambiguous"}:
+                    if state.get("state") in {
+                        "confirmed",
+                        "ambiguous",
+                        "suppressed",
+                    }:
                         break
                     state = echo.advance(
                         binding.echo_operation_id, binding.echo_binding_digest
                     )
-                echo.require_confirmed(
+                echo.require_discharged(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
             except EchoError as exception:
-                if str(exception) == "echo_not_confirmed":
+                if str(exception) in {"echo_not_confirmed", "echo_not_discharged"}:
                     raise NativeEgressError("egress_echo_not_confirmed") from None
                 raise NativeEgressError(str(exception)) from None
         nonce = str(uuid.uuid4())

@@ -199,6 +199,7 @@ class TestResolution(unittest.TestCase):
         self.assertEqual(
             public,
             {
+                "being_name_of_ref",
                 "being_ref_of_name",
                 "label_of",
                 "resolve",

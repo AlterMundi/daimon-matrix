@@ -36,7 +36,7 @@ import time
 import urllib.error
 import urllib.request
 from bisect import bisect_right
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -218,6 +218,133 @@ def render_plain_parts(document: str) -> list[str]:
         f"Daimon Matrix visibility v2 · part {i}/{len(chunks)}\n{c}"
         for i, c in enumerate(chunks, 1)
     ]
+
+
+PLAIN_REPRESENTATION = "plain-json/v2"
+COMPACT_REPRESENTATION = "compact-html/v1"
+REPRESENTATIONS = (PLAIN_REPRESENTATION, COMPACT_REPRESENTATION)
+
+_BEING_REF = re.compile(r"^dm:being:v1:[A-Za-z0-9_-]{43}$")
+_SPEECH_KINDS = ("message", "reply")
+_FAILED_RECEIPT_OUTCOMES = (
+    "failed:transport",
+    "refused:policy",
+    "expired",
+    "resolved:unroutable",
+)
+
+
+def _display_identity(value: str) -> str:
+    """Bounded human display for one approved projection identity string.
+
+    Trusted display names pass through untouched. Opaque being refs are
+    shortened deterministically (prefix + suffix) so a human can correlate
+    them with local records without flooding the channel. Presentation only:
+    never derived from message content, never an authority.
+    """
+    if _BEING_REF.fullmatch(value):
+        token = value.removeprefix("dm:being:v1:")
+        return f"being:{token[:8]}\u2026{token[-6:]}"
+    return value
+
+
+def _bounded_ref(value: str) -> str:
+    return value if len(value) <= 16 else value[:16] + "\u2026"
+
+
+def _compact_chunks(payload: str) -> list[str]:
+    """Escaped-prefix chunking identical in limits to render_plain_parts."""
+    if (
+        not payload
+        or len(payload.encode("utf-8")) > 98304
+        or len(payload) > MAX_TEXT_BYTES
+    ):
+        raise ValueError("echo_projection_invalid")
+    prefix = [0]
+    for char in payload:
+        unit = len(html.escape(char).encode("utf-16-le")) // 2
+        prefix.append(prefix[-1] + unit)
+    chunks, start = [], 0
+    while start < len(payload):
+        end = max(start + 1, bisect_right(prefix, prefix[start] + 3000) - 1)
+        chunks.append(payload[start:end])
+        start = end
+    if len(chunks) > MAX_PARTS:
+        raise ValueError("echo_projection_invalid")
+    return chunks
+
+
+def render_compact_parts(projection: Mapping[str, Any]) -> list[str]:
+    """Human-facing rendering of one validated echo projection.
+
+    Speech renders as ``sender -> recipient`` plus the complete text, chunked
+    safely, with a bounded reply reference. Actionable failures render as one
+    distinguishable warning line. Successful transport acknowledgments and
+    authorization/control chatter render as ZERO parts: suppressed by
+    representation, which is recorded honestly in the echo journal and never
+    presented as an acknowledged Telegram post.
+    """
+    kind = projection["kind"]
+    sender = _display_identity(projection["sender"])
+    recipient = _display_identity(projection["recipients"][0])
+    if kind in _SPEECH_KINDS:
+        text = projection["content"]["text"]
+        if len(text) > MAX_TEXT_BYTES or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
+            raise ValueError("echo_projection_invalid")
+        header = f"Daimon Matrix \u00b7 {sender} \u2192 {recipient}"
+        if kind == "reply":
+            reply_ref = _bounded_ref(projection["reply_to"]["event_id"])
+            header += f" \u00b7 \u21a9 reply to {reply_ref}"
+        chunks = _compact_chunks(text) if text else [""]
+        total = len(chunks)
+        rendered = []
+        for index, chunk in enumerate(chunks, 1):
+            suffix = f" \u00b7 part {index}/{total}" if total > 1 else ""
+            head = html.escape(header + suffix)
+            rendered.append(f"<b>{head}</b>\n{html.escape(chunk)}")
+        return rendered
+    if kind == "semantic-receipt":
+        outcome = projection["content"]["outcome"]
+        if outcome == "delivered":
+            return []
+        if outcome not in _FAILED_RECEIPT_OUTCOMES:
+            raise ValueError("echo_projection_invalid")
+        line = (
+            f"\u26a0 Daimon Matrix \u00b7 delivery {outcome} \u00b7 "
+            f"{sender} \u2192 {recipient} \u00b7 "
+            f"event {_bounded_ref(projection['event_id'])}"
+        )
+        return [f"<b>{html.escape(line)}</b>"]
+    if kind == "transport-result":
+        stage = projection["content"]["stage"]
+        outcome = projection["content"]["outcome"]
+        if outcome == "accepted":
+            return []
+        line = (
+            f"\u26a0 Daimon Matrix \u00b7 transport refused ({stage}) \u00b7 "
+            f"{sender} \u2192 {recipient} \u00b7 "
+            f"event {_bounded_ref(projection['event_id'])}"
+        )
+        return [f"<b>{html.escape(line)}</b>"]
+    if kind == "authorization-control":
+        return []
+    raise ValueError("echo_projection_invalid")
+
+
+def render_echo_parts(projection: Mapping[str, Any], representation: str) -> list[str]:
+    """Dispatch one validated projection through its policy representation.
+
+    Pure function of (projection, representation): the echo journal re-renders
+    it from the authenticated binding when validating proofs, so a record
+    admitted under one representation always re-derives byte-identically.
+    """
+    if representation == PLAIN_REPRESENTATION:
+        return render_plain_parts(
+            json.dumps(dict(projection), ensure_ascii=False, sort_keys=True, indent=2)
+        )
+    if representation == COMPACT_REPRESENTATION:
+        return render_compact_parts(projection)
+    raise ValueError("echo_representation_unknown")
 
 
 def plain_request(text: str, *, chat_id: int, topic_id: int | None) -> dict[str, Any]:

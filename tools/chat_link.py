@@ -1127,6 +1127,7 @@ def offer(
     output: Path,
     endpoints: list[str],
     installation: Path,
+    representation: str | None = None,
 ) -> Path:
     from daimon_matrix.messaging_config import protected_read
 
@@ -1138,6 +1139,16 @@ def offer(
         k: visibility["policy"][k]
         for k in ("bot_id", "chat_id", "topic_id", "representation")
     }
+    if representation is not None:
+        from daimon_matrix.telegram_mirror import REPRESENTATIONS
+
+        if representation not in REPRESENTATIONS:
+            raise ValueError("chat_link_representation_unknown")
+        # Versioned presentation choice for the NEW enrollment. The existing
+        # installation keeps its signed representation until it is re-enrolled;
+        # a representation change is a two-party disclosure re-signing, never a
+        # silent rewrite of an admitted policy.
+        destination["representation"] = representation
     token_name = visibility["secrets"]["telegram_token_file"]
     if Path(token_name).name != token_name:
         raise ValueError("chat_link_token_path")
@@ -1275,6 +1286,20 @@ def main() -> None:
     parser.add_argument("--peer-endpoint")
     parser.add_argument("--visibility-installation", type=Path)
     parser.add_argument("--additional-link", action="store_true")
+    parser.add_argument(
+        "--representation",
+        choices=("plain-json/v2", "compact-html/v1"),
+        default=None,
+        help=(
+            "Telegram echo presentation for the NEW enrollment; inherits the "
+            "installed representation when omitted. compact-html/v1 posts "
+            "speech as 'sender -> recipient' plus full text, one-line warnings "
+            "for actionable failures, and suppresses successful transport and "
+            "control chatter (recorded honestly as suppressed, never as an "
+            "acknowledged post). Switching an existing link is a two-party "
+            "re-enrollment."
+        ),
+    )
     args = parser.parse_args()
     os.umask(0o077)
     root = _state_root(args.runtime_root)
@@ -1335,6 +1360,7 @@ def main() -> None:
                 output,
                 [args.local_endpoint, args.peer_endpoint],
                 args.visibility_installation,
+                args.representation,
             )
         elif args.command == "accept":
             result = accept(runtime, root, password, supplied, output)
