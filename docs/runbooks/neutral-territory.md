@@ -159,5 +159,13 @@ same contract.
   documented and left to the renderers). Legacy `tribe-*` skills intentionally
   NOT promoted (deprecated system). Hermes sees 16 neutral skills via
   `external_dirs`.
+- Owner-local client retired as a hand-rolled script: the body venv now runs
+  the pinned wheel built from the exact head (editable install removed;
+  `daimon_matrix` resolves to site-packages), and the client is the rendered
+  `dm.owner-client/v1` artifact — byte-identical to the retired script —
+  installed at
+  `~/.local/state/daimon-matrix/compaii-codex-legion/owner-client/`
+  (0700, plan beside it, digest pinned in the binding manifest). After the
+  PR merges, re-pin the body venv to the merged commit.
 - Evidence: issue #161 comments; local pre/post row counts and env backup in
   `/tmp/nt-evidence/` on Legion.
