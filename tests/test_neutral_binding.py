@@ -17,13 +17,16 @@ from daimon_matrix.neutral_binding import (
     ARTIFACT_FILENAMES,
     BINDING_SCHEMA,
     MANIFEST_SCHEMA,
+    OWNER_CLIENT_SCHEMA,
     NeutralBindingError,
     binding_artifacts,
     main,
+    owner_client_plan_from_mapping,
     plan_from_mapping,
     render_binding_manifest,
     render_env_fragment,
     render_hermes_skills_fragment,
+    render_owner_client,
     render_service_env,
     render_surface_check,
 )
@@ -307,6 +310,129 @@ class CliTests(unittest.TestCase):
             invalid.write_text(json.dumps(plan_value(being_name="Nope")))
             self.assertEqual(
                 main(["--plan", str(invalid), "--out", str(root / "out")]), 2
+            )
+
+
+def client_plan_value(**overrides: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "schema": OWNER_CLIENT_SCHEMA,
+        "venv_python": HOME + "/.local/share/daimon-matrix/body-a/venv/bin/python",
+        "state_relative": ".local/state/daimon-matrix/body-a",
+        "client_label": "TestA's Codex embodiment on testhost",
+        "prog": "testa-codex",
+    }
+    value.update(overrides)
+    return value
+
+
+class OwnerClientTests(unittest.TestCase):
+    def test_render_is_deterministic_and_valid_python(self) -> None:
+        plan = owner_client_plan_from_mapping(client_plan_value())
+        first = render_owner_client(plan)
+        self.assertEqual(first, render_owner_client(plan))
+        compile(first.decode("utf-8"), "owner-client", "exec")
+        text = first.decode("utf-8")
+        self.assertTrue(text.startswith("#!" + HOME))
+        self.assertIn('prog="testa-codex"', text)
+        self.assertIn(
+            'STATE = pathlib.Path.home() / ".local/state/daimon-matrix/body-a"',
+            text,
+        )
+        self.assertIn("TestA's Codex embodiment on testhost", text)
+
+    def test_plan_fails_closed(self) -> None:
+        def code(value: Any) -> str:
+            with self.assertRaises(NeutralBindingError) as caught:
+                owner_client_plan_from_mapping(value)
+            return str(caught.exception)
+
+        self.assertEqual(code(["nope"]), "invalid_client_plan")
+        self.assertEqual(code(client_plan_value(extra="x")), "invalid_client_plan")
+        self.assertEqual(
+            code(client_plan_value(schema="dm.owner-client/v0")),
+            "unsupported_client_schema",
+        )
+        self.assertEqual(
+            code(client_plan_value(venv_python="relative/python")),
+            "invalid_venv_python",
+        )
+        self.assertEqual(
+            code(client_plan_value(state_relative="/absolute/path")),
+            "invalid_state_relative",
+        )
+        self.assertEqual(
+            code(client_plan_value(client_label='bad "label"')),
+            "invalid_client_label",
+        )
+        self.assertEqual(code(client_plan_value(prog="Bad Prog")), "invalid_prog")
+
+    def test_cli_renders_client_and_pins_its_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "plan.json"
+            plan_path.write_text(json.dumps(plan_value()))
+            client_path = root / "client-plan.json"
+            client_path.write_text(json.dumps(client_plan_value()))
+            out = root / "binding"
+            self.assertEqual(
+                main(
+                    [
+                        "--plan",
+                        str(plan_path),
+                        "--client-plan",
+                        str(client_path),
+                        "--out",
+                        str(out),
+                    ]
+                ),
+                0,
+            )
+            client = out / "testa-codex"
+            expected = render_owner_client(
+                owner_client_plan_from_mapping(client_plan_value())
+            )
+            self.assertEqual(client.read_bytes(), expected)
+            self.assertEqual(stat.S_IMODE(client.stat().st_mode), 0o700)
+            manifest = json.loads((out / ARTIFACT_FILENAMES["manifest"]).read_bytes())
+            self.assertEqual(
+                manifest["artifacts"]["owner_client"],
+                hashlib.sha256(expected).hexdigest(),
+            )
+
+    def test_cli_refuses_bad_client_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "plan.json"
+            plan_path.write_text(json.dumps(plan_value()))
+            broken = root / "client.json"
+            broken.write_text("{not json")
+            self.assertEqual(
+                main(
+                    [
+                        "--plan",
+                        str(plan_path),
+                        "--client-plan",
+                        str(broken),
+                        "--out",
+                        str(root / "out"),
+                    ]
+                ),
+                2,
+            )
+            invalid = root / "invalid-client.json"
+            invalid.write_text(json.dumps(client_plan_value(prog="NO")))
+            self.assertEqual(
+                main(
+                    [
+                        "--plan",
+                        str(plan_path),
+                        "--client-plan",
+                        str(invalid),
+                        "--out",
+                        str(root / "out"),
+                    ]
+                ),
+                2,
             )
 
 

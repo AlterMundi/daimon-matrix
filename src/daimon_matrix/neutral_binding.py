@@ -362,11 +362,15 @@ def binding_artifacts(plan: NeutralBindingPlan) -> dict[str, bytes]:
     return artifacts
 
 
-def render_binding_manifest(plan: NeutralBindingPlan) -> bytes:
+def render_binding_manifest(
+    plan: NeutralBindingPlan, owner_client_digest: str | None = None
+) -> bytes:
     """Content-addressed manifest binding plan, paths and artifact digests."""
     artifacts = {
         name: _sha256(data) for name, data in sorted(binding_artifacts(plan).items())
     }
+    if owner_client_digest is not None:
+        artifacts["owner_client"] = owner_client_digest
     paths: dict[str, str] = {
         "agents_root": plan.agents_root,
         "skills_root": plan.skills_root,
@@ -392,12 +396,289 @@ def render_binding_manifest(plan: NeutralBindingPlan) -> bytes:
         raise NeutralBindingError("manifest_not_canonical") from exception
 
 
+OWNER_CLIENT_SCHEMA: Final = "dm.owner-client/v1"
+
+_STATE_RELATIVE: Final = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
+_CLIENT_LABEL: Final = re.compile(r"^[A-Za-z0-9 '.@-]{1,120}$")
+_PROG: Final = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
+_CLIENT_FIELDS: Final = frozenset(
+    {"schema", "venv_python", "state_relative", "client_label", "prog"}
+)
+
+
+@dataclass(frozen=True)
+class OwnerClientPlan:
+    """Closed plan for one body's owner-local client. No secrets, no paths
+    outside the owner home convention; the client is a rendered artifact."""
+
+    venv_python: str
+    state_relative: str
+    client_label: str
+    prog: str
+
+
+def owner_client_plan_from_mapping(value: Any) -> OwnerClientPlan:
+    if not isinstance(value, Mapping):
+        raise NeutralBindingError("invalid_client_plan")
+    if set(value) != _CLIENT_FIELDS:
+        raise NeutralBindingError("invalid_client_plan")
+    if value["schema"] != OWNER_CLIENT_SCHEMA:
+        raise NeutralBindingError("unsupported_client_schema")
+    return OwnerClientPlan(
+        venv_python=_text(value["venv_python"], "invalid_venv_python", _ABS_PATH),
+        state_relative=_text(
+            value["state_relative"], "invalid_state_relative", _STATE_RELATIVE
+        ),
+        client_label=_text(
+            value["client_label"], "invalid_client_label", _CLIENT_LABEL
+        ),
+        prog=_text(value["prog"], "invalid_prog", _PROG),
+    )
+
+
+_OWNER_CLIENT_TEMPLATE: Final = r'''#!@@VENV_PYTHON@@
+"""Owner-local client for @@CLIENT_LABEL@@.
+
+One invocation does one thing a human asked for, then exits. There is no daemon,
+no poller, no timer and no autonomous reply here: authority and custody stay
+inside the runtime, and this script holds a single least-authority client
+capability. Reading a message never authorizes answering it.
+
+    compaii-codex status
+    compaii-codex we                       # this being's embodiments
+    compaii-codex say --text "..." [--to EMBODIMENT_ID]... [--thread UUID]
+    compaii-codex read [--thread UUID] [--limit N]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+import uuid
+
+from daimon_matrix.client import ClientConfig, read_capability_key
+from daimon_matrix.local_api import create_request, request_hash, verify_response
+from daimon_matrix.native_egress import closed_visibility
+from daimon_matrix.runtime import load_runtime
+
+STATE = pathlib.Path.home() / @@STATE_RELATIVE@@
+RUNTIME = STATE / "runtime"
+NOW = lambda: 1_800_000_000_000  # replaced by the real clock below
+
+
+def _clock() -> int:
+    import time
+
+    return time.time_ns() // 1_000_000
+
+
+def _runtime():
+    password = (STATE / "body.password").read_bytes().strip()
+    return load_runtime(
+        RUNTIME,
+        "runtime.json",
+        lambda: bytearray(password),
+        clock=_clock,
+        egress=closed_visibility(clock=_clock, catalog_mode="migrate"),
+    )
+
+
+def _client(runtime):
+    descriptor_path = RUNTIME / "client.json"
+    # read_capability_key owns and closes the descriptor it is given.
+    key = read_capability_key(os.open(RUNTIME / "client.key", os.O_RDONLY))
+    return _runtime(), ClientConfig.load(descriptor_path, key)
+
+
+def _call(method: str, params: dict) -> dict:
+    runtime, config = _client(None)
+    request = create_request(
+        config.capability,
+        request_id=str(uuid.uuid4()),
+        issued_at_ms=_clock(),
+        method=method,
+        params=params,
+        nonce=os.urandom(16),
+    )
+    response = runtime.service.handle(request)
+    verify_response(
+        response,
+        config.capability,
+        expected_request_id=request["request_id"],
+        expected_request_hash=request_hash(request),
+        expected_server=runtime.service.origin,
+        expected_runtime={
+            "runtime_id": runtime.service.runtime_id,
+            "runtime_label": runtime.service.runtime_label,
+        },
+    )
+    if response.get("error") is not None:
+        raise SystemExit(f"{method} rechazado: {response['error']}")
+    return response["result"]
+
+
+def _conversation(runtime, thread: str | None, limit: int) -> list[dict]:
+    """Read this being's own conversation straight from its ledger."""
+    rows = []
+    for event in runtime.service.ledger.events(include_incomplete=False):
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if event.get("subject") == "communication":
+            intent = payload.get("intent") or {}
+            if intent.get("scope") != "/we":
+                continue
+            body = payload.get("body") or {}
+            rows.append(
+                {
+                    "kind": "message",
+                    "at": event["occurred_at_ms"],
+                    "from": event["origin"]["embodiment_id"],
+                    "to": body.get("addressee"),
+                    "thread": intent.get("thread_id"),
+                    "text": body.get("text"),
+                }
+            )
+        elif event.get("subject") == "communication-receipt":
+            if payload.get("recipient_type") != "embodiment":
+                continue
+            rows.append(
+                {
+                    "kind": "receipt",
+                    "at": event["occurred_at_ms"],
+                    "from": event["origin"]["embodiment_id"],
+                    "thread": payload.get("thread_id"),
+                    "outcome": payload.get("outcome"),
+                }
+            )
+    if thread is not None:
+        rows = [row for row in rows if row["thread"] == thread]
+    rows.sort(key=lambda row: (row["at"], row["from"]))
+    return rows[-limit:]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=@@PROG@@, description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("status", help="who this body is, and its integrity")
+    commands.add_parser("we", help="this being's embodiments")
+    say = commands.add_parser("say", help="author one /we message, on request")
+    say.add_argument("--text", required=True)
+    say.add_argument("--to", action="append", default=[])
+    say.add_argument("--thread")
+    read = commands.add_parser("read", help="read this being's conversation")
+    read.add_argument("--thread")
+    read.add_argument("--limit", type=int, default=40)
+    args = parser.parse_args(argv)
+
+    if args.command == "status":
+        result = _call("runtime.status", {})
+        print(
+            json.dumps(
+                {
+                    "being_ref": result["being_ref"],
+                    "manifest_hash": result["manifest_hash"][:16] + "…",
+                    "local_origin": result["local_origin"],
+                    "integrity": result["integrity"],
+                    "counts": result["counts"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.command == "we":
+        result = _call("scope.we", {})
+        rows = [
+            {
+                "embodiment_id": row["embodiment_id"],
+                "availability": row.get("availability"),
+                "manifest_status": row.get("manifest_status"),
+            }
+            for row in result["embodiments"]
+        ]
+        print(json.dumps(rows, indent=2, sort_keys=True))
+        return 0
+
+    runtime, _config = _client(None)
+    if args.command == "read":
+        print(json.dumps(_conversation(runtime, args.thread, args.limit), indent=2))
+        return 0
+
+    # say: one signed /we message authored by this body, on a human's request.
+    siblings = _call("scope.we", {})["embodiments"]
+    me = runtime.service.origin["embodiment_id"]
+    addressees = args.to or [
+        row["embodiment_id"]
+        for row in siblings
+        if row["embodiment_id"] != me and row.get("manifest_status") == "active"
+    ]
+    if not addressees:
+        raise SystemExit("sin hermanos a quienes dirigir el mensaje")
+    thread = args.thread or str(uuid.uuid4())
+    result = _call(
+        "we.observe",
+        {
+            "subject": "communication",
+            "payload": {
+                "schema": "dm.communication.message/v1",
+                "body": {"addressee": sorted(addressees), "text": args.text},
+                "intent": {
+                    "operation": "we.converse",
+                    "scope": "/we",
+                    "thread_id": thread,
+                },
+                "reply": None,
+            },
+            "sensitivity": "personal",
+            "causal_parents": [],
+            "occurred_at_ms": None,
+            "event_id": None,
+        },
+    )
+    print(
+        json.dumps(
+            {"thread_id": thread, "addressees": sorted(addressees), "event": result},
+            indent=2,
+            sort_keys=True,
+            default=str,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def render_owner_client(plan: OwnerClientPlan) -> bytes:
+    """Deterministic owner-local client for one body (human-request-only)."""
+    script = _OWNER_CLIENT_TEMPLATE
+    for token, replacement in (
+        ("@@VENV_PYTHON@@", plan.venv_python),
+        ("@@CLIENT_LABEL@@", plan.client_label),
+        ("@@STATE_RELATIVE@@", f'"{plan.state_relative}"'),
+        ("@@PROG@@", f'"{plan.prog}"'),
+    ):
+        script = script.replace(token, replacement)
+    return script.encode("utf-8")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render one binding: ``--plan plan.json --out DIR``. Exit 0/2/3."""
+    """Render one binding: ``--plan plan.json --out DIR`` (``--client-plan``
+    optional). Exit 0/2/3."""
     parser = argparse.ArgumentParser(
         description="Render the harness-neutral territory binding artifacts."
     )
     parser.add_argument("--plan", required=True, type=Path, help="binding plan JSON")
+    parser.add_argument(
+        "--client-plan", type=Path, default=None, help="owner-client plan JSON"
+    )
     parser.add_argument("--out", required=True, type=Path, help="output directory")
     args = parser.parse_args(argv)
     try:
@@ -410,18 +691,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     except NeutralBindingError as error:
         print(f"neutral-binding: {error}", file=sys.stderr)
         return 2
+    client_plan: OwnerClientPlan | None = None
+    client_bytes: bytes | None = None
+    if args.client_plan is not None:
+        try:
+            client_raw = json.loads(args.client_plan.read_bytes())
+            client_plan = owner_client_plan_from_mapping(client_raw)
+        except (OSError, json.JSONDecodeError):
+            print("neutral-binding: client_plan_unreadable", file=sys.stderr)
+            return 2
+        except NeutralBindingError as error:
+            print(f"neutral-binding: {error}", file=sys.stderr)
+            return 2
+        client_bytes = render_owner_client(client_plan)
     outputs = dict(binding_artifacts(plan))
-    outputs["manifest"] = render_binding_manifest(plan)
+    if client_bytes is not None:
+        outputs["owner_client"] = client_bytes
+    manifest = render_binding_manifest(
+        plan, None if client_bytes is None else _sha256(client_bytes)
+    )
+    outputs["manifest"] = manifest
     try:
         args.out.mkdir(mode=0o700, parents=True, exist_ok=True)
         for name, data in sorted(outputs.items()):
-            target = args.out / ARTIFACT_FILENAMES[name]
+            if name == "owner_client" and client_plan is not None:
+                target = args.out / client_plan.prog
+                mode = 0o700
+            else:
+                target = args.out / ARTIFACT_FILENAMES[name]
+                mode = 0o600
             target.write_bytes(data)
-            os.chmod(target, 0o600)
+            os.chmod(target, mode)
     except OSError:
         print("neutral-binding: output_unwritable", file=sys.stderr)
         return 3
-    print("neutral-binding: " + _sha256(outputs["manifest"]))
+    print("neutral-binding: " + _sha256(manifest))
     return 0
 
 
