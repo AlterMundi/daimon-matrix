@@ -439,10 +439,14 @@ def owner_client_plan_from_mapping(value: Any) -> OwnerClientPlan:
 _OWNER_CLIENT_TEMPLATE: Final = r'''#!@@VENV_PYTHON@@
 """Owner-local client for @@CLIENT_LABEL@@.
 
-One invocation does one thing a human asked for, then exits. There is no daemon,
-no poller, no timer and no autonomous reply here: authority and custody stay
-inside the runtime, and this script holds a single least-authority client
+One invocation does one thing a human asked for, then exits. This script starts
+no daemon, no poller, no timer and no autonomous reply: authority and custody
+stay inside the runtime, and the script holds a single least-authority client
 capability. Reading a message never authorizes answering it.
+
+If the owner hosts this body with daimon-matrixd, the script talks to that
+daemon over its socket; otherwise it loads the runtime in process. It never
+does both, because the daemon owns the state-root lock.
 
     compaii-codex status
     compaii-codex we                       # this being's embodiments
@@ -459,8 +463,18 @@ import pathlib
 import sys
 import uuid
 
-from daimon_matrix.client import ClientConfig, read_capability_key
-from daimon_matrix.local_api import create_request, request_hash, verify_response
+from daimon_matrix.client import (
+    ClientConfig,
+    ClientError,
+    LocalClient,
+    read_capability_key,
+)
+from daimon_matrix.local_api import (
+    LocalApiError,
+    create_request,
+    request_hash,
+    verify_response,
+)
 from daimon_matrix.native_egress import closed_visibility
 from daimon_matrix.runtime import load_runtime
 
@@ -486,25 +500,30 @@ def _runtime():
     )
 
 
-def _client(runtime):
-    descriptor_path = RUNTIME / "client.json"
+def _config():
     # read_capability_key owns and closes the descriptor it is given.
     key = read_capability_key(os.open(RUNTIME / "client.key", os.O_RDONLY))
-    return _runtime(), ClientConfig.load(descriptor_path, key)
+    return ClientConfig.load(RUNTIME / "client.json", key)
 
 
-def _call(method: str, params: dict) -> dict:
-    runtime, config = _client(None)
-    request = create_request(
-        config.capability,
-        request_id=str(uuid.uuid4()),
-        issued_at_ms=_clock(),
-        method=method,
-        params=params,
-        nonce=os.urandom(16),
-    )
+def _send(config, request: dict) -> dict:
+    """Reach the body through its daemon when one is running, else in process.
+
+    LocalClient.send authenticates the request and verifies the exact reply, so
+    the socket path needs no extra checking here. A socket file left behind by a
+    stopped daemon connects to nothing and reports daemon_unavailable, which is
+    the signal to load the runtime directly instead.
+    """
+    socket_path = RUNTIME / "matrix.sock"
+    if socket_path.exists():
+        try:
+            return LocalClient(socket_path, config).send(request)
+        except ClientError as error:
+            if str(error) != "daemon_unavailable":
+                raise
+    runtime = _runtime()
     response = runtime.service.handle(request)
-    verify_response(
+    return verify_response(
         response,
         config.capability,
         expected_request_id=request["request_id"],
@@ -515,49 +534,31 @@ def _call(method: str, params: dict) -> dict:
             "runtime_label": runtime.service.runtime_label,
         },
     )
+
+
+def _call(method: str, params: dict) -> dict:
+    config = _config()
+    try:
+        request = create_request(
+            config.capability,
+            request_id=str(uuid.uuid4()),
+            issued_at_ms=_clock(),
+            method=method,
+            params=params,
+            nonce=os.urandom(16),
+        )
+        response = _send(config, request)
+    except (ClientError, LocalApiError) as error:
+        # A stored capability that does not carry this method is a fact about the
+        # bundle, not a crash: name the method, say why, and stop without a
+        # traceback. Creating the request already authenticates it against the
+        # capability, so the refusal can arrive before anything is sent.
+        raise SystemExit(
+            f"{method} no está al alcance de la capability de este cuerpo: {error}"
+        ) from None
     if response.get("error") is not None:
         raise SystemExit(f"{method} rechazado: {response['error']}")
     return response["result"]
-
-
-def _conversation(runtime, thread: str | None, limit: int) -> list[dict]:
-    """Read this being's own conversation straight from its ledger."""
-    rows = []
-    for event in runtime.service.ledger.events(include_incomplete=False):
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        if event.get("subject") == "communication":
-            intent = payload.get("intent") or {}
-            if intent.get("scope") != "/we":
-                continue
-            body = payload.get("body") or {}
-            rows.append(
-                {
-                    "kind": "message",
-                    "at": event["occurred_at_ms"],
-                    "from": event["origin"]["embodiment_id"],
-                    "to": body.get("addressee"),
-                    "thread": intent.get("thread_id"),
-                    "text": body.get("text"),
-                }
-            )
-        elif event.get("subject") == "communication-receipt":
-            if payload.get("recipient_type") != "embodiment":
-                continue
-            rows.append(
-                {
-                    "kind": "receipt",
-                    "at": event["occurred_at_ms"],
-                    "from": event["origin"]["embodiment_id"],
-                    "thread": payload.get("thread_id"),
-                    "outcome": payload.get("outcome"),
-                }
-            )
-    if thread is not None:
-        rows = [row for row in rows if row["thread"] == thread]
-    rows.sort(key=lambda row: (row["at"], row["from"]))
-    return rows[-limit:]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -604,14 +605,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rows, indent=2, sort_keys=True))
         return 0
 
-    runtime, _config = _client(None)
     if args.command == "read":
-        print(json.dumps(_conversation(runtime, args.thread, args.limit), indent=2))
+        params = {"after": 0, "limit": args.limit}
+        if args.thread is not None:
+            params["thread_id"] = args.thread
+        # Through the service, not around it: the page is capability-checked and
+        # arrives with the labels layer applied, so a human reads names instead
+        # of opaque embodiment ids.
+        page = _call("we.conversation.page", params)
+        print(json.dumps(page["entries"], indent=2, sort_keys=True, default=str))
         return 0
 
     # say: one signed /we message authored by this body, on a human's request.
     siblings = _call("scope.we", {})["embodiments"]
-    me = runtime.service.origin["embodiment_id"]
+    me = _call("runtime.status", {})["local_origin"]["embodiment_id"]
     addressees = args.to or [
         row["embodiment_id"]
         for row in siblings
