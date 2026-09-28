@@ -89,9 +89,12 @@ from .operator_capabilities import (
 from .operator_genesis import HOLDER_SCHEMA as GENESIS_HOLDER_SCHEMA
 from .operator_genesis import PENDING_CONTROL_HEAD
 from .peer_transport import PeerTransportError, http_peer_round_trip
-from .runtime import load_runtime
+from .runtime import BUNDLE_SCHEMA_V7, BUNDLE_SCHEMA_V8, load_runtime
 from .weave import BeingManifest, RootAuthority
 
+SUPPORTED_RUNTIME_BUNDLE_GENERATIONS: Final = frozenset(
+    {BUNDLE_SCHEMA_V7, BUNDLE_SCHEMA_V8}
+)
 REQUEST_SCHEMA: Final = "dm.operator.embodiment-request/v1"
 REQUEST_DOMAIN: Final = "dm.operator.embodiment-request/v1"
 TRANSPORT_REQUEST_DOMAIN: Final = "dm.operator.embodiment-request-transport/v1"
@@ -1995,7 +1998,7 @@ def authority_from_runtime_bundle(value: Any) -> RootAuthority:
         "relationships",
     }
     bundle = _closed(value, fields, "invalid_rebirth_runtime_bundle")
-    if bundle["schema"] not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}:
+    if bundle["schema"] not in SUPPORTED_RUNTIME_BUNDLE_GENERATIONS:
         raise RebirthError("unsupported_rebirth_runtime_bundle")
     if any(
         bundle[field] is not None
@@ -4181,7 +4184,15 @@ def _activate_target_runtime(
     *,
     recovery: bool,
 ) -> dict[str, Any]:
-    """Build one fresh V7 target package without copying writable body state."""
+    """Build one fresh target package without copying writable body state.
+
+    The base bundle generation is preserved exactly: v7 in, v7 out; v8 in,
+    v8 out. An unknown generation fails closed, and an unexpected generation
+    change during activation is a distinct refusal, never a silent rewrite.
+    """
+    base_schema = base_bundle.get("schema") if isinstance(base_bundle, dict) else None
+    if base_schema not in SUPPORTED_RUNTIME_BUNDLE_GENERATIONS:
+        raise RebirthError("unsupported_rebirth_runtime_bundle")
 
     authority = authority_from_runtime_bundle(base_bundle)
     if recovery:
@@ -4241,8 +4252,11 @@ def _activate_target_runtime(
                 base_bundle, verified_activation, authority
             )
         )
-        if bundle.get("schema") != "dm.runtime.bundle/v7":
+        output_schema = bundle.get("schema")
+        if output_schema not in SUPPORTED_RUNTIME_BUNDLE_GENERATIONS:
             raise RebirthError("unsupported_rebirth_runtime_bundle")
+        if output_schema != base_schema:
+            raise RebirthError("rebirth_bundle_generation_changed")
         bundle["local_origin"] = copy.deepcopy(origin)
         bundle["runtime_id"] = runtime_id
         bundle["runtime_label"] = profile["label"]
