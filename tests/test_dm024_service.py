@@ -11,6 +11,7 @@ from typing import Any
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
+from daimon_matrix.identity import create_incarnation_authorization
 from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import (
@@ -27,6 +28,7 @@ from daimon_matrix.local_api import (
 from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
 from daimon_matrix.runtime import load_label_index
 from daimon_matrix.service import METHODS, HostedWeave, ServiceError
+from daimon_matrix.weave import BeingManifest, RootAuthority
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 
 
@@ -347,6 +349,94 @@ class HostedServiceTests(RootLedgerFixture):
             load_label_index(self.root_path, self.authority)
         path.unlink()
         self.assertIsNone(load_label_index(self.root_path, self.authority))
+
+    def test_label_index_skips_retired_rows_and_refuses_active_duplicates(
+        self,
+    ) -> None:
+        registry = {
+            "beings": {self.state.being_ref: "compaii"},
+            "overrides": {},
+            "schema": LABEL_SCHEMA,
+        }
+        path = self.root_path / "labels.json"
+        path.write_text(json.dumps(registry))
+        path.chmod(0o600)
+        self.addCleanup(path.unlink, missing_ok=True)
+
+        def authority_with(
+            rows: list[Any], extra_incarnations: dict[str, Any] | None = None
+        ) -> RootAuthority:
+            manifest: dict[str, Any] = copy.deepcopy(dict(self.manifest.value))
+            manifest["embodiments"] = rows
+            manifest["revision"] += 1
+            return RootAuthority(
+                BeingManifest.from_value(manifest),
+                self.state,
+                self.credentials,
+                {**self.incarnations, **(extra_incarnations or {})},
+            )
+
+        active_row = next(
+            dict(row)
+            for row in self.manifest.value["embodiments"]
+            if row["embodiment_id"] == "embodiment:legion"
+        )
+        # The live manifest shape: a RETIRED earlier incarnation beside the
+        # active one — same embodiment, distinct incarnation ids, sorted.
+        credential = self.credentials[active_row["embodiment_credential_id"]]
+        active_sequence = self.incarnations[active_row["incarnation_authorization_id"]][
+            "body"
+        ]["incarnation_sequence"]
+        retired_authorization = create_incarnation_authorization(
+            credential,
+            self.signing_seeds["legion"],
+            incarnation_id="incarnation:00000000-0000-4000-8000-000000000000",
+            incarnation_sequence=active_sequence,
+            started_at_ms=NOW,
+        )
+        retired_row = {
+            **active_row,
+            "status": "retired",
+            "incarnation_id": "incarnation:00000000-0000-4000-8000-000000000000",
+            "incarnation_authorization_id": retired_authorization["artifact_id"],
+        }
+        index = load_label_index(
+            self.root_path,
+            authority_with(
+                sorted(
+                    [retired_row, dict(active_row)],
+                    key=lambda row: (row["embodiment_id"], row["incarnation_id"]),
+                ),
+                {retired_authorization["artifact_id"]: retired_authorization},
+            ),
+        )
+        assert index is not None
+        self.assertEqual(index.label_of("embodiment:legion"), "compaii.cluster@legion")
+        # Two ACTIVE incarnations of one embodiment stay a fail-closed
+        # equivocation: an ambiguous label is never silently resolved.
+        second_authorization = create_incarnation_authorization(
+            credential,
+            self.signing_seeds["legion"],
+            incarnation_id="incarnation:ffffffff-ffff-4fff-8fff-ffffffffffff",
+            incarnation_sequence=active_sequence + 1,
+            started_at_ms=NOW,
+        )
+        second_active = {
+            **active_row,
+            "incarnation_id": "incarnation:ffffffff-ffff-4fff-8fff-ffffffffffff",
+            "incarnation_authorization_id": second_authorization["artifact_id"],
+        }
+        with self.assertRaises(HostedRuntimeError):
+            load_label_index(
+                self.root_path,
+                authority_with(
+                    sorted(
+                        [dict(active_row), second_active],
+                        key=lambda row: (row["embodiment_id"], row["incarnation_id"]),
+                    ),
+                    {second_authorization["artifact_id"]: second_authorization},
+                ),
+            )
 
     def test_we_conversation_page_renders_owner_labels(self) -> None:
         registry = {

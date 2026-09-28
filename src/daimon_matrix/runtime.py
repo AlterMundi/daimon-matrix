@@ -127,6 +127,11 @@ def load_label_index(root: Path, authority: RootAuthority) -> LabelIndex | None:
     Absence is normal and means ids only. Presence with unsafe ownership, unsafe
     permissions, unreadable bytes or an invalid registry fails closed rather than
     silently renaming a being.
+
+    Only ACTIVE manifest rows are labelled: a retired duplicate of an
+    embodiment is history, not a second body, and must not collide with the
+    living row. Two active rows for one embodiment remain a fail-closed
+    equivocation.
     """
     path = root / LABELS_FILENAME
     try:
@@ -154,6 +159,7 @@ def load_label_index(root: Path, authority: RootAuthority) -> LabelIndex | None:
             "embodiment_id": row["embodiment_id"],
         }
         for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active"
     ]
     try:
         return LabelIndex(entries, registry)
