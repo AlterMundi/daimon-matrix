@@ -134,8 +134,15 @@ re-mint a body bundled from a later commit.
 The operational rule is therefore:
 
 - a host that must reach the lane is **born from a current bundle**;
-- an existing body that must reach the lane is **reborn**, as a new incarnation
-  with fresh custody and a current capability set.
+- an existing body that must reach the lane needs a **new embodiment, through
+  rebirth**, because bundle creation is the only thing that makes a capability set.
+
+A new *incarnation* of the same embodiment is not enough, and the difference decides
+whether a plan works. An authority epoch retires the previous incarnation's row and
+adds an active one for the same embodiment, the same body ref and the same embodiment
+credential, with fresh incarnation custody — but it carries the existing capability
+set forward unchanged. Capability sets are created at bundle creation alone, so a
+re-incarnated body still cannot reach the lane.
 
 Plan for one of those two. Do not plan a re-mint step, because there is no such
 step to take, and discovering that at the host mid-rollout is the expensive way to
