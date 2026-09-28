@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest import mock
 
 from jsonschema import (  # type: ignore[import-untyped]
     Draft202012Validator,
@@ -17,11 +18,17 @@ from jsonschema import (  # type: ignore[import-untyped]
 from daimon_matrix.authority_epochs import (
     AuthorityEpochError,
     RootHistoryAuthority,
+    create_credential_succession,
     create_embodiment_enrollment,
     verify_embodiment_enrollment,
 )
-from daimon_matrix.canonical import b64url, canonical_bytes, digest
-from daimon_matrix.identity import signing_descriptor, verify_genesis
+from daimon_matrix.canonical import b64url, canonical_bytes, digest, unb64url
+from daimon_matrix.identity import (
+    create_embodiment_credential_v2,
+    create_incarnation_authorization,
+    signing_descriptor,
+    verify_genesis,
+)
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.native_egress import synthetic_visibility
@@ -622,6 +629,188 @@ class TestAdditionalEmbodiment(RootLedgerFixture):
                 self.origins["daimonmatrix"]["embodiment_id"],
             },
         )
+
+    def migrated_v8_successor(self) -> tuple[RootAuthority, dict[str, Any]]:
+        """Run the messaging-permissions credential succession over the fixture.
+
+        Same construction the live v7-to-v8 migration produces: successor
+        credential and incarnation authorization for the Legion body, manifest
+        revision bump, and one signed root succession transition.
+        """
+        origin = self.origins["legion"]
+        previous = self.authority
+        row = previous.manifest.member(
+            origin["embodiment_id"], origin["incarnation_id"]
+        )
+        old = previous.credentials[row["embodiment_credential_id"]]
+        body = old["body"]
+        new = create_embodiment_credential_v2(
+            previous.state,
+            self.root_seeds,
+            self.signing_seeds["legion"],
+            unb64url(body["encryption_key"]["public"], length=32),
+            embodiment_id=body["embodiment_id"],
+            body_ref=body["body_ref"],
+            purposes=body["purposes"],
+            revocation_generation=body["revocation_generation"],
+            transport_principals=body["transport_principals"],
+            validity={"mode": "until-revoked", "not_before_ms": body["valid_from_ms"]},
+        )
+        old_incarnation = previous.incarnations[row["incarnation_authorization_id"]][
+            "body"
+        ]
+        authorization = create_incarnation_authorization(
+            new,
+            self.signing_seeds["legion"],
+            incarnation_id=origin["incarnation_id"],
+            incarnation_sequence=old_incarnation["incarnation_sequence"],
+            started_at_ms=old_incarnation["started_at_ms"],
+        )
+        manifest: dict[str, Any] = copy.deepcopy(dict(previous.manifest.value))
+        manifest["revision"] += 1
+        for index, member in enumerate(manifest["embodiments"]):
+            if member == row:
+                updated = dict(member)
+                updated["embodiment_credential_id"] = new["artifact_id"]
+                updated["incarnation_authorization_id"] = authorization["artifact_id"]
+                manifest["embodiments"][index] = updated
+        active = RootAuthority(
+            BeingManifest.from_value(manifest),
+            previous.state,
+            {**previous.credentials, new["artifact_id"]: new},
+            {**previous.incarnations, authorization["artifact_id"]: authorization},
+        )
+        transition = create_credential_succession(
+            previous,
+            active,
+            embodiment_id=origin["embodiment_id"],
+            incarnation_id=origin["incarnation_id"],
+            migration_id="dm158-v8-regression",
+            issued_at_ms=NOW + 10,
+            root_seeds=self.root_seeds,
+            signing_seed=self.signing_seeds["legion"],
+        )
+        return active, transition
+
+    def v8_base(self) -> tuple[dict[str, Any], RootAuthority]:
+        """One legitimate v8 base: the v7 fixture through the messaging-permissions
+        credential succession, exactly as the live migration produces."""
+        active, transition = self.migrated_v8_successor()
+        bundle = self.base_runtime_bundle()
+        bundle.update(
+            schema="dm.runtime.bundle/v8",
+            manifest=active.manifest.value,
+            credentials=list(active.credentials.values()),
+            incarnations=list(active.incarnations.values()),
+            authority_history=[
+                {"manifest": self.manifest.value, "successor": transition}
+            ],
+        )
+        return bundle, active
+
+    def ceremony_for(
+        self, authority: RootAuthority, name: str
+    ) -> tuple[Any, Any, Any, Path, bytes]:
+        root = self.root_path / name
+        root.mkdir(mode=0o700)
+        password = b"fresh-runtime-password-dm158"
+        preparation = create_target_preparation(
+            root / "preparation",
+            authority,
+            self.target_profile(),
+            lambda: bytearray(password),
+            created_at_ms=NOW + 10,
+            expires_at_ms=NOW + 60_010,
+        )
+        request = json.loads((root / "preparation/request.json").read_bytes())
+        activation = authorize_enrollment_request(
+            request,
+            authority,
+            root_seeds=self.root_seeds[:2],
+            issued_at_ms=NOW + 20,
+        )
+        return preparation, request, activation, root, password
+
+    def test_activation_preserves_v8_and_builds_loadable_runtime(self) -> None:
+        base, active = self.v8_base()
+        preparation, request, activation, root, password = self.ceremony_for(
+            active, "target-runtime-v8"
+        )
+        receipt = activate_target_runtime(
+            root / "package",
+            root / "preparation",
+            preparation,
+            request,
+            activation,
+            base,
+            lambda: bytearray(password),
+        )
+        self.assertTrue(receipt["empty_writable_state"])
+        runtime_root = root / "package/runtime"
+        loaded = load_runtime(
+            runtime_root,
+            "runtime.json",
+            lambda: bytearray(password),
+            clock=lambda: NOW + 30,
+            egress=synthetic_visibility(clock=lambda: NOW + 30),
+        )
+        self.assertEqual(
+            loaded.service.ledger.local_origin, activation["body"]["origin"]
+        )
+        self.assertEqual(loaded.service.ledger.events(), [])
+        bundle = json.loads((runtime_root / "runtime.json").read_bytes())
+        self.assertEqual(bundle["schema"], "dm.runtime.bundle/v8")
+        self.assertEqual(
+            bundle["manifest"]["revision"], base["manifest"]["revision"] + 1
+        )
+        self.assertEqual(
+            len(bundle["authority_history"]), len(base["authority_history"]) + 1
+        )
+
+    def test_unknown_bundle_generation_fails_closed(self) -> None:
+        base = self.base_runtime_bundle()
+        base["schema"] = "dm.runtime.bundle/v9"
+        preparation, request, activation, root, password = self.ceremony_for(
+            self.authority, "target-runtime-v9"
+        )
+        with self.assertRaisesRegex(RebirthError, "unsupported_rebirth_runtime_bundle"):
+            activate_target_runtime(
+                root / "package",
+                root / "preparation",
+                preparation,
+                request,
+                activation,
+                base,
+                lambda: bytearray(password),
+            )
+
+    def test_unexpected_generation_change_is_a_distinct_refusal(self) -> None:
+        base, active = self.v8_base()
+        preparation, request, activation, root, password = self.ceremony_for(
+            active, "target-runtime-downgrade"
+        )
+        from daimon_matrix import operator_rebirth as rebirth
+
+        original = rebirth.apply_activation_to_runtime_bundle
+
+        def downgrade(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            out = dict(original(*args, **kwargs))
+            out["schema"] = "dm.runtime.bundle/v7"
+            return out
+
+        with (
+            mock.patch.object(rebirth, "apply_activation_to_runtime_bundle", downgrade),
+            self.assertRaisesRegex(RebirthError, "rebirth_bundle_generation_changed"),
+        ):
+            activate_target_runtime(
+                root / "package",
+                root / "preparation",
+                preparation,
+                request,
+                activation,
+                base,
+                lambda: bytearray(password),
+            )
 
     def test_transition_matches_schema_and_canonical_round_trip(self) -> None:
         _, activation = self.activation()
