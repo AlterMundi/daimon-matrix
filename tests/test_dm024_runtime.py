@@ -26,6 +26,7 @@ from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.daemon import (
     DaemonError,
     acquire_lock,
+    main,
     serve_connection,
     serve_forever,
 )
@@ -49,7 +50,7 @@ from daimon_matrix.messaging_config import (
     _public_identity,
     config_digest,
 )
-from daimon_matrix.native_egress import synthetic_visibility
+from daimon_matrix.native_egress import closed_visibility, synthetic_visibility
 from daimon_matrix.operator_capabilities import (
     HOST_CAPABILITY_PROFILES,
     HOST_PROFILE_NAMES,
@@ -1038,6 +1039,127 @@ class UnixDaemonTests(RuntimeFixture):
             self.assertNotIn(secret, stderr)
         for secret in (PASSWORD, self.signing_seeds["legion"]):
             self.assertNotIn(secret, exported)
+        records = [line for line in stderr.splitlines() if line]
+        self.assertEqual(len(records), 2)
+        self.assertIn(b'"code":"ready"', records[0])
+        self.assertIn(b'"code":"stopped"', records[1])
+
+    def test_closed_visibility_is_receive_only_with_nothing_releasable(self) -> None:
+        """Closed visibility is not a weaker mirror: it has no egress path at all.
+
+        Hosting a body without a Telegram installation must not become a way to
+        host a mirrored body without its mirror, so the posture is asserted rather
+        than assumed: no transport, no registered catalogs, release disabled.
+        """
+        state_root, _bundle, _capability = self.make_bundle(state_name="closed-egress")
+        runtime = load_runtime(
+            state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress=closed_visibility(clock=lambda: NOW, catalog_mode="migrate"),
+        )
+        self.assertFalse(runtime.egress.release_enabled)
+        self.assertEqual(runtime.egress.registered_catalog_ids(), frozenset())
+
+    def test_daemon_requires_exactly_one_visibility_source(self) -> None:
+        """Neither source, or both at once, is refused before anything is touched."""
+        base = ["--state-root", "/nonexistent", "--password-fd", "3"]
+        with self.subTest(case="neither"):
+            with self.assertRaises(SystemExit) as caught:
+                main(base)
+            self.assertEqual(caught.exception.code, 2)
+        with self.subTest(case="both"):
+            with self.assertRaises(SystemExit) as caught:
+                main(
+                    [
+                        *base,
+                        "--closed-visibility",
+                        "--visibility-installation",
+                        "/nonexistent.json",
+                    ]
+                )
+            self.assertEqual(caught.exception.code, 2)
+
+    def test_separate_process_hosts_a_body_with_no_mirror(self) -> None:
+        """A body with no Telegram installation is hostable and answers.
+
+        Per-harness messenger bodies each need their own hosted runtime, own peer
+        listener and own signing surface, and most of them will never own a mirror.
+        Before this, `--visibility-installation` was required and carried a Telegram
+        bot token, chat id and qualification probes, so such a body could not be
+        hosted at all and had to piggyback on a sibling that had one.
+        """
+        state_root, bundle, capability, now_ms = self.make_process_bundle()
+        password_read, password_write = os.pipe()
+        ready_read, ready_write = os.pipe()
+        command = [
+            sys.executable,
+            "-m",
+            "daimon_matrix.daemon",
+            "--state-root",
+            str(state_root),
+            "--password-fd",
+            str(password_read),
+            "--closed-visibility",
+            "--ready-fd",
+            str(ready_write),
+        ]
+        joined = b"\x00".join(part.encode() for part in command)
+        self.assertNotIn(PASSWORD, joined)
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=os.environ.copy(),
+            pass_fds=(password_read, ready_write),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        os.close(password_read)
+        os.close(ready_write)
+        os.write(password_write, PASSWORD)
+        os.close(password_write)
+        try:
+            self.assertEqual(os.read(ready_read, 6), b"READY\n")
+            request = create_request(
+                capability,
+                request_id="30000000-0000-4000-8000-00000000000a",
+                issued_at_ms=now_ms,
+                method="runtime.status",
+                params={},
+                nonce=b"c" * 16,
+            )
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(str(state_root / "matrix.sock"))
+                client.sendall(encode_frame(request))
+                header = client.recv(4)
+                size = int.from_bytes(header, "big")
+                body = b""
+                while len(body) < size:
+                    body += client.recv(size - len(body))
+            response = decode_frame(header + body)
+            verify_response(
+                response,
+                capability,
+                expected_request_id=request["request_id"],
+                expected_request_hash=request_hash(request),
+                expected_server=self.origins["legion"],
+                expected_runtime={
+                    "runtime_id": bundle["runtime_id"],
+                    "runtime_label": bundle["runtime_label"],
+                },
+            )
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["result"]["integrity"], "ok")
+        finally:
+            os.close(ready_read)
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0)
+        for secret in (PASSWORD, self.signing_seeds["legion"]):
+            self.assertNotIn(secret, stdout)
+            self.assertNotIn(secret, stderr)
         records = [line for line in stderr.splitlines() if line]
         self.assertEqual(len(records), 2)
         self.assertIn(b'"code":"ready"', records[0])

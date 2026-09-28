@@ -27,6 +27,7 @@ from .messaging_config import _public_identity, verify_public_binding
 from .native_egress import (
     MandatoryEgressController,
     NativeEgressError,
+    closed_visibility,
     load_owner_visibility_file,
 )
 from .peer_transport import MAX_ENVELOPE_BYTES, PeerTransportBusy, PeerTransportError
@@ -619,7 +620,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--bundle", default="runtime.json")
     parser.add_argument("--password-fd", type=int, required=True)
-    parser.add_argument("--visibility-installation", type=Path, required=True)
+    visibility = parser.add_mutually_exclusive_group(required=True)
+    visibility.add_argument("--visibility-installation", type=Path)
+    visibility.add_argument(
+        "--closed-visibility",
+        action="store_true",
+        help=(
+            "host receive-only, with no external egress path at all, for a body "
+            "that has no Telegram mirror of its own"
+        ),
+    )
     parser.add_argument("--ready-fd", type=int)
     return parser
 
@@ -635,15 +645,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         def clock() -> int:
             return time.time_ns() // 1_000_000
 
-        runtime = load_runtime(
-            root,
-            args.bundle,
-            _password_reader(args.password_fd),
-            clock=clock,
-            egress_factory=_visibility_factory(
-                args.visibility_installation, clock=clock
-            ),
-        )
+        if args.closed_visibility:
+            # Fail-closed and receive-only: no transport, and migration mode may
+            # install schema but never releases. This hosts a body that has
+            # nothing to mirror. It is not a way to host a mirrored body without
+            # its mirror, because a closed controller has no egress path at all.
+            runtime = load_runtime(
+                root,
+                args.bundle,
+                _password_reader(args.password_fd),
+                clock=clock,
+                egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+            )
+        else:
+            runtime = load_runtime(
+                root,
+                args.bundle,
+                _password_reader(args.password_fd),
+                clock=clock,
+                egress_factory=_visibility_factory(
+                    args.visibility_installation, clock=clock
+                ),
+            )
 
         def request_stop(_number: int, _frame: object) -> None:
             stopping.set()
