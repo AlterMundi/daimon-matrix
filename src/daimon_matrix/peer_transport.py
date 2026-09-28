@@ -62,6 +62,10 @@ CEK_WRAP_DOMAIN: Final = b"daimon/peer-envelope/cek-wrap/v1\x00"
 MAX_ENVELOPE_BYTES: Final = 3 * 1024 * 1024
 MAX_PAYLOAD_BYTES: Final = 2 * 1024 * 1024
 MAX_TTL_MS: Final = 60_000
+# Client statuses that ask for the same request later rather than refusing
+# it: a timeout, a too-early retry and a rate limit. Every other 4xx is a
+# definite rejection of these exact bytes.
+_RETRYABLE_CLIENT_STATUS: Final = frozenset({408, 425, 429})
 SCOPE_REQUEST: Final = "application/vnd.daimon.scope-request+json"
 SCOPE_RESPONSE: Final = "application/vnd.daimon.scope-response+json"
 SYNC_REQUEST: Final = "application/vnd.daimon.sync-request+json"
@@ -1719,8 +1723,19 @@ def http_peer_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
             )
             response = connection.getresponse()
             body = response.read(MAX_ENVELOPE_BYTES + 1)
-            if response.status == 503:
+            if response.status == 503 or response.status in _RETRYABLE_CLIENT_STATUS:
+                # The peer did not take ownership of these bytes and may accept
+                # the same envelope later, so the outcome stays undetermined.
                 raise PeerTransportAmbiguous()
+            if 400 <= response.status < 500:
+                # Any other 4xx is the peer's definite answer about these exact
+                # bytes: it refused to frame, open or dispatch the envelope, so
+                # the remote effect cannot have completed. Resending identical
+                # bytes cannot change that answer, which makes this a rejection
+                # rather than an undetermined outcome. The decision reads no
+                # body: a rejecting peer owes no explanation to an
+                # unauthenticated caller, and none is needed to classify.
+                raise PeerTransportError()
             lengths = response.headers.get_all("Content-Length", failobj=[])
             try:
                 declared = int(lengths[0]) if len(lengths) == 1 else -1
@@ -1733,6 +1748,8 @@ def http_peer_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
                 or not 1 <= len(body) <= MAX_ENVELOPE_BYTES
                 or declared != len(body)
             ):
+                # An unexpected status, or a 200 whose body is not one intact
+                # envelope, leaves the remote effect undetermined.
                 raise PeerTransportAmbiguous()
             return body
         except PeerTransportError:
