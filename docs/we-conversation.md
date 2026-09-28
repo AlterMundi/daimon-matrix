@@ -109,20 +109,44 @@ loudly instead of being silently reinterpreted as an id.
 
 ### Rollout consequence, stated plainly
 
-A capability profile is exactly the method set a stored capability has to match,
-and the runtime refuses to load a bundle whose capabilities drifted from it.
-`we.converse` joins the `weave` profile and `we.conversation.page` joins
-`observe`, so a runtime bundled before this change will not load until its
-operator capability set is re-minted by the owner-local offline upgrade path in
-`daimon_matrix.operator_runtime_upgrade`, which is deliberately not a
-model-facing tool.
+A capability profile bounds what a stored capability may carry, and a stored
+capability that predates a method added to its profile is **accepted**: holding
+less authority than the profile allows is least authority, not drift. What is
+refused is the other direction — a method the profile no longer names, or a
+profile or slot that does not match.
+
+So `we.converse` joining the `weave` profile and `we.conversation.page` joining
+`observe` does not make an older bundle unloadable. A runtime bundled before this
+change loads and serves normally; it simply cannot reach the lane, and the refusal
+arrives at request authentication rather than at load. Observed on two live bodies
+of one being, both bundled before the change: each carries five of the six current
+`weave` methods, missing exactly `we.converse`, and both load and answer
+`runtime.status`, `scope.we` and `memory.execute`.
+
+**There is no in-place re-mint.** Signed capabilities are immutable and no tool
+refreshes one: capability sets are created by genesis, by the first embodiment and
+by rebirth, and `runtime.py` states the rule directly — bundles advance only by
+rebirth. `daimon_matrix.operator_runtime_upgrade` is not a general remedy. It is a
+legacy conversion pinned to one exact source revision and to an exact SHA-256 over
+all 48 files of that source tree, and it refuses any other source, so it cannot
+re-mint a body bundled from a later commit.
+
+The operational rule is therefore:
+
+- a host that must reach the lane is **born from a current bundle**;
+- an existing body that must reach the lane is **reborn**, as a new incarnation
+  with fresh custody and a current capability set.
+
+Plan for one of those two. Do not plan a re-mint step, because there is no such
+step to take, and discovering that at the host mid-rollout is the expensive way to
+learn it.
 
 Putting the lane in its own new profile was considered and rejected: the bundle
 schemas pin the capability count at exactly twelve for both v7 and v8, so a new
 role would need a v9 bundle schema, its vectors and its ceremony, and would still
-leave every older bundle unable to reach the lane. Re-minting through the existing
-upgrade path is the smaller and already-tooled change. No capability is ever
-widened in place, and the lane is unreachable with an older capability.
+leave every older bundle unable to reach the lane. No capability is ever widened in
+place, and the lane stays unreachable with an older capability — which is the
+fail-closed behaviour wanted here rather than a defect to route around.
 
 ## Human-request-only
 
