@@ -1206,6 +1206,57 @@ class PeerTransportTests(PeerTransportFixture):
             server.server_close()
             thread.join(timeout=2)
 
+    def test_http_client_separates_rejection_from_undetermined_outcome(self) -> None:
+        """A definite 4xx is a rejection; only undetermined outcomes stay retryable.
+
+        A peer that cannot open our envelope answers 4xx with an empty body. That
+        answer is final for these exact bytes, so it must not surface as an
+        undetermined outcome: reporting a permanent refusal as retryable makes the
+        caller resend identical bytes forever and hides the real cause. Statuses
+        that ask for the same request later, and a busy peer, stay undetermined.
+        """
+        cases = [(400, False), (404, False), (429, True), (503, True)]
+        pending = [status for status, _ in cases]
+
+        class Rejecting(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                size = int(self.headers["Content-Length"])
+                self.rfile.read(size)
+                status = pending.pop(0)
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Rejecting)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[:2]
+            host = cast(str, host)
+            exchange = http_peer_round_trip(
+                f"http://{host}:{port}/dm-peer/v1", timeout_seconds=2
+            )
+            for status, ambiguous in cases:
+                with (
+                    self.subTest(status=status),
+                    self.assertRaises(PeerTransportError) as caught,
+                ):
+                    exchange(b"opaque")
+                self.assertEqual(
+                    isinstance(caught.exception, PeerTransportAmbiguous),
+                    ambiguous,
+                    f"status {status} misclassified",
+                )
+                self.assertEqual(str(caught.exception), "peer_transport_rejected")
+            self.assertEqual(pending, [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_real_http_carrier_observes_only_encrypted_bytes(self) -> None:
         server_state = self.root_path / "peer-http-server"
         client_state = self.root_path / "peer-http-client"
