@@ -435,6 +435,49 @@ class OwnerClientTests(unittest.TestCase):
                 2,
             )
 
+    def test_rendered_client_works_hosted_and_never_bypasses_the_service(
+        self,
+    ) -> None:
+        """The client reaches the body through its daemon, or in process, and reads
+        through the service.
+
+        A body may be hosted by daimon-matrixd — which owns the state-root lock, so
+        an in-process load cannot coexist with it — or used on demand with no daemon
+        at all. One rendered artifact has to serve both, and the socket must be
+        preferred when present, falling back only when nothing is listening.
+
+        Reading the ledger directly is forbidden here on purpose: it bypasses the
+        capability and audience checks the service enforces, and it cannot work at
+        all while a daemon holds the lock.
+        """
+        rendered = render_owner_client(
+            owner_client_plan_from_mapping(client_plan_value())
+        ).decode("utf-8")
+        self.assertNotIn("@@", rendered)
+        compile(rendered.split("\n", 1)[1], "<owner-client>", "exec")
+        # socket first, with an explicit and narrow fallback condition
+        self.assertIn("LocalClient(socket_path, config).send(request)", rendered)
+        self.assertIn('str(error) != "daemon_unavailable"', rendered)
+        self.assertIn("runtime = _runtime()", rendered)
+        # conversation reads go through the service, never around it
+        self.assertIn('"we.conversation.page"', rendered)
+        self.assertNotIn("service.ledger", rendered)
+        # the in-process path stays confined to _send: hand the request to the
+        # service, then verify the reply against that runtime's own identity
+        for expected in (
+            "response = runtime.service.handle(request)",
+            "expected_server=runtime.service.origin",
+            '"runtime_id": runtime.service.runtime_id',
+            '"runtime_label": runtime.service.runtime_label',
+        ):
+            self.assertIn(expected, rendered)
+        self.assertEqual(rendered.count("runtime.service."), 4)
+        # a stored capability that does not carry a method is reported in one line,
+        # not raised as a traceback: creating the request already authenticates it
+        # against the capability, so the refusal can arrive before anything is sent
+        self.assertIn("except (ClientError, LocalApiError) as error:", rendered)
+        self.assertIn("no está al alcance de la capability de este cuerpo", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
