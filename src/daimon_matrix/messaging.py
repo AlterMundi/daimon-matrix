@@ -74,6 +74,27 @@ def _display_identity(being_ref: str, labels: LabelIndex | None) -> str:
     return being_ref if name is None else name
 
 
+def _sender_display(
+    labels: LabelIndex | None, local_origin: Mapping[str, Any], being_ref: str
+) -> str:
+    """Name the sending body by its owner-local label when one exists.
+
+    The signing body's label (``being.harness@host``) is what lets humans
+    distinguish two bodies of one being in the echo; without it the display
+    falls back to the being registry name and then to the exact ref. The
+    label comes from signed body facts plus the owner registry, never from
+    message content, and authorizes nothing.
+    """
+    if labels is not None:
+        embodiment_id = local_origin.get("embodiment_id")
+        if isinstance(embodiment_id, str):
+            try:
+                return labels.label_of(embodiment_id)
+            except LabelError:
+                pass
+    return _display_identity(being_ref, labels)
+
+
 @dataclass(frozen=True)
 class GrantReference:
     grant_id: str
@@ -686,7 +707,9 @@ class MessagingDelivery:
             projections[phase] = {
                 "event_id": metadata["event_id"],
                 "event_digest": event["content_hash"],
-                "sender": _display_identity(owner, labels),
+                "sender": _sender_display(
+                    labels, self.sender.ledger.local_origin, owner
+                ),
                 "recipients": [
                     _display_identity(self.sender.context.local_being_ref, labels)
                 ],

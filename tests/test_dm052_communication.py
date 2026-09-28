@@ -1222,6 +1222,39 @@ class CompactEchoDisplayIdentityTests(unittest.TestCase):
         self.assertEqual(_display_identity(being, None), being)
         self.assertEqual(_display_identity("not-a-ref", index), "not-a-ref")
 
+    def test_sender_display_prefers_the_signing_body_label(self) -> None:
+        from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
+        from daimon_matrix.messaging import _sender_display
+
+        being = "dm:being:v1:" + "A" * 43
+        embodiment = "embodiment:195a923d-5896-4cce-83e6-4defcfa011f3"
+        index = LabelIndex(
+            [
+                {
+                    "being_ref": being,
+                    "body_ref": "cli:legion:compaii-chat",
+                    "embodiment_id": embodiment,
+                }
+            ],
+            {
+                "schema": LABEL_SCHEMA,
+                "beings": {being: "compaii"},
+                "overrides": {embodiment: {"harness": "chat"}},
+            },
+        )
+        origin = {
+            "embodiment_id": embodiment,
+            "body_ref": "cli:legion:compaii-chat",
+        }
+        # The signing body is named, so two bodies of one being stay
+        # distinguishable to the humans watching the echo.
+        self.assertEqual(_sender_display(index, origin, being), "compaii.chat@legion")
+        # Unknown body falls back to the being name, then to the exact ref.
+        stranger = {"embodiment_id": "embodiment:00000000-1111-2222-3333-444444444444"}
+        self.assertEqual(_sender_display(index, stranger, being), "compaii")
+        self.assertEqual(_sender_display(index, {}, being), "compaii")
+        self.assertEqual(_sender_display(None, origin, being), being)
+
 
 if __name__ == "__main__":
     unittest.main()
