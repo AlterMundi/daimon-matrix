@@ -287,7 +287,13 @@ MAX_TRIBE_TEXT_BYTES: Final = 64 * 1024
 DEFAULT_TRIBE_TTL_MS: Final = 10 * 60 * 1000
 
 DeliverTribeConversation = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
-"""Hand one sealed tribe conversation to a member body, return its intake."""
+"""Hand one sealed tribe conversation to a member body, return its intake.
+
+A member the carrier cannot reach is reported by raising ``TribeConversationError``,
+which the lane records as one undelivered row and keeps going. Anything else propagates:
+an unexpected exception is a bug or an attack, not a delivery problem, and must not be
+flattened into "this member is owed a retry".
+"""
 
 
 class TribeConversation:
@@ -439,6 +445,13 @@ class TribeConversation:
         member body. Authoring is idempotent under the caller's request id, so an
         exact retry says the same thing once; byte-exact transport retry belongs to
         the carrier's own outbox, not here.
+
+        The returned ``deliveries`` vector has exactly one row per audience member and
+        is the only honest answer about who got it: ``author`` for this body's own
+        embodiments, ``sealed`` when no carrier was supplied, ``delivered`` with the
+        member's verified receipt, and ``undelivered`` for a member the carrier could
+        not reach. An ``undelivered`` row is retryable under the same request id, which
+        re-authors the same event and re-attempts delivery rather than saying it twice.
         """
         now = _uint(self.clock(), "tribe_lane_clock_invalid")
         request = _uuid_text(request_id, "tribe_lane_request_invalid")
@@ -556,8 +569,29 @@ class TribeConversation:
                     {"embodiment_id": row["embodiment_id"], "state": "sealed"}
                 )
                 continue
+            try:
+                intake = deliver(row["embodiment_id"], payload)
+            except TribeConversationError:
+                # One member the carrier cannot reach does not take the message down
+                # with it. The event is already authored and idempotent under this
+                # request id, and the envelope is already sealed to every member key
+                # including this one, so what is owed is a delivery and not a new
+                # message. Callers get the whole per-member vector, which keeps an
+                # incomplete send visible and retryable instead of silently partial.
+                #
+                # Only the lane's own error is caught. An intake that comes back and
+                # then fails to verify is not a delivery problem: it is a forged or
+                # corrupt receipt, and that still fails the whole send closed.
+                deliveries.append(
+                    {
+                        "embodiment_id": row["embodiment_id"],
+                        "membership_ref": row["membership_ref"],
+                        "state": "undelivered",
+                    }
+                )
+                continue
             receipt = self._accept_member_receipt(
-                deliver(row["embodiment_id"], payload),
+                intake,
                 row=row,
                 message=message,
                 resolution=resolution,
