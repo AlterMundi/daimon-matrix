@@ -104,9 +104,9 @@ jobs:
       - run: python -m ruff format --check tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
       - run: python -m ruff check tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm078_vectors.py tools/generate_dm078_recovery_vectors.py tests/test_dm078_rebirth.py tests/test_dm078_recovery_rebirth.py
-      - run: python -m ruff format --check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
-      - run: python -m ruff check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
-      - run: MYPYPATH=src python -m mypy tools/generate_dm082_vectors.py tests/test_dm082_relationships.py
+      - run: python -m ruff format --check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py tests/test_single_active_tribe.py
+      - run: python -m ruff check tools/generate_dm082_vectors.py tests/test_dm082_relationships.py tests/test_single_active_tribe.py
+      - run: MYPYPATH=src python -m mypy tools/generate_dm082_vectors.py tests/test_dm082_relationships.py tests/test_single_active_tribe.py
       - run: python -m ruff format --check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: python -m ruff check tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
       - run: MYPYPATH=src python -m mypy tools/generate_dm042_vectors.py tests/test_dm042_local_we.py
@@ -225,6 +225,7 @@ jobs:
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm070_multihost.DM070PublishedContractTests -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm081_sources -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm082_relationships -q
+          "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_single_active_tribe -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm083_dogfood -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_rebirth -q
           "${RUNNER_TEMP}/dm020-wheel/bin/python" -W error::ResourceWarning -m unittest tests.test_dm078_recovery_rebirth -q
