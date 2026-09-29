@@ -1592,6 +1592,55 @@ class RelationshipView:
         }
 
 
+def active_tribe_refs(view: RelationshipView, being_ref: str) -> tuple[str, ...]:
+    """Every tribe one being is an active member of, sorted.
+
+    Membership here includes the founder. The founder's entry is synthesized from the
+    declaration rather than from an acceptance, so it carries no episode: against a live
+    store the founder reports ``state: active`` with ``episodes: 0``. A helper that
+    looked only at acceptance episodes would therefore report a founder as belonging to
+    no tribe at all, and any rule built on it would never fire for the one member who
+    cannot be removed.
+
+    This is read-only and makes no decision. It exists so a caller can ask the question
+    `specs/tribe-conversation.md` §6 asks -- how many active tribes does this being have
+    -- without re-deriving membership semantics that already live in the view.
+    """
+
+    return tuple(
+        sorted(
+            tribe
+            for tribe, info in view.tribes.items()
+            if info["state"] == "active"
+            and (info["memberships"].get(being_ref) or {}).get("state") == "active"
+        )
+    )
+
+
+def blocking_active_tribes(
+    view: RelationshipView,
+    being_ref: str,
+    *,
+    tribe_ref: str | None,
+) -> tuple[str, ...]:
+    """The active tribes that forbid this being creating or joining another one.
+
+    ``tribe_ref`` is ``None`` when the operation would create a tribe, so every
+    active tribe blocks it. It names a tribe when the operation would join one, so
+    re-admission into that same tribe after a leave stays a membership question
+    instead of being refused as a second tribe.
+
+    Split out from the authoring path so the decision is testable on its own: the
+    whole rule is this filter, and a wrong filter fails open rather than loudly.
+    """
+
+    return tuple(
+        tribe
+        for tribe in active_tribe_refs(view, being_ref)
+        if tribe_ref is None or tribe != tribe_ref
+    )
+
+
 __all__ = [
     "CardVerifier",
     "RelationshipAuthorityResolver",
@@ -1599,4 +1648,6 @@ __all__ = [
     "RelationshipStore",
     "RelationshipStoreError",
     "RelationshipView",
+    "active_tribe_refs",
+    "blocking_active_tribes",
 ]

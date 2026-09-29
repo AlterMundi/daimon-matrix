@@ -56,6 +56,7 @@ from .projections import ProjectionEngine, ProjectionError
 from .relationship_store import (
     RelationshipServiceContext,
     RelationshipStoreError,
+    blocking_active_tribes,
 )
 from .relationships import (
     RelationshipError,
@@ -188,6 +189,9 @@ RELATIONSHIP_METHOD_KINDS: Final = {
     "tribe.leave": "matrix/tribe-membership-leave",
     "tribe.membership.accept": "matrix/tribe-membership-acceptance",
 }
+_SINGLE_ACTIVE_TRIBE_METHODS: Final = frozenset(
+    {"tribe.declare", "tribe.membership.accept"}
+)
 RELATIONSHIP_METHODS: Final = frozenset(
     {
         *RELATIONSHIP_METHOD_KINDS,
@@ -1336,6 +1340,24 @@ class HostedWeave:
                 author_being_ref=local_being_ref,
                 causal_parents=(),
             )
+            # specs/tribe-conversation.md §6: V0 admits exactly one active tribe
+            # per being. Enforced here, at authoring, and deliberately not at
+            # resolution: a founded tribe can never be terminated, because the
+            # original founder's membership is unconditionally active and there is
+            # no dissolution event kind. Refusing at resolution time would therefore
+            # permanently brick every tribe of a being that founded a second one
+            # before this rule existed -- the real one included -- with no supported
+            # repair. Forward-only refusal leaves legacy tribes resolvable by the
+            # explicit tribe_ref that every artifact already carries.
+            if method in _SINGLE_ACTIVE_TRIBE_METHODS and blocking_active_tribes(
+                store.view(
+                    at_ms=self.clock(),
+                    card_verifier=relationships.card_verifier,
+                ),
+                local_being_ref,
+                tribe_ref=None if method == "tribe.declare" else payload["tribe_ref"],
+            ):
+                raise ServiceError("tribe_single_active_tribe_violated")
             if method == "relationship.grant.revoke" and payload["action"] != "revoke":
                 raise ServiceError("invalid_params")
             if (
