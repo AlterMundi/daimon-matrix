@@ -103,6 +103,31 @@ class GrantReference:
 
 
 @dataclass(frozen=True)
+class MessagingTribePolicy:
+    """One tribe channel's authority: active membership, and nothing else.
+
+    Deliberately not ``MessagingPeerPolicy`` with a longer member list. A tribe
+    channel has N recipients named by the audience frozen into the signed
+    resolution at send time rather than pinned here, its authority is membership
+    rather than bilateral consent, and it carries no resource, no operation and
+    no grant -- conversation never requires one and never creates one, and the
+    ``dm.tribe.membership-proof/v1`` artifact is closed so a proof that tries to
+    carry one is rejected rather than ignored.
+
+    The closed field set *is* the control. A policy that cannot name a grant
+    cannot smuggle one into a conversation envelope, which is why the pairwise
+    fields are absent here rather than present and empty: an empty
+    ``grant_refs`` that a later change could populate is exactly the opening
+    that review is meant to find.
+    """
+
+    tribe_ref: str
+    membership_ref: str
+    classification: str
+    max_ttl_ms: int = 60_000
+
+
+@dataclass(frozen=True)
 class MessagingPeerPolicy:
     """One explicitly configured directional /tribe channel, not a wire claim."""
 

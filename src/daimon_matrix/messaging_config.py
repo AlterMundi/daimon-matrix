@@ -236,6 +236,25 @@ _POLICY = _object(
         },
     }
 )
+# A tribe channel's policy. Closed, and closed on purpose: there is no
+# resource_ref, no operation and no grant_refs here, so a configuration that
+# supplies one is rejected by the schema instead of being carried into an
+# envelope. Recipients are not configured either -- they are resolved from
+# verified membership at send time and frozen into the signed resolution.
+_TRIBE_POLICY = _object(
+    {
+        "tribe_ref": _TEXT,
+        "membership_ref": _TEXT,
+        "classification": {"enum": ["private", "shareable", "public"]},
+        "max_ttl_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
+    }
+)
+_TRIBE_CHANNEL = _object(
+    {
+        "channel_id": _LEAF,
+        "policy": _TRIBE_POLICY,
+    }
+)
 _DIRECTION = _object(
     {
         "channel_id": _LEAF,
@@ -302,6 +321,14 @@ for _application_schema in (SPECIFICATION_SCHEMA, APPLICATION_JSON_SCHEMA):
             "store_filename": _LEAF,
         }
     )
+
+
+# Optional tribe channel. Absent means the application has only its pairwise
+# lane, so every existing configuration stays valid. Added to `properties`
+# without being added to `required`, which is how `relationship_mode` above is
+# optional too.
+for _application_schema in (SPECIFICATION_SCHEMA, APPLICATION_JSON_SCHEMA):
+    _application_schema["properties"]["tribe"] = _TRIBE_CHANNEL
 
 
 BINDING_JSON_SCHEMA = _object(
@@ -410,6 +437,15 @@ def validate_shape(application: Any, *, specification: bool = False) -> None:
             application["incoming"]["channel_id"]
             == application["outgoing"]["channel_id"]
         ):
+            raise ValueError()
+        tribe_section = application.get("tribe")
+        if isinstance(tribe_section, dict) and tribe_section.get("channel_id") in {
+            application["incoming"]["channel_id"],
+            application["outgoing"]["channel_id"],
+        }:
+            # One channel id means one channel. A tribe channel sharing an id
+            # with either pairwise direction would make the uniform surface
+            # ambiguous about which lane a send belongs to.
             raise ValueError()
         for direction in ("incoming", "outgoing"):
             for phase, route in application[direction]["routes"].items():
