@@ -139,6 +139,47 @@ new empty embodiment can authenticate and ingest events created before it
 existed. Peer pull is encrypted, replay-safe and additive; it never copies
 another embodiment's private custody or adopts its local decisions.
 
+## Host a body that has no messaging application
+
+A package produced by `activate` cannot be served by `daimon-matrixd
+--closed-visibility` until its own egress catalogs carry the echo subset. A body with
+peer transport registers two catalogs — one over its peer outbox and one over its peer
+exchange store — and the registry check demands the visibility tables in each. Every
+other caller of the installer needs something this body does not have: a messaging
+application, a link ceremony, or an owner visibility installation.
+
+Provision it once, before the first start, with the daemon's own verb:
+
+```bash
+python -I -m daimon_matrix.daemon \
+  --state-root /target/package/runtime \
+  --closed-visibility \
+  --provision-visibility \
+  --password-fd 3 3</target/body.password
+```
+
+It takes the state-root writer lock, installs the echo subset into the catalogs this
+body registered, validates them, logs `visibility_provisioned` and exits without binding
+a listener. It is idempotent, it never registers an egress transport, and it leaves the
+body receive-only. A catalog that is genuinely invalid still fails closed rather than
+being repaired. The verb is closed-visibility only: a body with an owner installation
+already has `operator_messaging migrate-visibility`, and that verb validates the
+installation as it goes.
+
+Then host it normally, and expect `{"code":"ready"}`:
+
+```bash
+python -I -m daimon_matrix.daemon \
+  --state-root /target/package/runtime \
+  --closed-visibility \
+  --password-fd 3 3</target/body.password
+```
+
+If a start is refused, the diagnostic names the cause —
+`{"code":"startup_refused","detail":"<ErrorType>:<stable_code>"}`. The detail is
+included only when it is a bare lowercase code, so a stdlib error carrying a path, a
+URL or key material is reported by its type name alone and nothing leaves the process.
+
 ## Re-publish messaging applications after the advance
 
 An enrollment advances the being manifest, and two kinds of document respond
