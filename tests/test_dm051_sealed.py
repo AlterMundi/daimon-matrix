@@ -60,6 +60,7 @@ from daimon_matrix.tribe_conversation import (
     ACCEPTANCE_KIND,
     DECLARATION_KIND,
     TRIBE_CONVERSE_RESULT_SCHEMA,
+    TRIBE_INTAKE_SCHEMA,
     MembershipAuthorizer,
     TribeConversation,
     TribeConversationError,
@@ -1260,6 +1261,118 @@ class TribeConversationLaneTests(TribeMembershipFixture):
             if event["subject"] == "communication-receipt"
         ]
         self.assertEqual(len(receipts), 1)
+
+    def test_an_unreachable_member_is_reported_and_the_message_survives(self) -> None:
+        """One member the carrier cannot reach is a row, not a failed send."""
+
+        attempted: list[str] = []
+
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            attempted.append(embodiment_id)
+            raise TribeConversationError("tribe_lane_delivery_unavailable")
+
+        result = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=carry,
+        )
+        self.assertEqual(result["schema"], TRIBE_CONVERSE_RESULT_SCHEMA)
+        self.assertEqual(attempted, [self.member.origin["embodiment_id"]])
+        # The per-member vector is the only honest answer about who got it: nobody did,
+        # and the caller can see that instead of receiving an exception or a lie.
+        self.assertEqual(
+            sorted(
+                (row["state"], row["embodiment_id"]) for row in result["deliveries"]
+            ),
+            sorted(
+                [
+                    ("author", self.founder.origin["embodiment_id"]),
+                    ("undelivered", self.member.origin["embodiment_id"]),
+                ]
+            ),
+        )
+        undelivered = next(
+            row for row in result["deliveries"] if row["state"] == "undelivered"
+        )
+        self.assertEqual(undelivered["membership_ref"], self.membership_ref)
+        self.assertNotIn("receipt", undelivered)
+        # The message and its frozen resolution were still authored, and the envelope
+        # was still sealed to every member key, so what is owed is a delivery.
+        self.assertIsNotNone(self.founder_ledger.event(result["message_id"]))
+        self.assertIsNotNone(self.founder_ledger.event(result["resolution_id"]))
+
+    def test_an_undelivered_member_is_retryable_under_the_same_request_id(self) -> None:
+        request_id = str(uuid.uuid4())
+
+        def refuse(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            raise TribeConversationError("tribe_lane_delivery_unavailable")
+
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            return self.receiver_lane.intake(payload)
+
+        first = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=request_id,
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=refuse,
+        )
+        self.assertIn("undelivered", {row["state"] for row in first["deliveries"]})
+        authored_before = len(self.founder_ledger.events())
+        second = self.sender_lane.converse(
+            text="hola tribu",
+            request_id=request_id,
+            tribe_ref=self.tribe_ref,
+            ttl_ms=30_000,
+            deliver=carry,
+        )
+        # Retrying re-attempts the delivery; it does not say the thing twice.
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["resolution_id"], first["resolution_id"])
+        self.assertEqual(second["message_hash"], first["message_hash"])
+        # The retry re-attempted delivery and authored nothing new.
+        self.assertEqual(len(self.founder_ledger.events()), authored_before)
+        self.assertEqual(
+            sorted(
+                (row["state"], row["embodiment_id"]) for row in second["deliveries"]
+            ),
+            sorted(
+                [
+                    ("author", self.founder.origin["embodiment_id"]),
+                    ("delivered", self.member.origin["embodiment_id"]),
+                ]
+            ),
+        )
+
+    def test_a_receipt_that_does_not_verify_still_fails_the_whole_send(self) -> None:
+        """An unreachable member is retryable; a forged intake is not a delivery."""
+
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            return {"schema": TRIBE_INTAKE_SCHEMA, "receipt": "not a receipt"}
+
+        with self.assertRaises(TribeConversationError):
+            self.sender_lane.converse(
+                text="hola tribu",
+                request_id=str(uuid.uuid4()),
+                tribe_ref=self.tribe_ref,
+                ttl_ms=30_000,
+                deliver=carry,
+            )
+
+    def test_an_unexpected_carrier_failure_is_not_flattened_into_a_retry(self) -> None:
+        def carry(embodiment_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            raise OSError("carrier bug, not a delivery problem")
+
+        with self.assertRaises(OSError):
+            self.sender_lane.converse(
+                text="hola tribu",
+                request_id=str(uuid.uuid4()),
+                tribe_ref=self.tribe_ref,
+                ttl_ms=30_000,
+                deliver=carry,
+            )
 
     def test_a_non_member_cannot_intake_the_message(self) -> None:
         delegate = self.journey.identities["delegate"]
