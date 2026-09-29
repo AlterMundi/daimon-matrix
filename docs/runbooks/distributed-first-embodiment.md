@@ -138,3 +138,58 @@ contains the prior manifest and signed transition in `authority_history`, so a
 new empty embodiment can authenticate and ingest events created before it
 existed. Peer pull is encrypted, replay-safe and additive; it never copies
 another embodiment's private custody or adopts its local decisions.
+
+## Re-publish messaging applications after the advance
+
+An enrollment advances the being manifest, and two kinds of document respond
+differently to that. Append-only records — relationship cards and the capability
+journal — verify against the epoch they name, through the history the successor
+bundle carries. Current-state documents do not: an application publication and its
+visibility installation pin the epoch they were issued under, by design, and the
+daemon compares that pin to its present authority exactly. So a body that carries a
+messaging application will refuse to start once its bundle is advanced, reporting
+`messaging_visibility_installation_rejected`.
+
+Advance such a body only with the repair step ready, in this order:
+
+```bash
+python -I -m daimon_matrix.operator_messaging republish \
+  --state-root /existing/runtime \
+  --app-dir /existing/messaging-application \
+  --visibility-installation /existing/visibility/installation.json \
+  --password-fd 3 3</existing/body.password
+```
+
+Run it with the daemon stopped: it takes the same runtime writer lock. It derives
+one successor from the application that is already published, changing exactly one
+field — this being's entry in `authorities`, replaced by the present epoch's public
+authority document. Routes, stores, `relationship_mode`, the client descriptor and
+every secret reference are carried over untouched, and no capability is re-minted
+and no key is rotated, so existing messaging clients keep working unchanged. It is
+idempotent: against an application that already pins the present epoch it reports
+the current digest and appends no generation.
+
+The predecessor is proved authentic before it is used, by verifying its binding
+against the epoch it names rather than against the present one, so an unverified
+file on disk is not a predecessor and a tampered one is refused without any change
+to the published pointer.
+
+The visibility installation is re-signed for the same reason and with the same
+limit. Two owner-side pins move: the installation's `application_sha256`, and the
+owner's own entry in `acceptance_set.bindings`, which is a binding over the
+disclosure and so carries the epoch's manifest digest. The installation generation
+advances, which fail-closes any echo retry command issued against the previous
+installation instead of letting it resolve against a policy that is no longer
+current.
+
+What does not move is the part that carries consent. `disclosure` is reproduced
+byte-identically, so `acceptance_set.disclosure_sha256` is unchanged, and every
+participant binding whose actor is not this being still verifies against exactly
+the bytes it was issued over. No foreign acceptance is re-requested, widened, or
+silently reused for a different disclosure; a re-publication re-attests owner-local
+authority over a disclosure nobody re-opened. The replaced installation is kept
+beside the new one, so the repair is reversible together with the bundle it was
+issued under.
+
+A body with no messaging application needs none of this. Neither does a body whose
+bundle was not advanced.

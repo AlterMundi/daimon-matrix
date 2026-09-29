@@ -1,7 +1,8 @@
 """Trusted operator provisioning of an external signed messaging application.
 
-Never expose prepare(), renew(), or the password descriptor to an autonomous/model
-tool. The daemon only verifies; it cannot renew or sign application enrollment.
+Never expose prepare(), renew(), republish(), or the password descriptor to an
+autonomous/model tool. The daemon only verifies; it cannot renew, re-publish or sign
+application enrollment.
 
 Publication is a mandatory signed metadata pointer. Renewal changes that pointer
 atomically while all stores and keys remain at their original paths. Run the CLI
@@ -52,6 +53,7 @@ from .messaging_config import (
     read_publication,
     validate_shape,
     verify_binding,
+    verify_binding_within_history,
     verify_public_binding,
 )
 from .messaging_store import MessagingInboxStore
@@ -60,9 +62,126 @@ from .native_egress import (
     MandatoryEgressController,
     load_owner_visibility_file,
 )
-from .operator_rebirth import authority_from_document
+from .operator_rebirth import (
+    AUTHORITY_SCHEMA,
+    authority_from_document,
+    authority_from_runtime_bundle,
+)
 from .runtime import HostedRuntime, VisibilityFactory, VisibilityFactoryContext
 from .service import MESSAGING_METHODS
+from .weave import RootAuthority
+
+
+def _application_authorities(
+    application: Mapping[str, Any],
+) -> dict[str, RootAuthority]:
+    """Index one application's pinned authorities by being, rejecting duplicates."""
+
+    authorities: dict[str, RootAuthority] = {}
+    for document in application["authorities"]:
+        authority = authority_from_document(document)
+        being_ref = authority.manifest.being_ref
+        if being_ref in authorities:
+            raise MessagingConfigError("messaging_visibility_installation_rejected")
+        authorities[being_ref] = authority
+    return authorities
+
+
+def _current_epoch(
+    authority: RootAuthority | RootHistoryAuthority,
+) -> RootAuthority:
+    """Narrow a possibly history-preserving authority to its present epoch."""
+
+    return (
+        authority.active if isinstance(authority, RootHistoryAuthority) else authority
+    )
+
+
+def _runtime_authority(
+    runtime: HostedRuntime,
+) -> RootAuthority | RootHistoryAuthority:
+    """One loaded runtime's authority, narrowed and fail-closed.
+
+    The ledger types its authority more widely than the root chain this module
+    signs against, so the same narrowing ``_identity`` already performs is the
+    only shape accepted here.
+    """
+
+    authority = runtime.service.ledger.authority
+    if not isinstance(authority, (RootAuthority, RootHistoryAuthority)):
+        raise MessagingConfigError("messaging_binding_rejected")
+    return authority
+
+
+def _runtime_epoch(runtime: HostedRuntime) -> RootAuthority:
+    """The present epoch of one loaded runtime."""
+
+    return _current_epoch(_runtime_authority(runtime))
+
+
+def _owner_visibility_controller(
+    *,
+    authorities: Mapping[str, RootAuthority],
+    application_sha256: str,
+    installation_path: Path,
+    authority: RootAuthority | RootHistoryAuthority,
+    origin: Mapping[str, Any],
+    runtime_id: str,
+    runtime_label: str,
+    signer_public_key: bytes,
+    clock: Callable[[], int],
+    catalog_mode: str,
+) -> MandatoryEgressController:
+    """Bind one owner installation to a selected app and the present epoch.
+
+    Shared by the daemon's visibility factory and by ``republish`` so that the
+    verification a re-issued installation has to survive is literally the one the
+    daemon applies, not a second implementation that can drift from it.
+    """
+
+    owner_identity = _public_identity(
+        authority,
+        origin,
+        runtime_id,
+        runtime_label,
+        clock(),
+    )
+    selected_owner = authorities.get(owner_identity["being_ref"])
+    # The application pins the current public authority, not the wrapper
+    # that additionally verifies events from earlier credential epochs.
+    if selected_owner != _current_epoch(authority):
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+
+    def verify_owner(document: Any, binding: Any) -> None:
+        verify_public_binding(
+            owner_identity,
+            signer_public_key,
+            document,
+            binding,
+        )
+
+    def verify_participant(participant: str, document: Any, binding: Any) -> None:
+        participant_authority = authorities[participant]
+        body = binding["body"]
+        identity = _public_identity(
+            participant_authority,
+            body["origin"],
+            body["runtime_id"],
+            body["runtime_label"],
+            clock(),
+        )
+        credential = participant_authority.credentials[identity["credential_id"]]
+        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+        verify_public_binding(identity, public_key, document, binding)
+
+    return load_owner_visibility_file(
+        installation_path,
+        expected_application_sha256=application_sha256,
+        verify_owner_binding=verify_owner,
+        verify_participant_binding=verify_participant,
+        clock=clock,
+        catalog_mode=cast(Any, catalog_mode),
+    )
 
 
 def _visibility_factory(
@@ -76,64 +195,20 @@ def _visibility_factory(
 
     validate_shape(application)
     application_sha256 = config_digest(application)
-    authorities = {}
-    for document in application["authorities"]:
-        authority = authority_from_document(document)
-        being_ref = authority.manifest.being_ref
-        if being_ref in authorities:
-            raise MessagingConfigError("messaging_visibility_installation_rejected")
-        authorities[being_ref] = authority
+    authorities = _application_authorities(application)
 
     def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
-        owner_identity = _public_identity(
-            context.authority,
-            context.origin,
-            context.runtime_id,
-            context.runtime_label,
-            clock(),
-        )
-        selected_owner = authorities.get(owner_identity["being_ref"])
-        # The application pins the current public authority, not the wrapper
-        # that additionally verifies events from earlier credential epochs.
-        current_authority = (
-            context.authority.active
-            if isinstance(context.authority, RootHistoryAuthority)
-            else context.authority
-        )
-        if selected_owner != current_authority:
-            raise MessagingConfigError("messaging_visibility_installation_rejected")
-
-        def verify_owner(document: Any, binding: Any) -> None:
-            verify_public_binding(
-                owner_identity,
-                context.signer_public_key,
-                document,
-                binding,
-            )
-
-        def verify_participant(participant: str, document: Any, binding: Any) -> None:
-            authority = authorities[participant]
-            body = binding["body"]
-            identity = _public_identity(
-                authority,
-                body["origin"],
-                body["runtime_id"],
-                body["runtime_label"],
-                clock(),
-            )
-            credential = authority.credentials[identity["credential_id"]]
-            public_key = unb64url(
-                credential["body"]["signing_key"]["public"], length=32
-            )
-            verify_public_binding(identity, public_key, document, binding)
-
-        return load_owner_visibility_file(
-            installation_path,
-            expected_application_sha256=application_sha256,
-            verify_owner_binding=verify_owner,
-            verify_participant_binding=verify_participant,
+        return _owner_visibility_controller(
+            authorities=authorities,
+            application_sha256=application_sha256,
+            installation_path=installation_path,
+            authority=context.authority,
+            origin=context.origin,
+            runtime_id=context.runtime_id,
+            runtime_label=context.runtime_label,
+            signer_public_key=context.signer_public_key,
             clock=clock,
-            catalog_mode=cast(Any, catalog_mode),
+            catalog_mode=catalog_mode,
         )
 
     return factory
@@ -954,6 +1029,345 @@ def prepare(
             shutil.rmtree(staging)
 
 
+def _current_authority_document(
+    runtime: HostedRuntime, bundle_name: str = "runtime.json"
+) -> dict[str, Any]:
+    """Project the runtime's present epoch as one public authority document.
+
+    Reads public bundle data only. The projection is verified twice before it is
+    returned: it must parse as an authority document, and both it and the bundle
+    it came from must equal the epoch the loaded runtime is actually serving, so
+    a stale file on disk can never be published as the present epoch.
+    """
+
+    from .runtime import _read_bundle, _safe_file
+
+    bundle = _read_bundle(
+        _safe_file(Path(runtime.state_root), bundle_name, must_exist=True)
+    )
+    document: dict[str, Any] = {
+        "schema": AUTHORITY_SCHEMA,
+        **{
+            key: bundle[key]
+            for key in (
+                "control_artifacts",
+                "control_head",
+                "manifest",
+                "credentials",
+                "incarnations",
+            )
+        },
+    }
+    projected = authority_from_document(document)
+    current = _runtime_epoch(runtime)
+    if (
+        projected != current
+        or _current_epoch(authority_from_runtime_bundle(bundle)) != current
+    ):
+        raise MessagingConfigError("messaging_republish_epoch_mismatch")
+    return document
+
+
+def _reissue_installation(
+    runtime: HostedRuntime,
+    installation: Path | str,
+    *,
+    application_sha256: str,
+) -> dict[str, Any]:
+    """Re-sign one owner installation against a new application digest.
+
+    A manifest advance moves the epoch that the owner's own attestations name, so
+    two owner-side pins have to be re-issued: the installation's
+    ``application_sha256``, and the owner's entry in ``acceptance_set.bindings``,
+    which is a binding over the disclosure signed by this same embodiment key and
+    therefore carries the epoch's manifest digest in its body.
+
+    Everything a foreign participant accepted is carried over byte-identical. The
+    ``disclosure`` does not change, so ``acceptance_set.disclosure_sha256`` does not
+    change, and every binding whose actor is not this being still verifies against
+    exactly the bytes it was issued over. No foreign acceptance is re-requested,
+    widened, or silently reused for a different disclosure: what moves is
+    owner-local authority over an unchanged disclosure.
+
+    The installation generation advances because the policy's acceptance digest
+    changed, which also fail-closes any echo retry command issued against the
+    previous installation instead of letting it resolve ambiguously against a
+    policy that is no longer current.
+
+    The installation being replaced is kept beside the new one, so the operation
+    stays reversible together with the runtime bundle it was issued under.
+    """
+
+    path = Path(os.path.abspath(installation))
+    directory = _directory(path.parent)
+    envelope = read_document(path)
+    if not isinstance(envelope, dict) or set(envelope) != {"document", "binding"}:
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+    previous = envelope["document"]
+    if not isinstance(previous, dict) or set(previous) != {
+        "schema",
+        "generation",
+        "runtime_id",
+        "application_sha256",
+        "disclosure",
+        "acceptance_set",
+        "policy",
+        "secrets",
+        "telegram_qualification",
+    }:
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+    if previous["application_sha256"] == application_sha256:
+        return {
+            "reissued": False,
+            "installation_sha256": config_digest(previous),
+        }
+    # The installation being replaced must be authentic at the epoch it names.
+    verify_binding_within_history(runtime, previous, envelope["binding"])
+
+    being_ref = _runtime_epoch(runtime).manifest.being_ref
+    if (
+        previous["schema"] != "dm.messaging.visibility-installation/v1"
+        or type(previous["generation"]) is not int
+        or previous["runtime_id"] != runtime.service.runtime_id
+    ):
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+    disclosure = previous["disclosure"]
+    acceptance = previous["acceptance_set"]
+    policy = previous["policy"]
+    participants = disclosure["participants"]
+    bindings = acceptance["bindings"]
+    if (
+        not isinstance(participants, list)
+        or not isinstance(bindings, list)
+        or len(bindings) != len(participants)
+        or participants.count(being_ref) != 1
+        or acceptance["disclosure_sha256"] != config_digest(disclosure)
+        or policy["generation"] != previous["generation"]
+        or policy["acceptance_digest"] != config_digest(acceptance)
+    ):
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+
+    owner_index = participants.index(being_ref)
+    foreign_before = [row for i, row in enumerate(bindings) if i != owner_index]
+    # The owner re-attests the very same disclosure at the present epoch.
+    successor_bindings = list(bindings)
+    successor_bindings[owner_index] = create_binding(runtime, disclosure)
+    successor_acceptance = {**acceptance, "bindings": successor_bindings}
+    generation = previous["generation"] + 1
+    document = {
+        **previous,
+        "generation": generation,
+        "application_sha256": application_sha256,
+        "acceptance_set": successor_acceptance,
+        "policy": {
+            **policy,
+            "generation": generation,
+            "acceptance_digest": config_digest(successor_acceptance),
+        },
+    }
+    # Only owner-side pins moved. Everything a foreign participant accepted, and
+    # every secret reference and qualification evidence, is carried over exactly.
+    if (
+        document["disclosure"] != previous["disclosure"]
+        or document["secrets"] != previous["secrets"]
+        or document["telegram_qualification"] != previous["telegram_qualification"]
+        or successor_acceptance["disclosure_sha256"] != acceptance["disclosure_sha256"]
+        or [row for i, row in enumerate(successor_bindings) if i != owner_index]
+        != foreign_before
+    ):
+        raise MessagingConfigError("messaging_visibility_installation_rejected")
+
+    successor = {"document": document, "binding": create_binding(runtime, document)}
+    backup = path.with_name(path.name + ".pre-republish-" + secrets.token_hex(8))
+    _write(directory, backup.name, canonical_bytes(envelope))
+    temporary = ".installation-" + secrets.token_hex(16) + ".json"
+    _write(directory, temporary, canonical_bytes(successor))
+    _sync(directory)
+    os.replace(directory / temporary, path)
+    try:
+        _sync(directory)
+    except OSError:
+        raise MessagingConfigError("messaging_published_durability_uncertain") from None
+    return {
+        "reissued": True,
+        "installation_sha256": config_digest(document),
+        "installation_generation": generation,
+        "foreign_acceptances_preserved": len(foreign_before),
+        "previous_installation_backup": backup.name,
+    }
+
+
+def republish(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    *,
+    installation: Path | None = None,
+    bundle_name: str = "runtime.json",
+) -> dict[str, Any]:
+    """Re-publish the current application against the runtime's present epoch.
+
+    Enrolling another embodiment advances the being manifest, and an application
+    publication together with its visibility installation are current-state
+    documents that deliberately pin the epoch they were issued under. Nothing else
+    about them is stale, so one enrollment used to strand a working link with no
+    supported repair: ``renew``, ``recover`` and ``migrate-visibility`` all begin
+    from a publication verified against the *current* epoch, and therefore refuse
+    the very document that needs repairing.
+
+    This derives one successor from the published application changing exactly one
+    field: the local being's entry in ``authorities``, replaced by the present
+    epoch's public authority document. Routes, stores, ``relationship_mode``, the
+    client descriptor and every secret reference are carried over untouched, and no
+    capability is re-minted and no key is rotated -- that is ``renew``, not this.
+
+    The previous publication is first proved authentic with
+    ``verify_binding_within_history``, so the successor is derived from a document
+    this same embodiment signing key really issued at the epoch it names. An
+    unverified file on disk is not a predecessor.
+
+    Idempotent: when the published application already pins the present epoch the
+    call reports the current digest and appends no generation.
+    """
+
+    import fcntl
+
+    root = _directory(app_directory)
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        current_authority = _runtime_epoch(runtime)
+        being_ref = current_authority.manifest.being_ref
+        current_document = _current_authority_document(runtime, bundle_name)
+
+        publication = read_document(root / "publication.json")
+        previous, metadata = _read_publication(root, lambda _document, _binding: None)
+        if not isinstance(publication, dict) or set(publication) != {"body", "binding"}:
+            raise MessagingConfigError("messaging_publication_rejected")
+        verify_binding_within_history(
+            runtime, previous, read_document(metadata / "binding.json")
+        )
+        verify_binding_within_history(
+            runtime, publication["body"], publication["binding"]
+        )
+        predecessor_sha256 = config_digest(previous)
+        if publication["body"]["application_sha256"] != predecessor_sha256:
+            raise MessagingConfigError("messaging_republish_conflict")
+
+        successor = copy.deepcopy(previous)
+        replaced = [
+            index
+            for index, entry in enumerate(successor["authorities"])
+            if authority_from_document(entry).manifest.being_ref == being_ref
+        ]
+        if len(replaced) != 1 or set(previous) != set(successor):
+            raise MessagingConfigError("messaging_republish_conflict")
+        successor["authorities"][replaced[0]] = copy.deepcopy(current_document)
+        # Exactly one authority entry may differ, and nothing else at all. A
+        # re-publication is not a way to smuggle in a route, a store or a client.
+        if any(
+            key != "authorities" and previous[key] != successor[key] for key in previous
+        ):
+            raise MessagingConfigError("messaging_republish_conflict")
+        if successor == previous:
+            return {
+                "status": "current",
+                "schema": APPLICATION_SCHEMA,
+                "application_sha256": predecessor_sha256,
+                "generation": publication["body"]["generation"],
+                "manifest_revision": current_authority.manifest.value["revision"],
+                "installation": {"reissued": False},
+            }
+        validate_shape(successor)
+
+        generation = "generation-" + secrets.token_hex(16)
+        destination = root / generation
+        destination.mkdir(mode=0o700)
+        # Failed candidate generations are retained for diagnosis, never selected.
+        _write(destination, "application.json", canonical_bytes(successor))
+        _write(
+            destination,
+            "binding.json",
+            canonical_bytes(create_binding(runtime, successor)),
+        )
+        client_config = {
+            "schema": "dm.local.client-config/v3",
+            "capability": successor["client"]["descriptor"],
+            "expected_server": dict(runtime.service.origin),
+            "runtime_id": runtime.service.runtime_id,
+            "runtime_label": runtime.service.runtime_label,
+        }
+        if read_document(metadata / "client.json") != client_config:
+            raise MessagingConfigError("messaging_republish_conflict")
+        _write(destination, "client.json", canonical_bytes(client_config))
+        _sync(destination)
+
+        successor_sha256 = config_digest(successor)
+        temporary = "publication-" + secrets.token_hex(16) + ".json"
+        _write(
+            root,
+            temporary,
+            _publication(runtime, successor, generation, predecessor_sha256),
+        )
+        _sync(root)
+        # Check again immediately before the sole visibility transition.
+        if (
+            read_document(root / "publication.json")["body"]["application_sha256"]
+            != predecessor_sha256
+        ):
+            raise MessagingConfigError("messaging_republish_conflict")
+        os.replace(root / temporary, root / "publication.json")
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+
+        installation_result: dict[str, Any] = {"reissued": False}
+        if installation is not None:
+            installation_result = _reissue_installation(
+                runtime, installation, application_sha256=successor_sha256
+            )
+
+        # Read back what is now published, verifying against the present epoch, and
+        # then prove the installation survives the daemon's own check.
+        republished, republished_metadata = read_publication(runtime, root)
+        if (
+            config_digest(republished) != successor_sha256
+            or republished_metadata.name != generation
+        ):
+            raise MessagingConfigError("messaging_republish_conflict")
+        if installation is not None:
+            _owner_visibility_controller(
+                authorities=_application_authorities(republished),
+                application_sha256=successor_sha256,
+                installation_path=Path(installation),
+                authority=_runtime_authority(runtime),
+                origin=runtime.service.origin,
+                runtime_id=runtime.service.runtime_id,
+                runtime_label=runtime.service.runtime_label,
+                signer_public_key=runtime.service.signer.public_key,
+                clock=runtime.service.clock,
+                catalog_mode="validate",
+            )
+        return {
+            "status": "republished",
+            "schema": APPLICATION_SCHEMA,
+            "previous_application_sha256": predecessor_sha256,
+            "application_sha256": successor_sha256,
+            "generation": generation,
+            "manifest_revision": current_authority.manifest.value["revision"],
+            "runtime_id": runtime.service.runtime_id,
+            "installation": installation_result,
+        }
+    except MessagingConfigError:
+        raise
+    except Exception:
+        raise MessagingConfigError("messaging_republish_rejected") from None
+    finally:
+        os.close(descriptor)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Trusted prepare/renew/revoke/recover and read-only operator entrypoints."""
     import argparse
@@ -974,6 +1388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "prepare",
             "migrate-visibility",
             "renew",
+            "republish",
             "revoke",
             "recover",
             "diagnostics",
@@ -1002,7 +1417,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock = None
     previous_signals = {}
     try:
-        if args.command in {"renew", "revoke", "recover"}:
+        if args.command == "republish":
+            # A re-publication is derived from what is already published, so it
+            # takes no expected digest, and it never serves traffic.
+            if (
+                args.ready_fd is not None
+                or args.expected_application_sha256 is not None
+            ):
+                raise ValueError()
+        elif args.command in {"renew", "revoke", "recover"}:
             import re
 
             if (
@@ -1022,7 +1445,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError()
         elif args.spec is not None or args.secret_dir is not None:
             raise ValueError()
-        if args.command != "prepare" and args.visibility_installation is None:
+        if (
+            args.command not in {"prepare", "republish"}
+            and args.visibility_installation is None
+        ):
             raise ValueError()
         if args.command == "migrate-visibility":
             if (
@@ -1038,7 +1464,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         def clock() -> int:
             return time.time_ns() // 1000000
 
-        if args.command == "prepare":
+        if args.command in {"prepare", "republish"}:
+            # A re-publication repairs the very document the visibility factory
+            # would otherwise reject, so it loads without one and validates the
+            # installation it wrote as its last step instead.
             visibility = closed_visibility(clock=clock, catalog_mode="migrate")
             visibility_factory = None
         else:
@@ -1087,6 +1516,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "application_sha256": config_digest(application),
                 "catalog_count": len(runtime.egress.registered_catalog_ids()),
             }
+        elif args.command == "republish":
+            result = republish(
+                runtime,
+                args.app_dir,
+                installation=args.visibility_installation,
+                bundle_name=args.bundle,
+            )
         elif args.command in {"renew", "revoke", "recover"}:
             operation = {
                 "renew": renew,
