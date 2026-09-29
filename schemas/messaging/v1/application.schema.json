@@ -576,6 +576,54 @@
         "store_filename"
       ],
       "additionalProperties": false
+    },
+    "tribe": {
+      "type": "object",
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "tribe_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "membership_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "classification": {
+              "enum": [
+                "private",
+                "shareable",
+                "public"
+              ]
+            },
+            "max_ttl_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60000
+            }
+          },
+          "required": [
+            "tribe_ref",
+            "membership_ref",
+            "classification",
+            "max_ttl_ms"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "channel_id",
+        "policy"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
