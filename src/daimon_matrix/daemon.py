@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import http.server
 import os
+import re
 import secrets
 import signal
 import socket
@@ -25,6 +26,7 @@ from .canonical import canonical_bytes, unb64url
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
 from .messaging_config import _public_identity, verify_public_binding
 from .native_egress import (
+    VISIBILITY_SCHEMA_VERSION,
     MandatoryEgressController,
     NativeEgressError,
     closed_visibility,
@@ -51,8 +53,33 @@ class DaemonError(RuntimeError):
     """The local daemon cannot safely acquire or serve its state root."""
 
 
-def _log(code: str) -> None:
-    record = {"schema": "dm.runtime.diagnostic/v1", "code": code}
+# A stable fail-closed reason code: lowercase snake_case, no separators that a
+# path, a URL or a key could contain. Anything else is withheld.
+_DETAIL_CODE: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _safe_detail(exception: BaseException) -> str:
+    """Name one startup failure without carrying anything out of the process.
+
+    This project's own errors are constructed with a stable code as their whole
+    message, so the message is exactly the useful part. A stdlib exception's
+    message is not: `OSError` and `KeyError` routinely carry a filesystem path,
+    and the daemon runs with custody open. So the type name is always reported and
+    the message is reported only when it is provably a code — one lowercase
+    snake_case token, which no path, URL, key or password can be.
+    """
+
+    kind = type(exception).__name__
+    message = str(exception)
+    if _DETAIL_CODE.fullmatch(message) is None:
+        return kind
+    return f"{kind}:{message}"
+
+
+def _log(code: str, *, detail: str | None = None) -> None:
+    record: dict[str, str] = {"schema": "dm.runtime.diagnostic/v1", "code": code}
+    if detail is not None:
+        record["detail"] = detail
     sys.stderr.buffer.write(canonical_bytes(record) + b"\n")
     sys.stderr.buffer.flush()
 
@@ -630,12 +657,32 @@ def _parser() -> argparse.ArgumentParser:
             "that has no Telegram mirror of its own"
         ),
     )
+    parser.add_argument(
+        "--provision-visibility",
+        action="store_true",
+        help=(
+            "install the echo subset into this body's own egress catalogs and exit, "
+            "instead of serving; for a freshly activated body with no messaging "
+            "application, which no other verb can provision"
+        ),
+    )
     parser.add_argument("--ready-fd", type=int)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.provision_visibility and not args.closed_visibility:
+        # A body with an owner installation already has a supported provisioning
+        # path, `operator_messaging migrate-visibility`, and that verb validates the
+        # installation as it goes. Duplicating it here would create a second way to
+        # mutate a signed installation's catalogs, so this one is closed-visibility
+        # only: a body that has nothing to mirror and therefore no other verb.
+        _log("provision_visibility_requires_closed_visibility")
+        return 2
+    if args.provision_visibility and args.ready_fd is not None:
+        _log("provision_visibility_never_serves")
+        return 2
     lock_descriptor: int | None = None
     stopping = threading.Event()
     try:
@@ -668,6 +715,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
             )
 
+        if args.provision_visibility:
+            # Idempotent, and bounded to the catalogs this body just registered:
+            # the same two calls the link ceremony makes, under the same writer
+            # lock, before any listener exists. A catalog that is genuinely invalid
+            # still fails closed here rather than being repaired.
+            runtime.egress.migrate_registered_catalogs(
+                version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs()
+            _log("visibility_provisioned")
+            return 0
+
         def request_stop(_number: int, _frame: object) -> None:
             stopping.set()
 
@@ -675,8 +734,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         signal.signal(signal.SIGINT, request_stop)
         serve_forever(runtime, stop=stopping, ready_descriptor=args.ready_fd)
         return 0
-    except Exception:
-        _log("startup_refused")
+    except Exception as exception:
+        _log("startup_refused", detail=_safe_detail(exception))
         return 1
     finally:
         if lock_descriptor is not None:
