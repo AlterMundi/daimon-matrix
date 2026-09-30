@@ -454,6 +454,59 @@ def _row_document(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def persisted_schema_version(ledger: Ledger) -> int | None:
+    """The schema version an existing communication store declares, or None.
+
+    ``_meta`` requires the persisted version to equal the version the store's own
+    flags imply, so a store that has already been migrated cannot be opened with
+    the default flags: it fails closed with ``communication_metadata_mismatch``.
+    Reading what is actually there lets a caller select the migrated schema instead
+    of assuming the oldest one.
+
+    ``None`` means no store exists yet, which is deliberately not reported as
+    version 1. A caller that turned ``None`` into "the newest schema" would silently
+    create fresh stores in a shape nobody asked for, so absence stays absence and
+    the caller keeps its defaults.
+    """
+
+    with ledger._database() as database:
+        exists = database.execute(
+            "SELECT name FROM sqlite_schema "
+            "WHERE name='communication_meta' AND type='table'"
+        ).fetchone()
+        if exists is None:
+            return None
+        row = database.execute(
+            "SELECT value FROM communication_meta WHERE key='schema_version'"
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        return int(str(row[0]))
+    except (TypeError, ValueError):
+        return None
+
+
+def select_persisted_schema(store: CommunicationStore, ledger: Ledger) -> None:
+    """Adopt the schema an existing store already declares, without migrating it.
+
+    Selecting is not authorizing. This never upgrades anything and never writes; it
+    only makes a store that has already been migrated openable, which is the
+    difference between resuming a host and refusing to start it. A store whose
+    persisted version is not one this build knows is left alone, so ``_meta`` raises
+    its own bounded error rather than this function guessing.
+    """
+
+    version = persisted_schema_version(ledger)
+    if version == LEGS_V3_SCHEMA_VERSION:
+        # Legs v3 implies receipts v2: the constructor refuses legs_v3 without it,
+        # and the expected schema version is derived from both flags together.
+        store.receipts_v2 = True
+        store.legs_v3 = True
+    elif version == RECEIPTS_V2_SCHEMA_VERSION:
+        store.receipts_v2 = True
+
+
 class CommunicationStore:
     """Durable logical-message reducer and operational queue projection."""
 
@@ -3066,4 +3119,6 @@ __all__ = [
     "CommunicationStore",
     "SyntheticRouteProvider",
     "dispatch_attempt",
+    "persisted_schema_version",
+    "select_persisted_schema",
 ]

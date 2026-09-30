@@ -17,6 +17,7 @@ from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
     CommunicationError,
     CommunicationStore,
+    select_persisted_schema,
 )
 from .curator import CuratorCoordinator, CuratorError
 from .human_review import HumanReviewCoordinator, HumanReviewError
@@ -489,19 +490,7 @@ class HostedWeave:
             raise ServiceError("communication_ledger_mismatch")
         # Runtime may supply its own store for the router before application
         # attach. Select an already migrated schema without authorizing migration.
-        with self.ledger._database() as database:
-            exists = database.execute(
-                "SELECT name FROM sqlite_schema WHERE name='communication_meta'"
-            ).fetchone()
-            version = (
-                None
-                if exists is None
-                else database.execute(
-                    "SELECT value FROM communication_meta WHERE key='schema_version'"
-                ).fetchone()
-            )
-        if version is not None and version[0] == "2":
-            communication.receipts_v2 = True
+        select_persisted_schema(communication, self.ledger)
         communication.initialize()
         if self.router is not None and self.router.store is not communication:
             raise ServiceError("route_store_mismatch")
