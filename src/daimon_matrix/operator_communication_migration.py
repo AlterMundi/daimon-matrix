@@ -16,7 +16,11 @@ from typing import Any
 
 from . import daemon
 from .canonical import canonical_bytes
-from .communication import CommunicationStore, select_persisted_schema
+from .communication import (
+    HISTORICAL_LEGS_SCHEMA_VERSION,
+    CommunicationStore,
+    select_persisted_schema,
+)
 from .ledger import Ledger
 from .native_egress import closed_visibility
 from .runtime import load_runtime
@@ -71,14 +75,14 @@ def plan(path: Path) -> dict[str, Any]:
         row = database.execute(
             "SELECT value FROM communication_meta WHERE key='schema_version'"
         ).fetchone()
-        if row is None or str(row[0]) not in {"1", "2", "3"}:
+        if row is None or str(row[0]) not in {"1", "2", "3", "4"}:
             raise MigrationError("migration_schema_unsupported")
         version = int(row[0])
         digest = _digest(database)
     body: dict[str, Any] = {
         "schema": SCHEMA,
         "source_version": version,
-        "target_version": 3,
+        "target_version": HISTORICAL_LEGS_SCHEMA_VERSION if version < 3 else version,
         "state_sha256": digest,
         "steps": (
             ["receipts_v2", "legs_v3"]
@@ -87,9 +91,11 @@ def plan(path: Path) -> dict[str, Any]:
             if version == 2
             else []
         ),
-        "status": "already-current" if version == 3 else "approval-required",
+        "status": "already-current" if version >= 3 else "approval-required",
         "changes": (
-            "Rebuild communication legs for per-body receipts; preserve signed history."
+            "Retain historical aliases and immutable retries for per-body receipts."
+            if version < 3
+            else "No schema transition; this preview does not certify semantic health."
         ),
     }
     body["plan_sha256"] = hashlib.sha256(canonical_bytes(body)).hexdigest()
@@ -153,7 +159,7 @@ def apply(
     before = plan(store.ledger.path)
     if before["plan_sha256"] != expected_plan:
         raise MigrationError("migration_plan_changed")
-    if before["source_version"] == 3:
+    if not before["steps"]:
         return before
     if any(parent.is_symlink() for parent in backup.parents):
         raise MigrationError("migration_ancestor_symlink")
@@ -163,17 +169,6 @@ def apply(
     rehearsal = backup / "rehearsal.sqlite"
     _copy_database(store.ledger.path, source)
     _copy_database(source, rehearsal)
-    # The delivered library does not validate cached historical snapshots or
-    # conflict links in _validate_store. Refuse these histories until #204 fixes
-    # their migration; passing ordinary result validation is insufficient.
-    with closing(_database(rehearsal)) as database:
-        for table in (
-            "communication_page_requests",
-            "communication_claim_batches",
-            "communication_conflicts",
-        ):
-            if database.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
-                raise MigrationError("migration_history_requires_library_fix")
     anchor = backup / "source.anchor"
     _copy_anchor(store.anchor_path, anchor)
     rehearsal_anchor = rehearsal.with_name(
@@ -186,7 +181,11 @@ def apply(
         local_origin=store.ledger.local_origin,
         clock=store.clock,
     )
-    candidate = CommunicationStore(ledger, clock=store.clock)
+    candidate = CommunicationStore(
+        ledger,
+        clock=store.clock,
+        foreign_authority_resolver=store.foreign_authority_resolver,
+    )
     select_persisted_schema(candidate, ledger)
     states = {str(before["source_version"]): before["state_sha256"]}
     if not candidate.receipts_v2:
@@ -197,7 +196,12 @@ def apply(
     # SQLite's structural integrity, before allowing live DDL.
     with candidate._database() as database:
         candidate._validate_store(database)
-    states["3"] = state_digest(rehearsal)
+        candidate._validate_cached_histories(database)
+        candidate._validate_conflicts(database)
+    target_version = str(before["target_version"])
+    if plan(rehearsal)["source_version"] != before["target_version"]:
+        raise MigrationError("migration_target_schema_mismatch")
+    states[target_version] = state_digest(rehearsal)
     if state_digest(source) != before["state_sha256"]:
         raise MigrationError("migration_snapshot_mismatch")
     journal = {
@@ -217,13 +221,16 @@ def apply(
         store.upgrade_receipts_v2()
     store.upgrade_legs_v3()
     after = plan(store.ledger.path)
-    if after["state_sha256"] != states["3"]:
+    if (
+        after["source_version"] != before["target_version"]
+        or after["state_sha256"] != states[target_version]
+    ):
         raise MigrationError("migration_result_mismatch")
     result = {
         "schema": SCHEMA,
         "status": "migrated",
         "source_version": before["source_version"],
-        "target_version": 3,
+        "target_version": before["target_version"],
         "state_sha256": after["state_sha256"],
         "source_plan_sha256": expected_plan,
     }
@@ -314,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                 preview = plan(path)
                 if preview["plan_sha256"] != args.expected_plan_sha256:
                     raise MigrationError("migration_plan_changed")
-                if preview["source_version"] == 3:
+                if not preview["steps"]:
                     result = preview
                 else:
                     if args.password_fd is None:
