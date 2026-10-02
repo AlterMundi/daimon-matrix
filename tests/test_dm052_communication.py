@@ -26,6 +26,7 @@ from daimon_matrix.communication import (
     CommunicationStore,
     SyntheticRouteProvider,
     dispatch_attempt,
+    select_persisted_schema,
 )
 from daimon_matrix.local_api import (
     create_capability,
@@ -1148,7 +1149,7 @@ class PerBodyLegTests(LogicalCommunicationFixture):
                 database.execute(
                     "SELECT value FROM communication_meta WHERE key='schema_version'"
                 ).fetchone()[0],
-                "3",
+                "4",
             )
             self.assertEqual(
                 database.execute("PRAGMA foreign_key_check").fetchall(), []
@@ -1167,6 +1168,7 @@ class PerBodyLegTests(LogicalCommunicationFixture):
         reopened = CommunicationStore(
             self.ledger_a, clock=lambda: NOW, receipts_v2=True, legs_v3=True
         )
+        select_persisted_schema(reopened, self.ledger_a)
         reopened.initialize()
         self.assertTrue(reopened.legs_v3)
 

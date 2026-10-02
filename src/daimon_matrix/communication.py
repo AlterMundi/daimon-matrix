@@ -41,6 +41,19 @@ RECEIPTS_V2_SCHEMA_VERSION: Final = 2
 # One semantic leg per receiving body rather than per member. Gated so a store
 # that never opts in keeps its delivered identity derivation and its schema.
 LEGS_V3_SCHEMA_VERSION: Final = 3
+HISTORICAL_LEGS_SCHEMA_VERSION: Final = 4
+_MIGRATION_DDL: Final = (
+    "CREATE TABLE communication_leg_migration ("
+    "schema TEXT PRIMARY KEY, generation TEXT NOT NULL, "
+    "source_version INTEGER NOT NULL CHECK(source_version=2), "
+    "cutoff INTEGER NOT NULL CHECK(cutoff>=0)) WITHOUT ROWID"
+)
+_ALIASES_DDL: Final = (
+    "CREATE TABLE communication_leg_aliases ("
+    "legacy_id TEXT PRIMARY KEY, canonical_id TEXT NOT NULL UNIQUE "
+    "REFERENCES communication_legs(leg_id) ON DELETE RESTRICT, "
+    "sequence INTEGER NOT NULL UNIQUE CHECK(sequence>0)) WITHOUT ROWID"
+)
 MAX_PAGE_SIZE: Final = 256
 MAX_TARGETS: Final = 256
 MAX_BODY_BYTES: Final = 192 * 1024
@@ -498,11 +511,12 @@ def select_persisted_schema(store: CommunicationStore, ledger: Ledger) -> None:
     """
 
     version = persisted_schema_version(ledger)
-    if version == LEGS_V3_SCHEMA_VERSION:
+    if version in {LEGS_V3_SCHEMA_VERSION, HISTORICAL_LEGS_SCHEMA_VERSION}:
         # Legs v3 implies receipts v2: the constructor refuses legs_v3 without it,
         # and the expected schema version is derived from both flags together.
         store.receipts_v2 = True
         store.legs_v3 = True
+        store.historical_legs = version == HISTORICAL_LEGS_SCHEMA_VERSION
     elif version == RECEIPTS_V2_SCHEMA_VERSION:
         store.receipts_v2 = True
 
@@ -527,6 +541,7 @@ class CommunicationStore:
         self.foreign_authority_resolver = foreign_authority_resolver
         self.receipts_v2 = receipts_v2
         self.legs_v3 = legs_v3
+        self.historical_legs = False
         self.clock = clock
         self.uuid_factory = uuid_factory
         self.token_factory = token_factory
@@ -667,11 +682,93 @@ class CommunicationStore:
 
     def _expected_schema_version(self) -> int:
         """The one schema version this store's declared capabilities imply."""
+        if self.historical_legs:
+            return HISTORICAL_LEGS_SCHEMA_VERSION
         if self.legs_v3:
             return LEGS_V3_SCHEMA_VERSION
         if self.receipts_v2:
             return RECEIPTS_V2_SCHEMA_VERSION
         return STORE_SCHEMA_VERSION
+
+    def _validate_aliases(self, database: sqlite3.Connection) -> None:
+        """Verify the complete offline mapping against signed canonical targets."""
+        if not self.historical_legs:
+            return
+        for table, expected_sql in (
+            ("communication_leg_migration", _MIGRATION_DDL),
+            ("communication_leg_aliases", _ALIASES_DDL),
+        ):
+            definition = database.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if definition is None or definition[0] != expected_sql:
+                raise CommunicationError("communication_aliases_corrupt")
+        generation, _counter, highwater = self._meta(database)
+        metadata = database.execute(
+            "SELECT schema, generation, source_version, cutoff "
+            "FROM communication_leg_migration"
+        ).fetchall()
+        if (
+            len(metadata) != 1
+            or metadata[0]["schema"] != "dm.communication.leg-aliases/v1"
+            or metadata[0]["generation"] != generation
+            or metadata[0]["source_version"] != 2
+            or type(metadata[0]["cutoff"]) is not int
+            or not 0 <= metadata[0]["cutoff"] <= highwater
+        ):
+            raise CommunicationError("communication_aliases_corrupt")
+        rows = database.execute(
+            "SELECT * FROM communication_legs WHERE sequence<=? ORDER BY sequence",
+            (metadata[0]["cutoff"],),
+        ).fetchall()
+        aliases = database.execute(
+            "SELECT legacy_id, canonical_id, sequence FROM communication_leg_aliases"
+        ).fetchall()
+        expected = {
+            (
+                _leg_id(row["message_id"], row["recipient_type"], row["recipient_id"]),
+                _leg_id(
+                    row["message_id"],
+                    row["recipient_type"],
+                    row["recipient_id"],
+                    row["receipt_origin_embodiment_id"],
+                ),
+                row["sequence"],
+            )
+            for row in rows
+        }
+        actual = {tuple(row) for row in aliases}
+        if (
+            len(aliases) != len(rows)
+            or actual != expected
+            or len({item[0] for item in expected}) != len(rows)
+            or {item[0] for item in expected}
+            & {
+                row[0]
+                for row in database.execute("SELECT leg_id FROM communication_legs")
+            }
+        ):
+            raise CommunicationError("communication_aliases_corrupt")
+        for message_id in {row["message_id"] for row in rows}:
+            message = database.execute(
+                "SELECT * FROM communication_messages WHERE message_id=?", (message_id,)
+            ).fetchone()
+            if message is None:
+                raise CommunicationError("communication_aliases_corrupt")
+            vector = database.execute(
+                "SELECT * FROM communication_legs WHERE message_id=?", (message_id,)
+            ).fetchall()
+            self._validate_vector(database, message, vector)
+
+    def _canonical_leg_id(self, database: sqlite3.Connection, identifier: str) -> str:
+        if not self.historical_legs:
+            return identifier
+        self._validate_aliases(database)
+        row = database.execute(
+            "SELECT canonical_id FROM communication_leg_aliases WHERE legacy_id=?",
+            (identifier,),
+        ).fetchone()
+        return str(row[0]) if row is not None else identifier
 
     def _meta(self, database: sqlite3.Connection) -> tuple[str, int, int]:
         rows = {
@@ -722,6 +819,7 @@ class CommunicationStore:
                     generation, counter, _ = self._meta(database)
                     if self._anchor() != (generation, counter):
                         raise CommunicationError("communication_state_rollback")
+                    self._validate_aliases(database)
                     database.commit()
                     return
                 database.executescript(
@@ -1527,6 +1625,7 @@ class CommunicationStore:
 
     def _validate_store(self, database: sqlite3.Connection) -> None:
         if self.receipts_v2:
+            self._validate_aliases(database)
             for (message_id,) in database.execute(
                 "SELECT message_id FROM communication_messages UNION "
                 "SELECT message_id FROM communication_legs"
@@ -1541,7 +1640,12 @@ class CommunicationStore:
                     canonical_bytes(attempt) != raw
                     or hashlib.sha256(raw).hexdigest() != row["attempt_hash"]
                     or any(
-                        row[key] != value
+                        row[key]
+                        != (
+                            self._canonical_leg_id(database, value)
+                            if key == "leg_id"
+                            else value
+                        )
                         for key, value in attempt.items()
                         if key != "schema"
                     )
@@ -1553,6 +1657,167 @@ class CommunicationStore:
                     _hash(row["ack_hash"], "route_attempt_store_corrupt")
             self._validate_consumers(database)
             self._validate_queue(database)
+            self._validate_conflicts(database)
+
+    def _validate_conflicts(self, database: sqlite3.Connection) -> None:
+        error = "communication_conflict_corrupt"
+        for row in database.execute("SELECT * FROM communication_conflicts").fetchall():
+            raw = bytes(row["evidence_json"])
+            try:
+                evidence = json.loads(raw)
+            except (ValueError, UnicodeDecodeError) as exception:
+                raise CommunicationError(error) from exception
+            if (
+                not isinstance(evidence, dict)
+                or canonical_bytes(evidence) != raw
+                or hashlib.sha256(raw).hexdigest() != row["conflict_hash"]
+                or evidence.get("lane") != row["lane"]
+            ):
+                raise CommunicationError(error)
+            leg = database.execute(
+                "SELECT * FROM communication_legs WHERE leg_id=?", (row["leg_id"],)
+            ).fetchone()
+            if leg is None or leg["state"] != "quarantined":
+                raise CommunicationError(error)
+            _uint(row["detected_at_ms"], error)
+            schema = evidence.get("schema")
+            if schema == "dm.communication.conflict/v1" and row["lane"] == "delivery":
+                _closed(
+                    evidence,
+                    {
+                        "schema",
+                        "lane",
+                        "delivery_id",
+                        "existing_attempt_id",
+                        "existing_leg_id",
+                        "existing_envelope_hash",
+                        "presented_attempt_id",
+                        "presented_leg_id",
+                        "presented_envelope_hash",
+                    },
+                    error,
+                )
+                for prefix in ("existing", "presented"):
+                    referenced = self._canonical_leg_id(
+                        database, evidence[prefix + "_leg_id"]
+                    )
+                    attempt = database.execute(
+                        "SELECT leg_id FROM communication_attempts WHERE attempt_id=?",
+                        (evidence[prefix + "_attempt_id"],),
+                    ).fetchone()
+                    if attempt is None or attempt[0] != referenced:
+                        raise CommunicationError(error)
+                    target = database.execute(
+                        "SELECT state FROM communication_legs WHERE leg_id=?",
+                        (referenced,),
+                    ).fetchone()
+                    if target is None or target[0] != "quarantined":
+                        raise CommunicationError(error)
+                    _hash(evidence[prefix + "_envelope_hash"], error)
+                if (
+                    self._canonical_leg_id(database, evidence["presented_leg_id"])
+                    != row["leg_id"]
+                ):
+                    raise CommunicationError(error)
+                delivery = database.execute(
+                    "SELECT attempt_id, envelope_hash FROM communication_deliveries "
+                    "WHERE delivery_id=?",
+                    (evidence["delivery_id"],),
+                ).fetchone()
+                if delivery is None or tuple(delivery) != (
+                    evidence["existing_attempt_id"],
+                    evidence["existing_envelope_hash"],
+                ):
+                    raise CommunicationError(error)
+            elif (
+                schema == "dm.communication.conflict/v1"
+                and row["lane"] == "terminal-receipt"
+            ):
+                _closed(
+                    evidence,
+                    {
+                        "schema",
+                        "lane",
+                        "leg_id",
+                        "existing_receipt_event_id",
+                        "existing_receipt_hash",
+                        "existing_outcome",
+                        "presented_receipt_event_id",
+                        "presented_receipt_hash",
+                        "presented_outcome",
+                    },
+                    error,
+                )
+                if (
+                    self._canonical_leg_id(database, evidence["leg_id"])
+                    != row["leg_id"]
+                ):
+                    raise CommunicationError(error)
+                for prefix in ("existing", "presented"):
+                    event = _event(
+                        self._known_event(
+                            database, evidence[prefix + "_receipt_event_id"]
+                        ),
+                        self.ledger.authority,
+                    )
+                    payload = self._bind_local_receipt(event, leg)
+                    if (
+                        event["content_hash"] != evidence[prefix + "_receipt_hash"]
+                        or payload["outcome"] != evidence[prefix + "_outcome"]
+                    ):
+                        raise CommunicationError(error)
+            elif (
+                schema == "dm.communication.conflict/v2"
+                and row["lane"] == "terminal-receipt"
+            ):
+                singular = "existing_receipt" in evidence
+                fields = {"schema", "lane", "presented_receipt"}
+                fields.add("existing_receipt" if singular else "existing_receipts")
+                if not singular and "local_receipt" in evidence:
+                    fields.add("local_receipt")
+                _closed(evidence, fields, error)
+                receipts = [evidence["presented_receipt"]]
+                if singular:
+                    receipts.append(evidence["existing_receipt"])
+                else:
+                    if not isinstance(evidence["existing_receipts"], list):
+                        raise CommunicationError(error)
+                    receipts.extend(evidence["existing_receipts"])
+                    if "local_receipt" in evidence:
+                        receipts.append(evidence["local_receipt"])
+                bound_ids = set()
+                for value in receipts:
+                    if not isinstance(value, dict):
+                        raise CommunicationError(error)
+                    if (
+                        value.get("being_ref")
+                        == self.ledger.authority.manifest.being_ref
+                    ):
+                        event = _event(value, self.ledger.authority)
+                        if canonical_bytes(
+                            self._known_event(database, event["event_id"])
+                        ) != canonical_bytes(event):
+                            raise CommunicationError(error)
+                        self._bind_local_receipt(event, leg)
+                        bound_ids.add(leg["leg_id"])
+                    else:
+                        _event_value, bound = self._validate_foreign_receipt(
+                            database,
+                            value,
+                            _text(value.get("being_ref"), error, maximum=240),
+                        )
+                        bound_ids.add(bound["leg_id"])
+                if row["leg_id"] not in bound_ids:
+                    raise CommunicationError(error)
+                for identifier in bound_ids:
+                    target = database.execute(
+                        "SELECT state FROM communication_legs WHERE leg_id=?",
+                        (identifier,),
+                    ).fetchone()
+                    if target is None or target[0] != "quarantined":
+                        raise CommunicationError(error)
+            else:
+                raise CommunicationError(error)
 
     def _validate_snapshot(
         self,
@@ -1630,7 +1895,8 @@ class CommunicationStore:
             if not isinstance(item, dict) or not isinstance(item.get("leg_id"), str):
                 raise CommunicationError(error)
             row = database.execute(
-                "SELECT * FROM communication_legs WHERE leg_id=?", (item["leg_id"],)
+                "SELECT * FROM communication_legs WHERE leg_id=?",
+                (self._canonical_leg_id(database, item["leg_id"]),),
             ).fetchone()
             if row is None:
                 raise CommunicationError(error)
@@ -1641,7 +1907,7 @@ class CommunicationStore:
                 any(
                     item[key] != value
                     for key, value in current.items()
-                    if key not in mutable
+                    if key not in mutable | {"leg_id"}
                 )
                 or item["recipient_id"] != request["recipient_id"]
                 or not last < _uint(item["sequence"], error) <= cutoff
@@ -1664,7 +1930,7 @@ class CommunicationStore:
                     "SELECT outcome FROM communication_receipts WHERE leg_id=? "
                     "UNION ALL "
                     "SELECT outcome FROM communication_foreign_receipts WHERE leg_id=?",
-                    (item["leg_id"], item["leg_id"]),
+                    (row["leg_id"], row["leg_id"]),
                 ).fetchall()
                 if len(proof) != 1 or proof[0]["outcome"] != item["state"]:
                     raise CommunicationError(error)
@@ -1687,7 +1953,46 @@ class CommunicationStore:
             ):
                 raise CommunicationError(error)
 
+    def _validate_cached_histories(self, database: sqlite3.Connection) -> None:
+        """Validate retained snapshot semantics without inventing old requests.
+
+        V1 stores retain request hashes, not full cursor-bearing requests. Exact
+        replay still verifies the caller's request hash. Offline validation checks
+        every retained immutable item/proof and cursor, preserving all raw bytes.
+        """
+        for table, claim in (
+            ("communication_page_requests", False),
+            ("communication_claim_batches", True),
+        ):
+            for row in database.execute(f"SELECT * FROM {table}").fetchall():
+                error = "claim_state_corrupt" if claim else "page_state_corrupt"
+                _hash(row["request_hash"], error)
+                raw = bytes(row["response_json"])
+                value = json.loads(raw)
+                if not isinstance(value, dict) or canonical_bytes(value) != raw:
+                    raise CommunicationError(error)
+                items = value.get("items")
+                if not isinstance(items, list):
+                    raise CommunicationError(error)
+                request = {
+                    "recipient_id": value.get("recipient_id"),
+                    "consumer_id": value.get("consumer_id"),
+                    "limit": MAX_PAGE_SIZE,
+                }
+                if claim:
+                    request["claim_id"] = row["claim_id"]
+                    request["lease_until_ms"] = value.get("lease_until_ms")
+                else:
+                    request["consumer_id"] = row["consumer_id"]
+                    request["cursor"] = None
+                    if value.get("next_cursor") is not None:
+                        request["limit"] = len(items)
+                self._validate_snapshot(database, value, request, claim=claim)
+
     def _result(self, database: sqlite3.Connection, message_id: str) -> dict[str, Any]:
+        self._validate_aliases(database)
+        if self.receipts_v2:
+            self._validate_conflicts(database)
         message = database.execute(
             "SELECT * FROM communication_messages WHERE message_id=?",
             (message_id,),
@@ -1742,6 +2047,14 @@ class CommunicationStore:
                         "receipt_hash": event["content_hash"],
                         "outcome": payload["outcome"],
                     }
+                    retained = json.loads(bytes(local["receipt_json"]))
+                    if (
+                        isinstance(retained, dict)
+                        and isinstance(retained.get("leg_id"), str)
+                        and self._canonical_leg_id(database, retained["leg_id"])
+                        == row["leg_id"]
+                    ):
+                        projection["leg_id"] = retained["leg_id"]
                     if (
                         proof is not None
                         or local["receipt_hash"] != event["content_hash"]
@@ -1822,7 +2135,8 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN")
             row = database.execute(
-                "SELECT * FROM communication_legs WHERE leg_id=?", (leg_id,)
+                "SELECT * FROM communication_legs WHERE leg_id=?",
+                (self._canonical_leg_id(database, leg_id),),
             ).fetchone()
             if row is None:
                 raise CommunicationError("semantic_leg_not_known")
@@ -1840,7 +2154,8 @@ class CommunicationStore:
         with self._database() as database:
             database.execute("BEGIN")
             leg = database.execute(
-                "SELECT * FROM communication_legs WHERE leg_id=?", (leg_id,)
+                "SELECT * FROM communication_legs WHERE leg_id=?",
+                (self._canonical_leg_id(database, leg_id),),
             ).fetchone()
             if leg is None:
                 raise CommunicationError("semantic_leg_not_known")
@@ -2012,8 +2327,8 @@ class CommunicationStore:
             try:
                 self._validate_store(database)
                 leg = database.execute(
-                    "SELECT state FROM communication_legs WHERE leg_id=?",
-                    (attempt["leg_id"],),
+                    "SELECT leg_id, state FROM communication_legs WHERE leg_id=?",
+                    (self._canonical_leg_id(database, attempt["leg_id"]),),
                 ).fetchone()
                 if leg is None:
                     raise CommunicationError("semantic_leg_not_known")
@@ -2041,6 +2356,8 @@ class CommunicationStore:
                     }
                 if leg["state"] != "accepted":
                     raise CommunicationError("semantic_leg_not_accepted")
+                if attempt["leg_id"] != leg["leg_id"]:
+                    raise CommunicationError("historical_leg_requires_exact_retry")
                 if attempt["deadline_ms"] <= self.clock():
                     raise CommunicationError("route_attempt_expired")
                 database.execute(
@@ -2284,13 +2601,10 @@ class CommunicationStore:
     def upgrade_legs_v3(self) -> None:
         """Explicit offline successor: one semantic leg per receiving body.
 
-        Existing rows keep their stored `leg_id` and `sequence`, so nothing already
-        materialized is rewritten or re-derived and a leg from before the upgrade
-        stays addressable after it. SQLite cannot alter a UNIQUE constraint in
-        place and three child tables reference this one with `ON DELETE RESTRICT`
-        while every connection enforces foreign keys, so the table is rebuilt with
-        enforcement off, inside one transaction, and the result is verified before
-        the flag is raised.
+        Schema 4 retains verified aliases for the historical IDs while current
+        projections use canonical per-body IDs. Immutable requests, receipts and
+        cached results retain their original bytes. The transaction validates
+        both source and candidate before commit; the live flags change afterward.
         """
         self.initialize()
         if self.legs_v3:
@@ -2303,6 +2617,13 @@ class CommunicationStore:
             try:
                 database.execute("BEGIN IMMEDIATE")
                 self._meta(database)
+                # Reject invalid accepted history before changing its schema.
+                # A structurally valid SQLite file is not necessarily a valid
+                # signed communication projection.
+                self._validate_store(database)
+                self._validate_cached_histories(database)
+                if database.execute("PRAGMA foreign_key_check").fetchall():
+                    raise CommunicationError("communication_store_corrupt")
                 database.execute(
                     """CREATE TABLE communication_legs_v3 (
                         leg_id TEXT PRIMARY KEY,
@@ -2386,12 +2707,27 @@ class CommunicationStore:
                     "ALTER TABLE communication_legs_v3 RENAME TO communication_legs"
                 )
                 database.execute("PRAGMA legacy_alter_table=OFF")
+                database.execute(_MIGRATION_DDL)
+                generation, _counter, cutoff = self._meta(database)
+                database.execute(
+                    "INSERT INTO communication_leg_migration VALUES (?, ?, ?, ?)",
+                    ("dm.communication.leg-aliases/v1", generation, 2, cutoff),
+                )
+                database.execute(_ALIASES_DDL)
+                database.executemany(
+                    "INSERT INTO communication_leg_aliases VALUES (?, ?, ?)",
+                    [
+                        (row["leg_id"], renewed, row["sequence"])
+                        for row, (_old, renewed) in zip(rows, renames, strict=True)
+                    ],
+                )
                 for old_id, new_id in renames:
                     for child in (
                         "communication_queue",
                         "communication_attempts",
                         "communication_receipts",
                         "communication_foreign_receipts",
+                        "communication_conflicts",
                     ):
                         database.execute(
                             f"UPDATE {child} SET leg_id=? WHERE leg_id=?",
@@ -2399,8 +2735,15 @@ class CommunicationStore:
                         )
                 database.execute(
                     "UPDATE communication_meta SET value=? WHERE key='schema_version'",
-                    (str(LEGS_V3_SCHEMA_VERSION),),
+                    (str(HISTORICAL_LEGS_SCHEMA_VERSION),),
                 )
+                candidate = copy.copy(self)
+                candidate.legs_v3 = True
+                candidate.historical_legs = True
+                candidate._validate_store(database)
+                candidate._validate_cached_histories(database)
+                if database.execute("PRAGMA foreign_key_check").fetchall():
+                    raise CommunicationError("communication_store_corrupt")
                 database.commit()
             except BaseException:
                 database.rollback()
@@ -2410,6 +2753,7 @@ class CommunicationStore:
             if database.execute("PRAGMA foreign_key_check").fetchall():
                 raise CommunicationError("communication_store_corrupt")
             self.legs_v3 = True
+            self.historical_legs = True
 
     def _validate_foreign_receipt(
         self,
@@ -2673,10 +3017,20 @@ class CommunicationStore:
                     "FROM communication_receipts WHERE leg_id=?",
                     (leg["leg_id"],),
                 ).fetchone()
+                projection_leg_id = str(leg["leg_id"])
+                if existing is not None:
+                    retained = json.loads(bytes(existing["receipt_json"]))
+                    if (
+                        isinstance(retained, dict)
+                        and isinstance(retained.get("leg_id"), str)
+                        and self._canonical_leg_id(database, retained["leg_id"])
+                        == leg["leg_id"]
+                    ):
+                        projection_leg_id = retained["leg_id"]
                 raw_projection = canonical_bytes(
                     {
                         "schema": SEMANTIC_RECEIPT_SCHEMA,
-                        "leg_id": leg["leg_id"],
+                        "leg_id": projection_leg_id,
                         "receipt_event_id": receipt_event_id,
                         "receipt_hash": receipt["content_hash"],
                         "outcome": payload["outcome"],
@@ -3066,6 +3420,9 @@ class CommunicationStore:
     def conflicts(self) -> list[dict[str, Any]]:
         self.initialize()
         with self._database() as database:
+            database.execute("BEGIN")
+            self._validate_store(database)
+            self._validate_conflicts(database)
             rows = database.execute(
                 "SELECT conflict_hash, leg_id, lane, evidence_json, detected_at_ms "
                 "FROM communication_conflicts ORDER BY detected_at_ms, conflict_hash"

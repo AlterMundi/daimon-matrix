@@ -18,7 +18,7 @@ from __future__ import annotations
 import unittest
 
 from daimon_matrix.communication import (
-    LEGS_V3_SCHEMA_VERSION,
+    HISTORICAL_LEGS_SCHEMA_VERSION,
     RECEIPTS_V2_SCHEMA_VERSION,
     STORE_SCHEMA_VERSION,
     CommunicationError,
@@ -51,7 +51,7 @@ class SchemaSelectionTests(LogicalCommunicationFixture):
 
         self.store.upgrade_legs_v3()
         self.assertEqual(
-            LEGS_V3_SCHEMA_VERSION, persisted_schema_version(self.ledger_a)
+            HISTORICAL_LEGS_SCHEMA_VERSION, persisted_schema_version(self.ledger_a)
         )
 
     def test_a_legs_v3_store_is_unopenable_with_default_flags(self) -> None:
@@ -74,7 +74,9 @@ class SchemaSelectionTests(LogicalCommunicationFixture):
 
         self.assertTrue(reopened.receipts_v2)
         self.assertTrue(reopened.legs_v3)
-        self.assertEqual(LEGS_V3_SCHEMA_VERSION, reopened._expected_schema_version())
+        self.assertEqual(
+            HISTORICAL_LEGS_SCHEMA_VERSION, reopened._expected_schema_version()
+        )
         reopened.initialize()
 
     def test_selection_adopts_receipts_v2_without_claiming_legs_v3(self) -> None:

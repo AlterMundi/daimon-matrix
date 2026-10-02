@@ -7,7 +7,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from daimon_matrix.communication import CommunicationStore
+from daimon_matrix.communication import CommunicationStore, select_persisted_schema
 from daimon_matrix.synthetic_relationships import _uuid
 from daimon_matrix.weave import create_event
 from tests import test_native_messaging as native
@@ -544,6 +544,57 @@ class ForeignReceiptTests(unittest.TestCase):
                 receipt, recipient_being_ref=self.pair.recipient.state.being_ref
             ),
         )
+
+    def test_migration_preserves_foreign_proof_terminal_page_and_retry(self):
+        store = self.store()
+        receipt = self.receipt()
+        before = store.record_foreign_receipt(
+            receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+        )
+        page_request = dict(
+            recipient_id=self.pair.policy.membership_ref,
+            consumer_id="migration:foreign-terminal",
+            request_id=_uuid("foreign-terminal-page"),
+            cursor=None,
+            limit=1,
+        )
+        page = store.page(**page_request)
+        history = self.sender.ledger.events()
+        with store._database() as database:
+            proof = database.execute(
+                "SELECT receipt_json, receipt_hash FROM communication_foreign_receipts"
+            ).fetchall()
+        store.upgrade_legs_v3()
+        reopened = CommunicationStore(
+            self.sender.ledger,
+            clock=lambda: self.pair.now,
+            foreign_authority_resolver=lambda ref: self.pair.public[ref],
+        )
+        select_persisted_schema(reopened, self.sender.ledger)
+        reopened.initialize()
+        self.assertTrue(reopened.historical_legs)
+        self.assertTrue(
+            reopened.result(self.message["event_id"], require_terminal=True)["terminal"]
+        )
+        self.assertEqual(reopened.page(**page_request), page)
+        replay = reopened.record_foreign_receipt(
+            receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+        )
+        self.assertTrue(replay["terminal"])
+        self.assertEqual(replay["legs"][0]["sequence"], before["legs"][0]["sequence"])
+        with reopened._database() as database:
+            self.assertEqual(
+                [
+                    tuple(row)
+                    for row in database.execute(
+                        "SELECT receipt_json, receipt_hash "
+                        "FROM communication_foreign_receipts"
+                    ).fetchall()
+                ],
+                [tuple(row) for row in proof],
+            )
+        self.assertEqual(self.sender.ledger.events(), history)
+        self.assertIsNone(self.sender.ledger.event(receipt["event_id"]))
 
 
 # Original independent #132 regression probes, including positive controls.

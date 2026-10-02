@@ -99,13 +99,43 @@ canonical `events` table. The logical tables retain:
 4. one terminal receipt projection whose authority remains its signed
    `dm.we.v1` receipt event.
 
-The upgrade is an explicit offline successor, like the receipts V2 one: it
-preserves every stored row, its sequence and its state, recomputes leg identities
-under the widened derivation together with the queue, attempt and receipt rows that
-reference them, and verifies referential integrity before it reports success. Legs
-are a projection of signed events rather than signed history, so recomputing their
-identifiers in that successor is legitimate, and it is what keeps a single identity
-rule true of every leg in the store instead of tolerating two forever.
+The upgrade is an explicit offline successor, like the receipts V2 one. The
+original persisted schema 3 recomputed projected IDs without preserving every
+historical reference. Schema 4 repairs the migration contract for source schemas
+1/2: current leg documents use the widened derivation, while a durable historical
+alias maps each old locator to its canonical per-body leg. Sequence, state, signed
+events, immutable attempt/request hashes, local receipt documents, cached
+page/claim responses and conflict evidence retain their original values/bytes.
+SQL associations become canonical; historical artifacts are not rehashed.
+
+The migration records its source generation, source version and sequence cutoff.
+The alias set MUST cover exactly every pre-cutoff leg and MUST be one-to-one.
+Both identifiers MUST derive from the same complete signed target tuple, including
+its exact receipt author. Missing/extra mappings, retargeting, chains, collisions,
+changed vector bindings and aliases for later legs MUST fail closed. The catalogs
+participate in the existing communication projection digest/journal. They are
+owner-local projection metadata, not a new signed authority or permission to send.
+These checks prove the signed target bindings and coverage of the recorded
+cutoff under the existing trusted-owner boundary. The counter-only anchor does
+not independently certify migration provenance against coordinated rewriting of
+both the cutoff and alias set. Such owner rewriting is outside this contract;
+it must not be described as a signed immutable migration manifest.
+
+Historical locators remain usable for lookup and exact previously accepted
+attempt UUID/hash retries. Fresh attempts MUST use the canonical locator. Retry
+construction MUST retain the original caller spelling so the authenticated
+request and mandatory-egress operation do not change. All current authorization,
+deadline and transport gates continue to apply; compatibility never renews them.
+Cached replay returns its original snapshot and lease rather than current state.
+
+All source and candidate semantic checks and SQLite foreign-key checks precede
+the transaction commit. Schema selection remains read-only. Existing healthy
+schema 3 stores remain readable without inferred aliases; an old reader MUST
+refuse schema 4. The `legs_v3` feature describes per-body semantics, while the
+persisted storage version identifies the historical-reference representation.
+An already-canonical schema 3 store remains a stated no-op for this upgrade.
+Repairing a schema 3 history damaged by the original migration requires separate
+provenance/recovery evidence; this transition does not guess its lost boundary.
 
 Creating the same message or leg again returns the stored projection. Changed
 immutable bytes conflict. Direct and hub attempts, retry, forwarding, batching
