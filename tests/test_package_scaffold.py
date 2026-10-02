@@ -64,6 +64,9 @@ class PackageMetadataTests(unittest.TestCase):
                 ),
                 "daimon-genesis": "daimon_matrix.operator_genesis:main",
                 "daimon-codex-body": "daimon_matrix.codex_body:main",
+                "daimon-communication-migration": (
+                    "daimon_matrix.operator_communication_migration:main"
+                ),
                 "daimon-conformance": "daimon_matrix.conformance:main",
                 "daimon-curator-worker": "daimon_matrix.curator_worker_process:main",
                 "daimon-hermes-body": "daimon_matrix.hermes_body:main",
@@ -152,7 +155,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 75)
+        self.assertEqual(len(modules), 76)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -333,6 +336,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/messaging.py",
                 "src/daimon_matrix/messaging_store.py",
                 "src/daimon_matrix/messaging_config.py",
+                "src/daimon_matrix/operator_communication_migration.py",
                 "src/daimon_matrix/operator_messaging.py",
                 "src/daimon_matrix/operator_runtime_upgrade.py",
                 "src/daimon_matrix/telegram_mirror.py",
@@ -415,6 +419,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/messaging.py",
                 "daimon_matrix/messaging_store.py",
                 "daimon_matrix/messaging_config.py",
+                "daimon_matrix/operator_communication_migration.py",
                 "daimon_matrix/operator_messaging.py",
                 "daimon_matrix/operator_runtime_upgrade.py",
                 "daimon_matrix/telegram_mirror.py",

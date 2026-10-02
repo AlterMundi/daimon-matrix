@@ -74,6 +74,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/messaging.py",
         "src/daimon_matrix/messaging_store.py",
         "src/daimon_matrix/messaging_config.py",
+        "src/daimon_matrix/operator_communication_migration.py",
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/telegram_mirror.py",
         "src/daimon_matrix/operator_bootstrap.py",
@@ -155,6 +156,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/messaging.py",
         "daimon_matrix/messaging_store.py",
         "daimon_matrix/messaging_config.py",
+        "daimon_matrix/operator_communication_migration.py",
         "daimon_matrix/operator_messaging.py",
         "daimon_matrix/operator_runtime_upgrade.py",
         "daimon_matrix/telegram_mirror.py",
@@ -415,6 +417,8 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
+        b"daimon-communication-migration = "
+        b"daimon_matrix.operator_communication_migration:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"
         b"daimon-curator-worker = daimon_matrix.curator_worker_process:main\n"
         b"daimon-first-embodiment = daimon_matrix.operator_first_embodiment:main\n"

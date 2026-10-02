@@ -98,6 +98,10 @@ jobs:
       - run: python -m ruff format --check tests/test_dm091_tribe_policy.py
       - run: python -m ruff check tests/test_dm091_tribe_policy.py
       - run: MYPYPATH=src python -m mypy tests/test_dm091_tribe_policy.py
+
+      - run: python -m ruff format --check tests/test_operator_communication_migration.py
+      - run: python -m ruff check tests/test_operator_communication_migration.py
+      - run: MYPYPATH=src python -m mypy tests/test_operator_communication_migration.py
       - run: python -m ruff format --check tests/test_dm090_store_schema_selection.py
       - run: python -m ruff check tests/test_dm090_store_schema_selection.py
       - run: MYPYPATH=src python -m mypy tests/test_dm090_store_schema_selection.py

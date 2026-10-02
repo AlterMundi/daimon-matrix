@@ -67,6 +67,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/messaging.py"),
     Path("src/daimon_matrix/messaging_store.py"),
     Path("src/daimon_matrix/messaging_config.py"),
+    Path("src/daimon_matrix/operator_communication_migration.py"),
     Path("src/daimon_matrix/operator_messaging.py"),
     Path("src/daimon_matrix/operator_runtime_upgrade.py"),
     Path("src/daimon_matrix/telegram_mirror.py"),
