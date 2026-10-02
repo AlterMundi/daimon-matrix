@@ -26,6 +26,7 @@ from daimon_matrix.communication import (
     CommunicationError,
     CommunicationStore,
     dispatch_attempt,
+    select_persisted_schema,
 )
 from daimon_matrix.daemon import serve_connection
 from daimon_matrix.local_api import (
@@ -626,6 +627,83 @@ class RouteSelectionTests(RouteFixture):
         self.assertEqual(dispatched["status"], "refused")
         self.assertEqual(dispatched["selected"]["outcome"], "refused")
         self.assertEqual(hub_calls, 0)
+
+    def test_migration_preserves_lost_response_request_and_egress_binding(self) -> None:
+        _, result, raw, authorization = self.message_and_delivery()
+        old_id = result["legs"][0]["leg_id"]
+        inbox, ingress = self.ingress("direct", authorization)
+        requests: list[bytes] = []
+
+        def response_loss(request: bytes) -> bytes:
+            requests.append(request)
+            response = ingress.handle(request)
+            if len(requests) == 1:
+                raise ConnectionError("response lost after durable intake")
+            return response
+
+        provider = self.provider("direct", "direct", response_loss)
+        profile = self.profile(
+            [self.binding("provider:direct", "route:direct", "direct", priority=0)]
+        )
+        coordinator = RouteCoordinator(
+            self.store,
+            profile,
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+        )
+        first = coordinator.dispatch(
+            leg_id=old_id, envelope=raw, deadline_ms=NOW + 20_000
+        )
+        self.assertEqual(first["status"], "pending")
+        immutable_query = (
+            "SELECT operation_id, path_id, locator, native_sha256, projection_json, "
+            "projection_sha256, echo_operation_id, echo_binding_digest, deadline_ms, "
+            "authority_head, created_at_ms FROM mandatory_egress_operations "
+            "ORDER BY operation_id"
+        )
+        with contextlib.closing(sqlite3.connect(self.ledger_a.path)) as database:
+            before = database.execute(immutable_query).fetchall()
+            retained = database.execute(
+                "SELECT request, request_sha256 FROM communication_egress_requests"
+            ).fetchall()
+        self.assertTrue(before)
+        self.assertTrue(retained)
+        self.store.upgrade_receipts_v2()
+        self.store.upgrade_legs_v3()
+        reopened = CommunicationStore(self.ledger_a, clock=lambda: self.now)
+        select_persisted_schema(reopened, self.ledger_a)
+        coordinator = RouteCoordinator(
+            reopened,
+            profile,
+            {provider.provider_ref: provider},
+            clock=lambda: self.now,
+            egress=self.egress,
+        )
+        second = coordinator.dispatch(
+            leg_id=old_id, envelope=raw, deadline_ms=NOW + 20_000
+        )
+        self.assertEqual(second["status"], "accepted")
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(
+            first["attempts"][0]["attempt_id"], second["attempts"][0]["attempt_id"]
+        )
+        with contextlib.closing(sqlite3.connect(self.ledger_a.path)) as database:
+            self.assertEqual(database.execute(immutable_query).fetchall(), before)
+            self.assertEqual(
+                database.execute(
+                    "SELECT request, request_sha256 FROM communication_egress_requests"
+                ).fetchall(),
+                retained,
+            )
+        claimed = inbox.claim(
+            recipient_id="embodiment:daimonmatrix",
+            consumer_id="migration-retry",
+            claim_id=identifier(72_000_000, 8),
+            limit=10,
+            lease_until_ms=NOW + 5_000,
+        )
+        self.assertEqual(len(claimed["items"]), 1)
 
     def test_ambiguous_direct_then_hub_and_retry_are_idempotent(self) -> None:
         _, result, raw, authorization = self.message_and_delivery()
