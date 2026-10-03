@@ -245,6 +245,12 @@ def render_codex_skills_fragment(plan: NeutralBindingPlan, value: Any) -> bytes:
     """Disable auxiliary SKILL.md files without disabling declared nested roots."""
     if "codex" not in plan.harnesses:
         raise NeutralBindingError("codex_not_in_binding")
+    return render_codex_skills_fragment_at_root(plan.skills_root, value)
+
+
+def render_codex_skills_fragment_at_root(skills_root: str, value: Any) -> bytes:
+    """Render the same discovery controls for a verified local package projection."""
+    _text(skills_root, "invalid_skills_root", _ABS_PATH)
     discovery = skill_discovery_from_mapping(value)
     roots = {package["path"] + "/SKILL.md" for package in discovery["packages"]}
     auxiliary = {
@@ -258,7 +264,7 @@ def render_codex_skills_fragment(plan: NeutralBindingPlan, value: Any) -> bytes:
             [
                 "",
                 "[[skills.config]]",
-                "path = " + json.dumps(plan.skills_root + "/" + relative),
+                "path = " + json.dumps(skills_root + "/" + relative),
                 "enabled = false",
             ]
         )

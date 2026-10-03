@@ -405,3 +405,30 @@ session with a new bootstrap/profile. Never reuse the ambiguous profile,
 guess a thread from directory contents or convert this report into a park
 receipt. Known-ID pending resumes use `recover-resume-park`; pending parks use
 `recover-park`. An empty, unmaterialized native thread cannot cold-resume.
+
+### Selected neutral skill packages
+
+The successor owner plan optionally carries `skill_packages`, a closed
+`dm.codex-skill-packages/v1` inventory. Each package declares its relative path,
+SHA-256 of its canonical sorted file inventory, and files with relative path,
+SHA-256, byte length and executable flag. This is an explicit owner selection;
+neither a digest nor native discovery supplies adoption consent or Matrix authority.
+The historical profile rejects this extension. Plans without it retain their
+existing rendered bytes and manifests.
+
+`plan-create --skill-packages INVENTORY` validates and binds that selection.
+`native-lifecycle --create-profile --skill-source DIRECTORY` prepares an immutable
+local projection of exactly the declared source files under the private profile
+HOME's `.agents/skills`. Sources are not changed. Unsafe links, file collisions,
+missing roots and changed source bytes refuse before profile creation. The
+profile manifest and plan hash bind the inventory and projected file digests;
+subsequent verification uses the projected files, without re-importing a changed
+source pool. Updating skills requires another explicitly selected profile.
+
+The same neutral discovery renderer disables auxiliary `SKILL.md` documents while
+preserving declared nested skill roots. Rendered and effective native configuration
+must match those controls. Changed, missing, linked or added projected files refuse
+admission. Scripts retain their declared executable flag but are never executed
+while preparing or verifying the profile. Package preparation does not establish
+live invocation, implicit-invocation enforcement, memory adoption or sync acceptance.
+Those operational checks and any pending activation approval remain separate.

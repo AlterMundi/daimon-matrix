@@ -570,6 +570,78 @@
         "schema": {
           "const": "dm.codex-body.plan/v2"
         },
+        "skill_packages": {
+          "additionalProperties": false,
+          "properties": {
+            "packages": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "files": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "bytes": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "executable": {
+                          "type": "boolean"
+                        },
+                        "path": {
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\\\)[^\\x00-\\x1f\\x7f]+$",
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "pattern": "^[0-9a-f]{64}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "sha256",
+                        "bytes",
+                        "executable"
+                      ],
+                      "type": "object"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "path": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\\\)[^\\x00-\\x1f\\x7f]+$",
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256",
+                  "files"
+                ],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "schema": {
+              "const": "dm.codex-skill-packages/v1"
+            }
+          },
+          "required": [
+            "schema",
+            "packages"
+          ],
+          "type": "object"
+        },
         "workspace_ref": {
           "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
           "type": "string"
@@ -615,10 +687,18 @@
             "additionalProperties": false,
             "properties": {
               "name": {
-                "enum": [
-                  "AGENTS.md",
-                  "bootstrap.json",
-                  "config.toml"
+                "oneOf": [
+                  {
+                    "enum": [
+                      "AGENTS.md",
+                      "bootstrap.json",
+                      "config.toml"
+                    ]
+                  },
+                  {
+                    "pattern": "^\\.agents/skills/(?!.*(?:/\\.\\.?/|//|\\\\))[^\\x00-\\x1f\\x7f]+$",
+                    "type": "string"
+                  }
                 ]
               },
               "sha256": {
@@ -632,7 +712,6 @@
             ],
             "type": "object"
           },
-          "maxItems": 3,
           "minItems": 3,
           "type": "array",
           "uniqueItems": true

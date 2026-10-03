@@ -123,6 +123,31 @@ def contracts_schema() -> dict[str, Any]:
             {"$ref": "../v1/contracts.schema.json#/$defs/bootstrap"},
         ]
     }
+    relative = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "pattern": r"^(?!/)(?!.*(?:^|/)\.\.?(?:/|$))(?!.*//)(?!.*\\)[^\x00-\x1f\x7f]+$",
+    }
+    file_entry = closed(
+        dict(path=relative, sha256=HASH, bytes=UINT, executable={"type": "boolean"})
+    )
+    plan["skill_packages"] = closed(
+        dict(
+            schema={"const": "dm.codex-skill-packages/v1"},
+            packages={
+                "type": "array",
+                "minItems": 1,
+                "items": closed(
+                    dict(
+                        path=relative,
+                        sha256=HASH,
+                        files={"type": "array", "minItems": 1, "items": file_entry},
+                    )
+                ),
+            },
+        )
+    )
     policy = plan["profile_policy"]
     policy["properties"].update(
         hooks={"const": "disabled"}, lifecycle={"const": "human-request-only"}
@@ -134,8 +159,19 @@ def contracts_schema() -> dict[str, Any]:
     manifest["properties"]["lifecycle"] = {"const": "human-request-only"}
     manifest["required"].append("lifecycle")
     files = manifest["properties"]["files"]
-    files.update(minItems=3, maxItems=3)
-    files["items"]["properties"]["name"]["enum"].remove("hooks/lifecycle.py")
+    files.update(minItems=3)
+    files.pop("maxItems", None)
+    files["items"]["properties"]["name"] = {
+        "oneOf": [
+            {"enum": ["AGENTS.md", "bootstrap.json", "config.toml"]},
+            {
+                "type": "string",
+                "pattern": (
+                    r"^\.agents/skills/(?!.*(?:/\.\.?/|//|\\))" r"[^\x00-\x1f\x7f]+$"
+                ),
+            },
+        ]
+    }
     launch = definitions["launch_receipt"]["properties"]
     compatibility = launch["compatibility"]
     compatibility["properties"].pop("hook_python_sha256")

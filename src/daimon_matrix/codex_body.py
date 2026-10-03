@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import IO, Any, Final, Protocol, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .neutral_binding import (
+    NeutralBindingError,
+    render_codex_skills_fragment_at_root,
+    skill_discovery_from_mapping,
+)
 
 CODEX_VERSION: Final = "0.146.0"
 CODEX_VERSION_OUTPUT: Final = f"codex-cli {CODEX_VERSION}"
@@ -258,6 +263,7 @@ class CodexBodyPlan:
     mcp_binary: Path
     mcp_args: tuple[str, ...]
     hook_python: Path | None
+    skill_source: Path | None = None
 
 
 def _canonical(value: Any, code: str) -> bytes:
@@ -546,6 +552,12 @@ def _validate_native_configuration(
     owned_tables = ("mcp_servers", "projects")
     if (
         not matches(expected, config)
+        or (
+            config.get("skills", {}).get("config")
+            if isinstance(config.get("skills", {}), Mapping)
+            else "invalid"
+        )
+        != expected.get("skills", {}).get("config")
         or any(set(config[name]) != set(expected[name]) for name in owned_tables)
         or any(
             config.get(name) is not None
@@ -714,6 +726,133 @@ def validate_bootstrap(value: Any) -> dict[str, Any]:
     return copy.deepcopy(dict(row))
 
 
+def _skill_relative(value: Any) -> str:
+    text = _text(value, "invalid_codex_skill_path", maximum=1024)
+    if (
+        text.startswith("/")
+        or "\\" in text
+        or any(part in {"", ".", ".."} for part in text.split("/"))
+    ):
+        raise CodexBodyError("invalid_codex_skill_path")
+    return text
+
+
+def validate_skill_packages(value: Any) -> dict[str, Any]:
+    """Closed owner-selected inventory; hashes prove bytes, never authority."""
+    row = _closed(value, {"schema", "packages"}, "invalid_codex_skill_packages")
+    if (
+        row["schema"] != "dm.codex-skill-packages/v1"
+        or not isinstance(row["packages"], list)
+        or not row["packages"]
+    ):
+        raise CodexBodyError("invalid_codex_skill_packages")
+    packages: list[dict[str, Any]] = []
+    roots: set[str] = set()
+    all_files: dict[str, Mapping[str, Any]] = {}
+    for package in row["packages"]:
+        package = _closed(
+            package, {"path", "sha256", "files"}, "invalid_codex_skill_package"
+        )
+        path = _skill_relative(package["path"])
+        if path in roots or not isinstance(package["files"], list):
+            raise CodexBodyError("invalid_codex_skill_package")
+        roots.add(path)
+        files: list[dict[str, Any]] = []
+        names: set[str] = set()
+        for entry in package["files"]:
+            entry = _closed(
+                entry,
+                {"path", "sha256", "bytes", "executable"},
+                "invalid_codex_skill_file",
+            )
+            name = _skill_relative(entry["path"])
+            digest = _hash(entry["sha256"], "invalid_codex_skill_file")
+            size = _uint(entry["bytes"], "invalid_codex_skill_file")
+            if (
+                name in names
+                or size > MAX_DOCUMENT_BYTES
+                or type(entry["executable"]) is not bool
+            ):
+                raise CodexBodyError("invalid_codex_skill_file")
+            names.add(name)
+            item = dict(
+                path=name, sha256=digest, bytes=size, executable=entry["executable"]
+            )
+            full = path + "/" + name
+            identity = {key: item[key] for key in ("sha256", "bytes", "executable")}
+            if full in all_files and all_files[full] != identity:
+                raise CodexBodyError("codex_skill_file_overlap")
+            all_files[full] = identity
+            files.append(item)
+        if "SKILL.md" not in names:
+            raise CodexBodyError("codex_skill_root_missing")
+        files.sort(key=lambda item: item["path"])
+        digest = _hash(package["sha256"], "invalid_codex_skill_package")
+        if (
+            hashlib.sha256(_canonical(files, "invalid_codex_skill_package")).hexdigest()
+            != digest
+        ):
+            raise CodexBodyError("codex_skill_package_hash_mismatch")
+        packages.append(dict(path=path, sha256=digest, files=files))
+    # A declared file cannot also be an ancestor directory of another file.
+    for name in all_files:
+        if any(
+            "/".join(name.split("/")[:index]) in all_files
+            for index in range(1, len(name.split("/")))
+        ):
+            raise CodexBodyError("codex_skill_file_overlap")
+    result = dict(
+        schema=row["schema"],
+        packages=sorted(packages, key=lambda package: package["path"]),
+    )
+    _skill_discovery(result)
+    _canonical(result, "invalid_codex_skill_packages")
+    return result
+
+
+def _skill_discovery(inventory: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        return skill_discovery_from_mapping(
+            dict(
+                schema="dm.skill-discovery/v1",
+                packages=[
+                    dict(
+                        path=package["path"],
+                        sha256=package["sha256"],
+                        auxiliary_skills=[
+                            entry["path"]
+                            for entry in package["files"]
+                            if entry["path"].endswith("/SKILL.md")
+                        ],
+                    )
+                    for package in inventory["packages"]
+                ],
+            )
+        )
+    except NeutralBindingError as exception:
+        raise CodexBodyError("invalid_codex_skill_discovery") from exception
+
+
+def _skill_specs(value: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    if "skill_packages" not in value:
+        return {}
+    packages = validate_skill_packages(value["skill_packages"])["packages"]
+    return {
+        package["path"] + "/" + entry["path"]: entry
+        for package in packages
+        for entry in package["files"]
+    }
+
+
+def _skill_fragment(plan: CodexBodyPlan) -> bytes:
+    if "skill_packages" not in plan.value:
+        return b""
+    discovery = _skill_discovery(validate_skill_packages(plan.value["skill_packages"]))
+    return b"\n" + render_codex_skills_fragment_at_root(
+        os.fspath(plan.profile_root / ".agents" / "skills"), discovery
+    )
+
+
 def validate_plan(value: Any) -> dict[str, Any]:
     row = _closed(
         value,
@@ -724,10 +863,20 @@ def validate_plan(value: Any) -> dict[str, Any]:
             "profile_policy",
             "schema",
             "workspace_ref",
-        },
+        }
+        | (
+            {"skill_packages"}
+            if isinstance(value, Mapping) and "skill_packages" in value
+            else set()
+        ),
         "invalid_codex_body_plan",
     )
     profile = _profile_contract(row)
+    if "skill_packages" in row:
+        if profile.automatic_hooks:
+            raise CodexBodyError("historical_codex_skills_forbidden")
+        if row["skill_packages"] != validate_skill_packages(row["skill_packages"]):
+            raise CodexBodyError("codex_skill_inventory_not_normalized")
     contract = profile.release
     if (
         _DERIVED_ID.fullmatch(
@@ -792,6 +941,7 @@ def create_plan_value(
     provider: str,
     workspace_ref: str,
     release: str = CODEX_VERSION,
+    skill_packages: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     contract = release_contract(release)
     historical = release == CODEX_VERSION
@@ -826,6 +976,8 @@ def create_plan_value(
         cast(dict[str, Any], core["profile_policy"]).update(
             hooks="disabled", lifecycle="human-request-only"
         )
+    if skill_packages is not None:
+        core["skill_packages"] = validate_skill_packages(skill_packages)
     return validate_plan(core)
 
 
@@ -838,6 +990,7 @@ def bind_plan(
     mcp_binary: Path,
     mcp_args: Sequence[str],
     hook_python: Path | None = None,
+    skill_source: Path | None = None,
 ) -> CodexBodyPlan:
     normalized = validate_plan(value)
     root = _safe_absolute(profile_root, "invalid_profile_root")
@@ -875,7 +1028,14 @@ def bind_plan(
         raise CodexBodyError("invalid_matrix_mcp_argument") from exception
     if str(capability_fd) != arguments[5] or not 3 <= capability_fd <= 1024:
         raise CodexBodyError("invalid_matrix_mcp_argument")
-    return CodexBodyPlan(normalized, root, work, codex, mcp, arguments, python)
+    source = (
+        _safe_absolute(skill_source, "invalid_codex_skill_source")
+        if skill_source is not None
+        else None
+    )
+    if source is not None and "skill_packages" not in normalized:
+        raise CodexBodyError("codex_skill_source_without_inventory")
+    return CodexBodyPlan(normalized, root, work, codex, mcp, arguments, python, source)
 
 
 def _capability_fd(plan: CodexBodyPlan) -> int:
@@ -1018,6 +1178,7 @@ def render_config(plan: CodexBodyPlan) -> bytes:
         ]
     )
     raw = ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    raw += _skill_fragment(plan)
     try:
         parsed = tomllib.loads(raw.decode("utf-8"))
     except tomllib.TOMLDecodeError as exception:
@@ -1027,6 +1188,9 @@ def render_config(plan: CodexBodyPlan) -> bytes:
 
 
 def _validate_effective_config(value: Mapping[str, Any], plan: CodexBodyPlan) -> None:
+    expected_skills = tomllib.loads(_skill_fragment(plan).decode()).get("skills")
+    if value.get("skills") != expected_skills:
+        raise CodexBodyError("codex_skill_configuration_drift")
     if (
         value.get("model") != plan.value["codex"]["model"]
         or value.get("model_provider") != plan.value["codex"]["provider"]
@@ -1177,6 +1341,12 @@ def _profile_manifest_core(
         )
     else:
         core["lifecycle"] = "human-request-only"
+    if "skill_packages" in value:
+        core["files"].extend(
+            {"name": ".agents/skills/" + name, "sha256": entry["sha256"]}
+            for name, entry in sorted(_skill_specs(value).items())
+        )
+        core["files"].sort(key=lambda item: item["name"])
     return core
 
 
@@ -1217,6 +1387,30 @@ def create_profile(
         raise CodexBodyError("codex_binary_hash_mismatch")
     files = _profile_files(plan)
     core = _profile_manifest_core(plan, files)
+    selected: dict[str, tuple[bytes, int]] = {}
+    if "skill_packages" in value:
+        if plan.skill_source is None:
+            raise CodexBodyError("codex_skill_source_required")
+        _secure_directory(
+            plan.skill_source, "codex_skill_source_unsafe", owner_only=False
+        )
+        for name, entry in _skill_specs(value).items():
+            raw = _read_secure_file(
+                plan.skill_source / name,
+                "codex_skill_source_unsafe",
+                owner_only=False,
+                executable=entry["executable"],
+            )
+            if (
+                len(raw) != entry["bytes"]
+                or hashlib.sha256(raw).hexdigest() != entry["sha256"]
+            ):
+                raise CodexBodyError("codex_skill_source_drift")
+            selected[".agents/skills/" + name] = (
+                raw,
+                0o700 if entry["executable"] else 0o600,
+            )
+        files.update(selected)
     try:
         os.mkdir(plan.profile_root, 0o700)
         if profile.automatic_hooks:
@@ -1224,6 +1418,11 @@ def create_profile(
     except OSError as exception:
         raise CodexBodyError("profile_create_failed") from exception
     for relative, (raw, mode) in files.items():
+        if relative in selected:
+            parent = plan.profile_root
+            for part in Path(relative).parts[:-1]:
+                parent /= part
+                parent.mkdir(exist_ok=True, mode=0o700)
         _write_new_file(plan.profile_root / relative, raw, mode)
     manifest = {
         **core,
@@ -1238,6 +1437,12 @@ def create_profile(
     )
     if profile.automatic_hooks:
         _fsync_directory(plan.profile_root / "hooks")
+    for directory in sorted(
+        {(plan.profile_root / name).parent for name in selected},
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        _fsync_directory(directory)
     _fsync_directory(plan.profile_root)
     _fsync_directory(plan.profile_root.parent)
     return copy.deepcopy(manifest)
@@ -1290,6 +1495,29 @@ def verify_profile(plan: CodexBodyPlan) -> dict[str, Any]:
         )
         if actual != raw:
             raise CodexBodyError("profile_file_drift")
+    skill_specs = _skill_specs(plan.value)
+    skill_root = plan.profile_root / ".agents" / "skills"
+    for name, entry in skill_specs.items():
+        actual = _read_secure_file(
+            skill_root / name,
+            "codex_skill_file_rejected",
+            executable=entry["executable"],
+        )
+        if (
+            len(actual) != entry["bytes"]
+            or hashlib.sha256(actual).hexdigest() != entry["sha256"]
+        ):
+            raise CodexBodyError("codex_skill_file_drift")
+    if skill_root.exists() or skill_root.is_symlink():
+        # An added package or support file changes the admitted instruction surface.
+        _secure_directory(skill_root, "codex_skill_surface_unsafe")
+        actual_files = {
+            path.relative_to(skill_root).as_posix()
+            for path in skill_root.rglob("*")
+            if not path.is_dir()
+        }
+        if actual_files != set(skill_specs):
+            raise CodexBodyError("codex_skill_surface_drift")
     manifest_value = _json_load(
         _read_secure_file(
             plan.profile_root / "profile-manifest.json", "profile_manifest_rejected"
@@ -3084,6 +3312,7 @@ def parser() -> argparse.ArgumentParser:
     plan_create.add_argument("--provider", required=True)
     plan_create.add_argument("--workspace-ref", required=True)
     plan_create.add_argument("--output", type=Path, required=True)
+    plan_create.add_argument("--skill-packages", type=Path)
     binding = commands.add_parser(
         "binding-check", help="verify public authority against the running owner daemon"
     )
@@ -3103,6 +3332,7 @@ def parser() -> argparse.ArgumentParser:
     native = commands.add_parser(
         "native-lifecycle", help="perform one explicit no-model lifecycle qualification"
     )
+    native.add_argument("--skill-source", type=Path)
     for name in (
         "bundle",
         "client-config",
@@ -3231,6 +3461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         workspace=args.workspace,
                         codex_binary=args.binary,
                         mcp_binary=args.mcp_binary,
+                        skill_source=args.skill_source,
                         mcp_args=(
                             "--socket",
                             os.fspath(client.socket_path),
@@ -3310,6 +3541,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 provider=args.provider,
                 workspace_ref=args.workspace_ref,
                 release=SUCCESSOR_RELEASE.version,
+                skill_packages=_json_load(
+                    _read_secure_file(
+                        args.skill_packages, "owner_skill_inventory_rejected"
+                    ),
+                    "owner_skill_inventory_rejected",
+                )
+                if args.skill_packages is not None
+                else None,
             )
             _secure_directory(args.output.parent, "owner_plan_output_unsafe")
             content = _canonical(document, "owner_plan_output_rejected")

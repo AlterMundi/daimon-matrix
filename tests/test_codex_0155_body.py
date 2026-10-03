@@ -23,7 +23,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from referencing import Registry, Resource
 
 from daimon_matrix import codex_body as body
-from daimon_matrix.canonical import b64url
+from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.codex_body import CodexBodyError, verify_compatibility_bundle
 
 
@@ -294,6 +294,141 @@ class SuccessorProfileTests(unittest.TestCase):
                 os.fspath(self.root / "requests"),
             ),
         )
+
+    def selected_skills(self) -> body.CodexBodyPlan:
+        source = self.root / "selected-skills"
+        source.mkdir(mode=0o700)
+        payloads = {
+            "memory/SKILL.md": (
+                b"---\nname: memory\ndescription: Explicit recall fixture\n---\n"
+            ),
+            "memory/references/SKILL.md": b"Auxiliary document\n",
+            "memory/librarian/SKILL.md": (
+                b"---\nname: librarian\ndescription: Nested skill fixture\n---\n"
+            ),
+            "memory/scripts/recall.py": b"print('fixture')\n",
+        }
+        for name, raw in payloads.items():
+            target = source / name
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target.write_bytes(raw)
+            target.chmod(0o700 if name.endswith(".py") else 0o600)
+        packages = []
+        for root in ("memory", "memory/librarian"):
+            files = sorted(
+                [
+                    dict(
+                        path=name[len(root) + 1 :],
+                        sha256=hashlib.sha256(raw).hexdigest(),
+                        bytes=len(raw),
+                        executable=name.endswith(".py"),
+                    )
+                    for name, raw in payloads.items()
+                    if name.startswith(root + "/")
+                ],
+                key=lambda entry: str(entry["path"]),
+            )
+            packages.append(
+                dict(
+                    path=root,
+                    sha256=hashlib.sha256(canonical_bytes(files)).hexdigest(),
+                    files=files,
+                )
+            )
+        value = copy.deepcopy(self.value)
+        value["skill_packages"] = body.validate_skill_packages(
+            dict(schema="dm.codex-skill-packages/v1", packages=packages)
+        )
+        return replace(self.plan, value=value, skill_source=source)
+
+    def test_selected_skills_are_manifest_bound_and_source_independent(self) -> None:
+        self.plan = self.selected_skills()
+        manifest = self.create()
+        projected = self.plan.profile_root / ".agents/skills"
+        self.assertTrue((projected / "memory/scripts/recall.py").stat().st_mode & 0o100)
+        names = {entry["name"] for entry in manifest["files"]}
+        self.assertIn(".agents/skills/memory/librarian/SKILL.md", names)
+        config = tomllib.loads(body.render_config(self.plan).decode())
+        self.assertEqual(
+            config["skills"]["config"],
+            [dict(path=str(projected / "memory/references/SKILL.md"), enabled=False)],
+        )
+        self.assertEqual(
+            body.verify_profile(replace(self.plan, skill_source=None)), manifest
+        )
+        assert self.plan.skill_source is not None
+        (self.plan.skill_source / "memory/SKILL.md").write_text("Source evolved later")
+        self.assertEqual(body.verify_profile(self.plan), manifest)
+        body._validate_native_configuration(dict(config=config, origins={}), self.plan)
+        config["skills"]["config"][0]["enabled"] = True
+        with self.assertRaisesRegex(CodexBodyError, "native_configuration_drift"):
+            body._validate_native_configuration(
+                dict(config=config, origins={}), self.plan
+            )
+
+    def test_selected_skills_refuse_source_drift_before_creating_profile(self) -> None:
+        self.plan = self.selected_skills()
+        assert self.plan.skill_source is not None
+        (self.plan.skill_source / "memory/SKILL.md").write_text("Changed")
+        with self.assertRaisesRegex(CodexBodyError, "skill_source_drift"):
+            self.create()
+        self.assertFalse(self.plan.profile_root.exists())
+
+    def test_selected_skills_refuse_added_changed_missing_or_linked_files(self) -> None:
+        self.plan = self.selected_skills()
+        self.create()
+        root = self.plan.profile_root / ".agents/skills"
+        extra = root / "extra/SKILL.md"
+        extra.parent.mkdir(mode=0o700)
+        extra.write_bytes(b"extra")
+        extra.chmod(0o600)
+        with self.assertRaisesRegex(CodexBodyError, "skill_surface_drift"):
+            body.verify_profile(self.plan)
+        extra.unlink()
+        target = root / "memory/SKILL.md"
+        original = target.read_bytes()
+        target.write_bytes(b"changed")
+        with self.assertRaisesRegex(CodexBodyError, "skill_file_drift"):
+            body.verify_profile(self.plan)
+        target.unlink()
+        with self.assertRaisesRegex(CodexBodyError, "skill_file_rejected"):
+            body.verify_profile(self.plan)
+        assert self.plan.skill_source is not None
+        target.symlink_to(self.plan.skill_source / "memory/SKILL.md")
+        with self.assertRaisesRegex(CodexBodyError, "skill_file_rejected"):
+            body.verify_profile(self.plan)
+        target.unlink()
+        target.write_bytes(original)
+        target.chmod(0o600)
+        body.verify_profile(self.plan)
+
+    def test_skill_inventory_refuses_traversal_overlap_digest_and_historical_replay(
+        self,
+    ) -> None:
+        plan = self.selected_skills()
+        inventory = plan.value["skill_packages"]
+        schema = importlib.import_module(
+            "tools.generate_codex_0155_vectors"
+        ).contracts_schema()
+        Draft202012Validator(
+            schema["$defs"]["plan"]["properties"]["skill_packages"]
+        ).validate(inventory)
+        for edit in ("path", "digest", "overlap"):
+            changed = copy.deepcopy(inventory)
+            if edit == "path":
+                changed["packages"][0]["path"] = "../escape"
+            elif edit == "digest":
+                changed["packages"][0]["sha256"] = "0" * 64
+            else:
+                changed["packages"][1]["files"][0]["executable"] = True
+            with self.assertRaises(CodexBodyError):
+                body.validate_skill_packages(changed)
+        historical = dict(copy.deepcopy(plan.value))
+        historical.update(schema=body.PLAN_SCHEMA, adapter_version="1.0.0")
+        with self.assertRaisesRegex(
+            CodexBodyError, "historical_codex_skills_forbidden"
+        ):
+            body.validate_plan(historical)
 
     def create(self) -> dict[str, Any]:
         return body.create_profile(
