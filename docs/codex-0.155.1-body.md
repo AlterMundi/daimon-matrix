@@ -367,6 +367,31 @@ hosts. `--cluster-state` must already be owner-only, and the reader must report
 the exact current body and incarnation. No daemon-health fallback, registry
 mutation or resource-fence acquisition is provided.
 
+An explicit alternative is `--cluster-reader-socket ABSOLUTE_PATH` together
+with `--cluster-reader-owner-uid UID`. This mode connects to the optional
+Cluster-owned local reader delivered by nicoechaniz/daimon-cluster#112 (PR#113).
+It permits the native verifier to remain under the Cluster service UID while
+Codex retains its own owner UID. Both selectors are required; combining either
+with `--cluster-checkout` or `--cluster-state` refuses. A refused socket request
+never falls back to an in-process reader or a daemon-health snapshot.
+
+The client verifies protected ancestors, the socket's exact owner and published
+inode, and real Linux `SO_PEERCRED` before sending the closed origin request.
+Only0600 or explicitly shared0666 sockets are admitted; the caller UID is
+separately checked by the server before it consumes a request. Connect, write,
+header and response payload share a five-second transport deadline. The returned
+snapshot is checked by the existing closed Matrix contract and current native
+admission/freshness checks; transport success does not authorize a body.
+
+The service must already have an owner-approved profile naming this exact caller,
+body, embodiment and incarnation and must use the native authenticated production
+fence verifier. Its registry must truthfully report the body as running. The
+reader does not register, start, stop or sign a body, widen capabilities, or open
+custody. Installing or activating the optional service remains a separate live
+action. Its existing native verifier startup permission/SQLite auxiliary-file
+effects must be covered by that plan. Private IPC qualification does not prove
+actual cross-UID deployment, registration, lifecycle or operational adoption.
+
 This entry point qualifies a local native lifecycle. It submits zero model
 inputs and grants no provider canary, neutral-memory adoption, deployed-host
 acceptance or live-supported status. First-start loss without saved IDs still

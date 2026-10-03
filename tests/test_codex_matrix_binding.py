@@ -31,6 +31,7 @@ from daimon_matrix.codex_matrix_binding import (
     check_current_runtime_authority,
     observe_native_cluster_body,
     open_owner_native_session,
+    owner_cluster_body_reader,
     owner_local_admission,
     pinned_cluster_body_reader,
     prepare_owner_bootstrap_request,
@@ -359,6 +360,19 @@ sys.exit(2)
             observed.snapshot,
         )
         self.assertEqual(registry.path.read_bytes(), before)
+        selected_reader = owner_cluster_body_reader(
+            checkout=reader_checkout,
+            state_root=cluster_root,
+            socket_path=None,
+            owner_uid=None,
+            embodiment_id=binding.embodiment_id,
+        )
+        self.assertEqual(
+            observe_native_cluster_body(
+                binding, selected_reader, max_age_ms=1000
+            ).snapshot,
+            observed.snapshot,
+        )
         (reader_checkout / "clusterctl/matrix_host.py").write_text(
             "raise RuntimeError('unverified source executed')\n"
         )
