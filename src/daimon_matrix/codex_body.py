@@ -3348,6 +3348,8 @@ def parser() -> argparse.ArgumentParser:
     native.add_argument("--capability-key-fd", type=int, required=True)
     for name in ("proof-journal", "cluster-checkout", "cluster-state"):
         native.add_argument("--" + name, type=Path)
+    native.add_argument("--cluster-reader-socket", type=Path)
+    native.add_argument("--cluster-reader-owner-uid", type=int)
     native.add_argument("--max-age-ms", type=int)
     native.add_argument("--create-profile", action="store_true")
     native.add_argument(
@@ -3388,8 +3390,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .codex_matrix_binding import (
                 attest_owner_bootstrap_request,
                 open_owner_native_session,
+                owner_cluster_body_reader,
                 owner_local_admission,
-                pinned_cluster_body_reader,
                 prepare_owner_bootstrap_request,
                 read_native_capability_key,
             )
@@ -3481,17 +3483,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                             _canonical(value, "codex_cli_output_invalid") + b"\n"
                         )
                         return 0
-                    if (
-                        args.proof_journal is None
-                        or args.cluster_checkout is None
-                        or args.cluster_state is None
-                        or args.max_age_ms is None
-                    ):
+                    if args.proof_journal is None or args.max_age_ms is None:
                         raise CodexBodyError("owner_cluster_locations_required")
                     if args.create_profile and args.action != "start-park":
                         raise CodexBodyError("owner_native_create_requires_start")
-                    reader = pinned_cluster_body_reader(
-                        args.cluster_checkout, args.cluster_state, current.embodiment_id
+                    reader = owner_cluster_body_reader(
+                        checkout=args.cluster_checkout,
+                        state_root=args.cluster_state,
+                        socket_path=args.cluster_reader_socket,
+                        owner_uid=args.cluster_reader_owner_uid,
+                        embodiment_id=current.embodiment_id,
                     )
                     session = open_owner_native_session(
                         native_plan,
