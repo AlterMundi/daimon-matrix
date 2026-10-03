@@ -8,7 +8,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -730,6 +730,118 @@ PROFILES = [
         requires_real_vendor_smoke=True,
     ),
 ]
+
+
+def codex_successor_candidate() -> dict[str, Any]:
+    """Explicit successor evidence; never promote the frozen historical profile."""
+    source = "codex-0-155-1-candidate"
+    controls = _candidate_controls(
+        source,
+        {
+            "profile_isolation": _pass(
+                source,
+                (
+                    "Installed native fixture uses a fresh owner-only profile and"
+                    " rejects concurrent processes on that profile."
+                ),
+            ),
+            "required_matrix_boundary": _pass(
+                source,
+                (
+                    "Actual installed Matrix MCP failure rejects native startup "
+                    "before an active handle is committed."
+                ),
+            ),
+            "tool_allowlist": _pass(
+                source,
+                (
+                    "Actual native discovery admits exactly the six Matrix tools "
+                    "and eight resource advertisements."
+                ),
+            ),
+            "version_pinned": _pass(
+                source,
+                (
+                    "Exact registry-verified native payload and normalized "
+                    "generated contracts are pinned."
+                ),
+            ),
+            "upgrade_migration_closed": _pass(
+                source,
+                (
+                    "Unknown versions and mixed historical/successor bindings "
+                    "refuse without rewriting history."
+                ),
+            ),
+            "lifecycle_boundaries": _unknown(
+                source,
+                (
+                    "Installed start/resume/park recovery passes; first-start "
+                    "response loss still needs operator-directed resolution and "
+                    "complete lifecycle acceptance."
+                ),
+            ),
+            "history_persistence_disabled": _unknown(
+                source,
+                (
+                    "History persistence configuration is none, but resumable "
+                    "native rollouts materialize after the first input; the "
+                    "complete native-state policy is not accepted yet."
+                ),
+            ),
+            "native_memory_disabled": _unknown(
+                source,
+                (
+                    "Native memories are configured disabled; approved neutral "
+                    "skills/HMK source and actual-binary memory policy acceptance"
+                    " remain outstanding."
+                ),
+            ),
+            "network_default_deny": _unknown(
+                source,
+                (
+                    "Recovery fixture has private network isolation; that does "
+                    "not prove production provider egress control."
+                ),
+            ),
+        },
+    )
+    return _profile(
+        "codex-cli-0-155-1",
+        name="Codex CLI",
+        vendor="OpenAI",
+        version="0.155.1",
+        surface="app-server-stdio",
+        source_refs=[source],
+        evidence_state="documented-candidate",
+        admission_reason="successor-mandatory-evidence-incomplete",
+        controls=controls,
+        install_source="npm-openai-codex-0-155-1-registry-verified",
+        executable_sha256="0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761",
+        config_precedence="successor-effective-config-and-instruction-acceptance-required",
+        state_roots=["fresh-owner-only-codex-home"],
+        auto_update_policy="exact-version-only-auto-update-disabled",
+        migration_policy="no-personal-profile-session-or-memory-import",
+        limitations=[
+            "not-live-supported",
+            "provider-inference-unqualified",
+            "neutral-binding-pending",
+            "unknown-first-start-requires-operator-resolution",
+        ],
+        launch_argv=["codex", "app-server"],
+        launch_configuration=[
+            "hooks=disabled",
+            "lifecycle=human-request-only",
+            "history.persistence=none",
+            "mcp_servers.matrix.required=true",
+        ],
+        launch_environment=["CODEX_HOME=<validated-disposable-root>"],
+        requires_real_vendor_smoke=True,
+    )
+
+
+def codex_successor_report(profile: dict[str, Any]) -> dict[str, Any]:
+    return cast(dict[str, Any], conformance_report(profile, fixture_manifest()))
 
 
 def _bytes(value: Any) -> bytes:

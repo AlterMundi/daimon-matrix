@@ -1,0 +1,43 @@
+{
+  "bootstrap_hash": "6bc0973e75c6c6276a1d2cdba5841fa70978bb6f2dd5f83becd721f0c35ef4ca",
+  "event": {
+    "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+    "causal_parents": [
+      "00000205-0000-4000-8000-000000000001"
+    ],
+    "content_hash": "3122ddb424f685908f99ca472c3bcb2858b8cd764b5722c09a94897126ea0b75",
+    "event_id": "00000205-0000-4000-8000-000000000002",
+    "kind": "experience.observed",
+    "manifest_hash": "1065983b575118b7d86a6c5504f8e8a038c81525e81d6ca21447bedf60cced3d",
+    "occurred_at_ms": 1800000000000,
+    "origin": {
+      "body_ref": "cluster:legion:compaii",
+      "embodiment_id": "embodiment:legion",
+      "incarnation_id": "incarnation:legion:0",
+      "principal_id": "compaii@legion"
+    },
+    "payload": {
+      "bootstrap_event_hash": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+      "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+      "previous_event_hash": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+      "previous_event_id": "00000205-0000-4000-8000-000000000001",
+      "schema": "dm.codex-body.session-witness/v1",
+      "witness_sequence": 1
+    },
+    "previous_event_id": "00000205-0000-4000-8000-000000000001",
+    "protocol": "dm.we.v1",
+    "sensitivity": "private",
+    "sequence": 2,
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
+      "value": "wY4eHMhBlY4yiZOkgpYEN42JCvJoSV9pu920AnMNObJQeFqJkS_pmJzHqbBhuV5Qd43etxzM1JNSHDjw-lF_CQ"
+    },
+    "subject": "codex-body/session-witness",
+    "supersedes": null
+  },
+  "generation": 0,
+  "previous_record_hash": null,
+  "record_hash": "6b6f78ba27308b7cd0983c94f28488d35ecb9b1c38b2746672f44234b2dfcaf3",
+  "schema": "dm.codex-body.session-proof-record/v1"
+}

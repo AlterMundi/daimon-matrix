@@ -1,0 +1,8 @@
+{
+  "bootstrap_event_hash": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+  "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+  "previous_event_hash": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+  "previous_event_id": "00000205-0000-4000-8000-000000000001",
+  "schema": "dm.codex-body.session-witness/v1",
+  "witness_sequence": 1
+}

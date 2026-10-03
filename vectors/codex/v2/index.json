@@ -1,0 +1,52 @@
+{
+  "codex_version": "0.155.1",
+  "files": [
+    {
+      "name": "negative/hook-policy.json",
+      "sha256": "2e92489ca600f31645eed7c3fda570aef011d07ed433db099d763677b3838937",
+      "valid": false
+    },
+    {
+      "name": "negative/mixed-plan.json",
+      "sha256": "a277e58920241d1a7b49de17c65ecf1b7ce7538cc12f5d781ac5b28b7ede3f5d",
+      "valid": false
+    },
+    {
+      "name": "valid/bootstrap.json",
+      "sha256": "0e06a6a6806ac5dd8dfb93b2fdffea12342bbe2e26b08fd54420d21099c7c3a6",
+      "valid": true
+    },
+    {
+      "name": "valid/launch-receipt.json",
+      "sha256": "26aa481530271e80d2cd0745e2a62cb90d57aec3ded64cbb5f955abfc74d0dc4",
+      "valid": true
+    },
+    {
+      "name": "valid/parking-handle.json",
+      "sha256": "b3ab53612f4079ee24041a3837dc8e7096b1ecdefc39ac62d6e83532fbb4ed6e",
+      "valid": true
+    },
+    {
+      "name": "valid/plan.json",
+      "sha256": "f2e49e43bd48f5a929d42c0c2bbf5c3fb7b79efd778ec625ebb65d80f4ac7f94",
+      "valid": true
+    },
+    {
+      "name": "valid/profile-manifest.json",
+      "sha256": "415b68e7f106ae951de33acec1619f95197cb0c6430ed531ba4f164f5c1072fb",
+      "valid": true
+    },
+    {
+      "name": "valid/session-proof-record.json",
+      "sha256": "9a0d8cbc32374a3b7bf56ccb4a5fb20ddcd51f0470af57c284d2e95b8c7cba69",
+      "valid": true
+    },
+    {
+      "name": "valid/session-witness.json",
+      "sha256": "a5149342318755b8961e41c280d39e46b3ca4a4776885c4cd689077dc0bc9687",
+      "valid": true
+    }
+  ],
+  "schema": "dm.codex-body.vector-index/v2",
+  "scope": "public deterministic signed fixture and synthetic codec records; no native launch or live authority proof"
+}

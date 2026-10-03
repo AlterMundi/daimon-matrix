@@ -1,0 +1,135 @@
+{
+  "issue": "https://github.com/AlterMundi/daimon-matrix/issues/205",
+  "items": [
+    {
+      "criterion": 1,
+      "evidence": [
+        "provenance/codex-cli-0.155.1.json",
+        "tests.test_codex_0155_body.ReleaseAdmissionTests"
+      ],
+      "remaining": [
+        "Independent candidate review; final acceptance of configuration and notification source audit"
+      ],
+      "requirement": "Exact install provenance and release-specific contract audit",
+      "status": "partial"
+    },
+    {
+      "criterion": 2,
+      "evidence": [
+        "schemas/codex/v2/contracts.schema.json",
+        "vectors/codex/v2/index.json",
+        "tests.test_codex_0155_body"
+      ],
+      "remaining": [
+        "Independent review and current-head CI"
+      ],
+      "requirement": "Explicit closed successor without historical wildcard admission",
+      "status": "isolated-conformant"
+    },
+    {
+      "criterion": 3,
+      "evidence": [
+        "docs/codex-0.155.1-body.md",
+        "tests.test_codex_0155_body.SuccessorProfileTests",
+        "effective-controls-progress.json",
+        "source-native-effective-controls.json",
+        "config-admission-native-effective-controls.json"
+      ],
+      "remaining": [
+        "Independent exact-head review and full gates for native configuration admission",
+        "Trusted project instruction precedence",
+        "Approved neutral skills/HMK source and binding",
+        "Accepted native rollout persistence/retention policy"
+      ],
+      "requirement": "Effective policy, instruction, hooks, history, telemetry and neutral memory surface",
+      "status": "partial"
+    },
+    {
+      "criterion": 4,
+      "evidence": [
+        "installed-native-park-probe.json",
+        "installed-native-mandatory-mcp-refusal.json"
+      ],
+      "remaining": [
+        "Repeatable reviewed release qualification and current-head CI; no live support claim"
+      ],
+      "requirement": "Actual no-model startup, required MCP refusal and exact inventory",
+      "status": "isolated-installed-smoke"
+    },
+    {
+      "criterion": 5,
+      "evidence": [
+        "installed-native-park-probe.json",
+        "installed-native-isolated-resume-loss-probe.json",
+        "installed-native-start-response-loss-probe.json"
+      ],
+      "remaining": [
+        "Unknown first-start response requires explicit operator-directed resolution",
+        "Live-body lifecycle acceptance; provider canary separately authorized if required"
+      ],
+      "requirement": "Installed native start, resume, response-loss, park and recovery",
+      "status": "isolated-installed-smoke"
+    },
+    {
+      "criterion": 6,
+      "evidence": [
+        "tests.test_codex_matrix_binding.MatrixBindingTests",
+        "tests.test_codex_0155_body.SuccessorProfileTests"
+      ],
+      "remaining": [
+        "DM-018 successor procedure acceptance on the deployed body",
+        "Independent security/persistence review"
+      ],
+      "requirement": "Identity, bootstrap, capability and canonical high-water continuity",
+      "status": "partial"
+    },
+    {
+      "criterion": 7,
+      "evidence": [
+        "provenance/codex-cli-0.155.1.json",
+        "schemas/codex/v2/contracts.schema.json",
+        "vectors/codex/v2/index.json",
+        "docs/codex-0.155.1-body.md",
+        "vectors/codex/v2/adoption/profile.json",
+        "vectors/codex/v2/adoption/report.json"
+      ],
+      "remaining": [
+        "Final acceptance of mandatory controls; candidate artifacts do not promote live support"
+      ],
+      "requirement": "Provenance, schemas/vectors, profiles and support-state documentation",
+      "status": "partial"
+    },
+    {
+      "criterion": 8,
+      "evidence": [
+        "installed-candidate-qualification.json",
+        ".github/workflows/tests.yml"
+      ],
+      "remaining": [
+        "Final committed-head installed-wheel/dependency/contract qualification",
+        "Independent review and current-head CI",
+        "Exact live rollout approval"
+      ],
+      "requirement": "Exact-head release gates, independent review and same-plan rollout approval",
+      "status": "incomplete"
+    }
+  ],
+  "owner_local_evidence": {
+    "description": "Synthetic reports retained by the accountable owner; hashes identify evidence, not deployed acceptance.",
+    "sha256": {
+      "config-admission-native-effective-controls.json": "92c5c2fc0004a338c722454af6e0aee6d9b1c9a21d6c1f92a645adea5309ec37",
+      "config-admission-native-isolated-resume-loss-probe.json": "37bc788f255a1794206bb6de10035eb96d49b4f43bea9d29dc62212e1e75cfd2",
+      "config-admission-native-mandatory-mcp-refusal.json": "f24992c4173d8e4c85678b8959d062210c86de6d795eb9b220a1ece9cbcac55d",
+      "config-admission-native-start-response-loss-probe.json": "a9da164f680e15954b0d4d1a2ded823fc503e7e1ce04fe3c94a5eb8655fc357f",
+      "effective-controls-progress.json": "65e9c673bd33ce7f586a57d8198272419fca3ec74fa0a755f87950875d3b8b1e",
+      "installed-candidate-qualification.json": "55e17accd665df3c883e28c43e5f43d4a017cc399751a09e4cace914e09f2729",
+      "installed-native-isolated-resume-loss-probe.json": "45df38dfd3e3b59e22f2d380b80626817b4a9803d7a5de307a401a154c0ac014",
+      "installed-native-mandatory-mcp-refusal.json": "74800701df84b5806295f94ba96cd8b356749897a05b125668a35a84333fd9c9",
+      "installed-native-park-probe.json": "7e985e482a92892f7bc3c6e0dd87c847db625a7830c92d9246ff5e695a46ba5d",
+      "installed-native-start-response-loss-probe.json": "9f38f74f2955a8733863930f595b8bec39f13fa68923c5dd9c7d985011421007",
+      "source-native-effective-controls.json": "68201ac57c3d2f98b487f99c9ad6cee6c7b0fa3f6909551c36b0266de8d38266"
+    }
+  },
+  "qualification": "candidate; not live-supported",
+  "schema": "dm.codex-body.acceptance-trace/v1"
+}

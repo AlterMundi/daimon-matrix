@@ -1,0 +1,187 @@
+{
+  "app_server": {
+    "generated_contracts": [
+      {
+        "command": "generate-json-schema",
+        "digest": "cb06f684309129396e771ba6197e0a19fd5eb697458d6971df5c1dffca7eecb5",
+        "exit_code": 0,
+        "experimental": false,
+        "files": 312
+      },
+      {
+        "command": "generate-json-schema",
+        "digest": "178b5719060665e3cae19cfaeed60848aae310a49445d0ee0f5f48e79e68f6cc",
+        "exit_code": 0,
+        "experimental": true,
+        "files": 437
+      },
+      {
+        "command": "generate-ts",
+        "digest": "959f9c082cd867a934f3cd745ef981e4228fef92663a0ff5f745060806561c6d",
+        "exit_code": 0,
+        "experimental": false,
+        "files": 721
+      }
+    ],
+    "normalization": "relative-path + NUL + canonical-json + NUL for JSON; relative-path + NUL + bytes + NUL for TypeScript"
+  },
+  "codex_version": "0.155.1",
+  "install": {
+    "archive_bytes": 142140011,
+    "execution_or_install": false,
+    "installed_native_match": true,
+    "native_payloads": [
+      {
+        "bytes": 269273536,
+        "path": "package/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "sha256": "0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761"
+      }
+    ],
+    "package": "@openai/codex",
+    "registry_integrity_verified": true,
+    "registry_public_keys_sha256": "faf23d8753d5bb79df250f10391ac89b63ecf7743e48487a544a99c847f9c8df",
+    "registry_public_keys_source": "https://registry.npmjs.org/-/npm/v1/keys",
+    "registry_signatures_verified": [
+      {
+        "algorithm": "ECDSA-P256-SHA256",
+        "expires": null,
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "valid": true
+      },
+      {
+        "algorithm": "ECDSA-P256-SHA256",
+        "expires": null,
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "valid": true
+      }
+    ],
+    "schema": "compaii.codex-install-provenance/v1",
+    "signature_format_source": "https://docs.npmjs.com/about-registry-signatures/",
+    "slsa_attestation_verified": false,
+    "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.155.1-linux-x64.tgz",
+    "trust_boundary": "Registry signatures verified against current HTTPS-published registry keys; no claim of independent SLSA/source-build verification.",
+    "version": "0.155.1-linux-x64"
+  },
+  "native_binary_sha256": "0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761",
+  "official_source": {
+    "files": [
+      {
+        "bytes": 76531,
+        "git_blob": "28ca20f7b4750d05bcbff175ae74d96cd830d3fe",
+        "path": "codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+        "sha256": "ffc2f432bc7d0dadf9ae10db832035c8b75d7b709462bfed3c83d33ea89c526a",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server-protocol/src/protocol/v2/thread.rs"
+      },
+      {
+        "bytes": 18400,
+        "git_blob": "fbc0b70471a13349079443e04e86f5735873e1cd",
+        "path": "codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs",
+        "sha256": "c569abd0f1e3244a495a67da73a6b20ecd029a1184f8d6fd4c97a29c6fbc3ff4",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs"
+      },
+      {
+        "bytes": 40776,
+        "git_blob": "5e5f58d5799a0aaaf9640efcabc16952f88a76bf",
+        "path": "codex-rs/app-server-protocol/src/protocol/v2/config.rs",
+        "sha256": "51c06df16539283e97b6b472753f09d16712f9f1e682751ad6c03b779a0c493e",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server-protocol/src/protocol/v2/config.rs"
+      },
+      {
+        "bytes": 30301,
+        "git_blob": "25a61167b375b2d53cfef21e080909cdf44effa4",
+        "path": "codex-rs/app-server-protocol/src/protocol/v2/mcp.rs",
+        "sha256": "ae6dde792099d0df8bfc78fcf6d30e596b93f28f6af12f693fa87aeca84212ae",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server-protocol/src/protocol/v2/mcp.rs"
+      },
+      {
+        "bytes": 8639,
+        "git_blob": "17013b528f92e67dcbef37731989a21dbd3d1108",
+        "path": "codex-rs/app-server-protocol/src/protocol/v1.rs",
+        "sha256": "6177fc28441f759181feee0eb983d46fc2b8864a7ede6686503b1f8b74cd12af",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server-protocol/src/protocol/v1.rs"
+      },
+      {
+        "bytes": 62017,
+        "git_blob": "1a31316b79aedece3666507d57a10fc60ce71aa6",
+        "path": "codex-rs/features/src/lib.rs",
+        "sha256": "f52a1c2ce33ffed3fb32610d4a3bf5f273207dd8f24e0733f62a20d2deab4981",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/features/src/lib.rs"
+      },
+      {
+        "bytes": 195038,
+        "git_blob": "ffbda1e8e46f83d9e228ba8178db27ca6628e868",
+        "path": "codex-rs/core/src/config/mod.rs",
+        "sha256": "99f4fff7d17c72af3feae3a36fd022522c312148c6e99287b66223989668373f",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/config/mod.rs"
+      },
+      {
+        "bytes": 78465,
+        "git_blob": "be62b731bf5066877b75c6527c1cdfd6495bc662",
+        "path": "codex-rs/app-server/src/message_processor.rs",
+        "sha256": "a59d06723a2f51bac06a38b6d484669d93f12616fbfd0c4995794eaaa6a49e8d",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/app-server/src/message_processor.rs"
+      },
+      {
+        "bytes": 2738,
+        "git_blob": "16f8a062b594fdb58c5886ced624732b35b93b2a",
+        "path": "codex-rs/codex-home/src/instructions/mod.rs",
+        "sha256": "fad349ac9be95dfcbf5401d814f35a8cb118ab6cdfe3cf48ae89fda8b39e4614",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/codex-home/src/instructions/mod.rs"
+      },
+      {
+        "bytes": 936,
+        "git_blob": "f75cb24d577c2fc46f4c9a16fa1fe65f3715eac8",
+        "path": "codex-rs/core/src/context/user_instructions.rs",
+        "sha256": "fd331f381cd81c788c50b951fb7f5641581cdd5593ff1cc92dd47428b42ea7b9",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/context/user_instructions.rs"
+      },
+      {
+        "bytes": 4563,
+        "git_blob": "478681b528af8c48206f8230cd36b70179d77598",
+        "path": "codex-rs/codex-home/src/instructions/tests.rs",
+        "sha256": "330645d00ce248925f1805745a5340d39c76f1df5c18458e40abb408669e5b95",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/codex-home/src/instructions/tests.rs"
+      },
+      {
+        "bytes": 18193,
+        "git_blob": "431834e1da60ba6b76f85c00ba75f0bb8911597d",
+        "path": "codex-rs/core/src/agents_md.rs",
+        "sha256": "da9e6ed6d88a0cec2a7951cff2898bb28fed9cdd6c7a516eda40b7c1e56cefb5",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/agents_md.rs"
+      },
+      {
+        "bytes": 2557,
+        "git_blob": "4ac0005ceee9095e11e5b6ae023412673e042914",
+        "path": "codex-rs/core/src/agents_md_manager.rs",
+        "sha256": "5e3301c7c8763092748d86f6f92c441c2ffd5050c36ee489b609018803de1591",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/agents_md_manager.rs"
+      },
+      {
+        "bytes": 2901,
+        "git_blob": "1b9a1680106fe2bbf88ab1bb7d74eccb0c2bac25",
+        "path": "codex-rs/core/src/context/world_state/agents_md.rs",
+        "sha256": "199174af43c3ead167add60bcfd51573694b0ab41712231f3a8e4d97c646abc3",
+        "url": "https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/context/world_state/agents_md.rs"
+      }
+    ],
+    "repository": "openai/codex",
+    "revision": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+    "tag": "rust-v0.155.1",
+    "tag_object": "4e21628f9ec9ee656650cd2b62ef92225725b5ac"
+  },
+  "qualification": {
+    "independent_candidate_review": "pending",
+    "isolated_native_installed_smoke": true,
+    "limitations": [
+      "Current-head CI and independent exact-head review remain unproven.",
+      "Unknown first-start outcomes require operator-directed resolution.",
+      "Approved neutral skills/HMK binding and deployed-body acceptance remain pending.",
+      "Installed-wheel configuration admission and native lifecycle fixtures pass with fresh dependencies; complete source/package gates remain pending.",
+      "Thread/start exposes profile instructions; trusted project instruction precedence is not yet qualified."
+    ],
+    "live_supported": false,
+    "promotion": "documented-candidate",
+    "real_inference": false
+  },
+  "schema": "dm.codex-body.provenance/v2"
+}
