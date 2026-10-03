@@ -53,6 +53,38 @@ Write a plan JSON (closed field set; everything else is derived):
 `macos-launchagent`, or `env-file` (fallback: the env file is the mechanism).
 `env_file` and `wrapper_path` must be absolute paths under `home`.
 
+When Hermes uses a separate HOME, add the optional `hermes_home` field under
+the same owner `home`. The surface checker then reads
+`<hermes_home>/config.yaml`; the shared memory and skills roots still derive
+from the owner `home`. Do not copy a harness configuration into the owner's
+default `.hermes` directory just to make the check pass.
+
+To render the shared `hmk` wrapper, add an explicit native command:
+
+```json
+{
+  "hermes_home": "/home/owner/agents/compaii/hermes-home",
+  "hmk": {
+    "python": "/usr/bin/python3",
+    "scripts_root": "/home/owner/vendor/hermes-memory-kit/scripts",
+    "workspace_root": "/home/owner/agents/compaii"
+  }
+}
+```
+
+These are optional fields added to the complete binding plan above, not a
+standalone plan. The command field set is closed; script/workspace paths must
+remain under the owner HOME, without `.` or `..` segments. Pin and verify the
+actual native HMK distribution and interpreter before activation. The renderer
+does not install dependencies or change providers. It emits an executable
+owner-only `hmk`, bound into the manifest, to install at `wrapper_path`.
+The wrapper accepts a native Python script basename and preserves literal
+arguments. It selects the shared pool and binds `HMK_DB_PATH` to its absolute
+`library.db` path, overriding inherited database selection,
+and supplies the declared env file and workspace to native HMK. It never
+sources that env file as shell code. Existing plans without these fields
+retain their original rendered artifacts and manifest bytes.
+
 ```bash
 PYTHONPATH=src python -m daimon_matrix.neutral_binding \
   --plan binding-plan.json --out /tmp/neutral-binding

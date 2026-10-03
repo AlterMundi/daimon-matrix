@@ -50,6 +50,7 @@ ARTIFACT_FILENAMES: Final = {
     "chat_skill_body": "skills/daimon-chat/SKILL.md",
     "chat_skill_openai": "skills/daimon-chat/agents/openai.yaml",
     "chat_skill_hermes": "skills/daimon-chat/agents/hermes.yaml",
+    "hmk_wrapper": "hmk",
 }
 
 SKILL_DISCOVERY_SCHEMA: Final = "dm.skill-discovery/v1"
@@ -74,10 +75,20 @@ _BASE_FIELDS: Final = frozenset(
     }
 )
 _SYSTEMD_FIELDS: Final = _BASE_FIELDS | {"service_unit"}
+_OPTIONAL_FIELDS: Final = frozenset({"hermes_home", "hmk"})
 
 
 class NeutralBindingError(ValueError):
     """Stable fail-closed error. A binding is derived or refused, never guessed."""
+
+
+@dataclass(frozen=True)
+class HMKCommandPlan:
+    """Explicit existing native tooling, independent of either harness."""
+
+    python: str
+    scripts_root: str
+    workspace_root: str
 
 
 @dataclass(frozen=True)
@@ -92,6 +103,8 @@ class NeutralBindingPlan:
     env_file: str
     wrapper_path: str
     service_unit: str | None
+    hermes_home: str | None = None
+    hmk: HMKCommandPlan | None = None
 
     @property
     def agents_root(self) -> str:
@@ -125,6 +138,17 @@ def _under_home(value: Any, home: str, code: str) -> str:
     return result
 
 
+def _command_path(value: Any, code: str, home: str | None = None) -> str:
+    result = (
+        _text(value, code, _ABS_PATH)
+        if home is None
+        else _under_home(value, home, code)
+    )
+    if any(part in {".", ".."} for part in result.split("/")):
+        raise NeutralBindingError(code)
+    return result
+
+
 def plan_from_mapping(value: Any) -> NeutralBindingPlan:
     """Validate a closed binding plan or refuse it with a stable code."""
     if not isinstance(value, Mapping):
@@ -133,7 +157,7 @@ def plan_from_mapping(value: Any) -> NeutralBindingPlan:
     if not isinstance(platform, str) or platform not in PLATFORMS:
         raise NeutralBindingError("invalid_platform")
     fields = _SYSTEMD_FIELDS if platform == "linux-systemd" else _BASE_FIELDS
-    if set(value) != fields:
+    if set(value) - _OPTIONAL_FIELDS != fields:
         raise NeutralBindingError("invalid_binding_plan")
     if value["schema"] != BINDING_SCHEMA:
         raise NeutralBindingError("unsupported_binding_schema")
@@ -147,6 +171,29 @@ def plan_from_mapping(value: Any) -> NeutralBindingPlan:
     ):
         raise NeutralBindingError("invalid_harnesses")
     home = _text(value["home"], "invalid_home", _ABS_PATH)
+    hermes_home = None
+    if "hermes_home" in value:
+        if "hermes" not in harnesses_raw:
+            raise NeutralBindingError("hermes_not_in_binding")
+        hermes_home = _command_path(value["hermes_home"], "invalid_hermes_home", home)
+    hmk = None
+    if "hmk" in value:
+        command = value["hmk"]
+        if not isinstance(command, Mapping) or set(command) != {
+            "python",
+            "scripts_root",
+            "workspace_root",
+        }:
+            raise NeutralBindingError("invalid_hmk_command")
+        hmk = HMKCommandPlan(
+            python=_command_path(command["python"], "invalid_hmk_python"),
+            scripts_root=_command_path(
+                command["scripts_root"], "invalid_hmk_scripts_root", home
+            ),
+            workspace_root=_command_path(
+                command["workspace_root"], "invalid_hmk_workspace_root", home
+            ),
+        )
     service_unit: str | None = None
     if platform == "linux-systemd":
         service_unit = _text(
@@ -161,6 +208,8 @@ def plan_from_mapping(value: Any) -> NeutralBindingPlan:
         env_file=_under_home(value["env_file"], home, "invalid_env_file"),
         wrapper_path=_under_home(value["wrapper_path"], home, "invalid_wrapper_path"),
         service_unit=service_unit,
+        hermes_home=hermes_home,
+        hmk=hmk,
     )
 
 
@@ -189,6 +238,42 @@ def render_hermes_skills_fragment(plan: NeutralBindingPlan) -> bytes:
     if "hermes" not in plan.harnesses:
         raise NeutralBindingError("hermes_not_in_binding")
     return f"skills:\n  external_dirs:\n    - {plan.skills_root}\n".encode()
+
+
+def render_hmk_wrapper(plan: NeutralBindingPlan) -> bytes:
+    """Explicit native script invocation; never source an env file as shell code."""
+    if plan.hmk is None:
+        raise NeutralBindingError("hmk_command_not_in_binding")
+    # Paths use the closed absolute-path alphabet, so single-quoted literals
+    # cannot introduce expansions. Native HMK reads its configured env file for
+    # provider settings; shared-pool selection is explicit before module import.
+    script = f"""#!/bin/sh
+# Rendered dm.neutral-binding/v1; one explicit human-requested HMK invocation.
+set -eu
+if [ "$#" -lt 1 ]; then
+    echo 'hmk: script name required' >&2
+    exit 2
+fi
+case "$1" in
+    *[!A-Za-z0-9_.-]*|.*|*..*|'') echo 'hmk: invalid script name' >&2; exit 2 ;;
+    *.py) ;;
+    *) echo 'hmk: Python script name required' >&2; exit 2 ;;
+esac
+target='{plan.hmk.scripts_root}/'"$1"
+shift
+if [ ! -f "$target" ] || [ -L "$target" ]; then
+    echo 'hmk: native script unavailable' >&2
+    exit 2
+fi
+export HMK_DB_PATH='{plan.memory_base}/library.db'
+export HMK_AGENT_MEMORY_BASE='{plan.memory_base}'
+export HERMES_AGENT_MEMORY_BASE='{plan.memory_base}'
+export HMK_ENV_FILE='{plan.env_file}'
+export HMK_WORKSPACE_ROOT='{plan.hmk.workspace_root}'
+cd '{plan.hmk.workspace_root}'
+exec '{plan.hmk.python}' "$target" "$@"
+"""
+    return script.encode()
 
 
 def skill_discovery_from_mapping(value: Any) -> dict[str, Any]:
@@ -451,6 +536,11 @@ if __name__ == "__main__":
 def render_surface_check(plan: NeutralBindingPlan) -> bytes:
     """Self-contained read-only checker for the rendered territory."""
     script = _CHECK_TEMPLATE
+    if plan.hermes_home is not None:
+        script = script.replace(
+            'config = Path(HOME) / ".hermes" / "config.yaml"',
+            f'config = Path({plan.hermes_home!r}) / "config.yaml"',
+        )
     for token, replacement in (
         ("@@HOME@@", repr(plan.home)),
         ("@@SKILLS_ROOT@@", repr(plan.skills_root)),
@@ -478,6 +568,8 @@ def binding_artifacts(plan: NeutralBindingPlan) -> dict[str, bytes]:
     }
     if "hermes" in plan.harnesses:
         artifacts["hermes_skills_fragment"] = render_hermes_skills_fragment(plan)
+    if plan.hmk is not None:
+        artifacts["hmk_wrapper"] = render_hmk_wrapper(plan)
     return artifacts
 
 
@@ -518,6 +610,8 @@ def render_binding_manifest(
     }
     if plan.service_unit is not None:
         paths["service_unit"] = plan.service_unit
+    if plan.hermes_home is not None:
+        paths["hermes_home"] = plan.hermes_home
     body: dict[str, Any] = {
         "schema": MANIFEST_SCHEMA,
         "being_name": plan.being_name,
@@ -529,6 +623,12 @@ def render_binding_manifest(
     }
     if skill_discovery is not None:
         body["skill_discovery"] = skill_discovery_from_mapping(skill_discovery)
+    if plan.hmk is not None:
+        body["hmk_command"] = {
+            "python": plan.hmk.python,
+            "scripts_root": plan.hmk.scripts_root,
+            "workspace_root": plan.hmk.workspace_root,
+        }
     if codex_baseline is not None:
         body["codex_baseline_sha256"] = _sha256(codex_baseline)
     try:
@@ -914,7 +1014,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mode = 0o700
             else:
                 target = args.out / ARTIFACT_FILENAMES[name]
-                mode = 0o600
+                mode = 0o700 if name == "hmk_wrapper" else 0o600
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_bytes(data)
             os.chmod(target, mode)

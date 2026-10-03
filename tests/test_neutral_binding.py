@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,7 @@ from daimon_matrix.neutral_binding import (
     render_codex_skills_fragment,
     render_env_fragment,
     render_hermes_skills_fragment,
+    render_hmk_wrapper,
     render_owner_client,
     render_service_env,
     render_surface_check,
@@ -204,6 +209,227 @@ def build_territory(home: Path) -> None:
     wrapper = home / ".local/bin/hmk"
     wrapper.write_text("#!/bin/sh\nexit 0\n")
     wrapper.chmod(0o755)
+
+
+class HostSpecificBindingTests(unittest.TestCase):
+    def test_native_embedding_verifier_uses_bound_pool(self) -> None:
+        contract = os.environ.get("HMK_CONTRACT_ROOT")
+        if contract is None:
+            self.skipTest("pinned native HMK contract not configured")
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            scripts = home / "scripts"
+            scripts.mkdir()
+            shutil.copyfile(
+                Path(contract) / "scripts/embed_verify.py", scripts / "embed_verify.py"
+            )
+            workspace = home / "workspace"
+            workspace.mkdir()
+            plan = plan_from_mapping(
+                plan_value(
+                    home=str(home),
+                    env_file=str(home / "memory.env"),
+                    wrapper_path=str(home / "hmk"),
+                    hmk={
+                        "python": sys.executable,
+                        "scripts_root": str(scripts),
+                        "workspace_root": str(workspace),
+                    },
+                )
+            )
+            pool = Path(plan.memory_base)
+            pool.mkdir(parents=True)
+            wrong = home / "unrelated.db"
+            for path, provider in (
+                (pool / "library.db", "synthetic-selected"),
+                (wrong, "synthetic-unrelated"),
+            ):
+                with closing(sqlite3.connect(path)) as connection:
+                    connection.execute(
+                        "CREATE TABLE chapter_embeddings "
+                        "(provider TEXT, model TEXT, dims INT, embedding_json TEXT)"
+                    )
+                    connection.execute(
+                        "INSERT INTO chapter_embeddings VALUES (?, ?, ?, ?)",
+                        (provider, "fixture", 1, "[1]"),
+                    )
+                    connection.commit()
+            original_wrong = wrong.read_bytes()
+            wrapper = home / "hmk"
+            wrapper.write_bytes(render_hmk_wrapper(plan))
+            wrapper.chmod(0o700)
+            for overrides in (
+                {"HMK_DB_PATH": str(wrong)},
+                {"HERMES_DB_PATH": str(wrong)},
+                {"HMK_BASE_DIR": str(home / "unrelated-base")},
+            ):
+                with self.subTest(overrides=overrides):
+                    result = subprocess.run(
+                        [str(wrapper), "embed_verify.py", "--json"],
+                        env={"HOME": str(home), "PATH": "/usr/bin:/bin", **overrides},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("synthetic-selected", result.stdout)
+                    self.assertNotIn("synthetic-unrelated", result.stdout)
+                    self.assertEqual(wrong.read_bytes(), original_wrong)
+
+    def test_custom_hermes_home_checks_the_actual_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            build_territory(home)
+            actual_home = home / "agents/compaii/hermes-home"
+            actual_home.mkdir(parents=True)
+            (home / ".hermes/config.yaml").rename(actual_home / "config.yaml")
+            value = plan_value(
+                home=str(home),
+                env_file=str(home / ".hermes/.env"),
+                wrapper_path=str(home / ".local/bin/hmk"),
+            )
+            script = home / "surface_check.py"
+            script.write_bytes(render_surface_check(plan_from_mapping(value)))
+            before = subprocess.run(
+                [sys.executable, str(script)], capture_output=True, check=False
+            )
+            self.assertEqual(before.returncode, 1)
+            self.assertIn(b"FAIL hermes-config-present", before.stdout)
+            value["hermes_home"] = str(actual_home)
+            plan = plan_from_mapping(value)
+            script.write_bytes(render_surface_check(plan))
+            after = subprocess.run(
+                [sys.executable, str(script)], capture_output=True, check=False
+            )
+            self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+            self.assertIn(b"surface-check: ok", after.stdout)
+            manifest = json.loads(render_binding_manifest(plan))
+            self.assertEqual(manifest["paths"]["hermes_home"], str(actual_home))
+            self.assertEqual(
+                manifest["paths"]["memory_base"],
+                str(home / ".agents/memory/compaii/agent-memory"),
+            )
+
+    def test_optional_command_fields_are_closed_and_canonical(self) -> None:
+        command = {
+            "python": "/usr/bin/python3",
+            "scripts_root": HOME + "/vendor/hmk/scripts",
+            "workspace_root": HOME + "/agents/compaii",
+        }
+        self.assertIsNotNone(plan_from_mapping(plan_value(hmk=command)).hmk)
+        assert_code(self, plan_value(hmk=None), "invalid_hmk_command")
+        assert_code(
+            self, plan_value(hmk={**command, "extra": True}), "invalid_hmk_command"
+        )
+        assert_code(self, plan_value(hermes_home=None), "invalid_hermes_home")
+        assert_code(
+            self, plan_value(hermes_home=HOME + "/../other"), "invalid_hermes_home"
+        )
+        assert_code(
+            self,
+            plan_value(harnesses=["codex"], hermes_home=HOME + "/hermes"),
+            "hermes_not_in_binding",
+        )
+        for name, code in (
+            ("python", "invalid_hmk_python"),
+            ("scripts_root", "invalid_hmk_scripts_root"),
+            ("workspace_root", "invalid_hmk_workspace_root"),
+        ):
+            assert_code(
+                self, plan_value(hmk={**command, name: HOME + "/../other"}), code
+            )
+        assert_code(
+            self,
+            plan_value(hmk={**command, "scripts_root": "/etc/scripts"}),
+            "invalid_hmk_scripts_root",
+        )
+
+    def test_rendered_wrapper_invokes_native_script_with_neutral_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            home.mkdir()
+            scripts = home / "vendor/hmk/scripts"
+            scripts.mkdir(parents=True)
+            workspace = home / "agents/compaii"
+            workspace.mkdir(parents=True)
+            env_file = home / "memory.env"
+            marker = home / "must-not-execute"
+            env_file.write_text(f"UNTRUSTED=$(touch {marker})\n")
+            target = scripts / "memoryctl.py"
+            target.write_text(
+                "import os,json,sys\n"
+                "print(json.dumps({'argv':sys.argv[1:],'cwd':os.getcwd(),"
+                "'base':os.environ['HMK_AGENT_MEMORY_BASE'],"
+                "'hermes_base':os.environ['HERMES_AGENT_MEMORY_BASE'],"
+                "'env_file':os.environ['HMK_ENV_FILE'],"
+                "'workspace':os.environ['HMK_WORKSPACE_ROOT'],"
+                "'db_override':os.environ.get('HMK_DB_PATH'),"
+                "'provider':os.environ.get('HMK_EMBED_PROVIDER')}))\n"
+            )
+            value = plan_value(
+                home=str(home),
+                env_file=str(env_file),
+                wrapper_path=str(home / "hmk"),
+                hmk={
+                    "python": sys.executable,
+                    "scripts_root": str(scripts),
+                    "workspace_root": str(workspace),
+                },
+            )
+            plan = plan_from_mapping(value)
+            wrapper = home / "hmk"
+            wrapper.write_bytes(render_hmk_wrapper(plan))
+            wrapper.chmod(0o700)
+            environment = {
+                **os.environ,
+                "HMK_DB_PATH": str(home / "wrong.db"),
+                "HERMES_DB_PATH": str(home / "wrong-legacy.db"),
+                "HMK_BASE_DIR": str(home / "wrong-base"),
+                "HMK_EMBED_PROVIDER": "existing-provider",
+                "HMK_AGENT_MEMORY_BASE": str(home / "wrong-pool"),
+            }
+            result = subprocess.run(
+                [str(wrapper), "memoryctl.py", "stats", "literal argument"],
+                env=environment,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            native = json.loads(result.stdout)
+            self.assertEqual(native["argv"], ["stats", "literal argument"])
+            self.assertEqual(native["cwd"], str(workspace))
+            self.assertEqual(native["workspace"], str(workspace))
+            self.assertEqual(native["base"], plan.memory_base)
+            self.assertEqual(native["hermes_base"], plan.memory_base)
+            self.assertEqual(native["env_file"], str(env_file))
+            self.assertEqual(native["db_override"], f"{plan.memory_base}/library.db")
+            self.assertEqual(native["provider"], "existing-provider")
+            self.assertFalse(marker.exists())
+            manifest = json.loads(render_binding_manifest(plan))
+            self.assertEqual(
+                manifest["artifacts"]["hmk_wrapper"],
+                hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(manifest["hmk_command"], value["hmk"])
+            for argument in ("../memoryctl.py", str(target), "--help", "missing.py"):
+                refused = subprocess.run(
+                    [str(wrapper), argument], capture_output=True, check=False
+                )
+                self.assertEqual(refused.returncode, 2, argument)
+            target.unlink()
+            (scripts / "elsewhere.py").write_text("print('must not execute')\n")
+            target.symlink_to(scripts / "elsewhere.py")
+            refused = subprocess.run(
+                [str(wrapper), "memoryctl.py"], capture_output=True, check=False
+            )
+            self.assertEqual(refused.returncode, 2)
+            out = home / "rendered-binding"
+            plan_file = home / "binding-plan.json"
+            plan_file.write_text(json.dumps(value))
+            self.assertEqual(main(["--plan", str(plan_file), "--out", str(out)]), 0)
+            self.assertEqual((out / "hmk").read_bytes(), wrapper.read_bytes())
+            self.assertEqual(stat.S_IMODE((out / "hmk").stat().st_mode), 0o700)
 
 
 class SurfaceCheckTests(unittest.TestCase):
