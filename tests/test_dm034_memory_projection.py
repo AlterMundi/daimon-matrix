@@ -46,6 +46,7 @@ from daimon_matrix.memory_projection import (
     validate_rebuild_plan,
     validate_rebuild_receipt,
 )
+from daimon_matrix.sync import SyncEngine
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -214,6 +215,7 @@ class DM034ProjectionTests(RootLedgerFixture):
         category: str = "personal-insight",
         author: str | None = None,
         media_type: str = "text/plain",
+        origin_label: str = "legion",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         sequence = 1 if predecessor is None else predecessor["payload"]["sequence"] + 1
         reference = None if text is None else self.content(text, media_type=media_type)
@@ -244,13 +246,14 @@ class DM034ProjectionTests(RootLedgerFixture):
             body_evidence=None,
             predecessor_decision_id=predecessor_decision_id,
         )
-        checkpoint = memory_checkpoint(self.ledger_a, candidate, captured_at_ms=NOW)
+        ledger = self.ledger_a if origin_label == "legion" else self.ledger_b
+        checkpoint = memory_checkpoint(ledger, candidate, captured_at_ms=NOW)
         plan = evaluate_memory_candidate(
             self.policy, candidate, checkpoint, evaluated_at_ms=NOW
         )
         self.assertEqual(plan["outcome"], "eligible")
         event = MemoryPolicyExecutor(
-            self.ledger_a, self.signers["legion"], clock=lambda: NOW
+            ledger, self.signers[origin_label], clock=lambda: NOW
         ).execute(
             plan,
             self.policy,
@@ -259,6 +262,171 @@ class DM034ProjectionTests(RootLedgerFixture):
             request_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "dm034:" + label)),
         )["event"]
         return event, plan
+
+    def origin_adapter(
+        self, label: str, *, on_receiver: bool = True
+    ) -> MemoryProjectionAdapter:
+        return MemoryProjectionAdapter(
+            ledger=self.ledger_b if on_receiver else self.ledger_a,
+            profile=create_projection_profile(
+                source_instance="matrix:" + self.origins[label]["embodiment_id"],
+                target_instance="hmk:synthetic",
+            ),
+            transport=self.transport,
+            content_resolver=self.resolve,
+            journal=ProjectionJournal(self.root_path / label / "projection.sqlite"),
+        )
+
+    def sync_memory_ledgers(self, *, request_label: str) -> None:
+        receiver = SyncEngine(self.ledger_b)
+        request = receiver.request(
+            request_id=str(uuid.uuid5(uuid.NAMESPACE_URL, request_label)), limit=100
+        )
+        page = SyncEngine(self.ledger_a).serve(request)
+        self.assertFalse(page["more"])
+        receipt = receiver.pull(page)
+        self.assertEqual(receiver.pull(page), receipt)
+
+    def test_cross_host_projection_keeps_origin_and_rebuild_namespaces_separate(
+        self,
+    ) -> None:
+        local, _ = self.record(label="origin-a", text="synthetic source memory")
+        remote, _ = self.record(
+            label="origin-b",
+            origin_label="daimonmatrix",
+            memory_id="34000000-0000-4000-8000-000000000002",
+            text="synthetic receiver memory",
+        )
+        self.sync_memory_ledgers(request_label="two-origin-sync")
+        source = self.origin_adapter("legion")
+        receiver = self.origin_adapter("daimonmatrix")
+        receipt = source.project(event_id=local["event_id"], idempotency_key="origin-a")
+        receiver.project(event_id=remote["event_id"], idempotency_key="origin-b")
+        self.assertEqual(receipt["source_instance"], "matrix:embodiment:legion")
+        self.assertEqual(len(source.verify()["projections"]), 1)
+        self.assertEqual(len(receiver.verify()["projections"]), 1)
+        before = receiver.verify()["logical_hash"]
+        plan = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000003",
+            idempotency_key="rebuild-origin-a",
+        )
+        self.assertEqual(len(plan["hmk_plan"]["entries"]), 1)
+        source.rebuild_apply(plan)
+        self.assertEqual(receiver.verify()["logical_hash"], before)
+        self.assertEqual(
+            source.recall(memory_id=MEMORY_ID)["origin"]["source_instance"],
+            "matrix:embodiment:legion",
+        )
+
+    def test_received_event_refuses_receiver_namespace_before_effect(self) -> None:
+        event, _ = self.record(label="wrong-receiver-namespace")
+        self.sync_memory_ledgers(request_label="wrong-receiver-sync")
+        adapter = self.origin_adapter("daimonmatrix")
+        with self.assertRaisesRegex(MemoryProjectionError, "matrix_memory_unknown"):
+            adapter.project(event_id=event["event_id"], idempotency_key="wrong-origin")
+        self.assertIsNone(adapter.journal.lookup("wrong-origin"))
+        self.assertFalse((self.hmk_base / "library.db").exists())
+
+    def test_missing_or_substituted_cross_host_content_is_not_projected(self) -> None:
+        event, _ = self.record(label="cross-host-content")
+        self.sync_memory_ledgers(request_label="cross-host-content-sync")
+        reference = event["payload"]["content_ref"]
+        original = self.contents.pop(reference["sha256"])
+        adapter = self.origin_adapter("legion")
+        with self.assertRaisesRegex(
+            MemoryProjectionError, "memory_projection_content_unavailable"
+        ):
+            adapter.project(
+                event_id=event["event_id"], idempotency_key="missing-content"
+            )
+        self.contents[reference["sha256"]] = b"substituted synthetic content"
+        with self.assertRaisesRegex(
+            MemoryProjectionError, "memory_projection_content_mismatch"
+        ):
+            adapter.project(event_id=event["event_id"], idempotency_key="wrong-content")
+        self.contents[reference["sha256"]] = original
+        adapter.project(event_id=event["event_id"], idempotency_key="valid-content")
+        self.assertEqual(
+            adapter.recall(memory_id=MEMORY_ID)["statement"]["text"], original.decode()
+        )
+
+    def test_sibling_correction_keeps_assertion_origin_namespace(self) -> None:
+        event, plan = self.record(label="source-before-correction")
+        self.sync_memory_ledgers(request_label="before-sibling-correction")
+        corrected, _ = self.record(
+            label="sibling-correction",
+            origin_label="daimonmatrix",
+            operation="correct",
+            text="synthetic sibling correction",
+            predecessor=event,
+            predecessor_decision_id=plan["decision_id"],
+        )
+        source = self.origin_adapter("legion")
+        rebuild = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000004",
+            idempotency_key="corrected-origin-rebuild",
+        )
+        source.rebuild_apply(rebuild)
+        recalled = source.recall(memory_id=MEMORY_ID)
+        self.assertEqual(
+            recalled["origin"]["source_instance"], "matrix:embodiment:legion"
+        )
+        self.assertEqual(recalled["origin"]["head"]["event_id"], corrected["event_id"])
+        with self.assertRaisesRegex(MemoryProjectionError, "matrix_memory_unknown"):
+            self.origin_adapter("daimonmatrix").inspect(memory_id=MEMORY_ID)
+
+    def test_sibling_retraction_verifies_before_and_after_empty_rebuild(self) -> None:
+        event, plan = self.record(label="source-before-retraction")
+        self.sync_memory_ledgers(request_label="before-sibling-retraction")
+        source = self.origin_adapter("legion")
+        source.project(event_id=event["event_id"], idempotency_key="before-retract")
+        retracted, _ = self.record(
+            label="sibling-retraction",
+            origin_label="daimonmatrix",
+            operation="retract",
+            text=None,
+            predecessor=event,
+            predecessor_decision_id=plan["decision_id"],
+        )
+        source.project(event_id=retracted["event_id"], idempotency_key="retract")
+        self.assertFalse(source.verify()["projections"][0]["active"])
+        rebuild = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000005",
+            idempotency_key="retracted-origin-rebuild",
+        )
+        self.assertEqual(rebuild["hmk_plan"]["entries"], [])
+        receipt = source.rebuild_apply(rebuild)
+        self.assertEqual(source.rebuild_apply(rebuild), receipt)
+        self.assertEqual(source.verify()["projections"], [])
+        with self.assertRaises(MemoryProjectionError):
+            source.recall(memory_id=MEMORY_ID)
+
+    def test_first_received_retraction_rebuilds_without_fabricated_projection(
+        self,
+    ) -> None:
+        event, plan = self.record(label="assert-before-first-received-retraction")
+        self.record(
+            label="first-received-retraction",
+            operation="retract",
+            text=None,
+            predecessor=event,
+            predecessor_decision_id=plan["decision_id"],
+        )
+        self.sync_memory_ledgers(request_label="first-received-retraction-sync")
+        source = self.origin_adapter("legion")
+        rebuild = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000006",
+            idempotency_key="first-received-retracted-origin",
+        )
+        source.rebuild_apply(rebuild)
+        self.assertEqual(source.verify()["projections"], [])
+        # Generic frozen namespace profiles obey the same active-head rebuild.
+        generic_rebuild = self.adapter.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000007",
+            idempotency_key="generic-retracted-origin",
+        )
+        self.adapter.rebuild_apply(generic_rebuild)
+        self.assertEqual(self.adapter.verify()["projections"], [])
 
     def test_manifest_profile_and_exact_pin_are_closed(self) -> None:
         manifest = create_projection_manifest()
