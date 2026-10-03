@@ -135,8 +135,19 @@ class SessionProofJournal:
                 raise CodexBodyError("session_proof_parent_unsafe")
             flags = os.O_RDWR | os.O_APPEND | os.O_CREAT if write else os.O_RDONLY
             descriptor = os.open(
-                self.path.name, flags | os.O_NOFOLLOW, 0o600, dir_fd=parent
+                self.path.name,
+                flags | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600,
+                dir_fd=parent,
             )
+            file_info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(file_info.st_mode)
+                or file_info.st_uid != os.geteuid()
+                or file_info.st_nlink != 1
+                or stat.S_IMODE(file_info.st_mode) & 0o077
+            ):
+                raise CodexBodyError("session_proof_file_unsafe")
             fcntl.flock(descriptor, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
             return parent, descriptor
         except BaseException:

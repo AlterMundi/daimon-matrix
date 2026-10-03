@@ -7,6 +7,8 @@ import hashlib
 import importlib
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -329,6 +331,9 @@ class SuccessorProfileTests(unittest.TestCase):
             ("projects", {}),
             ("developer_instructions", "synthetic override"),
             ("hooks", {}),
+            ("notify", ["/bin/true"]),
+            ("model_instructions_file", "/synthetic/instructions.txt"),
+            ("experimental_compact_prompt_file", "/synthetic/compact.txt"),
         ):
             changed = copy.deepcopy(response)
             changed["config"][field] = value
@@ -670,6 +675,94 @@ class SuccessorProfileTests(unittest.TestCase):
             )
         self.assertEqual(refused.exception.code, "codex_journal_profile_mismatch")
         self.assertEqual(transport.mock_calls, [])
+
+    def test_start_rechecks_admission_and_preserves_pending(self) -> None:
+        self.create()
+        now = [self.now]
+        calls: list[int] = []
+
+        def presence(binding: Mapping[str, Any], at_ms: int) -> dict[str, Any]:
+            calls.append(at_ms)
+            return {
+                **{
+                    key: binding[key]
+                    for key in (
+                        "body_ref",
+                        "embodiment_id",
+                        "incarnation_id",
+                        "matrix_session_id",
+                        "matrix_high_water",
+                    )
+                },
+                "state": "active",
+                "expires_at_ms": self.now + 1000,
+            }
+
+        from tests.test_dm040_codex_body import CodexBodyFixture
+
+        inventory = CodexBodyFixture.mcp_inventory(self)  # type: ignore[arg-type]
+        server = inventory["data"][0]
+        server.update(runtimeStatus="connected", pluginId=None, toolsError=None)
+        server["resources"] = [
+            {"uri": uri, "mimeType": "application/vnd.daimon-matrix+json"}
+            for uri in (
+                "daimon:contract/server",
+                "daimon:contract/tools",
+                "daimon:contract/local-api",
+                "daimon:runtime/status",
+                "daimon:scope/me",
+                "daimon:scope/we",
+                "daimon:we/heads",
+                "daimon:we/projection",
+            )
+        ]
+
+        def rpc(method: str, _params: Any) -> dict[str, Any]:
+            if method == "thread/start":
+                now[0] += 2000
+                return self.thread_response()
+            self.assertEqual(method, "mcpServerStatus/list")
+            return inventory
+
+        transport = mock.Mock()
+        transport.request.side_effect = rpc
+        journal = body.RuntimeHandleJournal(
+            self.root / "expired-start.jsonl", plan=self.plan
+        )
+        adapter = body.CodexBodyAdapter(
+            self.plan, transport, presence, journal, clock=lambda: now[0]
+        )
+        adapter.initialized = True
+        with self.assertRaises(CodexBodyError) as refused:
+            adapter.start()
+        self.assertEqual(refused.exception.code, "matrix_presence_rejected")
+        self.assertEqual(calls, [self.now, self.now + 2000])
+        self.assertEqual([row["state"] for row in journal.load()], ["starting"])
+        with self.assertRaises(CodexBodyError) as retry:
+            adapter.start()
+        self.assertEqual(retry.exception.code, "codex_launch_outcome_unknown")
+        self.assertEqual(transport.request.call_count, 2)
+
+    def test_runtime_journal_fifo_refuses_without_waiting_for_writer(self) -> None:
+        path = self.root / "handles.fifo"
+        os.mkfifo(path, 0o600)
+        code = """import sys
+from pathlib import Path
+from daimon_matrix.codex_body import CodexBodyError, RuntimeHandleJournal
+try:
+    RuntimeHandleJournal(Path(sys.argv[1])).load()
+except CodexBodyError as error:
+    sys.exit(0 if error.code == 'handle_journal_rejected' else 1)
+sys.exit(2)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, os.fspath(path)],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertTrue(path.exists())
 
     def test_native_park_cannot_claim_shutdown_through_generic_rpc_transport(
         self,

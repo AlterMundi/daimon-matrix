@@ -554,6 +554,9 @@ def _validate_native_configuration(
                 "instructions",
                 "compact_prompt",
                 "hooks",
+                "notify",
+                "model_instructions_file",
+                "experimental_compact_prompt_file",
             )
         )
     ):
@@ -1569,7 +1572,9 @@ class RuntimeHandleJournal:
         _secure_directory(self.path.parent, "handle_journal_parent_rejected")
         if not self.path.exists():
             return []
-        descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(
+            self.path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+        )
         try:
             info = os.fstat(descriptor)
             if (
@@ -2679,6 +2684,8 @@ class CodexBodyAdapter:
             require_tools=not _profile_contract(self.plan.value).automatic_hooks,
             release=_profile_contract(self.plan.value).release.version,
         )
+        if not _profile_contract(self.plan.value).automatic_hooks:
+            presence = self._verify_presence(presence["matrix_high_water"])
         return self._record_handle(thread_id, session_tree_id, None, "active", presence)
 
     def resume(self) -> dict[str, Any]:

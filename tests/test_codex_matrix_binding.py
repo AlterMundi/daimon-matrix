@@ -52,6 +52,42 @@ class MatrixBindingTests(RuntimeFixture):
         super().setUp()
         self.runtime_root, self.bundle, self.capability = self.make_bundle()
 
+    def test_session_journal_fifo_refuses_before_lock_or_verification(self) -> None:
+        path = self.root_path / "proof.fifo"
+        os.mkfifo(path, 0o600)
+        before = path.stat()
+        bootstrap = (
+            Path(__file__).resolve().parents[1]
+            / "vectors/codex/v2/valid/bootstrap.json"
+        )
+        code = """import json,sys
+from pathlib import Path
+from daimon_matrix.codex_body import CodexBodyError
+from daimon_matrix.codex_matrix_binding import SessionProofJournal
+journal=SessionProofJournal(Path(sys.argv[1]),bootstrap=json.loads(Path(sys.argv[2]).read_bytes()))
+def verifier(*args):
+    raise AssertionError('unsafe journal reached verification')
+try:
+    if sys.argv[3]=='load':
+        journal.load(expected_high_water=journal.bootstrap['matrix_high_water'],verifier=verifier)
+    else:
+        journal.append({},expected_high_water=journal.bootstrap['matrix_high_water'],verifier=verifier)
+except CodexBodyError as error:
+    sys.exit(0 if error.code=='session_proof_file_unsafe' else 1)
+sys.exit(2)
+"""
+        for action in ("load", "append"):
+            with self.subTest(action=action):
+                result = subprocess.run(
+                    [sys.executable, "-c", code, str(path), str(bootstrap), action],
+                    capture_output=True,
+                    timeout=2,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+        after = path.stat()
+        self.assertEqual((before.st_ino, before.st_mode), (after.st_ino, after.st_mode))
+
     def test_native_descriptor_repeated_reads_preserve_shared_offset(self) -> None:
         path = self.root_path / "native-capability"
         path.write_bytes(self.capability.key)
