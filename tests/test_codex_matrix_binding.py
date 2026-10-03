@@ -10,10 +10,12 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from daimon_matrix import codex_body, codex_matrix_binding
 from daimon_matrix.canonical import b64url
 from daimon_matrix.client import ClientConfig, ClientError, LocalClient
 from daimon_matrix.codex_body import CodexBodyError, bind_plan, create_plan_value
@@ -57,6 +59,139 @@ class MatrixBindingTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
         self.runtime_root, self.bundle, self.capability = self.make_bundle()
+
+    def _assert_owner_reopening_saved_tip(
+        self,
+        client: LocalClient,
+        bootstrap: dict[str, Any],
+        witness: dict[str, Any],
+        proof_path: Path,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Exercise real signed/socket/profile I/O before the native boundary."""
+        binary = self.root_path / "synthetic-native"
+        binary.write_bytes(b"#!/bin/sh\nexit 0\n")
+        binary.chmod(0o700)
+        pin = replace(
+            codex_body.SUCCESSOR_RELEASE,
+            binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+        )
+        key = self.root_path / "reopening.key"
+        key.write_bytes(self.capability.key)
+        key.chmod(0o600)
+        descriptor = os.open(key, os.O_RDONLY)
+        original_proofs = proof_path.read_bytes()
+        try:
+            with mock.patch.object(codex_body, "SUCCESSOR_RELEASE", pin):
+                plan = bind_plan(
+                    create_plan_value(
+                        bootstrap=bootstrap,
+                        model="synthetic",
+                        provider="openai",
+                        workspace_ref="dm:workspace:v1:" + b64url(bytes(32)),
+                        release="0.155.1",
+                    ),
+                    profile_root=self.root_path / "reopening-profile",
+                    workspace=self.root_path,
+                    codex_binary=binary,
+                    mcp_binary=binary,
+                    mcp_args=(
+                        "--socket",
+                        str(client.socket_path),
+                        "--client-config",
+                        str(self.runtime_root / "client.json"),
+                        "--capability-key-fd",
+                        str(descriptor),
+                        "--request-dir",
+                        str(self.root_path),
+                    ),
+                )
+                bootstrap_verifier = DaemonBootstrapVerifier(
+                    client, self.authority, self.admission()
+                )
+                codex_body.create_profile(
+                    plan,
+                    bootstrap_verifier=lambda evidence, at_ms: bootstrap_verifier(
+                        evidence, at_ms
+                    ),
+                    clock=lambda: NOW,
+                )
+                handles = codex_body.RuntimeHandleJournal(
+                    plan.profile_root / "runtime-handles.jsonl", plan=plan
+                )
+                core = {
+                    name: bootstrap[name]
+                    for name in (
+                        "being_ref",
+                        "body_ref",
+                        "embodiment_id",
+                        "incarnation_id",
+                        "matrix_session_id",
+                    )
+                }
+                core.update(
+                    matrix_high_water=witness["content_hash"],
+                    thread_id="saved-thread",
+                    session_tree_id="saved-session",
+                    turn_id=None,
+                    observed_at_ms=NOW,
+                )
+
+                def reopen() -> Any:
+                    return open_owner_native_session(
+                        plan,
+                        self.bundle,
+                        client,
+                        body_reader=lambda *_: snapshot,
+                        proof_journal_path=proof_path,
+                        max_age_ms=1000,
+                        clock=lambda: NOW,
+                    )
+
+                # Only native process/protocol initialization are replaced.
+                # Admission, signatures, profile and both journals remain real.
+                with (
+                    mock.patch.object(
+                        codex_matrix_binding, "AppServerProcess"
+                    ) as spawn,
+                    mock.patch.object(codex_body.CodexBodyAdapter, "initialize"),
+                ):
+                    for state in ("active", "resuming", "parking"):
+                        handles.append({**core, "state": state})
+                        saved_handles = handles.path.read_bytes()
+                        session = reopen()
+                        session.close()
+                        self.assertEqual(handles.path.read_bytes(), saved_handles)
+                        self.assertEqual(proof_path.read_bytes(), original_proofs)
+                    self.assertEqual(spawn.call_count, 3)
+                    spawn.reset_mock()
+                    corruptions = {
+                        "missing": None,
+                        "empty": b"",
+                        "torn": original_proofs[:-1],
+                        "substituted": original_proofs.replace(
+                            witness["content_hash"].encode(), b"0" * 64
+                        ),
+                    }
+                    for name, raw in corruptions.items():
+                        with self.subTest(ancestry=name):
+                            if raw is None:
+                                proof_path.unlink()
+                            else:
+                                proof_path.write_bytes(raw)
+                                proof_path.chmod(0o600)
+                            with self.assertRaises(CodexBodyError):
+                                reopen()
+                            spawn.assert_not_called()
+                            self.assertEqual(handles.path.read_bytes(), saved_handles)
+                            if raw is None:
+                                self.assertFalse(proof_path.exists())
+                            else:
+                                self.assertEqual(proof_path.read_bytes(), raw)
+                            proof_path.write_bytes(original_proofs)
+                            proof_path.chmod(0o600)
+        finally:
+            os.close(descriptor)
 
     def test_session_journal_fifo_refuses_before_lock_or_verification(self) -> None:
         path = self.root_path / "proof.fifo"
@@ -909,6 +1044,9 @@ sys.exit(2)
             admitted = native_admission(requested, NOW)
             self.assertEqual(admitted["matrix_high_water"], witness["content_hash"])
             self.assertEqual(admitted["expires_at_ms"], NOW + 1000)
+            self._assert_owner_reopening_saved_tip(
+                client, bootstrap, witness, proof_path, snapshot
+            )
             with self.assertRaises(CodexBodyError):
                 native_admission(
                     {**requested, "incarnation_id": "another-incarnation"}, NOW

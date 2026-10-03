@@ -338,7 +338,12 @@ with an existing attested bootstrap, a trusted host `BodyReader`, the durable
 session proof journal and the native runtime-handle journal. It checks the
 rendered MCP's exact client configuration, socket and key binding, and verifies
 current authority and Cluster evidence before profile creation or native
-spawn. It returns an initialized process and adapter; the owner explicitly
+spawn.
+When reopening an existing profile, admission verifies the signed ancestry
+against the terminal high-water in its validated profile-bound handle history.
+Only a fresh start without saved handles uses the bootstrap high-water;
+missing or altered ancestry refuses without rewriting either journal.
+It returns an initialized process and adapter; the owner explicitly
 requests start, resume, recovery or park. Closing the transport does not invent
 a park receipt. Failed initialization closes its child and preserves evidence.
 The host must supply its actual Cluster reader; cached metadata or daemon

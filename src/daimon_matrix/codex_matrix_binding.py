@@ -45,7 +45,6 @@ from .codex_body import (
     _write_new_file,
     create_profile,
     validate_bootstrap,
-    verify_profile,
 )
 from .identity import (
     VerificationError,
@@ -836,17 +835,30 @@ def open_owner_native_session(
     presence = NativeAdmissionVerifier(
         client, authority, admission, proofs, body_reader, max_age_ms
     )
+    handles = None
+    expected_high_water = bootstrap["matrix_high_water"]
+    if not create:
+        # Authenticate ancestry against the independently saved, profile-bound
+        # handle tip. The proof journal cannot choose its own expected tip.
+        handles = RuntimeHandleJournal(
+            plan.profile_root / "runtime-handles.jsonl", plan=plan
+        )
+        saved_handles = handles.load()
+        if saved_handles:
+            expected_high_water = saved_handles[-1]["matrix_high_water"]
     presence(
         {
-            name: bootstrap[name]
-            for name in (
-                "being_ref",
-                "body_ref",
-                "embodiment_id",
-                "incarnation_id",
-                "matrix_session_id",
-                "matrix_high_water",
-            )
+            **{
+                name: bootstrap[name]
+                for name in (
+                    "being_ref",
+                    "body_ref",
+                    "embodiment_id",
+                    "incarnation_id",
+                    "matrix_session_id",
+                )
+            },
+            "matrix_high_water": expected_high_water,
         },
         clock(),
     )
@@ -856,11 +868,10 @@ def open_owner_native_session(
             bootstrap_verifier=lambda evidence, at_ms: verifier(evidence, at_ms),
             clock=clock,
         )
-    else:
-        verify_profile(plan)
-    handles = RuntimeHandleJournal(
-        plan.profile_root / "runtime-handles.jsonl", plan=plan
-    )
+    if handles is None:
+        handles = RuntimeHandleJournal(
+            plan.profile_root / "runtime-handles.jsonl", plan=plan
+        )
     process = AppServerProcess(plan, pass_fds=(int(plan.mcp_args[5]),))
     try:
         adapter = CodexBodyAdapter(
