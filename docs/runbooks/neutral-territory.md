@@ -79,7 +79,8 @@ actual native HMK distribution and interpreter before activation. The renderer
 does not install dependencies or change providers. It emits an executable
 owner-only `hmk`, bound into the manifest, to install at `wrapper_path`.
 The wrapper accepts a native Python script basename and preserves literal
-arguments. It selects the shared pool, clears an inherited `HMK_DB_PATH`,
+arguments. It selects the shared pool and binds `HMK_DB_PATH` to its absolute
+`library.db` path, overriding inherited database selection,
 and supplies the declared env file and workspace to native HMK. It never
 sources that env file as shell code. Existing plans without these fields
 retain their original rendered artifacts and manifest bytes.

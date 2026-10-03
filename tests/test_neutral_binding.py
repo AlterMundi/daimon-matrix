@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +212,70 @@ def build_territory(home: Path) -> None:
 
 
 class HostSpecificBindingTests(unittest.TestCase):
+    def test_native_embedding_verifier_uses_bound_pool(self) -> None:
+        contract = os.environ.get("HMK_CONTRACT_ROOT")
+        if contract is None:
+            self.skipTest("pinned native HMK contract not configured")
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            scripts = home / "scripts"
+            scripts.mkdir()
+            shutil.copyfile(
+                Path(contract) / "scripts/embed_verify.py", scripts / "embed_verify.py"
+            )
+            workspace = home / "workspace"
+            workspace.mkdir()
+            plan = plan_from_mapping(
+                plan_value(
+                    home=str(home),
+                    env_file=str(home / "memory.env"),
+                    wrapper_path=str(home / "hmk"),
+                    hmk={
+                        "python": sys.executable,
+                        "scripts_root": str(scripts),
+                        "workspace_root": str(workspace),
+                    },
+                )
+            )
+            pool = Path(plan.memory_base)
+            pool.mkdir(parents=True)
+            wrong = home / "unrelated.db"
+            for path, provider in (
+                (pool / "library.db", "synthetic-selected"),
+                (wrong, "synthetic-unrelated"),
+            ):
+                with closing(sqlite3.connect(path)) as connection:
+                    connection.execute(
+                        "CREATE TABLE chapter_embeddings "
+                        "(provider TEXT, model TEXT, dims INT, embedding_json TEXT)"
+                    )
+                    connection.execute(
+                        "INSERT INTO chapter_embeddings VALUES (?, ?, ?, ?)",
+                        (provider, "fixture", 1, "[1]"),
+                    )
+                    connection.commit()
+            original_wrong = wrong.read_bytes()
+            wrapper = home / "hmk"
+            wrapper.write_bytes(render_hmk_wrapper(plan))
+            wrapper.chmod(0o700)
+            for overrides in (
+                {"HMK_DB_PATH": str(wrong)},
+                {"HERMES_DB_PATH": str(wrong)},
+                {"HMK_BASE_DIR": str(home / "unrelated-base")},
+            ):
+                with self.subTest(overrides=overrides):
+                    result = subprocess.run(
+                        [str(wrapper), "embed_verify.py", "--json"],
+                        env={"HOME": str(home), "PATH": "/usr/bin:/bin", **overrides},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("synthetic-selected", result.stdout)
+                    self.assertNotIn("synthetic-unrelated", result.stdout)
+                    self.assertEqual(wrong.read_bytes(), original_wrong)
+
     def test_custom_hermes_home_checks_the_actual_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -317,6 +384,8 @@ class HostSpecificBindingTests(unittest.TestCase):
             environment = {
                 **os.environ,
                 "HMK_DB_PATH": str(home / "wrong.db"),
+                "HERMES_DB_PATH": str(home / "wrong-legacy.db"),
+                "HMK_BASE_DIR": str(home / "wrong-base"),
                 "HMK_EMBED_PROVIDER": "existing-provider",
                 "HMK_AGENT_MEMORY_BASE": str(home / "wrong-pool"),
             }
@@ -334,7 +403,7 @@ class HostSpecificBindingTests(unittest.TestCase):
             self.assertEqual(native["base"], plan.memory_base)
             self.assertEqual(native["hermes_base"], plan.memory_base)
             self.assertEqual(native["env_file"], str(env_file))
-            self.assertIsNone(native["db_override"])
+            self.assertEqual(native["db_override"], f"{plan.memory_base}/library.db")
             self.assertEqual(native["provider"], "existing-provider")
             self.assertFalse(marker.exists())
             manifest = json.loads(render_binding_manifest(plan))

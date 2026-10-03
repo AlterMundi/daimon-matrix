@@ -265,7 +265,7 @@ if [ ! -f "$target" ] || [ -L "$target" ]; then
     echo 'hmk: native script unavailable' >&2
     exit 2
 fi
-unset HMK_DB_PATH
+export HMK_DB_PATH='{plan.memory_base}/library.db'
 export HMK_AGENT_MEMORY_BASE='{plan.memory_base}'
 export HERMES_AGENT_MEMORY_BASE='{plan.memory_base}'
 export HMK_ENV_FILE='{plan.env_file}'
