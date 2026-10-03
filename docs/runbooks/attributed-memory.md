@@ -151,10 +151,55 @@ Three checks, all of them comparisons rather than readings:
 - **Plan TTL.** Five minutes by default; an expired plan cannot be executed.
 - **Split authority.** `evaluate` and `execute` are different capabilities by
   design. Do not widen one client to cover both.
-- **Cross-host sync is not covered here.** Projecting a memory that was signed on
-  another host requires the DM-023 sync lane plus local projection on receipt, under
-  DM-036: receipt is not adoption, inbound quarantine where applicable, and no
-  identity, membership or authority transfer through a source or a receipt.
+- **The cross-host projection boundary is tested; live adoption is a separate
+  operator action.** The procedure below does not establish a working peer route,
+  authorize a service restart or grant a capability the installed body lacks.
+
+## Manual cross-host adoption
+
+Continue the existing same-being DM-023 peer exchange; do not transport or merge
+whole `library.db` files between hosts. The host-local pool remains shared by the
+being's bodies on that host. Perform each invocation only for a human request.
+
+1. Verify the actual installed protocol, signed being/origin authority, peer route
+   and purpose-limited owner clients on both hosts. A reachable listener, matching
+   label or successful SSH copy is not same-being authority.
+2. Exchange signed event pages through the supported sync operation. Preserve the
+   request/page/receipt identities and origin signatures. An intake receipt is
+   not an adoption receipt. Do not read conversational inboxes as a shortcut.
+3. Supply the selected accepted memory's content separately through an explicit,
+   private artifact transfer. Resolve by the signed content reference, not title,
+   local chapter ID, destination path or semantic similarity. The existing
+   adapter validates NFC UTF-8, media type, length and SHA-256 before any effect.
+   The event exchange does not itself transfer these bytes.
+4. Create the projection profile with `source_instance="matrix:" +
+   assertion_event["origin"]["embodiment_id"]` and the actual target HMK instance.
+   Use one local projection journal per namespace. Do not replace the source with
+   the receiver. On a mixed-origin ledger, only that assertion-origin namespace
+   is selected, including during rebuild and verified recall.
+5. Project the current head with the supported adapter and verify its receipt and
+   current HMK effect. If the first received head is already a later correction,
+   use `rebuild-plan` then `rebuild-apply` for the exact origin namespace rather
+   than fabricating prior apply receipts. Keep the signed lane available for
+   verification. Correction authors remain distinguishable in that lane.
+6. Compare source and receiver memory ID, event head/hash, statement hash and
+   assertion-origin namespace. Local chapter IDs, receipt IDs, file hashes and
+   database layout need not equal between hosts. Replaying an identical event
+   page or applying the same verified intent must not duplicate memory.
+
+Unsigned HMK-native legacy memories remain a distinct artifact class. Preserve
+both source inventories and divergent variants. They cannot be signed now as if
+an embodiment had historically authored them; a later import witness must state
+its actual current provenance and retain their HMK-native authority. This
+procedure does not silently move that legacy content, private traces, skills,
+authentication material, custody or capabilities. Skill package reconciliation
+and binding are separately reviewable changes, preserving harness differences.
+
+The deterministic regression uses two independently signed ledgers, DM-023
+exchange/replay and the real pinned HMK CLI/SQLite effects. It checks separate
+origin namespaces, rebuild isolation, sibling corrections and rejection of
+missing/substituted content. It proves this boundary, not a live two-host
+operational acceptance or a completed reconciliation of legacy pools.
 
 ## Repair
 

@@ -448,6 +448,22 @@ def _personal_lanes(ledger: Ledger) -> dict[str, list[Event]]:
     return dict(lanes)
 
 
+def _profile_lanes(
+    profile: Mapping[str, Any], ledger: Ledger
+) -> dict[str, list[Event]]:
+    """Keep an embodiment namespace bound to the lane's signed assertion."""
+    lanes = _personal_lanes(ledger)
+    source = cast(str, profile["source_instance"])
+    if not source.startswith("matrix:embodiment:"):
+        # Existing generic DM-034 profiles keep their frozen namespace semantics.
+        return lanes
+    return {
+        memory_id: lane
+        for memory_id, lane in lanes.items()
+        if "matrix:" + lane[0]["origin"]["embodiment_id"] == source
+    }
+
+
 def projection_checkpoint(ledger: Ledger) -> dict[str, Any]:
     lanes = _personal_lanes(ledger)
     records = sorted(
@@ -664,9 +680,14 @@ def current_memory_projection(ledger: Ledger, *, limit: int = 64) -> dict[str, A
     )
 
 
-def _head_event(ledger: Ledger, memory_id: str) -> tuple[list[Event], Event]:
+def _head_event(
+    ledger: Ledger, memory_id: str, profile: Mapping[str, Any] | None = None
+) -> tuple[list[Event], Event]:
     _uuid(memory_id, "invalid_memory_id")
-    lane = _personal_lanes(ledger).get(memory_id)
+    lanes = (
+        _personal_lanes(ledger) if profile is None else _profile_lanes(profile, ledger)
+    )
+    lane = lanes.get(memory_id)
     if not lane:
         raise MemoryProjectionError("matrix_memory_unknown")
     return lane, lane[-1]
@@ -1637,7 +1658,7 @@ def _expected_states(
 ) -> list[dict[str, Any]]:
     subject = ledger.authority.manifest.being_ref
     states: list[dict[str, Any]] = []
-    for memory_id, lane in sorted(_personal_lanes(ledger).items()):
+    for memory_id, lane in sorted(_profile_lanes(profile, ledger).items()):
         head_event = lane[-1]
         head = head_event["payload"]
         reference, _text_value = _lane_statement(lane, resolver)
@@ -1665,10 +1686,12 @@ def _expected_states(
     return states
 
 
-def _rebuild_entries(ledger: Ledger, resolver: ContentResolver) -> list[dict[str, Any]]:
+def _rebuild_entries(
+    profile: Mapping[str, Any], ledger: Ledger, resolver: ContentResolver
+) -> list[dict[str, Any]]:
     subject = ledger.authority.manifest.being_ref
     entries: list[dict[str, Any]] = []
-    for memory_id, lane in sorted(_personal_lanes(ledger).items()):
+    for memory_id, lane in sorted(_profile_lanes(profile, ledger).items()):
         head_event = lane[-1]
         record = head_event["payload"]
         if record["operation"] == "retract":
@@ -1749,7 +1772,9 @@ class MemoryProjectionAdapter:
             or record["author_me_id"] != subject
         ):
             raise MemoryProjectionError("memory_projection_authority_violation")
-        _lane, head = _head_event(self.ledger, cast(str, record["memory_id"]))
+        _lane, head = _head_event(
+            self.ledger, cast(str, record["memory_id"]), self.profile
+        )
         if head["event_id"] != event_id:
             raise MemoryProjectionError("memory_projection_event_not_current")
         return event
@@ -1820,7 +1845,7 @@ class MemoryProjectionAdapter:
 
     def inspect(self, *, memory_id: str) -> dict[str, Any]:
         subject = self.ledger.authority.manifest.being_ref
-        _head_event(self.ledger, memory_id)
+        _head_event(self.ledger, memory_id, self.profile)
         query = _inspect_query(self.profile, subject, memory_id)
         return _inspect_result(
             _transport(self.transport, "inspect", query),
@@ -1925,7 +1950,9 @@ class MemoryProjectionAdapter:
         normalized = validate_projection_receipt(receipt)
         source = cast(Mapping[str, Any], normalized["source_event"])
         try:
-            _lane, current = _head_event(self.ledger, cast(str, source["memory_id"]))
+            _lane, current = _head_event(
+                self.ledger, cast(str, source["memory_id"]), self.profile
+            )
             if (
                 current["event_id"] != source["event_id"]
                 or current["content_hash"] != source["event_hash"]
@@ -1985,7 +2012,7 @@ class MemoryProjectionAdapter:
         projection = cast(Mapping[str, Any], inspected["projection"])
         if projection["active"] is not True:
             raise MemoryProjectionError("memory_projection_inactive")
-        _lane, head = _head_event(self.ledger, memory_id)
+        _lane, head = _head_event(self.ledger, memory_id, self.profile)
         if (
             projection["head"]["event_id"] != head["event_id"]
             or projection["head"]["event_hash"] != head["content_hash"]
@@ -2016,7 +2043,7 @@ class MemoryProjectionAdapter:
         _token(idempotency_key, "invalid_projection_idempotency_key")
         subject = self.ledger.authority.manifest.being_ref
         checkpoint = projection_checkpoint(self.ledger)
-        entries = _rebuild_entries(self.ledger, self.content_resolver)
+        entries = _rebuild_entries(self.profile, self.ledger, self.content_resolver)
         request = {
             "schema": HMK_REBUILD_REQUEST_SCHEMA,
             "request_id": request_id,
@@ -2109,7 +2136,9 @@ class MemoryProjectionAdapter:
             "subject_me_id": self.ledger.authority.manifest.being_ref,
             "projector": copy.deepcopy(self.profile["projector"]),
             "source_checkpoint": current,
-            "entries": _rebuild_entries(self.ledger, self.content_resolver),
+            "entries": _rebuild_entries(
+                self.profile, self.ledger, self.content_resolver
+            ),
         }
         _validate_hmk_rebuild_plan(
             hmk_plan,
