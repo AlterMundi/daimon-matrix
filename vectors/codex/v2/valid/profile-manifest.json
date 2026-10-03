@@ -1,0 +1,30 @@
+{
+  "adapter_version": "2.0.0",
+  "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+  "body_ref": "cluster:legion:compaii",
+  "codex_binary_sha256": "0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761",
+  "codex_version": "0.155.1",
+  "embodiment_id": "embodiment:legion",
+  "files": [
+    {
+      "name": "AGENTS.md",
+      "sha256": "6b9a86c76f56660b5d7f45adf6c72234fbb998e8b803dcbe8104be17741311f2"
+    },
+    {
+      "name": "bootstrap.json",
+      "sha256": "36f2a0933ee87f448f75b479ed4035d668b465a87c8d140f28fa08fae9e7a711"
+    },
+    {
+      "name": "config.toml",
+      "sha256": "c7375948cc05269ff8643754615d605a6a54c7f5a0ef83c118a8f3adb7245e0a"
+    }
+  ],
+  "incarnation_id": "incarnation:legion:0",
+  "lifecycle": "human-request-only",
+  "matrix_mcp_binary_sha256": "30b3ea6a556809ffa2f5f391fa024e60cfd9dd2a8e2e1b71ac7a5d5d0510811f",
+  "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+  "plan_hash": "9773cacf8ce1a46f61e7552e5ebdd0feb370032d08656d22960ece0c098f5ace",
+  "profile_id": "dm:codex-profile:v2:ADDXiJUZTlguGCKHZJBVqlNzB1xlY3baSv55NtwdHMc",
+  "schema": "dm.codex-body.profile-manifest/v2",
+  "workspace_ref": "dm:workspace:v1:tZNFI7EX8k9K15FwwRl0huIU-56Sq71OF314mRT5Yps"
+}

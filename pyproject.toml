@@ -27,6 +27,7 @@ dependencies = ["cryptography==50.0.0", "mcp==2.0.0", "wasmtime==45.0.0"]
 daimon = "daimon_matrix.cli:main"
 daimon-conformance = "daimon_matrix.conformance:main"
 daimon-codex-body = "daimon_matrix.codex_body:main"
+daimon-codex-mcp = "daimon_matrix.codex_matrix_binding:native_mcp_main"
 daimon-communication-migration = "daimon_matrix.operator_communication_migration:main"
 daimon-curator-worker = "daimon_matrix.curator_worker_process:main"
 daimon-hermes-body = "daimon_matrix.hermes_body:main"

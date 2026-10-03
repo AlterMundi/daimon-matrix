@@ -48,6 +48,7 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/client.py",
         "src/daimon_matrix/cluster.py",
         "src/daimon_matrix/codex_body.py",
+        "src/daimon_matrix/codex_matrix_binding.py",
         "src/daimon_matrix/codex_review.py",
         "src/daimon_matrix/collective_memory.py",
         "src/daimon_matrix/communication.py",
@@ -130,6 +131,7 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/client.py",
         "daimon_matrix/cluster.py",
         "daimon_matrix/codex_body.py",
+        "daimon_matrix/codex_matrix_binding.py",
         "daimon_matrix/codex_review.py",
         "daimon_matrix/collective_memory.py",
         "daimon_matrix/communication.py",
@@ -417,6 +419,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"[console_scripts]\n"
         b"daimon = daimon_matrix.cli:main\n"
         b"daimon-codex-body = daimon_matrix.codex_body:main\n"
+        b"daimon-codex-mcp = daimon_matrix.codex_matrix_binding:native_mcp_main\n"
         b"daimon-communication-migration = "
         b"daimon_matrix.operator_communication_migration:main\n"
         b"daimon-conformance = daimon_matrix.conformance:main\n"

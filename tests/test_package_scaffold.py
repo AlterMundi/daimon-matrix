@@ -64,6 +64,9 @@ class PackageMetadataTests(unittest.TestCase):
                 ),
                 "daimon-genesis": "daimon_matrix.operator_genesis:main",
                 "daimon-codex-body": "daimon_matrix.codex_body:main",
+                "daimon-codex-mcp": (
+                    "daimon_matrix.codex_matrix_binding:native_mcp_main"
+                ),
                 "daimon-communication-migration": (
                     "daimon_matrix.operator_communication_migration:main"
                 ),
@@ -155,7 +158,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 76)
+        self.assertEqual(len(modules), 77)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -310,6 +313,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/client.py",
                 "src/daimon_matrix/cluster.py",
                 "src/daimon_matrix/codex_body.py",
+                "src/daimon_matrix/codex_matrix_binding.py",
                 "src/daimon_matrix/codex_review.py",
                 "src/daimon_matrix/collective_memory.py",
                 "src/daimon_matrix/communication.py",
@@ -393,6 +397,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/client.py",
                 "daimon_matrix/cluster.py",
                 "daimon_matrix/codex_body.py",
+                "daimon_matrix/codex_matrix_binding.py",
                 "daimon_matrix/codex_review.py",
                 "daimon_matrix/collective_memory.py",
                 "daimon_matrix/communication.py",

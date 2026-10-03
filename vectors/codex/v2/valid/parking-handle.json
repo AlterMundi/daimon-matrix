@@ -1,0 +1,22 @@
+{
+  "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+  "body_ref": "cluster:legion:compaii",
+  "capability_set_hash": "fa6406d5dcfa97922c74f6bccbc18f9c7b6a53222d8520107c03bc734dfdec10",
+  "certificate_hash": "9b595c344e52f65f0291f3c95581adf192a78d7fd78c22ebbca7186213959340",
+  "codex_version": "0.155.1",
+  "embodiment_id": "embodiment:legion",
+  "generation": 0,
+  "handle_id": "dm:codex-handle:v2:eyZ3HTlXkGoFr5vPnJV_jPOCCeB6HpunyxIrNRbCPKs",
+  "incarnation_id": "incarnation:legion:0",
+  "matrix_high_water": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+  "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+  "observed_at_ms": 1800000000000,
+  "plan_hash": "9773cacf8ce1a46f61e7552e5ebdd0feb370032d08656d22960ece0c098f5ace",
+  "previous_handle_id": null,
+  "profile_id": "dm:codex-profile:v2:ADDXiJUZTlguGCKHZJBVqlNzB1xlY3baSv55NtwdHMc",
+  "schema": "dm.codex-body.runtime-handle/v2",
+  "session_tree_id": "synthetic-native-session",
+  "state": "parking",
+  "thread_id": "synthetic-native-thread",
+  "turn_id": null
+}

@@ -1,0 +1,210 @@
+{
+  "admission": {
+    "expected": "refused",
+    "reason_code": "successor-mandatory-evidence-incomplete",
+    "requires_real_vendor_smoke": true
+  },
+  "artifact": {
+    "auto_update_policy": "exact-version-only-auto-update-disabled",
+    "config_precedence": "successor-effective-config-and-instruction-acceptance-required",
+    "executable_sha256": "0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761",
+    "install_source": "npm-openai-codex-0-155-1-registry-verified",
+    "limitations": [
+      "neutral-binding-pending",
+      "not-live-supported",
+      "provider-inference-unqualified",
+      "unknown-first-start-requires-operator-resolution"
+    ],
+    "migration_policy": "no-personal-profile-session-or-memory-import",
+    "state_roots": [
+      "fresh-owner-only-codex-home"
+    ]
+  },
+  "controls": {
+    "authority_refusal": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "history_persistence_disabled": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "History persistence configuration is none, but resumable native rollouts materialize after the first input; the complete native-state policy is not accepted yet.",
+      "state": "unknown"
+    },
+    "instruction_precedence_audited": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "lifecycle_boundaries": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Installed start/resume/park recovery passes; first-start response loss still needs operator-directed resolution and complete lifecycle acceptance.",
+      "state": "unknown"
+    },
+    "lifecycle_receipts": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "native_memory_disabled": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Native memories are configured disabled; approved neutral skills/HMK source and actual-binary memory policy acceptance remain outstanding.",
+      "state": "unknown"
+    },
+    "network_default_deny": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Recovery fixture has private network isolation; that does not prove production provider egress control.",
+      "state": "unknown"
+    },
+    "profile_isolation": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Installed native fixture uses a fresh owner-only profile and rejects concurrent processes on that profile.",
+      "state": "pass"
+    },
+    "proposal_only": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "receipt_retry": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "required_matrix_boundary": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Actual installed Matrix MCP failure rejects native startup before an active handle is committed.",
+      "state": "pass"
+    },
+    "secret_custody": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    },
+    "tool_allowlist": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Actual native discovery admits exactly the six Matrix tools and eight resource advertisements.",
+      "state": "pass"
+    },
+    "upgrade_migration_closed": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Unknown versions and mixed historical/successor bindings refuse without rewriting history.",
+      "state": "pass"
+    },
+    "version_pinned": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Exact registry-verified native payload and normalized generated contracts are pinned.",
+      "state": "pass"
+    },
+    "write_approval": {
+      "evidence": [
+        "codex-0-155-1-candidate"
+      ],
+      "note": "Not proven by the pinned candidate evidence.",
+      "state": "unknown"
+    }
+  },
+  "evidence_state": "documented-candidate",
+  "harness": {
+    "name": "Codex CLI",
+    "source_refs": [
+      "codex-0-155-1-candidate"
+    ],
+    "surface": "app-server-stdio",
+    "vendor": "OpenAI",
+    "version": "0.155.1"
+  },
+  "launch": {
+    "argv": [
+      "codex",
+      "app-server"
+    ],
+    "configuration": [
+      "history.persistence=none",
+      "hooks=disabled",
+      "lifecycle=human-request-only",
+      "mcp_servers.matrix.required=true"
+    ],
+    "environment": [
+      "CODEX_HOME=<validated-disposable-root>"
+    ],
+    "status": "reference-only"
+  },
+  "matrix_boundary": {
+    "forbidden_methods": [
+      "audience.expand",
+      "deploy.effect",
+      "fence.satisfy",
+      "key.rotate",
+      "ledger.append",
+      "membership.mint",
+      "memory.admit",
+      "presence.satisfy",
+      "root.sign",
+      "source.admit",
+      "species.admit"
+    ],
+    "harness_is_being_authority": false,
+    "harness_memory_is_canonical": false,
+    "matrix_revalidates_effects": true,
+    "protocol_version": "0",
+    "required_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_projection_get",
+      "we_observe"
+    ],
+    "server_name": "matrix",
+    "transport": "local-inherited-descriptor",
+    "write_tools": [
+      "we_observe"
+    ]
+  },
+  "overlay": {
+    "cleanup_policy": "validated-disposable-codex-cli-0-155-1-root-only",
+    "credential_channel": "inherited-descriptor-only",
+    "effective_config_inspection": "required-before-admission",
+    "history_policy": "disabled-or-refused",
+    "home_isolation": "fresh-owner-only-codex-cli-0-155-1-root",
+    "instruction_policy": "matrix-overlay-guides-but-never-authorizes",
+    "lifecycle_policy": "stable-start-turn-tool-receipt-park-wake-crash-resume-ids",
+    "log_policy": "no-secrets-no-private-paths-no-transcript-authority",
+    "memory_policy": "disabled-or-subordinate-and-rebuildable",
+    "network_policy": "default-deny-no-public-tunnel",
+    "retry_policy": "same-id-same-bytes-only-different-bytes-conflict"
+  },
+  "profile_id": "codex-cli-0-155-1",
+  "schema": "dm.harness-profile/v0"
+}

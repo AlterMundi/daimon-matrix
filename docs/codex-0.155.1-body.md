@@ -1,0 +1,316 @@
+# Codex 0.155.1 successor qualification
+
+This successor is under qualification. Native initialization and isolated
+cryptographic bootstrap checks do not establish deployed lifecycle support.
+The historical DM-040 profile and its pinned artifacts retain their semantics.
+
+The successor profile uses explicit requests for Matrix and lifecycle actions.
+It installs no hooks. Its versioned runtime journal binds the original Matrix
+identity and session to the exact profile, plan, release, certificate and
+capability set. Legacy replay and changed bindings refuse without rewriting
+saved history.
+
+## Event-attested bootstrap
+
+`dm.codex-body.bootstrap/v2` retains the complete daemon-signed `dm.we.v1`
+event in `attestation`. Its `signature` is that event's signature: verification
+uses the existing weave event domain and content hash, never a fabricated
+signature over a different bootstrap domain. `matrix_high_water` is the signed
+event's content hash. The historical bootstrap/v1 format is unchanged and the
+historical profile refuses bootstrap/v2.
+
+An explicit `we.observe` request signs a private `experience.observed` event
+whose subject is `codex-body/bootstrap`. Its closed payload is
+`dm.codex-body.bootstrap-attestation/v1`, containing:
+
+- `bootstrap`: all bootstrap fields except `attestation`, `signature`, and
+  `matrix_high_water`;
+- exact `runtime_id`, selected `capability_id`, and `client_id`;
+- the current `manifest_hash`.
+
+The signed descriptor preserves the root's being, body, embodiment and
+incarnation IDs. Its Matrix session ID is explicit public context; the proof
+does not manufacture another being or incarnation. The event occurrence time
+equals the descriptor issuance time. Bootstrap expiry must fit inside both
+the selected finite capability and the embodiment credential's validity.
+
+`authenticate_matrix_binding` verifies a caller-supplied trusted current
+RootAuthority snapshot, active manifest membership, current non-revoked
+credential, incarnation authorization, signed runtime capability binding, and
+selected capability/client/runtime/validity/method admission. Credential and
+capability-set hashes are SHA-256 of their complete canonical public documents;
+they differ from the domain-separated operator capability-set identifier.
+
+`bootstrap_attestation_payload` only prepares public request data. It performs
+no I/O and cannot sign or send anything. `bootstrap_from_attestation` and
+`verify_bootstrap_attestation` verify the complete event signature and recheck
+current authority, original identity, exact runtime bindings, hashes and time
+interval. Startup requires `runtime.status`, `we.heads` and `we.observe` in the
+selected capability. No capability is widened or renewed by this operation.
+Messaging-only indefinite capabilities are not startup capabilities.
+
+The proof is local bootstrap evidence. It does not establish canonical active
+presence, a resource fence, session recovery, high-water ancestry after further
+events, conversational delivery, memory continuity, or participant acceptance.
+Those checks must be qualified separately. Current-epoch retrieval must use the
+trusted runtime boundary; accepting a cached RootAuthority alone cannot prove
+that it is still current. Runtime custody stays inside the daemon; the adapter
+uses public artifacts and its already authorized local client.
+
+`check_current_runtime_authority` uses that existing authenticated LocalClient
+to request `runtime.status`. It first matches the selected signed capability,
+expected server origin and exact runtime identity to the client configuration.
+It then requires an intact runtime with the same being, origin and active
+manifest as the supplied verified RootAuthority, and consistent epoch metadata.
+It reads no conversation or ledger contents. A different active epoch refuses;
+this check does not silently adopt another authority snapshot.
+
+`DaemonBootstrapVerifier` performs the metadata check before and after proof
+verification. It fits the existing profile bootstrap-verifier interface and
+performs work only when explicitly called for startup. The checks detect epoch
+drift observed during verification; they do not constitute Cluster lifecycle
+authority or a resource fence. The runtime still needs lifecycle checks before
+native start or recovery can be declared supported.
+
+## Cluster body observations
+
+[DM-021's retirement map](dm021-migration-map.md) retires the old singleton
+Matrix presence leases. [DM-037](dm037-cluster-effect-boundary.md) assigns
+physical body lifecycle and resource authority to Cluster. Native admission
+must preserve that boundary and allow other embodiments of the being to run.
+
+`observe_native_cluster_body` consumes the trusted host's existing BodyReader
+and canonical `dm.cluster-body-snapshot/v1` validator. It requires the exact
+body, embodiment and incarnation, a running state, and an observation inside
+the caller's configured freshness window. Future, stale, substituted, stopped
+or unavailable observations refuse. It never substitutes daemon health or
+manifest membership for a Cluster observation.
+
+Its `fresh_until_ms` is a local freshness deadline bounded by the admitted
+capability's expiry. It grants no lease, exclusion or resource authority.
+Resource-fence advertisements in a snapshot are observations; executing an
+effect still requires the existing separate current fence/effect verifier.
+
+Tests compose this check with the pinned Cluster MatrixHostAdapter and its
+actual registry in a disposable fixture, preserving registry bytes on reads
+and refusing after the fixture registry stops the embodiment. They do not
+prove a running live host, deployment effects, signed session ancestry,
+durable lifecycle recovery or other participants' acceptance.
+
+## Signed session continuity
+
+An explicitly requested private `we.observe` event with subject
+`codex-body/session-witness` carries a closed
+`dm.codex-body.session-witness/v1` payload. It names the exact Matrix session,
+bootstrap event hash, preceding witness event ID and hash, and the next
+session witness counter. Its causal parent is that exact preceding event.
+The existing daemon requires that dependency to exist in its accepted ledger
+before appending the signed observation.
+
+`verify_session_continuity` verifies the supplied bootstrap and every witness
+signature against current identity/capability admission. It checks exact
+origin, manifest, session, predecessor, counter, causal parent and ordered
+event time/sequence. Payload comparison uses canonical bytes, including the
+distinction between a boolean and an integer counter. Unrelated ledger events
+may occur between witnesses; this function neither fetches nor reads them.
+
+The caller must supply the independently required saved high-water hash.
+Truncated, reordered, incorrectly linked or substituted chains refuse. The
+returned terminal event proves the supplied causal lineage, not that it is the
+daemon's current head or the only competing lineage. The verifier does not
+select between competing tips.
+
+`SessionProofJournal` durably stores the verified witnesses in an owner-only,
+single-link file bound to the complete attested bootstrap. Every append locks
+the file, verifies the signed history against the independently supplied tip,
+and accepts exactly one successor before fsync. Concurrent writers with the
+same expected tip cannot accept competing branches. Reopening rechecks the
+proofs; truncation, torn or noncanonical records and unsafe files refuse
+without rewriting history. The caller supplies the current-authority verifier;
+the real Unix-socket fixture verifies both reopen and refusal under a changed
+authority epoch. The expected tip must survive independently of this file.
+
+`NativeAdmissionVerifier` connects that storage to the adapter: it requires
+the exact requested identity/session binding, authenticates current daemon
+metadata, verifies durable ancestry to the requested tip, consumes the trusted
+Cluster body reader, and rechecks daemon authority before returning. Its
+`expires_at_ms` is a local freshness deadline bounded by the bootstrap and
+capability, not a physical lifecycle lease. A stopped Cluster body refuses.
+
+Native App Server transport holds an exclusive nonblocking lock on the local
+profile directory inode until its child exits. The native child inherits the
+lock descriptor so loss of the parent transport descriptor cannot admit a
+competing process while the child is still alive. The isolated native probe
+closes that parent descriptor, verifies refusal, then proves the profile can
+be opened again after the native child exits. A second process using that
+profile refuses before spawning; no lock file is added to the manifest. This
+is local resource ownership and permits other profiles and embodiments of
+the same being. The historical profile behavior remains unchanged.
+
+This storage does not make native thread creation idempotent. The supported
+response-loss recoveries and the unresolved first-start case are described below.
+
+## Native MCP connections
+
+Codex starts more than one MCP connection during native startup. Each child
+inherits the same open-file description for the capability source. The native
+entry point `native_mcp_main` reads that protected descriptor with `pread`, so
+one child cannot consume another child's key by advancing the shared offset.
+It gives the existing MCP entry point a separate private pipe per connection.
+The installed console entry point is `daimon-codex-mcp`. Its executable and
+ancestor directories must be owner-controlled with no group or world write
+permission. Install under a restrictive umask and verify those modes before
+profile creation; an executable or ancestor left group-writable refuses.
+
+The capability source must be an owner-only, single-link regular file of exactly 32 bytes;
+single-consumer pipes and unreviewed descriptor types refuse. Key bytes never
+enter arguments, environment, protocol receipts or diagnostics.
+
+The reviewed 0.155.1 inventory adds `runtimeStatus`, `pluginId` and `toolsError`.
+Admission requires a connected local Matrix server, no plugin substitution,
+no discovery error, the exact server version, all six Matrix tools, and the
+eight resources advertised by the existing closed MCP contract. Resource
+advertisements are metadata; this check does not read their contents. The
+historical inventory rules remain unchanged.
+
+An isolated probe now creates an authenticated event-attested profile, starts
+the real pinned native App Server, creates thread metadata without any model
+turn, and verifies its policy, complete Matrix MCP inventory and running
+profile integrity. A subsequent isolated probe uses `NativeAdmissionVerifier`
+with the pinned Cluster `Registry`/`MatrixHostAdapter`, authenticated daemon
+and attested bootstrap, and invokes the actual `adapter.start`. Native start,
+MCP inventory, concurrent-profile refusal and stopped-body refusal pass. This
+proves isolated admission interoperability, not deployed host acceptance.
+
+Cold resume of this empty thread refuses with native error -32600, `no rollout
+found for thread id`. The pinned official upstream test
+`thread_resume_rejects_unmaterialized_thread` specifies that native rollout
+storage does not materialize before the first user message. The adapter
+preserves its pending resume handle and does not silently create a replacement
+thread or erase history. `thread/read` with turns is not a supported workaround
+in this native mode. A real user-input durability probe and full response-loss
+recovery cannot be established by zero-turn startup alone.
+
+A subsequent synthetic-input probe sends one fixed fixture message, observes
+the native completed user-message item, records its native turn handle and
+closes the native process. A fresh native process successfully calls the
+actual adapter resume and retains the exact original thread and session IDs,
+with the same authenticated Matrix/Cluster admission and complete MCP checks.
+The successor resume requests `excludeTurns: true`: no history hydration is
+needed to prove these handles. The pinned schema defines nullable opaque
+pagination cursors, which are validated as bounded strings and never fetched
+or interpreted. Historical cursor refusal remains unchanged.
+
+Provider errors are recognized as the pinned successor `error` notification,
+with exact outer fields, thread/turn tokens and a boolean `willRetry`; its
+message remains data, never an instruction to retry. The historical
+notification inventory is unchanged. The fixture has no provider credentials;
+waiting for generation in an earlier probe produced an unauthenticated vendor
+401 response, so absence of credentials is not evidence of network isolation.
+The successful durability probe closes after native input observation and
+does not qualify inference success. The supported recovery and park cases are
+qualified below; uncertain first-start resolution and deployed-body acceptance
+remain outstanding.
+
+## Explicit response-loss and local park recovery
+
+`recover_resume` admits only a successor journal ending in `resuming`, with
+unchanged native thread/session IDs linked to a preceding active or pending
+resume handle. It reissues metadata-only resume for those saved IDs, validates
+the returned policy and full MCP inventory, and rechecks current admission
+after the RPC before appending active. It never calls `thread/start` or guesses
+a thread from workspace metadata. A real pinned native probe consumes a resume
+response and withholds it from the adapter, verifies pending state, then
+successfully reconciles the same native IDs and validates a v2 resume receipt.
+
+Successor `park` is an explicitly requested **local native process** shutdown.
+It first appends durable `parking` intent, requests `thread/unsubscribe` with
+the saved ID, accepts only the pinned `unsubscribed`, `notSubscribed` or
+`notLoaded` statuses, and closes the actual native transport. A zero exit code
+and fresh admission are required before the parked handle is appended.
+Generic RPC transports cannot claim this shutdown. `recover_park` admits only
+an exact linked pending parking handle and safely repeats that bounded
+operation. The real native probe withholds the unsubscribe response, preserves
+the pending handle, recovers to child exit zero and records a root-verified
+Matrix observation carrying the final handle hash. It does not stop a Cluster
+host, daemon or sibling, or issue a physical lifecycle lease. Historical park
+behavior and wire states remain unchanged.
+
+Successor handle journal reads take a shared lock; append holds the exclusive
+lock, fsyncs the record and its containing directory. Hardlinked successor
+files refuse. Torn histories remain preserved and unresolved.
+
+Loss of the first start response before saving native IDs is a different case.
+The pinned start protocol offers neither client-selected thread IDs nor an
+idempotency token. The actual native start-loss probe proves one start only,
+preserves the starting handle, refuses blind retry/adoption/recovery and signs
+an observation explicitly naming the unknown outcome. This is proven refusal,
+not successful reconciliation. Operator-directed resolution remains required;
+no matching by folder or fabricated native history is supported.
+
+The first-input/resume-loss proof now runs in a private user/network namespace:
+the live child namespace is checked distinct from its parent, Matrix remains
+reachable through its filesystem Unix socket, and vendor network endpoints
+are unreachable. One synthetic native input is registered and no model turn
+completes; the same native thread/session is resumed and reconciled with real
+receipts. This qualifies protocol durability and recovery without an external
+provider canary, account credentials or personal history.
+
+## Remaining release and deployed-host evidence
+
+Release qualification must reproduce these native admission/lifecycle proofs
+with the installed wheel and exact Matrix MCP inventory. Closed v2 schemas, signed bootstrap/session and synthetic profile/launch
+vectors, package inventories and pinned provenance are now published as
+candidate artifacts. Full source/wheel qualification, independent review and
+current-head CI remain required. The separate DM-074 successor profile refuses
+admission until its mandatory evidence is complete; the historical profiles
+retain their frozen evidence states.
+Live installation and communication-store migration require the approved
+concrete rollout plan. No live change is implied by the isolated fixtures.
+
+## Installed candidate evidence
+
+The installed candidate wheel reproduces attested startup, exact six-tool and
+eight-resource MCP admission, concurrent-profile refusal, pending local park
+response-loss recovery, native exit zero and a Root-verified Matrix observation.
+All loaded `daimon_matrix` modules in that probe originate in the installed
+wheel; the MCP process uses its generated console entry point. This is isolated
+fixture interoperability, not live-body acceptance. Its test environment shares
+preinstalled qualification dependencies, so it does not prove a fresh dependency
+installation. Full release qualification remains required.
+
+The installed entry point also refuses a real native startup when its synthetic
+capability source has unsafe permissions: the required Matrix MCP cannot
+initialize, App Server rejects the request, and no active handle is committed.
+The fixture exits its native child cleanly and uses no model input. Installed
+cold resume and response-loss recovery retain the exact thread/session with
+real validated lifecycle receipts, in a private network namespace with one
+synthetic user input and zero completed model turns.
+
+## Effective configuration admission and remaining qualification
+
+The earlier installed, zero-input fixture needed a diagnostic codec because
+native `config/read` encodes its two configured durations as `10.0` and `30.0`.
+The successor now requests effective configuration during initialization and
+validates all rendered controls before admitting a session. Only those two
+pinned values on the exact correlated reply are normalized; canonical Matrix
+JSON, other replies, notifications and unknown floats remain unchanged.
+Vendor defaults may add nested fields, but configured values retain exact types,
+and additional MCP servers or project bindings are refused.
+
+The current wheel is built twice with identical bytes and installed into a new
+venv with fresh dependencies; `pip check` passes. Its actual native fixture
+passes initialization, effective policy comparisons, start and park recovery
+without a diagnostic codec. Installed mandatory-MCP refusal, unknown first-start
+refusal and network-isolated known-ID resume recovery also pass; the latter uses
+one synthetic input and completes zero model turns. These fixtures assert their
+Matrix modules come from the installed wheel. Forty-nine successor tests pass.
+Full source/package gates, independent review and current-head CI remain pending.
+No live body or provider acceptance is implied.
+
+The fixture adds a workspace `AGENTS.md`, but `thread/start` advertises only the
+owner-profile instruction source. Pinned official `agents_md.rs` skips project
+instructions when the active project is untrusted; its assembly otherwise puts
+host instructions before project entries. This source audit and the observed
+profile source do not qualify actual trusted-project precedence or neutral
+skills/HMK integration. The successor adoption profile remains refused.

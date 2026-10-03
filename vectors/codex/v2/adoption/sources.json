@@ -1,0 +1,15 @@
+{
+  "accessed_on": "2026-10-03",
+  "schema": "dm.harness-source-inventory/v0",
+  "sources": [
+    {
+      "accessed_on": "2026-10-03",
+      "content_digest": "sha256:e87877f680ec9636fe90bbb916342ee3a9a7c717bdf051f3ef5a7344c4d97db0",
+      "owner": "AlterMundi",
+      "pin": "rust-v0.155.1/be2951ea34f0d295ed0becf97079f92fa5f6950e",
+      "source_id": "codex-0-155-1-candidate",
+      "title": "Exact Codex 0.155.1 provenance and acceptance",
+      "url": "provenance/codex-cli-0.155.1.json"
+    }
+  ]
+}

@@ -49,6 +49,32 @@ isolation, lifecycle, instructions, native-state subordination, receipts or
 authority refusal means unsupported for a Matrix body canary even when MCP or
 tool calling exists.
 
+## Codex 0.155.1 successor candidate
+
+The separately generated [successor profile](../vectors/codex/v2/adoption/profile.json)
+and [offline report](../vectors/codex/v2/adoption/report.json) preserve the frozen
+historical profiles above. Regenerate them with
+`python tools/generate_codex_0155_vectors.py`; `--check` verifies their bytes.
+Their source inventory pins the exact successor provenance document.
+
+The installed native fixture verifies startup, required Matrix MCP refusal,
+exact discovery, cold resume and bounded response-loss/park recovery. These
+observations support individual controls, not promotion of the whole body.
+The successor remains `documented-candidate`, with refused admission and
+reference-only launch data while mandatory controls remain unknown. In
+particular, effective instruction precedence, approved neutral skills/HMK,
+complete native memory/history policy and production provider egress have not
+been accepted. No provider canary or live lifecycle change follows from this
+profile. See [the successor evidence](codex-0.155.1-body.md) and
+[its acceptance trace](verification/codex-0.155.1-invariants.json).
+
+`history.persistence = "none"` disables the native history index; it does not
+prove that resumable conversation rollouts contain no history. The actual
+native durability fixture materializes a rollout after its first synthetic
+input. Those files cannot become Matrix identity or canonical memory, or be
+silently imported into HMK. Their bounded retention and recovery policy still
+need acceptance; a passing startup test does not resolve that policy.
+
 ## Common narrow waist
 
 An admitted harness receives one required local server named `matrix` through
