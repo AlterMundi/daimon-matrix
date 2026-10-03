@@ -109,6 +109,31 @@ def pinned_cluster_body_reader(
             sys.modules.pop(name, None)
 
 
+def owner_cluster_body_reader(
+    *,
+    checkout: Path | None,
+    state_root: Path | None,
+    socket_path: Path | None,
+    owner_uid: int | None,
+    embodiment_id: str,
+) -> BodyReader:
+    """Select one explicit transport without a permission-bypass fallback."""
+    if socket_path is not None or owner_uid is not None:
+        if (
+            socket_path is None
+            or owner_uid is None
+            or checkout is not None
+            or state_root is not None
+        ):
+            raise CodexBodyError("owner_cluster_locations_required")
+        from .cluster_owner_client import cluster_owner_socket_reader
+
+        return cluster_owner_socket_reader(socket_path, owner_uid=owner_uid)
+    if checkout is None or state_root is None:
+        raise CodexBodyError("owner_cluster_locations_required")
+    return pinned_cluster_body_reader(checkout, state_root, embodiment_id)
+
+
 @dataclass(frozen=True)
 class SessionContinuity:
     """Verified supplied session proof chain, not a current-head or fence claim."""

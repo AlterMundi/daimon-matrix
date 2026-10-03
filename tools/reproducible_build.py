@@ -45,6 +45,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/cluster.py"),
     Path("src/daimon_matrix/codex_body.py"),
     Path("src/daimon_matrix/codex_matrix_binding.py"),
+    Path("src/daimon_matrix/cluster_owner_client.py"),
     Path("src/daimon_matrix/codex_review.py"),
     Path("src/daimon_matrix/collective_memory.py"),
     Path("src/daimon_matrix/communication.py"),
