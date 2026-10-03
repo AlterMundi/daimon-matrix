@@ -1751,6 +1751,37 @@ def validate_runtime_handle(value: Any) -> dict[str, Any]:
     return copy.deepcopy(dict(row))
 
 
+def describe_native_launch_state(plan: CodexBodyPlan) -> dict[str, Any]:
+    """Report verified local evidence without recovering or changing anything.
+
+    An unknown first start has no saved native identifiers. Its pending handle
+    remains intact; this report proves neither child termination nor a Matrix
+    disposition. A fresh session requires an explicit operator decision after
+    confirming the old process stopped, with a new bootstrap and profile.
+    """
+    if _profile_contract(validate_plan(plan.value)).automatic_hooks:
+        raise CodexBodyError("owner_native_successor_required")
+    verify_profile(plan)
+    handles = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    ).load()
+    if not handles:
+        raise CodexBodyError("codex_launch_evidence_absent")
+    tip = handles[-1]
+    unknown = tip["state"] == "starting"
+    return {
+        "schema": "dm.codex-body.owner-launch-state/v1",
+        "handle_id": tip["handle_id"],
+        "matrix_session_id": tip["matrix_session_id"],
+        "state": tip["state"],
+        "native_ids_saved": not unknown,
+        "outcome": "unknown-first-start" if unknown else "saved-native-handle",
+        "automatic_retry_allowed": False,
+        "process_termination_proven": False,
+        "evidence_changed": False,
+    }
+
+
 def create_launch_receipt(
     plan: CodexBodyPlan,
     profile_manifest: Mapping[str, Any],
@@ -3047,6 +3078,59 @@ def parser() -> argparse.ArgumentParser:
     )
     plan = commands.add_parser("plan-check")
     plan.add_argument("--document", type=Path, required=True)
+    plan_create = commands.add_parser("plan-create")
+    plan_create.add_argument("--bootstrap", type=Path, required=True)
+    plan_create.add_argument("--model", required=True)
+    plan_create.add_argument("--provider", required=True)
+    plan_create.add_argument("--workspace-ref", required=True)
+    plan_create.add_argument("--output", type=Path, required=True)
+    binding = commands.add_parser(
+        "binding-check", help="verify public authority against the running owner daemon"
+    )
+    binding.add_argument("--bundle", type=Path, required=True)
+    binding.add_argument("--client-config", type=Path, required=True)
+    binding.add_argument("--socket", type=Path, required=True)
+    binding.add_argument("--capability-key-fd", type=int, required=True)
+    for name in ("bootstrap-prepare", "bootstrap-attest"):
+        bootstrap_command = commands.add_parser(name)
+        for field in ("bundle", "client-config", "socket", "request"):
+            bootstrap_command.add_argument("--" + field, type=Path, required=True)
+        bootstrap_command.add_argument("--capability-key-fd", type=int, required=True)
+        bootstrap_command.add_argument("--matrix-session-id", required=True)
+        bootstrap_command.add_argument("--expires-at-ms", type=int, required=True)
+        if name == "bootstrap-attest":
+            bootstrap_command.add_argument("--output", type=Path, required=True)
+    native = commands.add_parser(
+        "native-lifecycle", help="perform one explicit no-model lifecycle qualification"
+    )
+    for name in (
+        "bundle",
+        "client-config",
+        "socket",
+        "document",
+        "profile-root",
+        "workspace",
+        "binary",
+        "mcp-binary",
+        "request-dir",
+    ):
+        native.add_argument("--" + name, type=Path, required=True)
+    native.add_argument("--capability-key-fd", type=int, required=True)
+    for name in ("proof-journal", "cluster-checkout", "cluster-state"):
+        native.add_argument("--" + name, type=Path)
+    native.add_argument("--max-age-ms", type=int)
+    native.add_argument("--create-profile", action="store_true")
+    native.add_argument(
+        "--action",
+        choices=(
+            "start-park",
+            "resume-park",
+            "recover-resume-park",
+            "recover-park",
+            "launch-state",
+        ),
+        required=True,
+    )
     hook = commands.add_parser("hook")
     hook.add_argument(
         "event",
@@ -3064,7 +3148,179 @@ def main(argv: Sequence[str] | None = None) -> int:
             return hook_entrypoint(
                 [args.event, os.fspath(args.bootstrap), os.fspath(args.observation)]
             )
-        if args.command == "contract-check":
+        if args.command in {
+            "binding-check",
+            "bootstrap-prepare",
+            "bootstrap-attest",
+            "native-lifecycle",
+        }:
+            from .client import ClientConfig, ClientError, LocalClient
+            from .codex_matrix_binding import (
+                attest_owner_bootstrap_request,
+                open_owner_native_session,
+                owner_local_admission,
+                pinned_cluster_body_reader,
+                prepare_owner_bootstrap_request,
+                read_native_capability_key,
+            )
+
+            key = read_native_capability_key(args.capability_key_fd)
+            try:
+                bundle = _json_load(
+                    _read_secure_file(args.bundle, "owner_bundle_rejected"),
+                    "owner_bundle_rejected",
+                )
+                if not isinstance(bundle, Mapping):
+                    raise CodexBodyError("owner_bundle_rejected")
+                config = ClientConfig.load(args.client_config, key)
+                client = LocalClient(args.socket, config)
+                _authority, _admission, current = owner_local_admission(
+                    bundle, client, at_ms=int(time.time() * 1000)
+                )
+                value = {
+                    "schema": "dm.codex-body.owner-admission-check/v1",
+                    "being_ref": current.being_ref,
+                    "body_ref": current.body_ref,
+                    "embodiment_id": current.embodiment_id,
+                    "incarnation_id": current.incarnation_id,
+                    "manifest_hash": current.manifest_hash,
+                    "capability_expires_at_ms": current.capability_expires_at_ms,
+                    "status": "current-authority-verified",
+                }
+                if args.command == "bootstrap-prepare":
+                    from .local_api import request_hash
+
+                    request = prepare_owner_bootstrap_request(
+                        bundle,
+                        client,
+                        args.request,
+                        matrix_session_id=args.matrix_session_id,
+                        expires_at_ms=args.expires_at_ms,
+                        at_ms=int(time.time() * 1000),
+                    )
+                    value = {
+                        "schema": "dm.codex-body.owner-bootstrap-prepare/v1",
+                        "request_id": request["request_id"],
+                        "request_hash": request_hash(request),
+                        "status": "prepared; not sent",
+                    }
+                elif args.command == "bootstrap-attest":
+                    bootstrap = attest_owner_bootstrap_request(
+                        bundle,
+                        client,
+                        args.request,
+                        args.output,
+                        matrix_session_id=args.matrix_session_id,
+                        expires_at_ms=args.expires_at_ms,
+                        at_ms=int(time.time() * 1000),
+                    )
+                    value = {
+                        "schema": "dm.codex-body.owner-bootstrap-attest/v1",
+                        "matrix_session_id": bootstrap["matrix_session_id"],
+                        "matrix_high_water": bootstrap["matrix_high_water"],
+                        "status": "attested; proof retained",
+                    }
+                elif args.command == "native-lifecycle":
+                    document = _json_load(
+                        _read_secure_file(args.document, "plan_document_rejected"),
+                        "plan_document_rejected",
+                    )
+                    native_plan = bind_plan(
+                        document,
+                        profile_root=args.profile_root,
+                        workspace=args.workspace,
+                        codex_binary=args.binary,
+                        mcp_binary=args.mcp_binary,
+                        mcp_args=(
+                            "--socket",
+                            os.fspath(client.socket_path),
+                            "--client-config",
+                            os.fspath(args.client_config),
+                            "--capability-key-fd",
+                            str(args.capability_key_fd),
+                            "--request-dir",
+                            os.fspath(args.request_dir),
+                        ),
+                    )
+                    if args.action == "launch-state":
+                        if args.create_profile:
+                            raise CodexBodyError("launch_state_create_forbidden")
+                        value = describe_native_launch_state(native_plan)
+                        sys.stdout.buffer.write(
+                            _canonical(value, "codex_cli_output_invalid") + b"\n"
+                        )
+                        return 0
+                    if (
+                        args.proof_journal is None
+                        or args.cluster_checkout is None
+                        or args.cluster_state is None
+                        or args.max_age_ms is None
+                    ):
+                        raise CodexBodyError("owner_cluster_locations_required")
+                    if args.create_profile and args.action != "start-park":
+                        raise CodexBodyError("owner_native_create_requires_start")
+                    reader = pinned_cluster_body_reader(
+                        args.cluster_checkout, args.cluster_state, current.embodiment_id
+                    )
+                    session = open_owner_native_session(
+                        native_plan,
+                        bundle,
+                        client,
+                        body_reader=reader,
+                        proof_journal_path=args.proof_journal,
+                        max_age_ms=args.max_age_ms,
+                        create=args.create_profile,
+                    )
+                    try:
+                        adapter = session.adapter
+                        if args.action == "recover-park":
+                            handle = adapter.recover_park()
+                        else:
+                            if args.action == "start-park":
+                                adapter.start()
+                            elif args.action == "resume-park":
+                                adapter.resume()
+                            else:
+                                adapter.recover_resume()
+                            handle = adapter.park()
+                        value = {
+                            "schema": "dm.codex-body.owner-native-lifecycle/v1",
+                            "action": args.action,
+                            "handle": handle,
+                            "native_exit_code": session.process.process.poll(),
+                            "model_inputs": 0,
+                            "status": "local-native-parked",
+                        }
+                    finally:
+                        session.close()
+            except ClientError as exception:
+                raise CodexBodyError("owner_local_client_rejected") from exception
+            finally:
+                key[:] = bytes(len(key))
+        elif args.command == "plan-create":
+            bootstrap = _json_load(
+                _read_secure_file(args.bootstrap, "owner_bootstrap_file_rejected"),
+                "owner_bootstrap_file_rejected",
+            )
+            if validate_bootstrap(bootstrap)["schema"] != ATTESTED_BOOTSTRAP_SCHEMA:
+                raise CodexBodyError("owner_native_attested_bootstrap_required")
+            document = create_plan_value(
+                bootstrap=bootstrap,
+                model=args.model,
+                provider=args.provider,
+                workspace_ref=args.workspace_ref,
+                release=SUCCESSOR_RELEASE.version,
+            )
+            _secure_directory(args.output.parent, "owner_plan_output_unsafe")
+            content = _canonical(document, "owner_plan_output_rejected")
+            _write_new_file(args.output, content, 0o600)
+            _fsync_directory(args.output.parent)
+            value = {
+                "schema": "dm.codex-body.owner-plan-create/v1",
+                "plan_sha256": hashlib.sha256(content).hexdigest(),
+                "status": "prepared; no native admission performed",
+            }
+        elif args.command == "contract-check":
             value = verify_compatibility_bundle(
                 args.binary, args.schema_dir, args.typescript_dir, release=args.release
             )

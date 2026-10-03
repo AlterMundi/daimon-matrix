@@ -314,3 +314,89 @@ instructions when the active project is untrusted; its assembly otherwise puts
 host instructions before project entries. This source audit and the observed
 profile source do not qualify actual trusted-project precedence or neutral
 skills/HMK integration. The successor adoption profile remains refused.
+
+## Explicit owner-local admission preflight
+
+`daimon-codex-body binding-check` accepts `--bundle`, `--client-config`,
+`--socket` and `--capability-key-fd`. It verifies the public runtime bundle's
+Root chain, signed capability binding and selected finite capability, then
+checks that the authenticated running daemon serves that exact current epoch.
+The capability key is read from an owner-only regular descriptor without
+changing its shared offset; it is never an argument, environment variable or
+output field. The command reports only the verified identity, manifest hash
+and capability expiry. It does not open custody, load a runtime, fall back when
+the daemon is absent, read a ledger/inbox, append an observation or start a
+native process.
+
+This preflight is the owner-facing connection to the verified admission APIs.
+It does not supply a trusted Cluster observation, create an attested session,
+or perform a complete native lifecycle. Those operations and their deployed
+acceptance remain required before claiming an operational body.
+
+`open_owner_native_session` composes that authenticated owner-local context
+with an existing attested bootstrap, a trusted host `BodyReader`, the durable
+session proof journal and the native runtime-handle journal. It checks the
+rendered MCP's exact client configuration, socket and key binding, and verifies
+current authority and Cluster evidence before profile creation or native
+spawn. It returns an initialized process and adapter; the owner explicitly
+requests start, resume, recovery or park. Closing the transport does not invent
+a park receipt. Failed initialization closes its child and preserves evidence.
+The host must supply its actual Cluster reader; cached metadata or daemon
+health is not accepted as a physical lifecycle observation. This composition
+still requires a deployed host/operator entry point and full acceptance.
+
+The `native-lifecycle` operator entry point exposes `start-park`, `resume-park`,
+`recover-resume-park` and `recover-park`. Each invocation performs the named
+no-model action and closes its native transport. It consumes an already
+attested public plan, exact owner socket/client/key descriptor, profile and
+request/proof locations, and the host's existing Cluster state. It does not
+register or start a Cluster body. `--create-profile` is explicit; existing
+profiles remain intact when creation is refused.
+
+`--cluster-checkout` supplies the four consumed reader source files from
+Cluster commit `676495e852e6772a60de8221271ee9fc976f77ce`. Their fixed hashes and
+protected paths are checked before any code executes; the verified bytes load
+under private module names, without importing an ambient `clusterctl` package.
+These hashes establish source integrity, not numerical equivalence between
+hosts. `--cluster-state` must already be owner-only, and the reader must report
+the exact current body and incarnation. No daemon-health fallback, registry
+mutation or resource-fence acquisition is provided.
+
+This entry point qualifies a local native lifecycle. It submits zero model
+inputs and grants no provider canary, neutral-memory adoption, deployed-host
+acceptance or live-supported status. First-start loss without saved IDs still
+refuses blind retries. Operator-directed resolution and retained native rollout policy remain
+separate acceptance work.
+
+`bootstrap-prepare` records an owner-only, fsynced exact `we.observe` request
+after checking current public authority. It sends nothing and refuses to
+replace an existing retry token. `bootstrap-attest` checks that saved request
+against the explicitly supplied session ID and expiry, rechecks the current
+daemon epoch, then sends those original bytes. Response loss reports
+`owner_bootstrap_response_unavailable` and preserves the token: retry the
+attest command with the same token rather than preparing another request.
+Successful attestation retains the verified bootstrap in an owner-only file;
+an exact repeated proof is accepted and a different existing output is
+preserved and refused. Expired or changed authority is refused.
+
+`plan-create` consumes that retained bootstrap and the explicitly selected
+model, provider and workspace reference to prepare the closed0.155.1 plan.
+Plan preparation performs no native admission or inference; current Root,
+capability and Cluster checks still happen at the native boundary. Thus the
+explicit no-model sequence is prepare request, attest request, create plan,
+then native-lifecycle. Live attestation is a Matrix write and is only executed
+within an explicitly approved operation. The source fixture exercises this
+entire CLI sequence and the real-socket response-loss regression replays the
+same accepted request without manufacturing a new session.
+
+For an ambiguous first start, `native-lifecycle --action launch-state` reports
+the validated local pending handle without spawning a process, writing a
+journal or discovering native IDs. It needs no Cluster checkout/state or proof
+journal location. `unknown-first-start` explicitly means no saved native IDs;
+the report does not prove child termination or successful reconciliation.
+Preserve the profile and journals, confirm the original process has stopped,
+and obtain an explicit operator decision before starting a fresh isolated
+session with a new bootstrap/profile. Never reuse the ambiguous profile,
+guess a thread from directory contents or convert this report into a park
+receipt. Known-ID pending resumes use `recover-resume-park`; pending parks use
+`recover-park`. An empty, unmaterialized native thread cannot cold-resume.

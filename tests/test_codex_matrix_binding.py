@@ -12,20 +12,26 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from daimon_matrix.canonical import b64url
-from daimon_matrix.client import ClientConfig, LocalClient
-from daimon_matrix.codex_body import CodexBodyError, create_plan_value
+from daimon_matrix.client import ClientConfig, ClientError, LocalClient
+from daimon_matrix.codex_body import CodexBodyError, bind_plan, create_plan_value
 from daimon_matrix.codex_matrix_binding import (
     CurrentMatrixBinding,
     DaemonBootstrapVerifier,
     NativeAdmissionVerifier,
     SessionProofJournal,
+    attest_owner_bootstrap_request,
     authenticate_matrix_binding,
     bootstrap_attestation_payload,
     bootstrap_from_attestation,
     check_current_runtime_authority,
     observe_native_cluster_body,
+    open_owner_native_session,
+    owner_local_admission,
+    pinned_cluster_body_reader,
+    prepare_owner_bootstrap_request,
     read_native_capability_key,
     session_witness_payload,
     validate_current_runtime_status,
@@ -203,6 +209,28 @@ sys.exit(2)
         )
         self.assertEqual(observed.snapshot["state"], "running")
         self.assertEqual(registry.path.read_bytes(), before)
+        reader_checkout = self.root_path / "verified-reader"
+        reader_checkout.mkdir(mode=0o700)
+        (reader_checkout / "clusterctl").mkdir(mode=0o700)
+        for name in ("__init__", "embodiments", "fences", "matrix_host"):
+            target = reader_checkout / "clusterctl" / f"{name}.py"
+            target.write_bytes((root / "clusterctl" / f"{name}.py").read_bytes())
+            target.chmod(0o600)
+        reader = pinned_cluster_body_reader(
+            reader_checkout, cluster_root, binding.embodiment_id
+        )
+        self.assertEqual(
+            observe_native_cluster_body(binding, reader, max_age_ms=1000).snapshot,
+            observed.snapshot,
+        )
+        self.assertEqual(registry.path.read_bytes(), before)
+        (reader_checkout / "clusterctl/matrix_host.py").write_text(
+            "raise RuntimeError('unverified source executed')\n"
+        )
+        with self.assertRaisesRegex(CodexBodyError, "owner_cluster_source_mismatch"):
+            pinned_cluster_body_reader(
+                reader_checkout, cluster_root, binding.embodiment_id
+            )
         registry.stop(binding.embodiment_id)
         with self.assertRaises(CodexBodyError):
             observe_native_cluster_body(binding, host.body_snapshot, max_age_ms=1000)
@@ -615,6 +643,100 @@ sys.exit(2)
                 client, self.authority, **self.admission()
             )
             self.assertEqual(binding, self.check())
+            request_path = self.root_path / "owner-bootstrap-request.json"
+            output_path = self.root_path / "owner-bootstrap.json"
+            session_id = "dm:session:v1:" + b64url(bytes(32))
+            prepared = prepare_owner_bootstrap_request(
+                self.bundle,
+                client,
+                request_path,
+                matrix_session_id=session_id,
+                expires_at_ms=NOW + 30_000,
+                at_ms=NOW,
+            )
+            stored = request_path.read_bytes()
+            sent = []
+            original_send = LocalClient.send
+
+            def lose_first_response(
+                selected: LocalClient, request: dict[str, Any]
+            ) -> dict[str, Any]:
+                response = original_send(selected, request)
+                if request["method"] == "we.observe":
+                    sent.append(copy.deepcopy(request))
+                    if len(sent) == 1:
+                        raise ClientError("synthetic_response_lost_after_acceptance")
+                return response
+
+            with mock.patch.object(LocalClient, "send", lose_first_response):
+                with self.assertRaisesRegex(
+                    CodexBodyError, "owner_bootstrap_request_rejected"
+                ):
+                    attest_owner_bootstrap_request(
+                        self.bundle,
+                        client,
+                        request_path,
+                        output_path,
+                        matrix_session_id="dm:session:v1:" + b64url(bytes([1]) * 32),
+                        expires_at_ms=NOW + 30_000,
+                        at_ms=NOW,
+                    )
+                self.assertEqual(sent, [])
+                with self.assertRaisesRegex(
+                    CodexBodyError, "owner_bootstrap_response_unavailable"
+                ):
+                    attest_owner_bootstrap_request(
+                        self.bundle,
+                        client,
+                        request_path,
+                        output_path,
+                        matrix_session_id=session_id,
+                        expires_at_ms=NOW + 30_000,
+                        at_ms=NOW,
+                    )
+                self.assertFalse(output_path.exists())
+                recovered = attest_owner_bootstrap_request(
+                    self.bundle,
+                    client,
+                    request_path,
+                    output_path,
+                    matrix_session_id=session_id,
+                    expires_at_ms=NOW + 30_000,
+                    at_ms=NOW,
+                )
+            self.assertEqual(sent, [prepared, prepared])
+            self.assertEqual(request_path.read_bytes(), stored)
+            self.assertEqual(recovered["matrix_session_id"], session_id)
+            self.assertEqual(
+                attest_owner_bootstrap_request(
+                    self.bundle,
+                    client,
+                    request_path,
+                    output_path,
+                    matrix_session_id=session_id,
+                    expires_at_ms=NOW + 30_000,
+                    at_ms=NOW,
+                ),
+                recovered,
+            )
+            public_authority, operator_admission, operator_binding = (
+                owner_local_admission(self.bundle, client, at_ms=NOW)
+            )
+            self.assertEqual(operator_binding, binding)
+            self.assertEqual(public_authority.manifest.digest, binding.manifest_hash)
+            self.assertEqual(
+                check_current_runtime_authority(
+                    client, public_authority, **operator_admission
+                ),
+                binding,
+            )
+            absent_client = LocalClient(
+                self.runtime_root / "absent.sock", client.config, clock=lambda: NOW
+            )
+            with self.assertRaisesRegex(
+                CodexBodyError, "matrix_runtime_metadata_unavailable"
+            ):
+                owner_local_admission(self.bundle, absent_client, at_ms=NOW)
             payload = bootstrap_attestation_payload(
                 binding,
                 matrix_session_id="dm:session:v1:"
@@ -643,6 +765,67 @@ sys.exit(2)
                     bootstrap, NOW
                 )
             )
+            key_path = self.root_path / "native-owner.key"
+            key_path.write_bytes(self.capability.key)
+            key_path.chmod(0o600)
+            descriptor = os.open(key_path, os.O_RDONLY)
+            try:
+                plan = bind_plan(
+                    create_plan_value(
+                        bootstrap=bootstrap,
+                        model="no-model",
+                        provider="openai",
+                        workspace_ref="dm:workspace:v1:" + b64url(bytes(32)),
+                        release="0.155.1",
+                    ),
+                    profile_root=self.root_path / "uncreated-owner-profile",
+                    workspace=self.root_path,
+                    codex_binary=self.root_path / "unavailable-native",
+                    mcp_binary=self.root_path / "unavailable-mcp",
+                    mcp_args=(
+                        "--socket",
+                        str(client.socket_path),
+                        "--client-config",
+                        str(self.runtime_root / "client.json"),
+                        "--capability-key-fd",
+                        str(descriptor),
+                        "--request-dir",
+                        str(self.root_path),
+                    ),
+                )
+
+                def stopped_host(*_arguments: Any) -> dict[str, Any]:
+                    return {
+                        "schema": "dm.cluster-body-snapshot/v1",
+                        "body_ref": binding.body_ref,
+                        "embodiment_id": binding.embodiment_id,
+                        "incarnation_id": binding.incarnation_id,
+                        "observed_at_ms": NOW,
+                        "resource_fences": [],
+                        "state": "stopped",
+                    }
+
+                with self.assertRaisesRegex(
+                    CodexBodyError, "native_cluster_body_not_current"
+                ):
+                    open_owner_native_session(
+                        plan,
+                        self.bundle,
+                        client,
+                        body_reader=stopped_host,
+                        proof_journal_path=self.root_path
+                        / "owner-session-proofs.jsonl",
+                        max_age_ms=1000,
+                        create=True,
+                        clock=lambda: NOW,
+                    )
+                self.assertFalse(plan.profile_root.exists())
+                self.assertFalse(
+                    (self.root_path / "owner-session-proofs.jsonl").exists()
+                )
+                self.assertEqual(os.lseek(descriptor, 0, os.SEEK_CUR), 0)
+            finally:
+                os.close(descriptor)
             witness_response = client.send(
                 client.prepare(
                     "we.observe",

@@ -9,24 +9,43 @@ from __future__ import annotations
 import copy
 import fcntl
 import hashlib
+import hmac
 import os
 import stat
 import sys
+import time
+import types
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .canonical import b64url, canonical_bytes
-from .client import ClientError, LocalClient
+from .client import (
+    ClientConfig,
+    ClientError,
+    LocalClient,
+    load_prepared_request,
+    store_prepared_request,
+)
 from .cluster import ClusterEvidenceError, validate_body_snapshot
 from .codex_body import (
     ATTESTED_BOOTSTRAP_SCHEMA,
+    AppServerProcess,
+    CodexBodyAdapter,
     CodexBodyError,
+    CodexBodyPlan,
+    RuntimeHandleJournal,
+    _fsync_directory,
     _json_load,
+    _read_secure_file,
     _secure_directory,
+    _write_new_file,
+    create_profile,
     validate_bootstrap,
+    verify_profile,
 )
 from .identity import (
     VerificationError,
@@ -41,6 +60,54 @@ from .operator_capabilities import (
 from .scopes import BodyReader
 from .service import SERVICE_METHODS
 from .weave import RootAuthority, WeaveProtocolError, verify_event
+
+# Consumed source bytes from daimon-cluster:
+# 676495e852e6772a60de8221271ee9fc976f77ce.
+CLUSTER_READER_SOURCE_HASHES = {
+    "__init__": "7944f2570561ec3f3e7e3b2e4bb225e763b2aed2c2268649ac3dc3e62de55898",
+    "embodiments": "1aeace11f79e136da51485c81fae98aff0f55cc0504ca43911c5b1fe86451b80",
+    "fences": "5273d04e3e5abb596d772591892973f3676b5615f80809e7af30e6d533393f64",
+    "matrix_host": "b539a366ca19bc30fdfbcb4a3704bbea5e2bea59a2c2e9d17a10d76e5115df01",
+}
+
+
+def pinned_cluster_body_reader(
+    checkout: Path, state_root: Path, embodiment_id: str
+) -> BodyReader:
+    """Load only the verified Cluster reader; never import ambient clusterctl.
+
+    All consumed bytes are checked before any code executes. Private module
+    names isolate the reader from workspace/PYTHONPATH modules. Cluster state
+    remains owned by its host: this function registers, starts and stops nothing.
+    """
+    _secure_directory(state_root, "owner_cluster_state_unsafe")
+    sources = {}
+    for name, expected in CLUSTER_READER_SOURCE_HASHES.items():
+        path = checkout / "clusterctl" / f"{name}.py"
+        raw = _read_secure_file(path, "owner_cluster_source_unsafe", owner_only=False)
+        if hashlib.sha256(raw).hexdigest() != expected:
+            raise CodexBodyError("owner_cluster_source_mismatch")
+        sources[name] = (path, raw)
+    namespace = "_dm_codex_cluster_" + uuid.uuid4().hex
+    names = []
+    try:
+        for name, (path, raw) in sources.items():
+            module_name = namespace if name == "__init__" else namespace + "." + name
+            module = types.ModuleType(module_name)
+            module.__file__ = str(path)
+            module.__package__ = namespace
+            if name == "__init__":
+                module.__path__ = []
+            sys.modules[module_name] = module
+            names.append(module_name)
+            exec(compile(raw, str(path), "exec"), module.__dict__)
+        host = sys.modules[namespace + ".matrix_host"].MatrixHostAdapter(
+            state_root, embodiment_id
+        )
+        return cast(BodyReader, host.body_snapshot)
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
 
 
 @dataclass(frozen=True)
@@ -504,6 +571,141 @@ class DaemonBootstrapVerifier:
         return True
 
 
+def owner_local_admission(
+    bundle: Mapping[str, Any], client: LocalClient, *, at_ms: int
+) -> tuple[RootAuthority, dict[str, Any], CurrentMatrixBinding]:
+    """Connect the public signed bundle to the daemon already serving it.
+
+    This explicit operator preflight never loads a runtime or opens custody.
+    A bundle is only a candidate authority snapshot: the authenticated socket
+    must prove the same current epoch. There is no in-process fallback.
+    """
+    from .operator_rebirth import RebirthError, authority_from_runtime_bundle
+
+    try:
+        authority = authority_from_runtime_bundle(bundle)
+        admission = {
+            "origin": copy.deepcopy(bundle["local_origin"]),
+            "runtime_id": bundle["runtime_id"],
+            "runtime_label": bundle["runtime_label"],
+            "capability_rows": copy.deepcopy(bundle["capabilities"]),
+            "capability_binding": copy.deepcopy(bundle["operator_capability_binding"]),
+            "capability_id": client.config.capability.capability_id,
+            "client_id": client.config.capability.client_id,
+            "required_methods": frozenset({"runtime.status", "we.heads", "we.observe"}),
+            "at_ms": at_ms,
+        }
+        binding = check_current_runtime_authority(client, authority, **admission)
+    except (RebirthError, KeyError, TypeError, ValueError) as exception:
+        raise CodexBodyError("owner_local_admission_rejected") from exception
+    return authority, admission, binding
+
+
+def prepare_owner_bootstrap_request(
+    bundle: Mapping[str, Any],
+    client: LocalClient,
+    request_path: Path,
+    *,
+    matrix_session_id: str,
+    expires_at_ms: int,
+    at_ms: int,
+) -> dict[str, Any]:
+    """Persist one explicit bootstrap request; send and sign nothing here."""
+    _authority, _admission, binding = owner_local_admission(bundle, client, at_ms=at_ms)
+    payload = bootstrap_attestation_payload(
+        binding, matrix_session_id=matrix_session_id, expires_at_ms=expires_at_ms
+    )
+    request = client.prepare(
+        "we.observe",
+        {
+            "subject": "codex-body/bootstrap",
+            "payload": payload,
+            "sensitivity": "private",
+            "causal_parents": [],
+            "occurred_at_ms": at_ms,
+            "event_id": None,
+        },
+    )
+    try:
+        store_prepared_request(request_path, request)
+    except ClientError as exception:
+        raise CodexBodyError("owner_bootstrap_request_store_rejected") from exception
+    return request
+
+
+def attest_owner_bootstrap_request(
+    bundle: Mapping[str, Any],
+    client: LocalClient,
+    request_path: Path,
+    output_path: Path,
+    *,
+    matrix_session_id: str,
+    expires_at_ms: int,
+    at_ms: int,
+) -> dict[str, Any]:
+    """Send only the saved exact request and retain its verified public proof.
+
+    Current authority is checked before sending. Response loss preserves the
+    original request; an explicit retry uses its original ID/nonce/MAC/bytes.
+    No fresh request is manufactured and no existing output is replaced.
+    """
+    authority, admission, _binding = owner_local_admission(bundle, client, at_ms=at_ms)
+    raw = _json_load(
+        _read_secure_file(request_path, "owner_bootstrap_request_rejected"),
+        "owner_bootstrap_request_rejected",
+    )
+    try:
+        issued_at_ms = raw["params"]["payload"]["bootstrap"]["issued_at_ms"]
+        if not issued_at_ms <= at_ms < expires_at_ms:
+            raise CodexBodyError("owner_bootstrap_interval_rejected")
+        initial = authenticate_matrix_binding(
+            authority, **{**admission, "at_ms": issued_at_ms}
+        )
+        params = {
+            "subject": "codex-body/bootstrap",
+            "payload": bootstrap_attestation_payload(
+                initial,
+                matrix_session_id=matrix_session_id,
+                expires_at_ms=expires_at_ms,
+            ),
+            "sensitivity": "private",
+            "causal_parents": [],
+            "occurred_at_ms": issued_at_ms,
+            "event_id": None,
+        }
+        request = load_prepared_request(
+            request_path, client.config.capability, method="we.observe", params=params
+        )
+        if request != raw:
+            raise CodexBodyError("owner_bootstrap_request_changed")
+        # Validate output's parent before producing any Matrix effect.
+        _secure_directory(output_path.parent, "owner_bootstrap_output_unsafe")
+    except (ClientError, KeyError, TypeError, ValueError) as exception:
+        raise CodexBodyError("owner_bootstrap_request_rejected") from exception
+    try:
+        response = client.send(request)
+    except ClientError as exception:
+        raise CodexBodyError(
+            "owner_bootstrap_response_unavailable", retryable=True
+        ) from exception
+    if response.get("ok") is not True:
+        raise CodexBodyError("owner_bootstrap_attestation_rejected")
+    try:
+        bootstrap = bootstrap_from_attestation(
+            response["result"]["event"], authority, **admission
+        )
+    except (KeyError, TypeError) as exception:
+        raise CodexBodyError("owner_bootstrap_attestation_rejected") from exception
+    content = canonical_bytes(bootstrap)
+    if output_path.exists() or output_path.is_symlink():
+        if _read_secure_file(output_path, "owner_bootstrap_output_unsafe") != content:
+            raise CodexBodyError("owner_bootstrap_output_conflict")
+    else:
+        _write_new_file(output_path, content, 0o600)
+        _fsync_directory(output_path.parent)
+    return bootstrap
+
+
 @dataclass(frozen=True)
 class NativeAdmissionVerifier:
     """Compose current daemon authority, durable ancestry and Cluster metadata.
@@ -569,6 +771,110 @@ class NativeAdmissionVerifier:
                 observation.fresh_until_ms, bootstrap["expires_at_ms"]
             ),
         }
+
+
+@dataclass(frozen=True)
+class OwnerNativeSession:
+    """One explicitly opened native process with owner-local admission.
+
+    The host supplies its trusted, live Cluster reader; a cached JSON snapshot
+    or daemon health is not a substitute. Opening initializes the protocol,
+    but does not start a thread, submit input, read messages or sign events.
+    The caller requests start/resume/recovery/park through ``adapter``.
+    ``close`` releases the native transport without inventing a park receipt.
+    """
+
+    adapter: CodexBodyAdapter
+    process: AppServerProcess
+
+    def close(self) -> None:
+        self.process.close()
+
+
+def open_owner_native_session(
+    plan: CodexBodyPlan,
+    bundle: Mapping[str, Any],
+    client: LocalClient,
+    *,
+    body_reader: BodyReader,
+    proof_journal_path: Path,
+    max_age_ms: int,
+    create: bool = False,
+    clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+) -> OwnerNativeSession:
+    """Compose the real socket, current Root, durable proofs and native body.
+
+    Authority and physical observations are checked before any profile write
+    or process spawn. The rendered MCP must use this exact client, socket and
+    key descriptor. Failed initialization closes its child and preserves all
+    profile/journal evidence; it never retries a launch or discovers a thread.
+    """
+    bootstrap = validate_bootstrap(plan.value["bootstrap"])
+    if bootstrap["schema"] != ATTESTED_BOOTSTRAP_SCHEMA:
+        raise CodexBodyError("owner_native_attested_bootstrap_required")
+    key = read_native_capability_key(int(plan.mcp_args[5]))
+    try:
+        # ClientConfig.load consumes and wipes a mutable key buffer.
+        key_matches = hmac.compare_digest(key, client.config.capability.key)
+        mcp_config = ClientConfig.load(Path(plan.mcp_args[3]), key)
+        if (
+            mcp_config != client.config
+            or Path(plan.mcp_args[1]) != client.socket_path
+            or not key_matches
+        ):
+            raise CodexBodyError("owner_native_mcp_binding_mismatch")
+    except ClientError as exception:
+        raise CodexBodyError("owner_native_mcp_binding_rejected") from exception
+    finally:
+        key[:] = bytes(len(key))
+    authority, admission, _binding = owner_local_admission(
+        bundle, client, at_ms=clock()
+    )
+    verifier = DaemonBootstrapVerifier(client, authority, admission)
+    verifier(bootstrap, clock())
+    proofs = SessionProofJournal(proof_journal_path, bootstrap=bootstrap)
+    presence = NativeAdmissionVerifier(
+        client, authority, admission, proofs, body_reader, max_age_ms
+    )
+    presence(
+        {
+            name: bootstrap[name]
+            for name in (
+                "being_ref",
+                "body_ref",
+                "embodiment_id",
+                "incarnation_id",
+                "matrix_session_id",
+                "matrix_high_water",
+            )
+        },
+        clock(),
+    )
+    if create:
+        create_profile(
+            plan,
+            bootstrap_verifier=lambda evidence, at_ms: verifier(evidence, at_ms),
+            clock=clock,
+        )
+    else:
+        verify_profile(plan)
+    handles = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    )
+    process = AppServerProcess(plan, pass_fds=(int(plan.mcp_args[5]),))
+    try:
+        adapter = CodexBodyAdapter(
+            plan,
+            process,
+            lambda binding, at_ms: presence(binding, at_ms),
+            handles,
+            clock=clock,
+        )
+        adapter.initialize()
+    except BaseException:
+        process.close()
+        raise
+    return OwnerNativeSession(adapter, process)
 
 
 def bootstrap_attestation_payload(

@@ -727,7 +727,7 @@ class SuccessorProfileTests(unittest.TestCase):
         transport = mock.Mock()
         transport.request.side_effect = rpc
         journal = body.RuntimeHandleJournal(
-            self.root / "expired-start.jsonl", plan=self.plan
+            self.plan.profile_root / "runtime-handles.jsonl", plan=self.plan
         )
         adapter = body.CodexBodyAdapter(
             self.plan, transport, presence, journal, clock=lambda: now[0]
@@ -741,6 +741,14 @@ class SuccessorProfileTests(unittest.TestCase):
         with self.assertRaises(CodexBodyError) as retry:
             adapter.start()
         self.assertEqual(retry.exception.code, "codex_launch_outcome_unknown")
+        self.assertEqual(transport.request.call_count, 2)
+        preserved = journal.path.read_bytes()
+        observed = body.describe_native_launch_state(self.plan)
+        self.assertEqual(observed["outcome"], "unknown-first-start")
+        self.assertFalse(observed["native_ids_saved"])
+        self.assertFalse(observed["process_termination_proven"])
+        self.assertFalse(observed["automatic_retry_allowed"])
+        self.assertEqual(journal.path.read_bytes(), preserved)
         self.assertEqual(transport.request.call_count, 2)
 
     def test_runtime_journal_fifo_refuses_without_waiting_for_writer(self) -> None:
