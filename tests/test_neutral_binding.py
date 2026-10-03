@@ -20,15 +20,19 @@ from daimon_matrix.neutral_binding import (
     OWNER_CLIENT_SCHEMA,
     NeutralBindingError,
     binding_artifacts,
+    chat_skill_artifacts,
+    compose_codex_config,
     main,
     owner_client_plan_from_mapping,
     plan_from_mapping,
     render_binding_manifest,
+    render_codex_skills_fragment,
     render_env_fragment,
     render_hermes_skills_fragment,
     render_owner_client,
     render_service_env,
     render_surface_check,
+    skill_discovery_from_mapping,
 )
 
 HOME = "/home/testowner"
@@ -477,6 +481,219 @@ class OwnerClientTests(unittest.TestCase):
         # against the capability, so the refusal can arrive before anything is sent
         self.assertIn("except (ClientError, LocalApiError) as error:", rendered)
         self.assertIn("no está al alcance de la capability de este cuerpo", rendered)
+
+
+class SkillDiscoveryTests(unittest.TestCase):
+    def discovery(self) -> dict[str, Any]:
+        return {
+            "schema": "dm.skill-discovery/v1",
+            "packages": [
+                {
+                    "path": "memory",
+                    "sha256": "a" * 64,
+                    "auxiliary_skills": [
+                        "references/example/SKILL.md",
+                        "librarian/SKILL.md",
+                    ],
+                },
+                {
+                    "path": "memory/librarian",
+                    "sha256": "b" * 64,
+                    "auxiliary_skills": [],
+                },
+            ],
+        }
+
+    def test_nested_root_survives_parent_auxiliary_classification(self) -> None:
+        import tomllib
+
+        plan = plan_from_mapping(plan_value())
+        config = tomllib.loads(
+            render_codex_skills_fragment(plan, self.discovery()).decode()
+        )
+        self.assertEqual(
+            config["skills"]["config"],
+            [
+                {
+                    "path": SKILLS_ROOT + "/memory/references/example/SKILL.md",
+                    "enabled": False,
+                }
+            ],
+        )
+        manifest = json.loads(
+            render_binding_manifest(plan, skill_discovery=self.discovery())
+        )
+        self.assertEqual(
+            manifest["artifacts"]["codex_skills_fragment"],
+            hashlib.sha256(
+                render_codex_skills_fragment(plan, self.discovery())
+            ).hexdigest(),
+        )
+        changed = self.discovery()
+        changed["packages"][0]["sha256"] = "c" * 64
+        self.assertNotEqual(
+            render_binding_manifest(plan, skill_discovery=changed),
+            render_binding_manifest(plan, skill_discovery=self.discovery()),
+        )
+
+    def test_reordering_is_deterministic_and_paths_are_deduplicated(self) -> None:
+        plan = plan_from_mapping(plan_value())
+        value = self.discovery()
+        value["packages"].reverse()
+        self.assertEqual(
+            render_binding_manifest(plan, skill_discovery=value),
+            render_binding_manifest(plan, skill_discovery=self.discovery()),
+        )
+
+    def test_untrusted_locator_cannot_escape_or_inject_configuration(self) -> None:
+        for bad in [
+            "../outside",
+            "memory/../outside",
+            "/absolute",
+            'pkg"\\n',
+            "pkg/./child",
+        ]:
+            value = self.discovery()
+            value["packages"][0]["path"] = bad
+            with self.subTest(path=bad), self.assertRaises(NeutralBindingError):
+                skill_discovery_from_mapping(value)
+        for bad in [
+            "../SKILL.md",
+            "/tmp/SKILL.md",
+            "SKILL.md",
+            "references/../../SKILL.md",
+        ]:
+            value = self.discovery()
+            value["packages"][0]["auxiliary_skills"] = [bad]
+            with self.subTest(auxiliary=bad), self.assertRaises(NeutralBindingError):
+                skill_discovery_from_mapping(value)
+        value = self.discovery()
+        value["packages"][0]["sha256"] = "invalid"
+        with self.assertRaises(NeutralBindingError):
+            skill_discovery_from_mapping(value)
+        value = self.discovery()
+        value["packages"].append(value["packages"][0])
+        with self.assertRaises(NeutralBindingError):
+            skill_discovery_from_mapping(value)
+
+    def test_cli_binds_discovery_and_refuses_before_writing_invalid_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_file = root / "binding.json"
+            plan_file.write_text(json.dumps(plan_value()))
+            skill_file = root / "skills.json"
+            skill_file.write_text(json.dumps(self.discovery()))
+            out = root / "out"
+            args = [
+                "--plan",
+                str(plan_file),
+                "--skill-plan",
+                str(skill_file),
+                "--out",
+                str(out),
+            ]
+            self.assertEqual(main(args), 0)
+            fragment = out / "codex_skills_fragment.toml"
+            self.assertEqual(stat.S_IMODE(fragment.stat().st_mode), 0o600)
+            before = {f.name: f.read_bytes() for f in out.iterdir()}
+            skill_file.write_text('{"schema":"dm.skill-discovery/v1","packages":[]}')
+            self.assertEqual(main(args), 2)
+            self.assertEqual(before, {f.name: f.read_bytes() for f in out.iterdir()})
+
+    def test_composition_preserves_baseline_policy_and_refuses_reapplication(
+        self,
+    ) -> None:
+        import tomllib
+
+        plan = plan_from_mapping(plan_value())
+        baseline = b'model = "fixture"\n[features]\nhooks = false\nmemories = false\n'
+        composed = compose_codex_config(plan, self.discovery(), baseline)
+        self.assertTrue(composed.startswith(baseline))
+        parsed = tomllib.loads(composed.decode())
+        self.assertEqual(parsed["features"], {"hooks": False, "memories": False})
+        with self.assertRaisesRegex(NeutralBindingError, "codex_skill_policy_conflict"):
+            compose_codex_config(plan, self.discovery(), composed)
+        with self.assertRaisesRegex(NeutralBindingError, "invalid_codex_baseline"):
+            compose_codex_config(plan, self.discovery(), b"[broken")
+        manifest = json.loads(
+            render_binding_manifest(
+                plan,
+                skill_discovery=self.discovery(),
+                codex_baseline=baseline,
+            )
+        )
+        self.assertEqual(
+            manifest["codex_baseline_sha256"], hashlib.sha256(baseline).hexdigest()
+        )
+        self.assertEqual(
+            manifest["artifacts"]["codex_config"], hashlib.sha256(composed).hexdigest()
+        )
+
+    def test_cli_emits_packaged_chat_and_composed_profile_without_changing_inputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan_file = root / "binding.json"
+            plan_file.write_text(json.dumps(plan_value()))
+            skill_file = root / "skills.json"
+            skill_file.write_text(json.dumps(self.discovery()))
+            baseline_file = root / "baseline.toml"
+            baseline_file.write_bytes(b'model = "fixture"\n')
+            out = root / "out"
+            args = [
+                "--plan",
+                str(plan_file),
+                "--skill-plan",
+                str(skill_file),
+                "--codex-config",
+                str(baseline_file),
+                "--chat-skill",
+                "--out",
+                str(out),
+            ]
+            before = baseline_file.read_bytes()
+            self.assertEqual(main(args), 0)
+            self.assertEqual(baseline_file.read_bytes(), before)
+            self.assertEqual(
+                (out / "codex_config.toml").read_bytes(),
+                compose_codex_config(
+                    plan_from_mapping(plan_value()), self.discovery(), before
+                ),
+            )
+            artifacts = chat_skill_artifacts()
+            self.assertEqual(
+                set(artifacts),
+                {"chat_skill_body", "chat_skill_openai", "chat_skill_hermes"},
+            )
+            for name, raw in artifacts.items():
+                emitted = out / ARTIFACT_FILENAMES[name]
+                self.assertEqual(emitted.read_bytes(), raw)
+                self.assertEqual(stat.S_IMODE(emitted.stat().st_mode), 0o600)
+            manifest = json.loads((out / "binding-manifest.json").read_bytes())
+            for name, raw in artifacts.items():
+                self.assertEqual(
+                    manifest["artifacts"][name], hashlib.sha256(raw).hexdigest()
+                )
+            for adapter in ["chat_skill_openai", "chat_skill_hermes"]:
+                self.assertEqual(
+                    artifacts[adapter], b"policy:\n  allow_implicit_invocation: false\n"
+                )
+            baseline_file.write_bytes((out / "codex_config.toml").read_bytes())
+            output_before = {
+                f.relative_to(out): f.read_bytes()
+                for f in out.rglob("*")
+                if f.is_file()
+            }
+            self.assertEqual(main(args), 2)
+            self.assertEqual(
+                output_before,
+                {
+                    f.relative_to(out): f.read_bytes()
+                    for f in out.rglob("*")
+                    if f.is_file()
+                },
+            )
 
 
 if __name__ == "__main__":
