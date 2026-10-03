@@ -93,6 +93,15 @@ SDIST_FILES: Final = frozenset(
         "src/daimon_matrix/native_egress.py",
         "src/daimon_matrix/neutral_binding.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",
+        "src/daimon_matrix/owner_memory_sync.py",
+        "src/daimon_matrix/owner_sync/__init__.py",
+        "src/daimon_matrix/owner_sync/durable_rebuild_packet.py",
+        "src/daimon_matrix/owner_sync/locked_projection_operation.py",
+        "src/daimon_matrix/owner_sync/namespace_rebuild_operation.py",
+        "src/daimon_matrix/owner_sync/native_reconcile.py",
+        "src/daimon_matrix/owner_sync/pool_snapshot.py",
+        "src/daimon_matrix/owner_sync/public_history_authority.py",
+        "src/daimon_matrix/owner_sync/selected_projection_kernel.py",
         "src/daimon_matrix/peer_transport.py",
         "src/daimon_matrix/publication.py",
         "src/daimon_matrix/projections.py",
@@ -179,6 +188,15 @@ WHEEL_FILES: Final = frozenset(
         "daimon_matrix/multihost.py",
         "daimon_matrix/native_egress.py",
         "daimon_matrix/neutral_binding.py",
+        "daimon_matrix/owner_memory_sync.py",
+        "daimon_matrix/owner_sync/__init__.py",
+        "daimon_matrix/owner_sync/durable_rebuild_packet.py",
+        "daimon_matrix/owner_sync/locked_projection_operation.py",
+        "daimon_matrix/owner_sync/namespace_rebuild_operation.py",
+        "daimon_matrix/owner_sync/native_reconcile.py",
+        "daimon_matrix/owner_sync/pool_snapshot.py",
+        "daimon_matrix/owner_sync/public_history_authority.py",
+        "daimon_matrix/owner_sync/selected_projection_kernel.py",
         "daimon_matrix/peer_transport.py",
         "daimon_matrix/publication.py",
         "daimon_matrix/projections.py",
@@ -435,6 +453,7 @@ def inspect_wheel(path: Path, source_root: Path) -> dict[str, object]:
         b"daimon-hermes-body = daimon_matrix.hermes_body:main\n"
         b"daimon-matrixd = daimon_matrix.daemon:main\n"
         b"daimon-mcp = daimon_matrix.mcp_server:main\n"
+        b"daimon-owner-memory-sync = daimon_matrix.owner_memory_sync:main\n"
         b"daimon-rebirth = daimon_matrix.operator_rebirth:main\n"
         b"daimon-reviewer = daimon_matrix.reviewer_cli:main\n"
         b"daimon-synthetic-bootstrap = daimon_matrix.operator_bootstrap:main\n"

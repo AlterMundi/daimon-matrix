@@ -75,6 +75,7 @@ class PackageMetadataTests(unittest.TestCase):
                 "daimon-hermes-body": "daimon_matrix.hermes_body:main",
                 "daimon-matrixd": "daimon_matrix.daemon:main",
                 "daimon-mcp": "daimon_matrix.mcp_server:main",
+                "daimon-owner-memory-sync": "daimon_matrix.owner_memory_sync:main",
                 "daimon-rebirth": "daimon_matrix.operator_rebirth:main",
                 "daimon-reviewer": "daimon_matrix.reviewer_cli:main",
                 "daimon-synthetic-bootstrap": ("daimon_matrix.operator_bootstrap:main"),
@@ -158,7 +159,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 77)
+        self.assertEqual(len(modules), 86)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -358,6 +359,15 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/multihost.py",
                 "src/daimon_matrix/native_egress.py",
                 "src/daimon_matrix/neutral_binding.py",
+                "src/daimon_matrix/owner_memory_sync.py",
+                "src/daimon_matrix/owner_sync/__init__.py",
+                "src/daimon_matrix/owner_sync/durable_rebuild_packet.py",
+                "src/daimon_matrix/owner_sync/locked_projection_operation.py",
+                "src/daimon_matrix/owner_sync/namespace_rebuild_operation.py",
+                "src/daimon_matrix/owner_sync/native_reconcile.py",
+                "src/daimon_matrix/owner_sync/pool_snapshot.py",
+                "src/daimon_matrix/owner_sync/public_history_authority.py",
+                "src/daimon_matrix/owner_sync/selected_projection_kernel.py",
                 "src/daimon_matrix/peer_transport.py",
                 "src/daimon_matrix/publication.py",
                 "src/daimon_matrix/projections.py",
@@ -445,6 +455,15 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/multihost.py",
                 "daimon_matrix/native_egress.py",
                 "daimon_matrix/neutral_binding.py",
+                "daimon_matrix/owner_memory_sync.py",
+                "daimon_matrix/owner_sync/__init__.py",
+                "daimon_matrix/owner_sync/durable_rebuild_packet.py",
+                "daimon_matrix/owner_sync/locked_projection_operation.py",
+                "daimon_matrix/owner_sync/namespace_rebuild_operation.py",
+                "daimon_matrix/owner_sync/native_reconcile.py",
+                "daimon_matrix/owner_sync/pool_snapshot.py",
+                "daimon_matrix/owner_sync/public_history_authority.py",
+                "daimon_matrix/owner_sync/selected_projection_kernel.py",
                 "daimon_matrix/peer_transport.py",
                 "daimon_matrix/publication.py",
                 "daimon_matrix/projections.py",
