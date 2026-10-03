@@ -58,6 +58,37 @@ Projection identity adds `memory_id`. Domain-separated SHA-256 over canonical
 JSON derives both IDs. Titles, slugs, shelves, tags, local chapter IDs, paths,
 body sessions and semantic similarity never participate.
 
+## Embodiment provenance after sync
+
+An operational per-embodiment profile MUST use `source_instance` equal to
+`matrix:` followed by the signed assertion event's `origin.embodiment_id`.
+For example, origin `embodiment:<id>` maps to `matrix:embodiment:<id>`.
+The receiver MUST NOT substitute its own embodiment, host, label or pathname.
+
+For these profiles the adapter selects only memory lanes whose first accepted
+`assert` event has that exact origin. Project, inspect, recall, verification and
+rebuild use the same selection. A received memory cannot be projected into the
+receiver's namespace; refusal precedes journal reservation and HMK effects.
+A correction or retraction signed by another embodiment of the same being
+retains the assertion's namespace and memory identity. The signed event chain
+still records the origin of each correction; the namespace is not a claim that
+one body authored every revision. A fork or gap remains an error, not a reason
+to select whichever copy arrived last.
+
+Existing generic DM-034 source-instance aliases retain their original namespace
+semantics for compatibility with frozen profiles. They are not evidence of
+per-embodiment attribution and MUST NOT be used for cross-host attributed
+adoption. This change does not relabel or rewrite an existing HMK namespace.
+The checkpoint remains the complete same-being personal-memory checkpoint;
+receiving another lane can therefore require refreshing a namespace's checkpoint
+even when its own selected statements did not change.
+
+Sync receipts authenticate event intake, not content availability or local
+projection. The operator MUST independently provide the statement bytes named
+by the accepted event, require exact length/hash/media validation, and explicitly
+perform local projection. Missing bytes are retryable unavailable content;
+substituted bytes are a mismatch. Neither condition creates a retrieval row.
+
 ## Mapping and effect proof
 
 An accepted Matrix `assert` maps to HMK `project`; `correct` maps to `advance`;
@@ -121,10 +152,14 @@ Only an active exact match is presented. The returned origin states
 `daimon-projection` and retains source instance, subject, author, memory,
 category, event head, classification and projector.
 
-Missing, stale, deleted, extra, content-drifted, checkpoint-ahead or
+Missing active, stale, deleted active, extra, content-drifted, checkpoint-ahead or
 manifest-mismatched rows fail closed. Retrieval scores and embeddings do not
 participate in verification. HMK keeps projection rows embedding-disabled and
 generic HMK mutation/publication paths refuse them at the pinned boundary.
+A retracted lane may have no HMK row after an active-head rebuild. If an inactive
+row remains, its current retraction head, statement reference and namespace MUST
+still match the signed lane. Active rows remain mandatory; duplicated, extra or
+resurrected rows remain discrepancies.
 
 ## Deterministic rebuild
 
