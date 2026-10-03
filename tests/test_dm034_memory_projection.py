@@ -375,6 +375,59 @@ class DM034ProjectionTests(RootLedgerFixture):
         with self.assertRaisesRegex(MemoryProjectionError, "matrix_memory_unknown"):
             self.origin_adapter("daimonmatrix").inspect(memory_id=MEMORY_ID)
 
+    def test_sibling_retraction_verifies_before_and_after_empty_rebuild(self) -> None:
+        event, plan = self.record(label="source-before-retraction")
+        self.sync_memory_ledgers(request_label="before-sibling-retraction")
+        source = self.origin_adapter("legion")
+        source.project(event_id=event["event_id"], idempotency_key="before-retract")
+        retracted, _ = self.record(
+            label="sibling-retraction",
+            origin_label="daimonmatrix",
+            operation="retract",
+            text=None,
+            predecessor=event,
+            predecessor_decision_id=plan["decision_id"],
+        )
+        source.project(event_id=retracted["event_id"], idempotency_key="retract")
+        self.assertFalse(source.verify()["projections"][0]["active"])
+        rebuild = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000005",
+            idempotency_key="retracted-origin-rebuild",
+        )
+        self.assertEqual(rebuild["hmk_plan"]["entries"], [])
+        receipt = source.rebuild_apply(rebuild)
+        self.assertEqual(source.rebuild_apply(rebuild), receipt)
+        self.assertEqual(source.verify()["projections"], [])
+        with self.assertRaises(MemoryProjectionError):
+            source.recall(memory_id=MEMORY_ID)
+
+    def test_first_received_retraction_rebuilds_without_fabricated_projection(
+        self,
+    ) -> None:
+        event, plan = self.record(label="assert-before-first-received-retraction")
+        self.record(
+            label="first-received-retraction",
+            operation="retract",
+            text=None,
+            predecessor=event,
+            predecessor_decision_id=plan["decision_id"],
+        )
+        self.sync_memory_ledgers(request_label="first-received-retraction-sync")
+        source = self.origin_adapter("legion")
+        rebuild = source.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000006",
+            idempotency_key="first-received-retracted-origin",
+        )
+        source.rebuild_apply(rebuild)
+        self.assertEqual(source.verify()["projections"], [])
+        # Generic frozen namespace profiles obey the same active-head rebuild.
+        generic_rebuild = self.adapter.rebuild_plan(
+            request_id="34000000-0000-4000-8000-000000000007",
+            idempotency_key="generic-retracted-origin",
+        )
+        self.adapter.rebuild_apply(generic_rebuild)
+        self.assertEqual(self.adapter.verify()["projections"], [])
+
     def test_manifest_profile_and_exact_pin_are_closed(self) -> None:
         manifest = create_projection_manifest()
         self.assertEqual(validate_projection_manifest(manifest), manifest)

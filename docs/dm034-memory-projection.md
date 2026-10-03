@@ -152,10 +152,14 @@ Only an active exact match is presented. The returned origin states
 `daimon-projection` and retains source instance, subject, author, memory,
 category, event head, classification and projector.
 
-Missing, stale, deleted, extra, content-drifted, checkpoint-ahead or
+Missing active, stale, deleted active, extra, content-drifted, checkpoint-ahead or
 manifest-mismatched rows fail closed. Retrieval scores and embeddings do not
 participate in verification. HMK keeps projection rows embedding-disabled and
 generic HMK mutation/publication paths refuse them at the pinned boundary.
+A retracted lane may have no HMK row after an active-head rebuild. If an inactive
+row remains, its current retraction head, statement reference and namespace MUST
+still match the signed lane. Active rows remain mandatory; duplicated, extra or
+resurrected rows remain discrepancies.
 
 ## Deterministic rebuild
 

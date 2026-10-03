@@ -1927,7 +1927,17 @@ class MemoryProjectionAdapter:
             if state["source_checkpoint"]["sequence"] > expected_checkpoint["sequence"]:
                 raise MemoryProjectionError("hmk_projection_checkpoint_ahead")
             actual.append(state)
-        if [state["memory_id"] for state in actual] != sorted(expected_by_memory):
+        actual_ids = [state["memory_id"] for state in actual]
+        required_ids = {
+            memory_id
+            for memory_id, state in expected_by_memory.items()
+            if state["active"] is True
+        }
+        # HMK rebuilds active heads only. An inactive row can disappear after
+        # rebuild; if still present, its exact signed retraction was checked above.
+        if actual_ids != sorted(set(actual_ids)) or not required_ids.issubset(
+            actual_ids
+        ):
             raise MemoryProjectionError("hmk_projection_set_mismatch")
         return {
             "schema": HMK_VERIFY_RESULT_SCHEMA,
