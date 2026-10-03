@@ -84,8 +84,9 @@ record it in the issue/deployment notes.
    `<home>/.hermes/config.yaml` under `skills.external_dirs` (upstream
    mechanism; local skills win name collisions, so do not keep a stale local
    copy of a promoted skill). Restart the gateway.
-6. Codex skills root: native — Codex already scans `<home>/.agents/skills`;
-   nothing to configure.
+6. Codex skills root: native — Codex scans `<home>/.agents/skills`. For
+   selected packages with auxiliary skill documents, prepare the discovery
+   controls described below.
 7. Run `python3 surface_check.py`; it must print `surface-check: ok`.
 
 ## Migration of an existing memory base
@@ -169,3 +170,68 @@ same contract.
   PR merges, re-pin the body venv to the merged commit.
 - Evidence: issue #161 comments; local pre/post row counts and env backup in
   `/tmp/nt-evidence/` on Legion.
+
+
+## Selected skill packages and native discovery
+
+The installed wheel ships `neutral_skill_assets/daimon-chat/`. Render with
+`--chat-skill` to emit an installable neutral package at
+`<out>/skills/daimon-chat/`; copy that directory to
+`<home>/.agents/skills/daimon-chat` only during an approved adoption.
+It contains one shared body and interface/policy-only `agents/openai.yaml` and
+`agents/hermes.yaml` adapters. Both declare `allow_implicit_invocation: false`.
+A harness must support the adapter policy to enforce it natively; Hermes's
+existing tool/request gate remains the operational boundary when it does not
+consume that file. Installing a package creates no hooks, timers or listeners.
+No ECC source is vendored. Resolve each body's existing rendered connection
+outside the package; never copy `connection.json`, credentials or custody with it.
+
+Codex recursively discovers auxiliary `SKILL.md` documents that Hermes excludes
+from discovery beneath a package's support directories. Preserve their bytes,
+but prepare a closed owner-selected discovery plan to disable those auxiliary
+paths in Codex. For example:
+
+```json
+{
+  "schema": "dm.skill-discovery/v1",
+  "packages": [
+    {
+      "path": "mariano-memory-kit",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "auxiliary_skills": ["references/example/SKILL.md", "librarian/SKILL.md"]
+    },
+    {
+      "path": "mariano-memory-kit/librarian",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "auxiliary_skills": []
+    }
+  ]
+}
+```
+
+Paths are package locators under the derived neutral root, never identity.
+Replace example digests with the exact captured package-manifest digests and
+retain that source inventory as evidence. The renderer binds this declaration,
+but does not inspect source bytes or certify provenance, fitness or adoption.
+The owner selects packages and classifies auxiliary documents from an inventory;
+rendering does not authorize mass promotion or query any runtime.
+
+Render with `python -m daimon_matrix.neutral_binding --plan binding.json
+--skill-plan selected-skills.json --out prepared-binding`. This additionally emits
+`codex_skills_fragment.toml`, with sorted unique exact-path `skills.config` entries,
+and records the normalized package declaration and fragment digest in the binding
+manifest. A declared nested package root remains enabled even if its parent lists
+that document as auxiliary. With no skill plan, existing binding bytes stay the
+same. This is a discovery policy, not permission to invoke tools or load memory.
+
+Pass `--codex-config <prepared-rendered-baseline.toml>` with `--skill-plan` to
+emit the final `codex_config.toml`. The renderer preserves the baseline bytes,
+refuses an existing `skills.config` policy rather than overriding it, and binds
+both the baseline digest and composed output to the manifest. Neither input nor
+active profile is changed. Check the prepared final config with the pinned native
+strict-config loader before approval. Reconcile a conflicting baseline explicitly;
+do not repeatedly append fragments to a live file. Verify the enabled roots
+against the declared inventory using `skills/list`; auxiliary parser diagnostics
+must be distinguished from missing enabled roots. Record the exact final config,
+package inventories and rollback in the deployment packet. Native discovery alone
+does not prove body admission, invocation fitness or operational adoption.

@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,16 @@ ARTIFACT_FILENAMES: Final = {
     "hermes_skills_fragment": "hermes_skills_fragment.yaml",
     "surface_check": "surface_check.py",
     "manifest": "binding-manifest.json",
+    "codex_skills_fragment": "codex_skills_fragment.toml",
+    "codex_config": "codex_config.toml",
+    "chat_skill_body": "skills/daimon-chat/SKILL.md",
+    "chat_skill_openai": "skills/daimon-chat/agents/openai.yaml",
+    "chat_skill_hermes": "skills/daimon-chat/agents/hermes.yaml",
 }
+
+SKILL_DISCOVERY_SCHEMA: Final = "dm.skill-discovery/v1"
+_SKILL_PATH: Final = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9._-]+)*$")
+_SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 
 _BEING_NAME: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 _HOST_WORD: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -179,6 +189,109 @@ def render_hermes_skills_fragment(plan: NeutralBindingPlan) -> bytes:
     if "hermes" not in plan.harnesses:
         raise NeutralBindingError("hermes_not_in_binding")
     return f"skills:\n  external_dirs:\n    - {plan.skills_root}\n".encode()
+
+
+def skill_discovery_from_mapping(value: Any) -> dict[str, Any]:
+    """Validate owner-selected package locators, digests and auxiliary documents.
+
+    Digests describe supplied packages; they are not trust or adoption decisions.
+    No directory scan, source import, installation or tool execution occurs.
+    """
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"schema", "packages"}
+        or value["schema"] != SKILL_DISCOVERY_SCHEMA
+        or not isinstance(value["packages"], list)
+        or not value["packages"]
+    ):
+        raise NeutralBindingError("invalid_skill_discovery")
+    packages: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value["packages"]:
+        if not isinstance(item, Mapping) or set(item) != {
+            "path",
+            "sha256",
+            "auxiliary_skills",
+        }:
+            raise NeutralBindingError("invalid_skill_package")
+        path = _text(item["path"], "invalid_skill_path", _SKILL_PATH)
+        if any(part in {".", ".."} for part in path.split("/")) or path in seen:
+            raise NeutralBindingError("invalid_skill_path")
+        seen.add(path)
+        digest = _text(item["sha256"], "invalid_skill_digest", _SHA256)
+        auxiliary = item["auxiliary_skills"]
+        if not isinstance(auxiliary, list):
+            raise NeutralBindingError("invalid_auxiliary_skills")
+        documents: set[str] = set()
+        for raw in auxiliary:
+            relative = _text(raw, "invalid_auxiliary_skill_path", _SKILL_PATH)
+            if (
+                not relative.endswith("/SKILL.md")
+                or any(part in {".", ".."} for part in relative.split("/"))
+                or relative in documents
+            ):
+                raise NeutralBindingError("invalid_auxiliary_skill_path")
+            documents.add(relative)
+        packages.append(
+            dict(path=path, sha256=digest, auxiliary_skills=sorted(documents))
+        )
+    return dict(
+        schema=SKILL_DISCOVERY_SCHEMA,
+        packages=sorted(packages, key=lambda p: p["path"]),
+    )
+
+
+def render_codex_skills_fragment(plan: NeutralBindingPlan, value: Any) -> bytes:
+    """Disable auxiliary SKILL.md files without disabling declared nested roots."""
+    if "codex" not in plan.harnesses:
+        raise NeutralBindingError("codex_not_in_binding")
+    discovery = skill_discovery_from_mapping(value)
+    roots = {package["path"] + "/SKILL.md" for package in discovery["packages"]}
+    auxiliary = {
+        package["path"] + "/" + relative
+        for package in discovery["packages"]
+        for relative in package["auxiliary_skills"]
+    } - roots
+    lines = ["# Owner-selected auxiliary documents; no package adoption or authority."]
+    for relative in sorted(auxiliary):
+        lines.extend(
+            [
+                "",
+                "[[skills.config]]",
+                "path = " + json.dumps(plan.skills_root + "/" + relative),
+                "enabled = false",
+            ]
+        )
+    return ("\n".join(lines) + "\n").encode()
+
+
+def compose_codex_config(
+    plan: NeutralBindingPlan, value: Any, baseline: bytes
+) -> bytes:
+    """Compose a prepared rendered baseline once; refuse conflicting skill policy."""
+    try:
+        config = tomllib.loads(baseline.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise NeutralBindingError("invalid_codex_baseline") from error
+    skills = config.get("skills", {})
+    if not isinstance(skills, Mapping) or "config" in skills:
+        raise NeutralBindingError("codex_skill_policy_conflict")
+    result = baseline + b"\n" + render_codex_skills_fragment(plan, value)
+    try:
+        tomllib.loads(result.decode("utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        raise NeutralBindingError("invalid_composed_codex_config") from error
+    return result
+
+
+def chat_skill_artifacts() -> dict[str, bytes]:
+    """Packaged neutral body/adapters only: no connection, hooks or credentials."""
+    base = Path(__file__).parent / "neutral_skill_assets" / "daimon-chat"
+    return {
+        "chat_skill_body": (base / "SKILL.md").read_bytes(),
+        "chat_skill_openai": (base / "agents" / "openai.yaml").read_bytes(),
+        "chat_skill_hermes": (base / "agents" / "hermes.yaml").read_bytes(),
+    }
 
 
 _CHECK_TEMPLATE: Final = r'''#!/usr/bin/env python3
@@ -363,7 +476,11 @@ def binding_artifacts(plan: NeutralBindingPlan) -> dict[str, bytes]:
 
 
 def render_binding_manifest(
-    plan: NeutralBindingPlan, owner_client_digest: str | None = None
+    plan: NeutralBindingPlan,
+    owner_client_digest: str | None = None,
+    skill_discovery: Any = None,
+    codex_baseline: bytes | None = None,
+    include_chat_skill: bool = False,
 ) -> bytes:
     """Content-addressed manifest binding plan, paths and artifact digests."""
     artifacts = {
@@ -371,6 +488,20 @@ def render_binding_manifest(
     }
     if owner_client_digest is not None:
         artifacts["owner_client"] = owner_client_digest
+    if skill_discovery is not None:
+        artifacts["codex_skills_fragment"] = _sha256(
+            render_codex_skills_fragment(plan, skill_discovery)
+        )
+    if codex_baseline is not None:
+        if skill_discovery is None:
+            raise NeutralBindingError("skill_plan_required_for_codex_config")
+        artifacts["codex_config"] = _sha256(
+            compose_codex_config(plan, skill_discovery, codex_baseline)
+        )
+    if include_chat_skill:
+        artifacts.update(
+            {name: _sha256(data) for name, data in chat_skill_artifacts().items()}
+        )
     paths: dict[str, str] = {
         "agents_root": plan.agents_root,
         "skills_root": plan.skills_root,
@@ -390,6 +521,10 @@ def render_binding_manifest(
         "paths": paths,
         "artifacts": artifacts,
     }
+    if skill_discovery is not None:
+        body["skill_discovery"] = skill_discovery_from_mapping(skill_discovery)
+    if codex_baseline is not None:
+        body["codex_baseline_sha256"] = _sha256(codex_baseline)
     try:
         return canonical_bytes(body)
     except CanonicalError as exception:
@@ -687,6 +822,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--client-plan", type=Path, default=None, help="owner-client plan JSON"
     )
     parser.add_argument("--out", required=True, type=Path, help="output directory")
+    parser.add_argument(
+        "--skill-plan", type=Path, help="owner-selected skill discovery plan JSON"
+    )
+    parser.add_argument(
+        "--codex-config",
+        type=Path,
+        help="prepared rendered Codex baseline; requires --skill-plan",
+    )
+    parser.add_argument(
+        "--chat-skill", action="store_true", help="emit the packaged neutral chat skill"
+    )
     args = parser.parse_args(argv)
     try:
         raw = json.loads(args.plan.read_bytes())
@@ -712,10 +858,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         client_bytes = render_owner_client(client_plan)
     outputs = dict(binding_artifacts(plan))
+    skill_discovery: Any = None
+    if args.skill_plan is not None:
+        try:
+            skill_discovery = skill_discovery_from_mapping(
+                json.loads(args.skill_plan.read_bytes())
+            )
+            outputs["codex_skills_fragment"] = render_codex_skills_fragment(
+                plan, skill_discovery
+            )
+        except (OSError, json.JSONDecodeError):
+            print("neutral-binding: skill_plan_unreadable", file=sys.stderr)
+            return 2
+        except NeutralBindingError as error:
+            print(f"neutral-binding: {error}", file=sys.stderr)
+            return 2
     if client_bytes is not None:
         outputs["owner_client"] = client_bytes
+    codex_baseline: bytes | None = None
+    try:
+        if args.codex_config is not None:
+            if skill_discovery is None:
+                raise NeutralBindingError("skill_plan_required_for_codex_config")
+            codex_baseline = args.codex_config.read_bytes()
+            outputs["codex_config"] = compose_codex_config(
+                plan, skill_discovery, codex_baseline
+            )
+        if args.chat_skill:
+            outputs.update(chat_skill_artifacts())
+    except OSError:
+        print("neutral-binding: config_or_skill_unreadable", file=sys.stderr)
+        return 2
+    except NeutralBindingError as error:
+        print(f"neutral-binding: {error}", file=sys.stderr)
+        return 2
     manifest = render_binding_manifest(
-        plan, None if client_bytes is None else _sha256(client_bytes)
+        plan,
+        None if client_bytes is None else _sha256(client_bytes),
+        skill_discovery,
+        codex_baseline,
+        args.chat_skill,
     )
     outputs["manifest"] = manifest
     try:
@@ -727,6 +909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 target = args.out / ARTIFACT_FILENAMES[name]
                 mode = 0o600
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             target.write_bytes(data)
             os.chmod(target, mode)
     except OSError:
