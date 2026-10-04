@@ -183,6 +183,10 @@ def contracts_schema() -> dict[str, Any]:
         "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
     }
     plan["codex"]["properties"]["reasoning_effort"] = effort
+    plan["codex"]["properties"]["provider_auth"] = {"const": "chatgpt-external"}
+    plan["codex"]["dependentSchemas"] = {
+        "provider_auth": {"properties": {"provider": {"const": "openai"}}}
+    }
     restricted = copy.deepcopy(policy)
     unrestricted = copy.deepcopy(policy)
     for key, value in body._execution_policy(True).items():

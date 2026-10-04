@@ -609,3 +609,28 @@ reopening, defaults, historical refusal, policy/effort substitution, native
 response verification, start/resume dispatch and resulting launch receipts.
 The public `valid/full-access-plan.json` is synthetic conformance evidence,
 not consent or evidence of a live rollout.
+
+
+### Explicit external ChatGPT OAuth
+
+An owner-selected Hermes OpenAI OAuth access token uses the optional successor
+`codex.provider_auth=chatgpt-external` selection (`plan-create --provider-auth
+chatgpt-external`, with provider `openai`). The token remains supplied through
+`--provider-token-fd`. Selected JWT account-routing metadata is decoded locally;
+it is not Matrix authority or a claim of provider entitlement. Malformed or
+duplicate metadata refuses without exposing credentials.
+
+This selection enables the pinned native experimental authentication API,
+then performs `account/login/start` with `chatgptAuthTokens` and one
+`account/read` with `refreshToken=false`. Account notifications are accepted
+only during these explicit authentication requests; other protocol contexts
+retain their existing closed validation. No token enters a plan, instructions,
+receipt, child environment or `auth.json`; no refresh token is imported and
+no automatic refresh handler is installed. The default agent-token environment
+handoff and historical profiles retain their previous behavior.
+
+`CODEX_ACCESS_TOKEN` identifies native agent credentials and is not the Hermes
+ChatGPT OAuth login path. Native external-token authentication is documented
+in [OpenAI's app-server authentication guide](https://developers.openai.com/codex/app-server#authentication-modes).
+Authentication metadata alone does not prove a completed inference turn or
+access to the selected model; those remain operational acceptance checks.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import tomllib
 import unittest
 from dataclasses import replace
@@ -10,6 +11,7 @@ from typing import Any
 from unittest import mock
 
 from daimon_matrix import codex_body as body
+from daimon_matrix.canonical import b64url
 from tests import test_codex_0155_body as fixtures
 
 
@@ -205,6 +207,148 @@ class ExecutionPolicyTests(unittest.TestCase):
             if method in ("thread/start", "thread/resume"):
                 self.assertEqual(params["approvalPolicy"], "never")
                 self.assertEqual(params["sandbox"], "danger-full-access")
+
+
+class ExternalAuthTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fixture = fixtures.SuccessorProfileTests(methodName="runTest")
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        value = body.create_plan_value(
+            bootstrap=self.fixture.bootstrap,
+            model="dm_probe",
+            provider="openai",
+            workspace_ref=self.fixture.value["workspace_ref"],
+            release="0.155.1",
+            provider_auth="chatgpt-external",
+        )
+        self.plan = replace(self.fixture.plan, value=value)
+        self.token = (
+            "synthetic."
+            + b64url(
+                json.dumps(
+                    {
+                        "https://api.openai.com/auth": {
+                            "chatgpt_account_id": "synthetic-account"
+                        }
+                    }
+                ).encode()
+            )
+            + ".synthetic"
+        )
+        body.create_profile(
+            self.plan,
+            bootstrap_verifier=lambda *_: True,
+            clock=lambda: self.fixture.now,
+        )
+
+    def test_external_login_through_real_pipes_preserves_profile(self) -> None:
+        from tests.test_codex_turn import BoundedTransportTests
+
+        io = BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        transport = io.transport(
+            "import json,sys\n"
+            "login=json.loads(sys.stdin.readline())\n"
+            "assert login['method']=='account/login/start'\n"
+            "assert login['params']['type']=='chatgptAuthTokens'\n"
+            "assert login['params']['chatgptAccountId']=='synthetic-account'\n"
+            "print(json.dumps({'method':'account/login/completed','params':"
+            "{'loginId':None,'success':True,'error':None,'onboardingEntrypoint':None}}),flush=True)\n"
+            "print(json.dumps({'id':login['id'],'result':{'type':'chatgptAuthTokens'}}),flush=True)\n"
+            "read=json.loads(sys.stdin.readline())\n"
+            "assert read['method']=='account/read'\n"
+            "assert read['params']=={'refreshToken':False}\n"
+            "print(json.dumps({'method':'account/updated','params':{'authMode':'chatgpt','planType':'plus'}}),flush=True)\n"
+            "print(json.dumps({'id':read['id'],'result':{'account':{'type':'chatgpt'},'requiresOpenaiAuth':True}}),flush=True)\n"
+        )
+        before = body.verify_profile(self.plan)
+        body.authenticate_chatgpt(self.plan, transport, self.token)
+        self.assertEqual(body.verify_profile(self.plan), before)
+        self.assertFalse((self.plan.profile_root / "auth.json").exists())
+        for path in self.plan.profile_root.iterdir():
+            if path.is_file():
+                self.assertNotIn(self.token.encode(), path.read_bytes())
+
+    def test_malformed_or_duplicate_claims_refuse_without_secret_error(self) -> None:
+        for value in (
+            "synthetic",
+            "x.e30.x",
+            "x."
+            + b64url(
+                b'{"https://api.openai.com/auth":{},"https://api.openai.com/auth":{}}'
+            )
+            + ".x",
+        ):
+            with (
+                self.subTest(value=value),
+                self.assertRaises(body.CodexBodyError) as caught,
+            ):
+                body.chatgpt_login_params(value)
+            self.assertNotIn(value, str(caught.exception))
+
+    def test_external_auth_requires_explicit_selection_and_success(self) -> None:
+        transport = mock.Mock()
+        with self.assertRaises(body.CodexBodyError):
+            body.authenticate_chatgpt(self.fixture.plan, transport, self.token)
+        transport.request.assert_not_called()
+        transport.request.return_value = {"type": "chatgpt"}
+        with self.assertRaises(body.CodexBodyError):
+            body.authenticate_chatgpt(self.plan, transport, self.token)
+        self.assertEqual(transport.request.call_count, 1)
+
+    def test_auth_notifications_are_restricted_to_explicit_auth_requests(self) -> None:
+        value: dict[str, Any] = {
+            "method": "account/updated",
+            "params": {"authMode": "chatgpt", "planType": "plus"},
+        }
+        with self.assertRaises(body.CodexBodyError):
+            body._validate_notification(value, allow_hooks=False)
+        body._validate_notification(value, allow_hooks=False, authenticating=True)
+        value["params"]["authMode"] = "apikey"
+        with self.assertRaises(body.CodexBodyError):
+            body._validate_notification(value, allow_hooks=False, authenticating=True)
+
+    def test_auth_selection_requires_successor_and_openai_provider(self) -> None:
+        value = copy.deepcopy(self.plan.value)
+        value["codex"]["provider"] = "another-provider"
+        with self.assertRaises(body.CodexBodyError):
+            body.validate_plan(value)
+        with self.assertRaises(body.CodexBodyError):
+            body.create_plan_value(
+                bootstrap=self.fixture.bootstrap,
+                model="dm_probe",
+                provider="openai",
+                workspace_ref=self.fixture.value["workspace_ref"],
+                provider_auth="chatgpt-external",
+            )
+
+    def test_initialize_enables_external_auth_only_when_selected(self) -> None:
+        default = replace(
+            self.fixture.plan, profile_root=self.plan.profile_root.parent / "default"
+        )
+        body.create_profile(
+            default,
+            bootstrap_verifier=lambda *_: True,
+            clock=lambda: self.fixture.now,
+        )
+        for plan, selected in ((self.plan, True), (default, False)):
+            transport = mock.Mock()
+            transport.request.return_value = {}
+            journal = body.RuntimeHandleJournal(
+                plan.profile_root / "runtime-handles.jsonl", plan=plan
+            )
+            adapter = body.CodexBodyAdapter(plan, transport, lambda *_: {}, journal)
+            # Stop after the actual initialization request; a malformed native
+            # response must not advance to config or skills validation.
+            with self.assertRaises(body.CodexBodyError):
+                adapter.initialize()
+            self.assertEqual(transport.request.call_count, 1)
+            self.assertEqual(
+                transport.request.call_args.args[1]["capabilities"]["experimentalApi"],
+                selected,
+            )
 
 
 if __name__ == "__main__":

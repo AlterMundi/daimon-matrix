@@ -547,6 +547,15 @@
         },
         "codex": {
           "additionalProperties": false,
+          "dependentSchemas": {
+            "provider_auth": {
+              "properties": {
+                "provider": {
+                  "const": "openai"
+                }
+              }
+            }
+          },
           "properties": {
             "app_server_schema_digest": {
               "const": "cb06f684309129396e771ba6197e0a19fd5eb697458d6971df5c1dffca7eecb5"
@@ -564,6 +573,9 @@
             "provider": {
               "pattern": "^[A-Za-z0-9._:-]{1,192}$",
               "type": "string"
+            },
+            "provider_auth": {
+              "const": "chatgpt-external"
             },
             "reasoning_effort": {
               "enum": [

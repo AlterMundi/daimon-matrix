@@ -961,9 +961,12 @@ def validate_plan(value: Any) -> dict[str, Any]:
             "provider",
             "version",
             *(
-                {"reasoning_effort"}
+                {
+                    name
+                    for name in ("reasoning_effort", "provider_auth")
+                    if name in row["codex"]
+                }
                 if isinstance(row["codex"], Mapping)
-                and "reasoning_effort" in row["codex"]
                 else set()
             ),
         },
@@ -986,6 +989,12 @@ def validate_plan(value: Any) -> dict[str, Any]:
         not in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
     ):
         raise CodexBodyError("unsupported_codex_reasoning_effort")
+    if "provider_auth" in codex and (
+        profile.automatic_hooks
+        or codex["provider_auth"] != "chatgpt-external"
+        or codex["provider"] != "openai"
+    ):
+        raise CodexBodyError("unsupported_codex_provider_auth")
     expected_policy: dict[str, Any] = {
         "approval_policy": "on-request",
         "history_persistence": "none",
@@ -1042,6 +1051,7 @@ def create_plan_value(
     continuity: Mapping[str, Any] | None = None,
     reasoning_effort: str | None = None,
     full_access: bool = False,
+    provider_auth: str | None = None,
 ) -> dict[str, Any]:
     contract = release_contract(release)
     historical = release == CODEX_VERSION
@@ -1072,10 +1082,14 @@ def create_plan_value(
             "mcp_env_names": list(SAFE_MCP_ENV_NAMES),
         },
     }
-    if historical and (full_access or reasoning_effort is not None):
+    if historical and (
+        full_access or reasoning_effort is not None or provider_auth is not None
+    ):
         raise CodexBodyError("historical_codex_execution_override_forbidden")
     if reasoning_effort is not None:
         cast(dict[str, Any], core["codex"])["reasoning_effort"] = reasoning_effort
+    if provider_auth is not None:
+        cast(dict[str, Any], core["codex"])["provider_auth"] = provider_auth
     if full_access:
         cast(dict[str, Any], core["profile_policy"]).update(_execution_policy(True))
     if not historical:
@@ -2278,6 +2292,42 @@ def validate_native_provider_token(value: Any) -> str:
     return value
 
 
+def chatgpt_login_params(token: str) -> dict[str, Any]:
+    """Decode selected OAuth routing metadata, never Matrix authority."""
+    validate_native_provider_token(token)
+    code = "codex_external_auth_token_rejected"
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise ValueError
+        claims = _decode_json(unb64url(parts[1]), code)
+        account = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+        _text(account, code, maximum=256)
+    except (ValueError, KeyError, TypeError, CanonicalError, CodexBodyError):
+        raise CodexBodyError(code) from None
+    return {
+        "type": "chatgptAuthTokens",
+        "accessToken": token,
+        "chatgptAccountId": account,
+    }
+
+
+def authenticate_chatgpt(
+    plan: CodexBodyPlan, transport: AppServerProcess, token: str
+) -> None:
+    """One explicit ephemeral login without token storage or refresh."""
+    if plan.value["codex"].get("provider_auth") != "chatgpt-external":
+        raise CodexBodyError("codex_external_auth_not_selected")
+    result = transport.request("account/login/start", chatgpt_login_params(token))
+    if dict(result) != {"type": "chatgptAuthTokens"}:
+        raise CodexBodyError("codex_external_auth_rejected")
+    result = transport.request("account/read", {"refreshToken": False})
+    account = result.get("account")
+    if not isinstance(account, Mapping) or account.get("type") != "chatgpt":
+        raise CodexBodyError("codex_external_auth_rejected")
+    verify_profile(plan)
+
+
 def read_native_provider_token(descriptor: int) -> str:
     """Read a selected token FD; no auth.json, account lookup or ambient import."""
     code = "codex_provider_token_fd_rejected"
@@ -3011,6 +3061,7 @@ class AppServerProcess:
         self._native_turn_data = False
         self._seen: set[int] = set()
         self._configuration_request_id: int | None = None
+        self._authentication_request_id: int | None = None
 
     def _send(self, value: Mapping[str, Any]) -> None:
         raw = _canonical(value, "app_server_message_invalid") + b"\n"
@@ -3072,6 +3123,12 @@ class AppServerProcess:
             if not self._automatic_hooks and method == "config/read"
             else None
         )
+        self._authentication_request_id = (
+            request_id
+            if not self._automatic_hooks
+            and method in {"account/login/start", "account/read"}
+            else None
+        )
         try:
             self._send(
                 {
@@ -3083,6 +3140,7 @@ class AppServerProcess:
             return self._await_response(request_id)
         finally:
             self._configuration_request_id = None
+            self._authentication_request_id = None
 
     def request_bounded(
         self, method: str, params: Mapping[str, Any], *, deadline: float
@@ -3172,7 +3230,11 @@ class AppServerProcess:
                 raise CodexBodyError("app_server_timeout", retryable=True)
             if "id" not in message:
                 _validate_notification(
-                    message, allow_hooks=self._automatic_hooks, native_turn=native_turn
+                    message,
+                    allow_hooks=self._automatic_hooks,
+                    native_turn=native_turn,
+                    authenticating=getattr(self, "_authentication_request_id", None)
+                    == request_id,
                 )
                 if captured is not None:
                     captured_bytes += len(
@@ -3514,7 +3576,11 @@ def _validate_turn_item(value: Any) -> None:
 
 
 def _validate_notification(
-    value: Mapping[str, Any], *, allow_hooks: bool = True, native_turn: bool = False
+    value: Mapping[str, Any],
+    *,
+    allow_hooks: bool = True,
+    native_turn: bool = False,
+    authenticating: bool = False,
 ) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(value, Mapping) or set(value) not in (
         {"method", "params"},
@@ -3527,6 +3593,36 @@ def _validate_notification(
     method = _text(row["method"], "app_server_notification_invalid", maximum=128)
     if not allow_hooks and method in {"hook/started", "hook/completed"}:
         raise CodexBodyError("codex_automatic_hooks_forbidden")
+    if (
+        authenticating
+        and not allow_hooks
+        and method in {"account/login/completed", "account/updated"}
+    ):
+        params = _closed(
+            row["params"],
+            {"loginId", "success", "error", "onboardingEntrypoint"}
+            if method == "account/login/completed"
+            else {"authMode", "planType"},
+            "codex_external_auth_notification_rejected",
+        )
+        if method == "account/login/completed":
+            if (
+                params["success"] is not True
+                or params["error"] is not None
+                or params["loginId"] is not None
+                or params["onboardingEntrypoint"] not in (None, "life_sciences")
+            ):
+                raise CodexBodyError("codex_external_auth_rejected")
+        else:
+            if params["authMode"] != "chatgpt":
+                raise CodexBodyError("codex_external_auth_rejected")
+            if params["planType"] is not None:
+                _text(
+                    params["planType"],
+                    "codex_external_auth_notification_rejected",
+                    maximum=256,
+                )
+        return method, params
     successor_error = not allow_hooks and method == "error"
     if (
         method not in KNOWN_NOTIFICATIONS
@@ -3838,7 +3934,8 @@ class CodexBodyAdapter:
                     "version": profile.adapter_version,
                 },
                 "capabilities": {
-                    "experimentalApi": False,
+                    "experimentalApi": self.plan.value["codex"].get("provider_auth")
+                    == "chatgpt-external",
                     "requestAttestation": False,
                     "mcpServerOpenaiFormElicitation": False,
                 },
@@ -4648,6 +4745,7 @@ def parser() -> argparse.ArgumentParser:
     plan_create.add_argument("--bootstrap", type=Path, required=True)
     plan_create.add_argument("--model", required=True)
     plan_create.add_argument("--provider", required=True)
+    plan_create.add_argument("--provider-auth", choices=("chatgpt-external",))
     plan_create.add_argument(
         "--reasoning-effort",
         choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
@@ -5001,6 +5099,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bootstrap=bootstrap,
                 model=args.model,
                 provider=args.provider,
+                provider_auth=args.provider_auth,
                 reasoning_effort=args.reasoning_effort,
                 full_access=args.full_access,
                 workspace_ref=args.workspace_ref,
