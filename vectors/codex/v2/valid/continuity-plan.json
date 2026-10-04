@@ -1,0 +1,115 @@
+{
+  "adapter_version": "2.0.0",
+  "bootstrap": {
+    "attestation": {
+      "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+      "causal_parents": [],
+      "content_hash": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+      "event_id": "00000205-0000-4000-8000-000000000001",
+      "kind": "experience.observed",
+      "manifest_hash": "1065983b575118b7d86a6c5504f8e8a038c81525e81d6ca21447bedf60cced3d",
+      "occurred_at_ms": 1800000000000,
+      "origin": {
+        "body_ref": "cluster:legion:compaii",
+        "embodiment_id": "embodiment:legion",
+        "incarnation_id": "incarnation:legion:0",
+        "principal_id": "compaii@legion"
+      },
+      "payload": {
+        "bootstrap": {
+          "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+          "body_ref": "cluster:legion:compaii",
+          "capability_set_hash": "fa6406d5dcfa97922c74f6bccbc18f9c7b6a53222d8520107c03bc734dfdec10",
+          "certificate_hash": "9b595c344e52f65f0291f3c95581adf192a78d7fd78c22ebbca7186213959340",
+          "embodiment_id": "embodiment:legion",
+          "expires_at_ms": 1800000030000,
+          "incarnation_id": "incarnation:legion:0",
+          "issued_at_ms": 1800000000000,
+          "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+          "schema": "dm.codex-body.bootstrap/v2"
+        },
+        "capability_id": "dm:local-capability:v1:J2s7G7KdgKrdx5NfvPxxI7ezF_5_uVUjxCqoZd4c6MY",
+        "client_id": "client:operator:local:observe",
+        "manifest_hash": "1065983b575118b7d86a6c5504f8e8a038c81525e81d6ca21447bedf60cced3d",
+        "runtime_id": "dm:runtime:v1:cWo1nUkDeGXeEY36FB-34_ajgHtM0nKLxqbkwL6Ms1M",
+        "schema": "dm.codex-body.bootstrap-attestation/v1"
+      },
+      "previous_event_id": null,
+      "protocol": "dm.we.v1",
+      "sensitivity": "private",
+      "sequence": 1,
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
+        "value": "WA-7SdI4dAmKtwFtUr8MUtqJ_179g6RzrTJiI5y1iiSR-YkzNFJsDaLQXIZrrabPnm8geSiMz4nGnAMdTlCUAA"
+      },
+      "subject": "codex-body/bootstrap",
+      "supersedes": null
+    },
+    "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+    "body_ref": "cluster:legion:compaii",
+    "capability_set_hash": "fa6406d5dcfa97922c74f6bccbc18f9c7b6a53222d8520107c03bc734dfdec10",
+    "certificate_hash": "9b595c344e52f65f0291f3c95581adf192a78d7fd78c22ebbca7186213959340",
+    "embodiment_id": "embodiment:legion",
+    "expires_at_ms": 1800000030000,
+    "incarnation_id": "incarnation:legion:0",
+    "issued_at_ms": 1800000000000,
+    "matrix_high_water": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+    "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
+    "schema": "dm.codex-body.bootstrap/v2",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
+      "value": "WA-7SdI4dAmKtwFtUr8MUtqJ_179g6RzrTJiI5y1iiSR-YkzNFJsDaLQXIZrrabPnm8geSiMz4nGnAMdTlCUAA"
+    }
+  },
+  "codex": {
+    "app_server_schema_digest": "cb06f684309129396e771ba6197e0a19fd5eb697458d6971df5c1dffca7eecb5",
+    "app_server_typescript_digest": "959f9c082cd867a934f3cd745ef981e4228fef92663a0ff5f745060806561c6d",
+    "binary_sha256": "0753dfe1d8b87a52436deb13eb1c549661ef4c84fee2c5aa688385eebeccb761",
+    "model": "dm_probe",
+    "provider": "openai",
+    "version": "0.155.1"
+  },
+  "continuity": {
+    "files": {
+      "FOUNDATION.md": {
+        "bytes": 39,
+        "sha256": "18ed58edf8a3e4bfca888af62f697d43e6494e4bdf294efee267c29542efcef1",
+        "source_ref": "public-synthetic:FOUNDATION.md"
+      },
+      "MEMORY-ACCESS.md": {
+        "bytes": 42,
+        "sha256": "c408d038b18a3360ce4b86b4306d6e7bbf6ca81ac2e60b6572468801aeff1458",
+        "source_ref": "public-synthetic:MEMORY-ACCESS.md"
+      },
+      "SOUL.md": {
+        "bytes": 33,
+        "sha256": "497a79b0182f40d0f127cc13c57c4146f0f9175e9af99582c96bc2b6d56e85eb",
+        "source_ref": "public-synthetic:SOUL.md"
+      }
+    },
+    "schema": "dm.codex-continuity/v1"
+  },
+  "profile_policy": {
+    "approval_policy": "on-request",
+    "history_persistence": "none",
+    "hooks": "disabled",
+    "lifecycle": "human-request-only",
+    "matrix_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_observe",
+      "we_projection_get"
+    ],
+    "mcp_env_names": [
+      "DAIMON_CAPABILITY_KEY_FD"
+    ],
+    "network": "disabled",
+    "sandbox": "workspace-write"
+  },
+  "schema": "dm.codex-body.plan/v2",
+  "workspace_ref": "dm:workspace:v1:tZNFI7EX8k9K15FwwRl0huIU-56Sq71OF314mRT5Yps"
+}

@@ -10,6 +10,41 @@ identity and session to the exact profile, plan, release, certificate and
 capability set. Legacy replay and changed bindings refuse without rewriting
 saved history.
 
+## Explicit being continuity
+
+The successor may select `dm.codex-continuity/v1` in its plan using
+`plan-create --continuity SELECTION.json`. The closed selection contains exactly
+`SOUL.md`, `FOUNDATION.md` and `MEMORY-ACCESS.md`, each with a byte count, SHA-256
+and source reference. It contains no private text, credentials or automatic
+actions. Initial creation takes `--continuity-source PRIVATE_DIRECTORY`; it
+verifies private regular files before creating the profile. Missing, changed,
+linked, executable or invalid UTF-8 sources refuse creation.
+
+The profile retains the originals byte for byte and includes them in `AGENTS.md`,
+the native global instruction surface. The combined instructions must fit the
+reviewed 32,768-byte native limit; truncation refuses. All copies are mode 0600
+and bound by the manifest and plan. Verification and resume use those copies,
+not the mutable originals. Editing a selected copy requires a new explicit
+profile selection and retains the prior history; it cannot silently change a
+saved session. Profiles without selection retain their previous bytes. The
+historical adapter refuses this selection.
+
+For CompAII, select the existing Hermes@daimonmatrix SOUL as the initial source,
+the complete foundation document without paraphrasing its memory vision, and
+the rendered neutral binding's absolute HMK command and shared pool access
+instructions. The pool stays mutable being-level memory; it is not a profile
+snapshot or a native Codex memory store. The access document must name the
+owner-selected installed binding; this feature does not install, invoke or
+verify that external binding. Operational acceptance separately verifies that
+the command reaches the reconciled pool from the isolated Codex environment.
+Provider settings and credentials are not imported into context.
+
+Hermes descriptions in the SOUL preserve that embodiment's history. The current
+Codex boundary expressly retains Matrix-certified identity and capabilities,
+human-request-only memory access, no prefetch, hooks, timers, inbox polling or
+autonomous replies. Selection changes context, not custody or authority. SOUL
+evolution can be recorded in the being's memory and later explicit selections.
+
 ## Event-attested bootstrap
 
 `dm.codex-body.bootstrap/v2` retains the complete daemon-signed `dm.we.v1`

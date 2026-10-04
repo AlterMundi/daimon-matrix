@@ -148,6 +148,32 @@ def contracts_schema() -> dict[str, Any]:
             },
         )
     )
+    plan["continuity"] = closed(
+        {
+            "schema": {"const": "dm.codex-continuity/v1"},
+            "files": closed(
+                {
+                    name: closed(
+                        {
+                            "bytes": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 24000,
+                            },
+                            "sha256": HASH,
+                            "source_ref": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 192,
+                                "pattern": r"^[^\x00-\x1f\x7f]+$",
+                            },
+                        }
+                    )
+                    for name in body.CONTINUITY_NAMES
+                }
+            ),
+        }
+    )
     policy = plan["profile_policy"]
     policy["properties"].update(
         hooks={"const": "disabled"}, lifecycle={"const": "human-request-only"}
@@ -163,7 +189,14 @@ def contracts_schema() -> dict[str, Any]:
     files.pop("maxItems", None)
     files["items"]["properties"]["name"] = {
         "oneOf": [
-            {"enum": ["AGENTS.md", "bootstrap.json", "config.toml"]},
+            {
+                "enum": [
+                    "AGENTS.md",
+                    "bootstrap.json",
+                    "config.toml",
+                    *body.CONTINUITY_NAMES,
+                ]
+            },
             {
                 "type": "string",
                 "pattern": (
@@ -609,6 +642,24 @@ def outputs() -> dict[Path, bytes]:
                 **plan,
                 "profile_policy": {**plan["profile_policy"], "hooks": "enabled"},
             },
+        }
+        selected_plan = copy.deepcopy(plan)
+        selected_plan["continuity"] = {
+            "schema": "dm.codex-continuity/v1",
+            "files": {
+                name: {
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "source_ref": "public-synthetic:" + name,
+                }
+                for name in body.CONTINUITY_NAMES
+                for raw in [("Synthetic owner-selected " + name + "\n").encode()]
+            },
+        }
+        values["valid/continuity-plan.json"] = body.validate_plan(selected_plan)
+        values["negative/continuity-prefetch.json"] = {
+            **selected_plan,
+            "continuity": {**selected_plan["continuity"], "automatic_prefetch": True},
         }
     finally:
         fixture.tearDown()
