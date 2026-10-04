@@ -960,6 +960,12 @@ def validate_plan(value: Any) -> dict[str, Any]:
             "model",
             "provider",
             "version",
+            *(
+                {"reasoning_effort"}
+                if isinstance(row["codex"], Mapping)
+                and "reasoning_effort" in row["codex"]
+                else set()
+            ),
         },
         "invalid_codex_body_plan",
     )
@@ -974,6 +980,12 @@ def validate_plan(value: Any) -> dict[str, Any]:
         raise CodexBodyError("unsupported_codex_compatibility")
     _token(codex["model"], "invalid_codex_body_plan")
     _token(codex["provider"], "invalid_codex_body_plan")
+    if "reasoning_effort" in codex and (
+        profile.automatic_hooks
+        or codex["reasoning_effort"]
+        not in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+    ):
+        raise CodexBodyError("unsupported_codex_reasoning_effort")
     expected_policy: dict[str, Any] = {
         "approval_policy": "on-request",
         "history_persistence": "none",
@@ -989,12 +1001,34 @@ def validate_plan(value: Any) -> dict[str, Any]:
         set(expected_policy),
         "invalid_codex_body_plan",
     )
+    if not profile.automatic_hooks and policy["sandbox"] == "danger-full-access":
+        expected_policy.update(_execution_policy(True))
     if dict(policy) != expected_policy:
         raise CodexBodyError("unsupported_codex_profile_policy")
     if bootstrap["expires_at_ms"] <= bootstrap["issued_at_ms"]:
         raise CodexBodyError("invalid_codex_body_plan")
     _canonical(row, "invalid_codex_body_plan")
     return copy.deepcopy(dict(row))
+
+
+def _execution_policy(full_access: bool = False) -> dict[str, str]:
+    return {
+        "sandbox": "danger-full-access" if full_access else "workspace-write",
+        "approval_policy": "never" if full_access else "on-request",
+        "network": "enabled" if full_access else "disabled",
+    }
+
+
+def _wire_sandbox(plan: CodexBodyPlan) -> dict[str, Any]:
+    if plan.value["profile_policy"]["sandbox"] == "danger-full-access":
+        return {"type": "dangerFullAccess"}
+    return {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": False,
+        "excludeTmpdirEnvVar": False,
+        "excludeSlashTmp": False,
+    }
 
 
 def create_plan_value(
@@ -1006,6 +1040,8 @@ def create_plan_value(
     release: str = CODEX_VERSION,
     skill_packages: Mapping[str, Any] | None = None,
     continuity: Mapping[str, Any] | None = None,
+    reasoning_effort: str | None = None,
+    full_access: bool = False,
 ) -> dict[str, Any]:
     contract = release_contract(release)
     historical = release == CODEX_VERSION
@@ -1036,6 +1072,12 @@ def create_plan_value(
             "mcp_env_names": list(SAFE_MCP_ENV_NAMES),
         },
     }
+    if historical and (full_access or reasoning_effort is not None):
+        raise CodexBodyError("historical_codex_execution_override_forbidden")
+    if reasoning_effort is not None:
+        cast(dict[str, Any], core["codex"])["reasoning_effort"] = reasoning_effort
+    if full_access:
+        cast(dict[str, Any], core["profile_policy"]).update(_execution_policy(True))
     if not historical:
         cast(dict[str, Any], core["profile_policy"]).update(
             hooks="disabled", lifecycle="human-request-only"
@@ -1132,6 +1174,7 @@ def render_config(plan: CodexBodyPlan) -> bytes:
     value = validate_plan(plan.value)
     profile = _profile_contract(value)
     codex = cast(Mapping[str, Any], value["codex"])
+    policy = value["profile_policy"]
     hook = plan.profile_root / "hooks" / "lifecycle.py"
     bootstrap = plan.profile_root / "bootstrap.json"
     observation = plan.profile_root / "lifecycle-observations.jsonl"
@@ -1143,8 +1186,16 @@ def render_config(plan: CodexBodyPlan) -> bytes:
     lines = [
         f"model = {_toml_string(cast(str, codex['model']))}",
         f"model_provider = {_toml_string(cast(str, codex['provider']))}",
-        'approval_policy = "on-request"',
-        'sandbox_mode = "workspace-write"',
+        f"approval_policy = {_toml_string(cast(str, policy['approval_policy']))}",
+        f"sandbox_mode = {_toml_string(cast(str, policy['sandbox']))}",
+        *(
+            [
+                "model_reasoning_effort = "
+                + _toml_string(cast(str, codex["reasoning_effort"]))
+            ]
+            if "reasoning_effort" in codex
+            else []
+        ),
         'web_search = "disabled"',
         "allow_login_shell = false",
         "project_doc_max_bytes = 32768",
@@ -1270,8 +1321,11 @@ def _validate_effective_config(value: Mapping[str, Any], plan: CodexBodyPlan) ->
     if (
         value.get("model") != plan.value["codex"]["model"]
         or value.get("model_provider") != plan.value["codex"]["provider"]
-        or value.get("approval_policy") != "on-request"
-        or value.get("sandbox_mode") != "workspace-write"
+        or value.get("approval_policy")
+        != plan.value["profile_policy"]["approval_policy"]
+        or value.get("sandbox_mode") != plan.value["profile_policy"]["sandbox"]
+        or value.get("model_reasoning_effort")
+        != plan.value["codex"].get("reasoning_effort")
         or value.get("web_search") != "disabled"
         or value.get("history") != {"persistence": "none"}
     ):
@@ -2638,9 +2692,9 @@ def create_launch_receipt(
             "model": plan.value["codex"]["model"],
             "provider": plan.value["codex"]["provider"],
             "workspace_ref": plan.value["workspace_ref"],
-            "sandbox": "workspace-write",
-            "approval_policy": "on-request",
-            "network": "disabled",
+            **_execution_policy(
+                plan.value["profile_policy"]["sandbox"] == "danger-full-access"
+            ),
             "thread_id": handle["thread_id"],
             "session_tree_id": handle["session_tree_id"],
             "turn_id": handle["turn_id"],
@@ -2773,11 +2827,10 @@ def validate_launch_receipt(value: Any) -> dict[str, Any]:
         },
         "invalid_launch_receipt",
     )
-    if (
-        runtime["approval_policy"] != "on-request"
-        or runtime["sandbox"] != "workspace-write"
-        or runtime["network"] != "disabled"
-    ):
+    selected_policy = _execution_policy(
+        not profile.automatic_hooks and runtime["sandbox"] == "danger-full-access"
+    )
+    if any(runtime[field] != expected for field, expected in selected_policy.items()):
         raise CodexBodyError("invalid_launch_receipt")
     for field in ("model", "provider", "session_tree_id", "thread_id"):
         _token(runtime[field], "invalid_launch_receipt")
@@ -3568,20 +3621,17 @@ def _thread_result(
         or value["modelProvider"] != plan.value["codex"]["provider"]
     ):
         raise CodexBodyError("app_server_model_drift")
-    if value["approvalPolicy"] != "on-request" or value["cwd"] != os.fspath(
-        plan.workspace
+    if (
+        value["approvalPolicy"] != plan.value["profile_policy"]["approval_policy"]
+        or value["cwd"] != os.fspath(plan.workspace)
+        or (
+            "reasoning_effort" in plan.value["codex"]
+            and value.get("reasoningEffort") != plan.value["codex"]["reasoning_effort"]
+        )
     ):
         raise CodexBodyError("app_server_policy_drift")
     if not profile.automatic_hooks and (
-        value["approvalsReviewer"] != "user"
-        or value["sandbox"]
-        != {
-            "type": "workspaceWrite",
-            "writableRoots": [],
-            "networkAccess": False,
-            "excludeTmpdirEnvVar": False,
-            "excludeSlashTmp": False,
-        }
+        value["approvalsReviewer"] != "user" or value["sandbox"] != _wire_sandbox(plan)
     ):
         raise CodexBodyError("app_server_policy_drift")
     thread = value["thread"]
@@ -3841,8 +3891,8 @@ class CodexBodyAdapter:
                 "model": self.plan.value["codex"]["model"],
                 "modelProvider": self.plan.value["codex"]["provider"],
                 "cwd": os.fspath(self.plan.workspace),
-                "approvalPolicy": "on-request",
-                "sandbox": "workspace-write",
+                "approvalPolicy": self.plan.value["profile_policy"]["approval_policy"],
+                "sandbox": self.plan.value["profile_policy"]["sandbox"],
                 "ephemeral": False,
             },
         )
@@ -3915,8 +3965,8 @@ class CodexBodyAdapter:
                 "model": self.plan.value["codex"]["model"],
                 "modelProvider": self.plan.value["codex"]["provider"],
                 "cwd": os.fspath(self.plan.workspace),
-                "approvalPolicy": "on-request",
-                "sandbox": "workspace-write",
+                "approvalPolicy": self.plan.value["profile_policy"]["approval_policy"],
+                "sandbox": self.plan.value["profile_policy"]["sandbox"],
             },
         )
         thread_id, session_tree_id, _sources = _thread_result(result, self.plan)
@@ -4598,6 +4648,18 @@ def parser() -> argparse.ArgumentParser:
     plan_create.add_argument("--bootstrap", type=Path, required=True)
     plan_create.add_argument("--model", required=True)
     plan_create.add_argument("--provider", required=True)
+    plan_create.add_argument(
+        "--reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+    )
+    plan_create.add_argument(
+        "--full-access",
+        action="store_true",
+        help=(
+            "Owner-selected danger-full-access/never execution; "
+            "grants no Matrix authority"
+        ),
+    )
     plan_create.add_argument("--workspace-ref", required=True)
     plan_create.add_argument("--output", type=Path, required=True)
     plan_create.add_argument("--skill-packages", type=Path)
@@ -4939,6 +5001,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bootstrap=bootstrap,
                 model=args.model,
                 provider=args.provider,
+                reasoning_effort=args.reasoning_effort,
+                full_access=args.full_access,
                 workspace_ref=args.workspace_ref,
                 release=SUCCESSOR_RELEASE.version,
                 skill_packages=_json_load(

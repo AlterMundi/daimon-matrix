@@ -584,3 +584,28 @@ vendor JSON bytes. Nonfinite numbers, duplicate keys and invalid UTF-8 refuse.
 Matrix signatures, bootstrap/plan/profile artifacts and handle/intent journals
 retain their strict canonical encoding. The audited native configuration-duration
 exception remains restricted to its exact correlated configuration reply.
+
+
+## Explicit owner execution selection
+
+The successor owner `plan-create` command accepts `--reasoning-effort medium`
+and `--full-access`. The latter selects the closed combination
+`approval_policy=never`, `sandbox=danger-full-access`, `network=enabled`.
+Omitting it retains the original `on-request`/`workspace-write`/disabled-network
+policy; historical profiles reject these overrides. Reasoning selection is an
+optional `codex.reasoning_effort` field, rendered as `model_reasoning_effort`.
+
+Selection is bound to the plan, private profile/config hashes and launch
+receipt. Effective native configuration and start/resume response policy must
+match the selected plan; mixed policies and substituted reasoning are refused.
+Full filesystem/network access does not authorize Matrix actions, custody,
+identity changes, automatic replies, hooks, or peer-directed operations. Those
+retain their existing signed authorization and human-request boundaries. A
+provider token is still passed privately through the supported descriptor
+handoff; never include credentials in a plan, profile instructions or receipt.
+
+`tests.test_codex_execution_policy` exercises private profile creation and
+reopening, defaults, historical refusal, policy/effort substitution, native
+response verification, start/resume dispatch and resulting launch receipts.
+The public `valid/full-access-plan.json` is synthetic conformance evidence,
+not consent or evidence of a live rollout.

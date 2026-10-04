@@ -27,6 +27,11 @@
       "valid": true
     },
     {
+      "name": "valid/full-access-plan.json",
+      "sha256": "a2c77ddb642cd65ee24c26850865cd1cb635f3383f0ffd4e478a46bde221e23a",
+      "valid": true
+    },
+    {
       "name": "valid/launch-receipt.json",
       "sha256": "26aa481530271e80d2cd0745e2a62cb90d57aec3ded64cbb5f955abfc74d0dc4",
       "valid": true

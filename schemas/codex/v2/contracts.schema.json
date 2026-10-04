@@ -394,61 +394,122 @@
           "type": "object"
         },
         "runtime": {
-          "additionalProperties": false,
-          "properties": {
-            "approval_policy": {
-              "const": "on-request"
-            },
-            "model": {
-              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
-              "type": "string"
-            },
-            "network": {
-              "const": "disabled"
-            },
-            "provider": {
-              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
-              "type": "string"
-            },
-            "sandbox": {
-              "const": "workspace-write"
-            },
-            "session_tree_id": {
-              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
-              "type": "string"
-            },
-            "thread_id": {
-              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
-              "type": "string"
-            },
-            "turn_id": {
-              "oneOf": [
-                {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approval_policy": {
+                  "const": "on-request"
+                },
+                "model": {
                   "pattern": "^[A-Za-z0-9._:-]{1,192}$",
                   "type": "string"
                 },
-                {
-                  "type": "null"
+                "network": {
+                  "const": "disabled"
+                },
+                "provider": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "sandbox": {
+                  "const": "workspace-write"
+                },
+                "session_tree_id": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "thread_id": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "turn_id": {
+                  "oneOf": [
+                    {
+                      "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "workspace_ref": {
+                  "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+                  "type": "string"
                 }
-              ]
+              },
+              "required": [
+                "model",
+                "provider",
+                "workspace_ref",
+                "sandbox",
+                "approval_policy",
+                "network",
+                "thread_id",
+                "session_tree_id",
+                "turn_id"
+              ],
+              "type": "object"
             },
-            "workspace_ref": {
-              "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
-              "type": "string"
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approval_policy": {
+                  "const": "never"
+                },
+                "model": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "network": {
+                  "const": "enabled"
+                },
+                "provider": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "sandbox": {
+                  "const": "danger-full-access"
+                },
+                "session_tree_id": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "thread_id": {
+                  "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                  "type": "string"
+                },
+                "turn_id": {
+                  "oneOf": [
+                    {
+                      "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "workspace_ref": {
+                  "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "provider",
+                "workspace_ref",
+                "sandbox",
+                "approval_policy",
+                "network",
+                "thread_id",
+                "session_tree_id",
+                "turn_id"
+              ],
+              "type": "object"
             }
-          },
-          "required": [
-            "model",
-            "provider",
-            "workspace_ref",
-            "sandbox",
-            "approval_policy",
-            "network",
-            "thread_id",
-            "session_tree_id",
-            "turn_id"
-          ],
-          "type": "object"
+          ]
         },
         "schema": {
           "const": "dm.codex-body.launch-receipt/v2"
@@ -503,6 +564,18 @@
             "provider": {
               "pattern": "^[A-Za-z0-9._:-]{1,192}$",
               "type": "string"
+            },
+            "reasoning_effort": {
+              "enum": [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
             },
             "version": {
               "const": "0.155.1"
@@ -621,53 +694,106 @@
           "type": "object"
         },
         "profile_policy": {
-          "additionalProperties": false,
-          "properties": {
-            "approval_policy": {
-              "const": "on-request"
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approval_policy": {
+                  "const": "on-request"
+                },
+                "history_persistence": {
+                  "const": "none"
+                },
+                "hooks": {
+                  "const": "disabled"
+                },
+                "lifecycle": {
+                  "const": "human-request-only"
+                },
+                "matrix_tools": {
+                  "const": [
+                    "daimon_status",
+                    "scope_me",
+                    "scope_we",
+                    "we_heads",
+                    "we_observe",
+                    "we_projection_get"
+                  ]
+                },
+                "mcp_env_names": {
+                  "const": [
+                    "DAIMON_CAPABILITY_KEY_FD"
+                  ]
+                },
+                "network": {
+                  "const": "disabled"
+                },
+                "sandbox": {
+                  "const": "workspace-write"
+                }
+              },
+              "required": [
+                "sandbox",
+                "approval_policy",
+                "network",
+                "history_persistence",
+                "matrix_tools",
+                "mcp_env_names",
+                "hooks",
+                "lifecycle"
+              ],
+              "type": "object"
             },
-            "history_persistence": {
-              "const": "none"
-            },
-            "hooks": {
-              "const": "disabled"
-            },
-            "lifecycle": {
-              "const": "human-request-only"
-            },
-            "matrix_tools": {
-              "const": [
-                "daimon_status",
-                "scope_me",
-                "scope_we",
-                "we_heads",
-                "we_observe",
-                "we_projection_get"
-              ]
-            },
-            "mcp_env_names": {
-              "const": [
-                "DAIMON_CAPABILITY_KEY_FD"
-              ]
-            },
-            "network": {
-              "const": "disabled"
-            },
-            "sandbox": {
-              "const": "workspace-write"
+            {
+              "additionalProperties": false,
+              "properties": {
+                "approval_policy": {
+                  "const": "never"
+                },
+                "history_persistence": {
+                  "const": "none"
+                },
+                "hooks": {
+                  "const": "disabled"
+                },
+                "lifecycle": {
+                  "const": "human-request-only"
+                },
+                "matrix_tools": {
+                  "const": [
+                    "daimon_status",
+                    "scope_me",
+                    "scope_we",
+                    "we_heads",
+                    "we_observe",
+                    "we_projection_get"
+                  ]
+                },
+                "mcp_env_names": {
+                  "const": [
+                    "DAIMON_CAPABILITY_KEY_FD"
+                  ]
+                },
+                "network": {
+                  "const": "enabled"
+                },
+                "sandbox": {
+                  "const": "danger-full-access"
+                }
+              },
+              "required": [
+                "sandbox",
+                "approval_policy",
+                "network",
+                "history_persistence",
+                "matrix_tools",
+                "mcp_env_names",
+                "hooks",
+                "lifecycle"
+              ],
+              "type": "object"
             }
-          },
-          "required": [
-            "sandbox",
-            "approval_policy",
-            "network",
-            "history_persistence",
-            "matrix_tools",
-            "mcp_env_names",
-            "hooks",
-            "lifecycle"
-          ],
-          "type": "object"
+          ]
         },
         "schema": {
           "const": "dm.codex-body.plan/v2"
