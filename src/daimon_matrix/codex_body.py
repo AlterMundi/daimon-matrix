@@ -2313,15 +2313,26 @@ def chatgpt_login_params(token: str) -> dict[str, Any]:
 
 
 def authenticate_chatgpt(
-    plan: CodexBodyPlan, transport: AppServerProcess, token: str
+    plan: CodexBodyPlan,
+    transport: AppServerProcess,
+    token: str,
+    *,
+    timeout_seconds: float = 30,
 ) -> None:
     """One explicit ephemeral login without token storage or refresh."""
     if plan.value["codex"].get("provider_auth") != "chatgpt-external":
         raise CodexBodyError("codex_external_auth_not_selected")
-    result = transport.request("account/login/start", chatgpt_login_params(token))
+    if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30:
+        raise CodexBodyError("invalid_app_server_timeout")
+    deadline = time.monotonic() + timeout_seconds
+    result, _ = transport.request_bounded(
+        "account/login/start", chatgpt_login_params(token), deadline=deadline
+    )
     if dict(result) != {"type": "chatgptAuthTokens"}:
         raise CodexBodyError("codex_external_auth_rejected")
-    result = transport.request("account/read", {"refreshToken": False})
+    result, _ = transport.request_bounded(
+        "account/read", {"refreshToken": False}, deadline=deadline
+    )
     account = result.get("account")
     if not isinstance(account, Mapping) or account.get("type") != "chatgpt":
         raise CodexBodyError("codex_external_auth_rejected")
@@ -3123,12 +3134,6 @@ class AppServerProcess:
             if not self._automatic_hooks and method == "config/read"
             else None
         )
-        self._authentication_request_id = (
-            request_id
-            if not self._automatic_hooks
-            and method in {"account/login/start", "account/read"}
-            else None
-        )
         try:
             self._send(
                 {
@@ -3140,7 +3145,6 @@ class AppServerProcess:
             return self._await_response(request_id)
         finally:
             self._configuration_request_id = None
-            self._authentication_request_id = None
 
     def request_bounded(
         self, method: str, params: Mapping[str, Any], *, deadline: float
@@ -3181,6 +3185,12 @@ class AppServerProcess:
         descriptor = self._stdin.fileno()
         blocking = os.get_blocking(descriptor)
         captured: list[Mapping[str, Any]] = []
+        self._authentication_request_id = (
+            request_id
+            if not self._automatic_hooks
+            and method in {"account/login/start", "account/read"}
+            else None
+        )
         try:
             os.set_blocking(descriptor, False)
             offset = 0
@@ -3209,6 +3219,7 @@ class AppServerProcess:
                 "app_server_unavailable", retryable=True
             ) from exception
         finally:
+            self._authentication_request_id = None
             with suppress(OSError):
                 os.set_blocking(descriptor, blocking)
 

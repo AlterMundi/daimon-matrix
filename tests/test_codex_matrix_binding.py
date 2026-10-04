@@ -187,9 +187,9 @@ class MatrixBindingTests(RuntimeFixture):
                             )
                             + ".synthetic"
                         )
-                        spawn.return_value.request.side_effect = [
-                            {"type": "chatgptAuthTokens"},
-                            {"account": {"type": "chatgpt"}},
+                        spawn.return_value.request_bounded.side_effect = [
+                            ({"type": "chatgptAuthTokens"}, []),
+                            ({"account": {"type": "chatgpt"}}, []),
                         ]
                     session = reopen(provider_token=token)
                     session.close()
@@ -199,14 +199,23 @@ class MatrixBindingTests(RuntimeFixture):
                     )
                     if external_auth:
                         self.assertEqual(
-                            spawn.return_value.request.call_args_list,
+                            spawn.return_value.request_bounded.call_args_list,
                             [
                                 mock.call(
                                     "account/login/start",
                                     codex_body.chatgpt_login_params(token),
+                                    deadline=mock.ANY,
                                 ),
-                                mock.call("account/read", {"refreshToken": False}),
+                                mock.call(
+                                    "account/read",
+                                    {"refreshToken": False},
+                                    deadline=mock.ANY,
+                                ),
                             ],
+                        )
+                        calls = spawn.return_value.request_bounded.call_args_list
+                        self.assertEqual(
+                            calls[0].kwargs["deadline"], calls[1].kwargs["deadline"]
                         )
                         self.assertFalse((plan.profile_root / "auth.json").exists())
                     spawn.reset_mock()

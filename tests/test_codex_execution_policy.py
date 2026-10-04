@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 import tomllib
 import unittest
 from dataclasses import replace
@@ -288,15 +289,63 @@ class ExternalAuthTests(unittest.TestCase):
                 body.chatgpt_login_params(value)
             self.assertNotIn(value, str(caught.exception))
 
+    def test_auth_notification_drip_has_one_total_deadline(self) -> None:
+        from tests.test_codex_turn import BoundedTransportTests
+
+        io = BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        transport = io.transport(
+            "import json,sys,time\n"
+            "sys.stdin.readline()\n"
+            "while True:\n"
+            " print(json.dumps({'method':'account/updated','params':"
+            "{'authMode':'chatgpt','planType':'plus'}}),flush=True)\n"
+            " time.sleep(.01)\n"
+        )
+        started = time.monotonic()
+        with self.assertRaisesRegex(body.CodexBodyError, "app_server_timeout"):
+            body.authenticate_chatgpt(
+                self.plan, transport, self.token, timeout_seconds=0.15
+            )
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIsNone(transport._authentication_request_id)
+
+    def test_auth_stalled_pipe_write_has_same_deadline(self) -> None:
+        try:
+            import fcntl
+        except ImportError:
+            self.skipTest("requires bounded Linux pipe fixture")
+        if not hasattr(fcntl, "F_SETPIPE_SZ"):
+            self.skipTest("requires bounded Linux pipe fixture")
+        from tests.test_codex_turn import BoundedTransportTests
+
+        io = BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        transport = io.transport("import time; time.sleep(10)\n")
+        fcntl.fcntl(transport._stdin.fileno(), fcntl.F_SETPIPE_SZ, 4096)
+        claims = {
+            "https://api.openai.com/auth": {"chatgpt_account_id": "synthetic-account"},
+            "padding": "x" * 10000,
+        }
+        token = "synthetic." + b64url(json.dumps(claims).encode()) + ".synthetic"
+        body.chatgpt_login_params(token)
+        started = time.monotonic()
+        with self.assertRaisesRegex(body.CodexBodyError, "app_server_timeout"):
+            body.authenticate_chatgpt(self.plan, transport, token, timeout_seconds=0.15)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIsNone(transport._authentication_request_id)
+
     def test_external_auth_requires_explicit_selection_and_success(self) -> None:
         transport = mock.Mock()
         with self.assertRaises(body.CodexBodyError):
             body.authenticate_chatgpt(self.fixture.plan, transport, self.token)
-        transport.request.assert_not_called()
-        transport.request.return_value = {"type": "chatgpt"}
+        transport.request_bounded.assert_not_called()
+        transport.request_bounded.return_value = ({"type": "chatgpt"}, [])
         with self.assertRaises(body.CodexBodyError):
             body.authenticate_chatgpt(self.plan, transport, self.token)
-        self.assertEqual(transport.request.call_count, 1)
+        self.assertEqual(transport.request_bounded.call_count, 1)
 
     def test_auth_notifications_are_restricted_to_explicit_auth_requests(self) -> None:
         value: dict[str, Any] = {
