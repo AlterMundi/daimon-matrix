@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -68,6 +69,8 @@ class MatrixBindingTests(RuntimeFixture):
         witness: dict[str, Any],
         proof_path: Path,
         snapshot: dict[str, Any],
+        *,
+        external_auth: bool = False,
     ) -> None:
         """Exercise real signed/socket/profile I/O before the native boundary."""
         binary = self.root_path / "synthetic-native"
@@ -91,8 +94,10 @@ class MatrixBindingTests(RuntimeFixture):
                         provider="openai",
                         workspace_ref="dm:workspace:v1:" + b64url(bytes(32)),
                         release="0.155.1",
+                        provider_auth="chatgpt-external" if external_auth else None,
                     ),
-                    profile_root=self.root_path / "reopening-profile",
+                    profile_root=self.root_path
+                    / ("external-profile" if external_auth else "reopening-profile"),
                     workspace=self.root_path,
                     codex_binary=binary,
                     mcp_binary=binary,
@@ -167,12 +172,52 @@ class MatrixBindingTests(RuntimeFixture):
                         self.assertEqual(proof_path.read_bytes(), original_proofs)
                     self.assertEqual(spawn.call_count, 3)
                     self.assertIsNone(spawn.call_args.kwargs["inherited_environment"])
-                    session = reopen(provider_token="synthetic-provider-value")
+                    token = "synthetic-provider-value"
+                    if external_auth:
+                        token = (
+                            "synthetic."
+                            + b64url(
+                                json.dumps(
+                                    {
+                                        "https://api.openai.com/auth": {
+                                            "chatgpt_account_id": "synthetic-account"
+                                        }
+                                    }
+                                ).encode()
+                            )
+                            + ".synthetic"
+                        )
+                        spawn.return_value.request_bounded.side_effect = [
+                            ({"type": "chatgptAuthTokens"}, []),
+                            ({"account": {"type": "chatgpt"}}, []),
+                        ]
+                    session = reopen(provider_token=token)
                     session.close()
                     self.assertEqual(
                         spawn.call_args.kwargs["inherited_environment"],
-                        {"CODEX_ACCESS_TOKEN": "synthetic-provider-value"},
+                        None if external_auth else {"CODEX_ACCESS_TOKEN": token},
                     )
+                    if external_auth:
+                        self.assertEqual(
+                            spawn.return_value.request_bounded.call_args_list,
+                            [
+                                mock.call(
+                                    "account/login/start",
+                                    codex_body.chatgpt_login_params(token),
+                                    deadline=mock.ANY,
+                                ),
+                                mock.call(
+                                    "account/read",
+                                    {"refreshToken": False},
+                                    deadline=mock.ANY,
+                                ),
+                            ],
+                        )
+                        calls = spawn.return_value.request_bounded.call_args_list
+                        self.assertEqual(
+                            calls[0].kwargs["deadline"], calls[1].kwargs["deadline"]
+                        )
+                        self.assertFalse((plan.profile_root / "auth.json").exists())
                     spawn.reset_mock()
                     corruptions = {
                         "missing": None,
@@ -1068,6 +1113,9 @@ sys.exit(2)
             self.assertEqual(admitted["expires_at_ms"], NOW + 1000)
             self._assert_owner_reopening_saved_tip(
                 client, bootstrap, witness, proof_path, snapshot
+            )
+            self._assert_owner_reopening_saved_tip(
+                client, bootstrap, witness, proof_path, snapshot, external_auth=True
             )
             with self.assertRaises(CodexBodyError):
                 native_admission(

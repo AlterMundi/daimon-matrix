@@ -960,6 +960,15 @@ def validate_plan(value: Any) -> dict[str, Any]:
             "model",
             "provider",
             "version",
+            *(
+                {
+                    name
+                    for name in ("reasoning_effort", "provider_auth")
+                    if name in row["codex"]
+                }
+                if isinstance(row["codex"], Mapping)
+                else set()
+            ),
         },
         "invalid_codex_body_plan",
     )
@@ -974,6 +983,18 @@ def validate_plan(value: Any) -> dict[str, Any]:
         raise CodexBodyError("unsupported_codex_compatibility")
     _token(codex["model"], "invalid_codex_body_plan")
     _token(codex["provider"], "invalid_codex_body_plan")
+    if "reasoning_effort" in codex and (
+        profile.automatic_hooks
+        or codex["reasoning_effort"]
+        not in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+    ):
+        raise CodexBodyError("unsupported_codex_reasoning_effort")
+    if "provider_auth" in codex and (
+        profile.automatic_hooks
+        or codex["provider_auth"] != "chatgpt-external"
+        or codex["provider"] != "openai"
+    ):
+        raise CodexBodyError("unsupported_codex_provider_auth")
     expected_policy: dict[str, Any] = {
         "approval_policy": "on-request",
         "history_persistence": "none",
@@ -989,12 +1010,34 @@ def validate_plan(value: Any) -> dict[str, Any]:
         set(expected_policy),
         "invalid_codex_body_plan",
     )
+    if not profile.automatic_hooks and policy["sandbox"] == "danger-full-access":
+        expected_policy.update(_execution_policy(True))
     if dict(policy) != expected_policy:
         raise CodexBodyError("unsupported_codex_profile_policy")
     if bootstrap["expires_at_ms"] <= bootstrap["issued_at_ms"]:
         raise CodexBodyError("invalid_codex_body_plan")
     _canonical(row, "invalid_codex_body_plan")
     return copy.deepcopy(dict(row))
+
+
+def _execution_policy(full_access: bool = False) -> dict[str, str]:
+    return {
+        "sandbox": "danger-full-access" if full_access else "workspace-write",
+        "approval_policy": "never" if full_access else "on-request",
+        "network": "enabled" if full_access else "disabled",
+    }
+
+
+def _wire_sandbox(plan: CodexBodyPlan) -> dict[str, Any]:
+    if plan.value["profile_policy"]["sandbox"] == "danger-full-access":
+        return {"type": "dangerFullAccess"}
+    return {
+        "type": "workspaceWrite",
+        "writableRoots": [],
+        "networkAccess": False,
+        "excludeTmpdirEnvVar": False,
+        "excludeSlashTmp": False,
+    }
 
 
 def create_plan_value(
@@ -1006,6 +1049,9 @@ def create_plan_value(
     release: str = CODEX_VERSION,
     skill_packages: Mapping[str, Any] | None = None,
     continuity: Mapping[str, Any] | None = None,
+    reasoning_effort: str | None = None,
+    full_access: bool = False,
+    provider_auth: str | None = None,
 ) -> dict[str, Any]:
     contract = release_contract(release)
     historical = release == CODEX_VERSION
@@ -1036,6 +1082,16 @@ def create_plan_value(
             "mcp_env_names": list(SAFE_MCP_ENV_NAMES),
         },
     }
+    if historical and (
+        full_access or reasoning_effort is not None or provider_auth is not None
+    ):
+        raise CodexBodyError("historical_codex_execution_override_forbidden")
+    if reasoning_effort is not None:
+        cast(dict[str, Any], core["codex"])["reasoning_effort"] = reasoning_effort
+    if provider_auth is not None:
+        cast(dict[str, Any], core["codex"])["provider_auth"] = provider_auth
+    if full_access:
+        cast(dict[str, Any], core["profile_policy"]).update(_execution_policy(True))
     if not historical:
         cast(dict[str, Any], core["profile_policy"]).update(
             hooks="disabled", lifecycle="human-request-only"
@@ -1132,6 +1188,7 @@ def render_config(plan: CodexBodyPlan) -> bytes:
     value = validate_plan(plan.value)
     profile = _profile_contract(value)
     codex = cast(Mapping[str, Any], value["codex"])
+    policy = value["profile_policy"]
     hook = plan.profile_root / "hooks" / "lifecycle.py"
     bootstrap = plan.profile_root / "bootstrap.json"
     observation = plan.profile_root / "lifecycle-observations.jsonl"
@@ -1143,8 +1200,16 @@ def render_config(plan: CodexBodyPlan) -> bytes:
     lines = [
         f"model = {_toml_string(cast(str, codex['model']))}",
         f"model_provider = {_toml_string(cast(str, codex['provider']))}",
-        'approval_policy = "on-request"',
-        'sandbox_mode = "workspace-write"',
+        f"approval_policy = {_toml_string(cast(str, policy['approval_policy']))}",
+        f"sandbox_mode = {_toml_string(cast(str, policy['sandbox']))}",
+        *(
+            [
+                "model_reasoning_effort = "
+                + _toml_string(cast(str, codex["reasoning_effort"]))
+            ]
+            if "reasoning_effort" in codex
+            else []
+        ),
         'web_search = "disabled"',
         "allow_login_shell = false",
         "project_doc_max_bytes = 32768",
@@ -1270,8 +1335,11 @@ def _validate_effective_config(value: Mapping[str, Any], plan: CodexBodyPlan) ->
     if (
         value.get("model") != plan.value["codex"]["model"]
         or value.get("model_provider") != plan.value["codex"]["provider"]
-        or value.get("approval_policy") != "on-request"
-        or value.get("sandbox_mode") != "workspace-write"
+        or value.get("approval_policy")
+        != plan.value["profile_policy"]["approval_policy"]
+        or value.get("sandbox_mode") != plan.value["profile_policy"]["sandbox"]
+        or value.get("model_reasoning_effort")
+        != plan.value["codex"].get("reasoning_effort")
         or value.get("web_search") != "disabled"
         or value.get("history") != {"persistence": "none"}
     ):
@@ -2224,6 +2292,53 @@ def validate_native_provider_token(value: Any) -> str:
     return value
 
 
+def chatgpt_login_params(token: str) -> dict[str, Any]:
+    """Decode selected OAuth routing metadata, never Matrix authority."""
+    validate_native_provider_token(token)
+    code = "codex_external_auth_token_rejected"
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise ValueError
+        claims = _decode_json(unb64url(parts[1]), code)
+        account = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+        _text(account, code, maximum=256)
+    except (ValueError, KeyError, TypeError, CanonicalError, CodexBodyError):
+        raise CodexBodyError(code) from None
+    return {
+        "type": "chatgptAuthTokens",
+        "accessToken": token,
+        "chatgptAccountId": account,
+    }
+
+
+def authenticate_chatgpt(
+    plan: CodexBodyPlan,
+    transport: AppServerProcess,
+    token: str,
+    *,
+    timeout_seconds: float = 30,
+) -> None:
+    """One explicit ephemeral login without token storage or refresh."""
+    if plan.value["codex"].get("provider_auth") != "chatgpt-external":
+        raise CodexBodyError("codex_external_auth_not_selected")
+    if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30:
+        raise CodexBodyError("invalid_app_server_timeout")
+    deadline = time.monotonic() + timeout_seconds
+    result, _ = transport.request_bounded(
+        "account/login/start", chatgpt_login_params(token), deadline=deadline
+    )
+    if dict(result) != {"type": "chatgptAuthTokens"}:
+        raise CodexBodyError("codex_external_auth_rejected")
+    result, _ = transport.request_bounded(
+        "account/read", {"refreshToken": False}, deadline=deadline
+    )
+    account = result.get("account")
+    if not isinstance(account, Mapping) or account.get("type") != "chatgpt":
+        raise CodexBodyError("codex_external_auth_rejected")
+    verify_profile(plan)
+
+
 def read_native_provider_token(descriptor: int) -> str:
     """Read a selected token FD; no auth.json, account lookup or ambient import."""
     code = "codex_provider_token_fd_rejected"
@@ -2638,9 +2753,9 @@ def create_launch_receipt(
             "model": plan.value["codex"]["model"],
             "provider": plan.value["codex"]["provider"],
             "workspace_ref": plan.value["workspace_ref"],
-            "sandbox": "workspace-write",
-            "approval_policy": "on-request",
-            "network": "disabled",
+            **_execution_policy(
+                plan.value["profile_policy"]["sandbox"] == "danger-full-access"
+            ),
             "thread_id": handle["thread_id"],
             "session_tree_id": handle["session_tree_id"],
             "turn_id": handle["turn_id"],
@@ -2773,11 +2888,10 @@ def validate_launch_receipt(value: Any) -> dict[str, Any]:
         },
         "invalid_launch_receipt",
     )
-    if (
-        runtime["approval_policy"] != "on-request"
-        or runtime["sandbox"] != "workspace-write"
-        or runtime["network"] != "disabled"
-    ):
+    selected_policy = _execution_policy(
+        not profile.automatic_hooks and runtime["sandbox"] == "danger-full-access"
+    )
+    if any(runtime[field] != expected for field, expected in selected_policy.items()):
         raise CodexBodyError("invalid_launch_receipt")
     for field in ("model", "provider", "session_tree_id", "thread_id"):
         _token(runtime[field], "invalid_launch_receipt")
@@ -2958,6 +3072,7 @@ class AppServerProcess:
         self._native_turn_data = False
         self._seen: set[int] = set()
         self._configuration_request_id: int | None = None
+        self._authentication_request_id: int | None = None
 
     def _send(self, value: Mapping[str, Any]) -> None:
         raw = _canonical(value, "app_server_message_invalid") + b"\n"
@@ -3070,6 +3185,12 @@ class AppServerProcess:
         descriptor = self._stdin.fileno()
         blocking = os.get_blocking(descriptor)
         captured: list[Mapping[str, Any]] = []
+        self._authentication_request_id = (
+            request_id
+            if not self._automatic_hooks
+            and method in {"account/login/start", "account/read"}
+            else None
+        )
         try:
             os.set_blocking(descriptor, False)
             offset = 0
@@ -3098,6 +3219,7 @@ class AppServerProcess:
                 "app_server_unavailable", retryable=True
             ) from exception
         finally:
+            self._authentication_request_id = None
             with suppress(OSError):
                 os.set_blocking(descriptor, blocking)
 
@@ -3119,7 +3241,11 @@ class AppServerProcess:
                 raise CodexBodyError("app_server_timeout", retryable=True)
             if "id" not in message:
                 _validate_notification(
-                    message, allow_hooks=self._automatic_hooks, native_turn=native_turn
+                    message,
+                    allow_hooks=self._automatic_hooks,
+                    native_turn=native_turn,
+                    authenticating=getattr(self, "_authentication_request_id", None)
+                    == request_id,
                 )
                 if captured is not None:
                     captured_bytes += len(
@@ -3461,7 +3587,11 @@ def _validate_turn_item(value: Any) -> None:
 
 
 def _validate_notification(
-    value: Mapping[str, Any], *, allow_hooks: bool = True, native_turn: bool = False
+    value: Mapping[str, Any],
+    *,
+    allow_hooks: bool = True,
+    native_turn: bool = False,
+    authenticating: bool = False,
 ) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(value, Mapping) or set(value) not in (
         {"method", "params"},
@@ -3474,6 +3604,36 @@ def _validate_notification(
     method = _text(row["method"], "app_server_notification_invalid", maximum=128)
     if not allow_hooks and method in {"hook/started", "hook/completed"}:
         raise CodexBodyError("codex_automatic_hooks_forbidden")
+    if (
+        authenticating
+        and not allow_hooks
+        and method in {"account/login/completed", "account/updated"}
+    ):
+        params = _closed(
+            row["params"],
+            {"loginId", "success", "error", "onboardingEntrypoint"}
+            if method == "account/login/completed"
+            else {"authMode", "planType"},
+            "codex_external_auth_notification_rejected",
+        )
+        if method == "account/login/completed":
+            if (
+                params["success"] is not True
+                or params["error"] is not None
+                or params["loginId"] is not None
+                or params["onboardingEntrypoint"] not in (None, "life_sciences")
+            ):
+                raise CodexBodyError("codex_external_auth_rejected")
+        else:
+            if params["authMode"] != "chatgpt":
+                raise CodexBodyError("codex_external_auth_rejected")
+            if params["planType"] is not None:
+                _text(
+                    params["planType"],
+                    "codex_external_auth_notification_rejected",
+                    maximum=256,
+                )
+        return method, params
     successor_error = not allow_hooks and method == "error"
     if (
         method not in KNOWN_NOTIFICATIONS
@@ -3568,20 +3728,17 @@ def _thread_result(
         or value["modelProvider"] != plan.value["codex"]["provider"]
     ):
         raise CodexBodyError("app_server_model_drift")
-    if value["approvalPolicy"] != "on-request" or value["cwd"] != os.fspath(
-        plan.workspace
+    if (
+        value["approvalPolicy"] != plan.value["profile_policy"]["approval_policy"]
+        or value["cwd"] != os.fspath(plan.workspace)
+        or (
+            "reasoning_effort" in plan.value["codex"]
+            and value.get("reasoningEffort") != plan.value["codex"]["reasoning_effort"]
+        )
     ):
         raise CodexBodyError("app_server_policy_drift")
     if not profile.automatic_hooks and (
-        value["approvalsReviewer"] != "user"
-        or value["sandbox"]
-        != {
-            "type": "workspaceWrite",
-            "writableRoots": [],
-            "networkAccess": False,
-            "excludeTmpdirEnvVar": False,
-            "excludeSlashTmp": False,
-        }
+        value["approvalsReviewer"] != "user" or value["sandbox"] != _wire_sandbox(plan)
     ):
         raise CodexBodyError("app_server_policy_drift")
     thread = value["thread"]
@@ -3788,7 +3945,8 @@ class CodexBodyAdapter:
                     "version": profile.adapter_version,
                 },
                 "capabilities": {
-                    "experimentalApi": False,
+                    "experimentalApi": self.plan.value["codex"].get("provider_auth")
+                    == "chatgpt-external",
                     "requestAttestation": False,
                     "mcpServerOpenaiFormElicitation": False,
                 },
@@ -3841,8 +3999,8 @@ class CodexBodyAdapter:
                 "model": self.plan.value["codex"]["model"],
                 "modelProvider": self.plan.value["codex"]["provider"],
                 "cwd": os.fspath(self.plan.workspace),
-                "approvalPolicy": "on-request",
-                "sandbox": "workspace-write",
+                "approvalPolicy": self.plan.value["profile_policy"]["approval_policy"],
+                "sandbox": self.plan.value["profile_policy"]["sandbox"],
                 "ephemeral": False,
             },
         )
@@ -3915,8 +4073,8 @@ class CodexBodyAdapter:
                 "model": self.plan.value["codex"]["model"],
                 "modelProvider": self.plan.value["codex"]["provider"],
                 "cwd": os.fspath(self.plan.workspace),
-                "approvalPolicy": "on-request",
-                "sandbox": "workspace-write",
+                "approvalPolicy": self.plan.value["profile_policy"]["approval_policy"],
+                "sandbox": self.plan.value["profile_policy"]["sandbox"],
             },
         )
         thread_id, session_tree_id, _sources = _thread_result(result, self.plan)
@@ -4598,6 +4756,19 @@ def parser() -> argparse.ArgumentParser:
     plan_create.add_argument("--bootstrap", type=Path, required=True)
     plan_create.add_argument("--model", required=True)
     plan_create.add_argument("--provider", required=True)
+    plan_create.add_argument("--provider-auth", choices=("chatgpt-external",))
+    plan_create.add_argument(
+        "--reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+    )
+    plan_create.add_argument(
+        "--full-access",
+        action="store_true",
+        help=(
+            "Owner-selected danger-full-access/never execution; "
+            "grants no Matrix authority"
+        ),
+    )
     plan_create.add_argument("--workspace-ref", required=True)
     plan_create.add_argument("--output", type=Path, required=True)
     plan_create.add_argument("--skill-packages", type=Path)
@@ -4939,6 +5110,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bootstrap=bootstrap,
                 model=args.model,
                 provider=args.provider,
+                provider_auth=args.provider_auth,
+                reasoning_effort=args.reasoning_effort,
+                full_access=args.full_access,
                 workspace_ref=args.workspace_ref,
                 release=SUCCESSOR_RELEASE.version,
                 skill_packages=_json_load(

@@ -840,8 +840,13 @@ def open_owner_native_session(
     key descriptor. Failed initialization closes its child and preserves all
     profile/journal evidence; it never retries a launch or discovers a thread.
     """
+    external_auth = plan.value["codex"].get("provider_auth") == "chatgpt-external"
     if provider_token is not None:
         validate_native_provider_token(provider_token)
+        if external_auth:
+            from .codex_body import chatgpt_login_params
+
+            chatgpt_login_params(provider_token)
     bootstrap = validate_bootstrap(plan.value["bootstrap"])
     if bootstrap["schema"] != ATTESTED_BOOTSTRAP_SCHEMA:
         raise CodexBodyError("owner_native_attested_bootstrap_required")
@@ -911,7 +916,7 @@ def open_owner_native_session(
         pass_fds=(int(plan.mcp_args[5]),),
         inherited_environment=(
             {"CODEX_ACCESS_TOKEN": provider_token}
-            if provider_token is not None
+            if provider_token is not None and not external_auth
             else None
         ),
     )
@@ -924,6 +929,10 @@ def open_owner_native_session(
             clock=clock,
         )
         adapter.initialize()
+        if external_auth and provider_token is not None:
+            from .codex_body import authenticate_chatgpt
+
+            authenticate_chatgpt(plan, process, provider_token)
     except BaseException:
         process.close()
         raise

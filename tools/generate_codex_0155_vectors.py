@@ -179,6 +179,19 @@ def contracts_schema() -> dict[str, Any]:
         hooks={"const": "disabled"}, lifecycle={"const": "human-request-only"}
     )
     policy["required"].extend(("hooks", "lifecycle"))
+    effort = {
+        "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+    }
+    plan["codex"]["properties"]["reasoning_effort"] = effort
+    plan["codex"]["properties"]["provider_auth"] = {"const": "chatgpt-external"}
+    plan["codex"]["dependentSchemas"] = {
+        "provider_auth": {"properties": {"provider": {"const": "openai"}}}
+    }
+    restricted = copy.deepcopy(policy)
+    unrestricted = copy.deepcopy(policy)
+    for key, value in body._execution_policy(True).items():
+        unrestricted["properties"][key] = {"const": value}
+    plan["profile_policy"] = {"oneOf": [restricted, unrestricted]}
     manifest = definitions["profile_manifest"]
     manifest["properties"].pop("hook_python_sha256")
     manifest["required"].remove("hook_python_sha256")
@@ -213,6 +226,11 @@ def contracts_schema() -> dict[str, Any]:
     compatibility["required"].append("lifecycle")
     launch["reviewed_files"]["properties"].pop("hook_sha256")
     launch["reviewed_files"]["required"].remove("hook_sha256")
+    restricted_runtime = copy.deepcopy(launch["runtime"])
+    unrestricted_runtime = copy.deepcopy(launch["runtime"])
+    for key, value in body._execution_policy(True).items():
+        unrestricted_runtime["properties"][key] = {"const": value}
+    launch["runtime"] = {"oneOf": [restricted_runtime, unrestricted_runtime]}
     handle = definitions["runtime_handle"]
     handle["properties"]["state"]["enum"].extend(("parking", "turning"))
     binding = {
@@ -629,6 +647,16 @@ def outputs() -> dict[Path, bytes]:
         values = {
             "valid/bootstrap.json": bootstrap,
             "valid/plan.json": plan,
+            "valid/full-access-plan.json": body.validate_plan(
+                {
+                    **plan,
+                    "codex": {**plan["codex"], "reasoning_effort": "medium"},
+                    "profile_policy": {
+                        **plan["profile_policy"],
+                        **body._execution_policy(True),
+                    },
+                }
+            ),
             "valid/profile-manifest.json": manifest,
             "valid/launch-receipt.json": codec_launch(plan, manifest, handle),
             "valid/session-witness.json": witness_payload,
