@@ -138,7 +138,7 @@ class MatrixBindingTests(RuntimeFixture):
                     observed_at_ms=NOW,
                 )
 
-                def reopen() -> Any:
+                def reopen(provider_token: str | None = None) -> Any:
                     return open_owner_native_session(
                         plan,
                         self.bundle,
@@ -147,6 +147,7 @@ class MatrixBindingTests(RuntimeFixture):
                         proof_journal_path=proof_path,
                         max_age_ms=1000,
                         clock=lambda: NOW,
+                        provider_token=provider_token,
                     )
 
                 # Only native process/protocol initialization are replaced.
@@ -165,6 +166,13 @@ class MatrixBindingTests(RuntimeFixture):
                         self.assertEqual(handles.path.read_bytes(), saved_handles)
                         self.assertEqual(proof_path.read_bytes(), original_proofs)
                     self.assertEqual(spawn.call_count, 3)
+                    self.assertIsNone(spawn.call_args.kwargs["inherited_environment"])
+                    session = reopen(provider_token="synthetic-provider-value")
+                    session.close()
+                    self.assertEqual(
+                        spawn.call_args.kwargs["inherited_environment"],
+                        {"CODEX_ACCESS_TOKEN": "synthetic-provider-value"},
+                    )
                     spawn.reset_mock()
                     corruptions = {
                         "missing": None,

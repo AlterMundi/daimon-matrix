@@ -851,7 +851,8 @@
             "resuming",
             "active",
             "parked",
-            "parking"
+            "parking",
+            "turning"
           ]
         },
         "thread_id": {
@@ -975,6 +976,290 @@
         "witness_sequence"
       ],
       "type": "object"
+    },
+    "turn_intent": {
+      "additionalProperties": false,
+      "properties": {
+        "active_handle_id": {
+          "pattern": "^dm:codex-handle:v2:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "being_ref": {
+          "pattern": "^dm:being:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "body_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "capability_set_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "certificate_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "codex_version": {
+          "const": "0.155.1"
+        },
+        "embodiment_id": {
+          "pattern": "^embodiment:[A-Za-z0-9._:-]{1,240}$",
+          "type": "string"
+        },
+        "incarnation_id": {
+          "pattern": "^incarnation:[A-Za-z0-9._:-]{1,240}$",
+          "type": "string"
+        },
+        "input_bytes": {
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "intent_id": {
+          "pattern": "^dm:codex-turn-intent:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "matrix_session_id": {
+          "pattern": "^dm:[a-z0-9-]+:v[01]:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "max_response_bytes": {
+          "maximum": 65536,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "plan_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "profile_id": {
+          "pattern": "^dm:codex-profile:v2:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "request_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "retain_until_ms": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "const": "dm.codex-body.turn-intent/v1"
+        },
+        "timeout_seconds": {
+          "maximum": 300,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "being_ref",
+        "body_ref",
+        "capability_set_hash",
+        "certificate_hash",
+        "codex_version",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "plan_hash",
+        "profile_id",
+        "schema",
+        "intent_id",
+        "request_id",
+        "active_handle_id",
+        "input_sha256",
+        "input_bytes",
+        "timeout_seconds",
+        "max_response_bytes",
+        "retain_until_ms"
+      ],
+      "type": "object"
+    },
+    "turn_result": {
+      "additionalProperties": false,
+      "properties": {
+        "intent_id": {
+          "pattern": "^dm:codex-turn-intent:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "native_turn": {
+          "additionalProperties": false,
+          "properties": {
+            "completedAt": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "durationMs": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "error": {
+              "type": "null"
+            },
+            "id": {
+              "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "type": {
+                          "enum": [
+                            "agentMessage",
+                            "plan"
+                          ]
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text"
+                      ]
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "type": {
+                          "const": "reasoning"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "content": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "summary": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      }
+                    }
+                  }
+                ],
+                "properties": {
+                  "id": {
+                    "pattern": "^[A-Za-z0-9._:-]{1,192}$",
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "agentMessage",
+                      "collabAgentToolCall",
+                      "commandExecution",
+                      "contextCompaction",
+                      "dynamicToolCall",
+                      "enteredReviewMode",
+                      "exitedReviewMode",
+                      "fileChange",
+                      "functionCallOutput",
+                      "imageGeneration",
+                      "imageView",
+                      "mcpToolCall",
+                      "plan",
+                      "reasoning",
+                      "sleep",
+                      "subAgentActivity",
+                      "userMessage",
+                      "webSearch"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "itemsView": {
+              "enum": [
+                "notLoaded",
+                "summary",
+                "full"
+              ]
+            },
+            "startedAt": {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "status": {
+              "enum": [
+                "completed",
+                "failed",
+                "interrupted"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "items",
+            "status"
+          ],
+          "type": "object"
+        },
+        "pending_handle_id": {
+          "pattern": "^dm:codex-handle:v2:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "request_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "result_id": {
+          "pattern": "^dm:codex-turn-result:v1:[A-Za-z0-9_-]{43}$",
+          "type": "string"
+        },
+        "schema": {
+          "const": "dm.codex-body.turn-result/v1"
+        }
+      },
+      "required": [
+        "schema",
+        "request_id",
+        "intent_id",
+        "pending_handle_id",
+        "native_turn",
+        "result_id"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://schemas.altermundi.net/daimon-matrix/codex/v2/contracts.schema.json",
@@ -1000,6 +1285,12 @@
     },
     {
       "$ref": "#/$defs/bootstrap_attestation"
+    },
+    {
+      "$ref": "#/$defs/turn_intent"
+    },
+    {
+      "$ref": "#/$defs/turn_result"
     },
     {
       "$ref": "#/$defs/session_witness"

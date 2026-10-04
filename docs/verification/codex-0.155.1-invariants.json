@@ -61,11 +61,16 @@
       "evidence": [
         "installed-native-park-probe.json",
         "installed-native-isolated-resume-loss-probe.json",
-        "installed-native-start-response-loss-probe.json"
+        "installed-native-start-response-loss-probe.json",
+        "tests.test_codex_turn.TurnControllerTests",
+        "tests.test_codex_turn.TurnCliTests",
+        "vectors/codex/v2/valid/turn-result.json",
+        "tests.test_codex_turn.TurnRecoveryTests"
       ],
       "remaining": [
         "Unknown first-start response requires explicit operator-directed resolution",
-        "Live-body lifecycle acceptance; provider canary separately authorized if required"
+        "Live-body lifecycle acceptance; provider canary separately authorized if required",
+        "Current-head release/installed qualification and approved live provider/retention acceptance; native interrupted-turn recovery without replacement input is isolated evidence"
       ],
       "requirement": "Installed native start, resume, response-loss, park and recovery",
       "status": "isolated-installed-smoke"

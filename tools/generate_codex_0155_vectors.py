@@ -181,7 +181,7 @@ def contracts_schema() -> dict[str, Any]:
     launch["reviewed_files"]["properties"].pop("hook_sha256")
     launch["reviewed_files"]["required"].remove("hook_sha256")
     handle = definitions["runtime_handle"]
-    handle["properties"]["state"]["enum"].append("parking")
+    handle["properties"]["state"]["enum"].extend(("parking", "turning"))
     binding = {
         "profile_id": manifest["properties"]["profile_id"],
         "plan_hash": HASH,
@@ -191,6 +191,112 @@ def contracts_schema() -> dict[str, Any]:
     }
     handle["properties"].update(binding)
     handle["required"].extend(binding)
+    definitions["turn_intent"] = closed(
+        {
+            **{
+                name: copy.deepcopy(handle["properties"][name])
+                for name in sorted(body._TURN_BINDING_FIELDS)
+            },
+            "schema": {"const": body.TURN_INTENT_SCHEMA},
+            "intent_id": {
+                "type": "string",
+                "pattern": r"^dm:codex-turn-intent:v1:[A-Za-z0-9_-]{43}$",
+            },
+            "request_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            },
+            "active_handle_id": copy.deepcopy(handle["properties"]["handle_id"]),
+            "input_sha256": HASH,
+            "input_bytes": {**UINT, "minimum": 1, "maximum": 4096},
+            "timeout_seconds": {**UINT, "minimum": 1, "maximum": 300},
+            "max_response_bytes": {**UINT, "minimum": 1, "maximum": 65536},
+            "retain_until_ms": UINT,
+        }
+    )
+    native_item: dict[str, Any] = {
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+            "id": {"type": "string", "pattern": r"^[A-Za-z0-9._:-]{1,192}$"},
+            "type": {
+                "enum": sorted(
+                    {
+                        "agentMessage",
+                        "plan",
+                        "reasoning",
+                        "userMessage",
+                        "functionCallOutput",
+                        "commandExecution",
+                        "fileChange",
+                        "mcpToolCall",
+                        "dynamicToolCall",
+                        "collabAgentToolCall",
+                        "subAgentActivity",
+                        "webSearch",
+                        "imageView",
+                        "sleep",
+                        "imageGeneration",
+                        "enteredReviewMode",
+                        "exitedReviewMode",
+                        "contextCompaction",
+                    }
+                )
+            },
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"type": {"enum": ["agentMessage", "plan"]}}},
+                "then": {
+                    "required": ["text"],
+                    "properties": {"text": {"type": "string"}},
+                },
+            },
+            {
+                "if": {"properties": {"type": {"const": "reasoning"}}},
+                "then": {
+                    "properties": {
+                        name: {"type": "array", "items": {"type": "string"}}
+                        for name in ("content", "summary")
+                    }
+                },
+            },
+        ],
+    }
+    native_turn = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id", "items", "status"],
+        "properties": {
+            "id": native_item["properties"]["id"],
+            "items": {"type": "array", "items": native_item},
+            "status": {"enum": ["completed", "failed", "interrupted"]},
+            "error": {"type": "null"},
+            "itemsView": {"enum": ["notLoaded", "summary", "full"]},
+            **{
+                name: {
+                    "type": ["integer", "null"],
+                    "minimum": -(2**63),
+                    "maximum": 2**63 - 1,
+                }
+                for name in ("startedAt", "completedAt", "durationMs")
+            },
+        },
+    }
+    definitions["turn_result"] = closed(
+        {
+            "schema": {"const": "dm.codex-body.turn-result/v1"},
+            "request_id": definitions["turn_intent"]["properties"]["request_id"],
+            "intent_id": definitions["turn_intent"]["properties"]["intent_id"],
+            "pending_handle_id": copy.deepcopy(handle["properties"]["handle_id"]),
+            "native_turn": native_turn,
+            "result_id": {
+                "type": "string",
+                "pattern": r"^dm:codex-turn-result:v1:[A-Za-z0-9_-]{43}$",
+            },
+        }
+    )
     artifact = definitions["compatibility"]["properties"]
     artifact["app_server_schema_files"]["const"] = release.schema_files
     artifact["app_server_typescript_files"]["const"] = release.typescript_files
@@ -391,6 +497,78 @@ def outputs() -> dict[Path, bytes]:
                 ),
             }
         )
+        active_core = {**handle_core, "state": "active"}
+        active_id = body._derived(
+            "dm:codex-handle:v2:",
+            b"daimon/codex-body/runtime-handle/v2\x00",
+            active_core,
+        )
+        turning_core = {
+            **active_core,
+            "state": "turning",
+            "generation": 1,
+            "previous_handle_id": active_id,
+            "turn_id": "synthetic-native-turn",
+        }
+        turning = body.validate_runtime_handle(
+            {
+                **turning_core,
+                "handle_id": body._derived(
+                    "dm:codex-handle:v2:",
+                    b"daimon/codex-body/runtime-handle/v2\x00",
+                    turning_core,
+                ),
+            }
+        )
+        input_bytes = b"Synthetic native input"
+        intent_core = {
+            **{name: handle[name] for name in sorted(body._TURN_BINDING_FIELDS)},
+            "schema": body.TURN_INTENT_SCHEMA,
+            "request_id": "00000205-0000-4000-8000-000000000003",
+            "active_handle_id": active_id,
+            "input_sha256": hashlib.sha256(input_bytes).hexdigest(),
+            "input_bytes": len(input_bytes),
+            "timeout_seconds": 30,
+            "max_response_bytes": 4096,
+            "retain_until_ms": NOW + 60_000,
+        }
+        intent = body.validate_turn_intent(
+            {
+                **intent_core,
+                "intent_id": body._derived(
+                    "dm:codex-turn-intent:v1:",
+                    body.TURN_INTENT_DOMAIN,
+                    intent_core,
+                ),
+            }
+        )
+        result_core = {
+            "schema": "dm.codex-body.turn-result/v1",
+            "request_id": intent["request_id"],
+            "intent_id": intent["intent_id"],
+            "pending_handle_id": turning["handle_id"],
+            "native_turn": {
+                "id": "synthetic-native-turn",
+                "status": "completed",
+                "items": [
+                    {
+                        "id": "synthetic-answer",
+                        "type": "agentMessage",
+                        "text": "Synthetic native result",
+                    }
+                ],
+            },
+        }
+        turn_result = body.validate_native_turn_result(
+            {
+                **result_core,
+                "result_id": body._derived(
+                    "dm:codex-turn-result:v1:",
+                    b"daimon/codex-body/turn-result/v1\x00",
+                    result_core,
+                ),
+            }
+        )
         witness_payload = bridge.session_witness_payload(bootstrap, event, sequence=1)
         witness = fixture.ledger_a.append_local(
             kind="experience.observed",
@@ -423,6 +601,9 @@ def outputs() -> dict[Path, bytes]:
             "valid/session-witness.json": witness_payload,
             "valid/session-proof-record.json": json.loads(proof_path.read_bytes()),
             "valid/parking-handle.json": handle,
+            "valid/turning-handle.json": turning,
+            "valid/turn-intent.json": intent,
+            "valid/turn-result.json": turn_result,
             "negative/mixed-plan.json": {**plan, "adapter_version": "1.0.0"},
             "negative/hook-policy.json": {
                 **plan,

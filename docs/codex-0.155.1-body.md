@@ -399,8 +399,12 @@ refuses blind retries. Operator-directed resolution and retained native rollout 
 separate acceptance work.
 
 `bootstrap-prepare` records an owner-only, fsynced exact `we.observe` request
-after checking current public authority. It sends nothing and refuses to
-replace an existing retry token. `bootstrap-attest` checks that saved request
+after authenticated current-authority queries to the live daemon. It does not
+send that saved `we.observe` request or sign its Matrix event, and refuses to
+replace an existing retry token. Those authority queries may update the daemon's
+request cache: preparation is not offline and requires the applicable live
+authorization, particularly before a migration whose source anchor must remain
+unchanged. `bootstrap-attest` checks that saved request
 against the explicitly supplied session ID and expiry, rechecks the current
 daemon epoch, then sends those original bytes. Response loss reports
 `owner_bootstrap_response_unavailable` and preserves the token: retry the
@@ -457,3 +461,91 @@ admission. Scripts retain their declared executable flag but are never executed
 while preparing or verifying the profile. Package preparation does not establish
 live invocation, implicit-invocation enforcement, memory adoption or sync acceptance.
 Those operational checks and any pending activation approval remain separate.
+
+### Explicit single-input controller
+
+The successor adapter's `run_turn` API accepts one explicitly selected text input,
+canonical request UUID, deadline, response bound and retention date. It reserves
+an immutable private intent containing the input digest and byte length, then
+persists a `turning` handle before sending `turn/start`. Pre-acknowledgement
+notifications are retained and correlated with the acknowledged thread and turn.
+Ordinary text, reasoning, item lifecycle, status, plan and token-usage envelopes
+use the pinned 0.155.1 contracts. Other native item payloads remain bounded data;
+they do not prove a tool effect or Matrix authorization. Historical notification
+admission and V1 runtime-handle states are unchanged.
+
+A correlated completed, failed or interrupted native result is retained in the
+private profile's `turn-results/UUID.json` before restoring an active handle with
+its saved turn ID. The result binds the immutable intent and known pending handle
+and carries a content-derived result ID. Failure and interruption retain their own status.
+Provider error details are removed from the returned result. Lost acknowledgements,
+timeout, malformed items or foreign thread/turn events retain the pending handle
+and immutable intent; subsequent input and ordinary resume refuse. Errors at this
+input boundary never carry an automatic retry flag. `launch-state` reports
+`unknown-turn-outcome`; neither that report nor process shutdown proves completion.
+Reusing an intent UUID never dispatches another input.
+
+The input and provider-token FD helpers require bounded, owner-only, read-only,
+unshared regular files and preserve descriptor offsets. The native owner session
+accepts an explicitly supplied provider token and forwards only `CODEX_ACCESS_TOKEN`
+through the existing native environment allowlist. Its default passes no provider
+credential. These helpers do not inspect ambient accounts, auth.json, personal
+history or canonical memory. Native output is returned to the caller; the API
+does not print it or grant permission to publish it.
+
+The intent retention date records a selected recovery interval, capped at thirty
+days from preparation. It installs no cleanup task and does not delete native
+rollouts, intent history or canonical memory. The accepted operational native
+retention policy remains unfinished.
+Source tests use real subprocess pipes with synthetic
+vendor and presence seams; they do not prove provider authentication, a completed
+real model turn or live CompAII acceptance.
+
+`native-turn` shares the owner, plan, native binary, workspace and Cluster-reader
+locations of `native-lifecycle`. `--action start-turn` optionally creates a selected
+profile with `--create-profile`; `--action resume-turn` reopens the saved active
+thread. Both require distinct private `--input-fd`, `--provider-token-fd` and
+`--capability-key-fd` descriptors, a canonical `--request-id`, `--timeout-seconds`
+(1–300), `--max-response-bytes` (1–65536) and explicit `--retain-until-ms`.
+The prompt is limited to 4096 UTF-8 bytes. Aliased descriptors, invalid limits or
+a previously reserved UUID refuse before owner admission. The controller checks
+the selected result location before submitting input and never overwrites an
+existing or torn result. A late write failure retains the pending handle.
+
+The command returns only a path-free status receipt with the saved handle,
+request/intent/result IDs, native-result digest, terminal status and child exit
+code. Native output remains private in the result file. The CLI returns success
+only for a completed native turn and clean native process exit; failed and
+interrupted turns return failure while retaining their terminal evidence.
+Closing the process does not invent a park receipt. Subsequent explicit resume
+preserves the previous known turn ID; cold resume and inference on the actual
+host remain operational acceptance checks. The reported `model_inputs` counts
+submitted human inputs, not internal provider requests or tool effects.
+
+`--action recover-turn` selects an existing immutable intent by `--request-id`.
+It requires the owner/provider descriptors but forbids an input descriptor,
+replacement limits, retention date or profile creation. The adapter uses the
+saved limits and current presence proof, reads only the saved native thread and
+its latest full turn, and checks its input byte length and hash. A known
+acknowledgement must match that terminal turn. Without an acknowledgement, the
+candidate must be the only turn or the immediate successor of the saved baseline;
+the second bounded page reads the preceding ID without loading its items.
+Missing, in-progress, foreign or ambiguous history leaves the pending state.
+Recovery never calls thread start/resume or submits replacement input.
+
+A proven terminal recovery writes `turn-results/UUID.recovered.json` before
+restoring active state, preserving even a torn original result. A retry after
+that write reuses the immutable recovered artifact only when the native turn ID,
+status, items and pending handle agree; timing annotations may differ. A changed
+result refuses rather than replacing the retained evidence. Recovery reports
+zero submitted model inputs. Native history and private results are recovery
+data, not Matrix authority or canonical memory, and do not establish live
+retention or operational acceptance.
+
+Explicit inference frames and private results use unsigned vendor JSON encoding,
+preserving UTF-8 text without normalization and finite JSON numbers in opaque
+tool payloads. Result IDs and native-result digests use deterministic sorted-key
+vendor JSON bytes. Nonfinite numbers, duplicate keys and invalid UTF-8 refuse.
+Matrix signatures, bootstrap/plan/profile artifacts and handle/intent journals
+retain their strict canonical encoding. The audited native configuration-duration
+exception remains restricted to its exact correlated configuration reply.
