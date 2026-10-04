@@ -648,6 +648,67 @@ class TurnControllerTests(unittest.TestCase):
         self.assertEqual(report["outcome"], "unknown-turn-outcome")
         self.assertFalse(report["automatic_retry_allowed"])
 
+    def test_presence_lost_during_intent_write_refuses_before_input(self) -> None:
+        adapter = self.adapter(self.script())
+        original_prepare = body.prepare_turn_intent
+        original_presence = adapter.presence_verifier
+        unavailable = False
+
+        def prepare(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            nonlocal unavailable
+            value = original_prepare(*args, **kwargs)
+            unavailable = True
+            return value
+
+        def current(binding: Mapping[str, Any], at_ms: int) -> Mapping[str, Any]:
+            if unavailable:
+                raise RuntimeError("synthetic presence lost during durable write")
+            return original_presence(binding, at_ms)
+
+        adapter.presence_verifier = current
+        with (
+            mock.patch.object(body, "prepare_turn_intent", side_effect=prepare),
+            self.assertRaises(CodexBodyError) as caught,
+        ):
+            self.run_turn(adapter)
+        self.assertEqual(caught.exception.code, "matrix_presence_unavailable")
+        self.assertFalse(caught.exception.retryable)
+        self.assertFalse((self.io.root / "accepted").exists())
+        self.assertEqual(self.fixture.journal.load()[-1]["state"], "turning")
+        body.read_turn_intent(self.fixture.plan, self.fixture.request_id)
+
+    def test_presence_lost_after_result_commit_preserves_proof_and_pending(
+        self,
+    ) -> None:
+        adapter = self.adapter(self.script())
+        original_save = body.save_native_turn_result
+        original_presence = adapter.presence_verifier
+        unavailable = False
+
+        def save(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            nonlocal unavailable
+            value = original_save(*args, **kwargs)
+            unavailable = True
+            return value
+
+        def current(binding: Mapping[str, Any], at_ms: int) -> Mapping[str, Any]:
+            if unavailable:
+                raise RuntimeError("synthetic presence lost after result fsync")
+            return original_presence(binding, at_ms)
+
+        adapter.presence_verifier = current
+        with (
+            mock.patch.object(body, "save_native_turn_result", side_effect=save),
+            self.assertRaises(CodexBodyError) as caught,
+        ):
+            self.run_turn(adapter)
+        self.assertEqual(caught.exception.code, "matrix_presence_unavailable")
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(self.fixture.journal.load()[-1]["state"], "turning")
+        saved = body.read_native_turn_result(self.fixture.plan, self.fixture.request_id)
+        self.assertEqual(saved["native_turn"]["status"], "completed")
+        self.assertEqual((self.io.root / "accepted").read_text(), "one")
+
 
 class TurnRecoveryTests(unittest.TestCase):
     def setUp(self) -> None:

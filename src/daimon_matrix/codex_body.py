@@ -4142,6 +4142,8 @@ class CodexBodyAdapter:
         self._record_handle(
             prior["thread_id"], prior["session_tree_id"], None, "turning", presence
         )
+        # Intent/journal fsync can outlast the previously observed presence.
+        self._verify_presence(prior["matrix_high_water"])
         deadline = time.monotonic() + timeout_seconds
         response, captured = self.transport.request_bounded(
             "turn/start",
@@ -4211,6 +4213,7 @@ class CodexBodyAdapter:
         presence = self._verify_presence(prior["matrix_high_water"])
         pending = self.journal.load()[-1]
         saved_result = save_native_turn_result(self.plan, intent, final, pending)
+        presence = self._verify_presence(prior["matrix_high_water"])
         handle = self._record_handle(
             prior["thread_id"], prior["session_tree_id"], turn_id, "active", presence
         )
