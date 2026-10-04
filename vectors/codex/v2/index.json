@@ -45,6 +45,21 @@
       "name": "valid/session-witness.json",
       "sha256": "a5149342318755b8961e41c280d39e46b3ca4a4776885c4cd689077dc0bc9687",
       "valid": true
+    },
+    {
+      "name": "valid/turn-intent.json",
+      "sha256": "e20f4a12ac53129a89529d1be6e902f7079c8bcbc2a92f039b987c9bf12d5eac",
+      "valid": true
+    },
+    {
+      "name": "valid/turn-result.json",
+      "sha256": "9efd9abf65ba0ec1d821f62e5800cbbc5edbd71f408ab24c389bb1d1700d79c7",
+      "valid": true
+    },
+    {
+      "name": "valid/turning-handle.json",
+      "sha256": "471b81ec8f1726f2838d3e5d4c5cc9c70c6d232c262069fe5b3d9ab98faa12c0",
+      "valid": true
     }
   ],
   "schema": "dm.codex-body.vector-index/v2",

@@ -45,6 +45,7 @@ from .codex_body import (
     _write_new_file,
     create_profile,
     validate_bootstrap,
+    validate_native_provider_token,
 )
 from .identity import (
     VerificationError,
@@ -634,7 +635,12 @@ def prepare_owner_bootstrap_request(
     expires_at_ms: int,
     at_ms: int,
 ) -> dict[str, Any]:
-    """Persist one explicit bootstrap request; send and sign nothing here."""
+    """Persist the bootstrap request after authenticated daemon authority queries.
+
+    The saved we.observe request is not sent and no Matrix event is signed here.
+    Authority queries do contact the live daemon and may update its request cache;
+    this is not a pure offline preparation or a way around a live-operation gate.
+    """
     _authority, _admission, binding = owner_local_admission(bundle, client, at_ms=at_ms)
     payload = bootstrap_attestation_payload(
         binding, matrix_session_id=matrix_session_id, expires_at_ms=expires_at_ms
@@ -824,6 +830,7 @@ def open_owner_native_session(
     proof_journal_path: Path,
     max_age_ms: int,
     create: bool = False,
+    provider_token: str | None = None,
     clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
 ) -> OwnerNativeSession:
     """Compose the real socket, current Root, durable proofs and native body.
@@ -833,6 +840,8 @@ def open_owner_native_session(
     key descriptor. Failed initialization closes its child and preserves all
     profile/journal evidence; it never retries a launch or discovers a thread.
     """
+    if provider_token is not None:
+        validate_native_provider_token(provider_token)
     bootstrap = validate_bootstrap(plan.value["bootstrap"])
     if bootstrap["schema"] != ATTESTED_BOOTSTRAP_SCHEMA:
         raise CodexBodyError("owner_native_attested_bootstrap_required")
@@ -897,7 +906,15 @@ def open_owner_native_session(
         handles = RuntimeHandleJournal(
             plan.profile_root / "runtime-handles.jsonl", plan=plan
         )
-    process = AppServerProcess(plan, pass_fds=(int(plan.mcp_args[5]),))
+    process = AppServerProcess(
+        plan,
+        pass_fds=(int(plan.mcp_args[5]),),
+        inherited_environment=(
+            {"CODEX_ACCESS_TOKEN": provider_token}
+            if provider_token is not None
+            else None
+        ),
+    )
     try:
         adapter = CodexBodyAdapter(
             plan,

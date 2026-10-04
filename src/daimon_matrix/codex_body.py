@@ -13,6 +13,7 @@ import copy
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import select
@@ -480,7 +481,12 @@ def _decode_json(raw: bytes, code: str) -> Any:
 
     try:
         value = json.loads(raw, object_pairs_hook=unique)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exception:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+        RecursionError,
+    ) as exception:
         raise CodexBodyError(code) from exception
     return value
 
@@ -491,12 +497,36 @@ def _json_load(raw: bytes, code: str) -> Any:
     return value
 
 
+def _native_json_bytes(value: Any, code: str) -> bytes:
+    """Unsigned vendor data; never Matrix signatures or profile artifacts."""
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8", "strict")
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        raise CodexBodyError(code) from None
+
+
+def _native_result_id(core: Mapping[str, Any]) -> str:
+    return "dm:codex-turn-result:v1:" + b64url(
+        hashlib.sha256(
+            b"daimon/codex-body/turn-result/v1\x00"
+            + _native_json_bytes(core, "codex_turn_result_rejected")
+        ).digest()
+    )
+
+
 def _native_configuration_frame(raw: bytes, request_id: int) -> Any:
     """Normalize only the pinned duration encoding on this correlated reply.
 
     Native RPC replies are unsigned. Canonical Matrix/profile JSON retains its
-    integer-only semantics; notifications, foreign replies and unknown floats
-    receive no exception.
+    integer-only semantics; configuration notifications, foreign replies and
+    unknown configuration floats receive no exception. Explicit inference uses
+    its own unsigned vendor JSON encoding, never this configuration exception.
     """
     code = "app_server_frame_invalid"
     value = _decode_json(raw, code)
@@ -550,14 +580,17 @@ def _validate_native_configuration(
 
     expected = tomllib.loads(render_config(plan).decode("utf-8"))
     owned_tables = ("mcp_servers", "projects")
+    native_skills = config.get("skills")
+    skill_config = (
+        native_skills.get("config")
+        if isinstance(native_skills, Mapping)
+        else None
+        if native_skills is None
+        else "invalid"
+    )
     if (
         not matches(expected, config)
-        or (
-            config.get("skills", {}).get("config")
-            if isinstance(config.get("skills", {}), Mapping)
-            else "invalid"
-        )
-        != expected.get("skills", {}).get("config")
+        or skill_config != expected.get("skills", {}).get("config")
         or any(set(config[name]) != set(expected[name]) for name in owned_tables)
         or any(
             config.get(name) is not None
@@ -1940,6 +1973,7 @@ def validate_runtime_handle(value: Any) -> dict[str, Any]:
     }
     if successor:
         states.add("parking")
+        states.add("turning")
     if row["schema"] != expected_schema or row["state"] not in states:
         raise CodexBodyError("invalid_runtime_handle")
     if (
@@ -1979,6 +2013,429 @@ def validate_runtime_handle(value: Any) -> dict[str, Any]:
     return copy.deepcopy(dict(row))
 
 
+_TURN_BINDING_FIELDS: Final = frozenset(
+    {
+        "being_ref",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+        "profile_id",
+        "plan_hash",
+        "codex_version",
+        "capability_set_hash",
+        "certificate_hash",
+    }
+)
+TURN_INTENT_SCHEMA: Final = "dm.codex-body.turn-intent/v1"
+TURN_INTENT_DOMAIN: Final = b"daimon/codex-body/turn-intent/v1\x00"
+
+
+def _turn_request_uuid(value: Any) -> str:
+    if not isinstance(value, str):
+        raise CodexBodyError("invalid_turn_request_id")
+    try:
+        if str(uuid.UUID(value)) != value:
+            raise ValueError("noncanonical UUID")
+    except ValueError as exception:
+        raise CodexBodyError("invalid_turn_request_id") from exception
+    return value
+
+
+def _turn_input_bytes(value: Any) -> bytes:
+    if not isinstance(value, str):
+        raise CodexBodyError("invalid_turn_input")
+    try:
+        raw = value.encode("utf-8", "strict")
+    except UnicodeError:
+        raise CodexBodyError("invalid_turn_input") from None
+    if not 1 <= len(raw) <= 4096:
+        raise CodexBodyError("invalid_turn_input")
+    return raw
+
+
+def _read_private_turn_fd(descriptor: int, *, maximum: int, code: str) -> bytes:
+    """Read a bounded owner-only regular descriptor without moving its offset."""
+    if (
+        not isinstance(descriptor, int)
+        or isinstance(descriptor, bool)
+        or descriptor < 0
+    ):
+        raise CodexBodyError(code)
+    try:
+        before = os.fstat(descriptor)
+        flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or flags & os.O_ACCMODE != os.O_RDONLY
+            or not 1 <= before.st_size <= maximum
+        ):
+            raise CodexBodyError(code)
+        raw = os.pread(descriptor, maximum + 1, 0)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) or len(raw) != before.st_size:
+            raise CodexBodyError(code)
+        return raw
+    except OSError:
+        raise CodexBodyError(code) from None
+
+
+def read_native_turn_input(descriptor: int) -> str:
+    """Consume only an explicitly selected private prompt, never stdin/history."""
+    code = "codex_turn_input_fd_rejected"
+    raw = _read_private_turn_fd(descriptor, maximum=4096, code=code)
+    try:
+        value = raw.decode("utf-8", "strict")
+    except UnicodeError:
+        raise CodexBodyError(code) from None
+    _turn_input_bytes(value)
+    return value
+
+
+def validate_native_provider_token(value: Any) -> str:
+    """Accept one explicit token value; errors contain no credential text."""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 16384
+        or not value.isascii()
+        or any(ord(char) <= 32 or ord(char) >= 127 for char in value)
+    ):
+        raise CodexBodyError("codex_provider_token_rejected")
+    return value
+
+
+def read_native_provider_token(descriptor: int) -> str:
+    """Read a selected token FD; no auth.json, account lookup or ambient import."""
+    code = "codex_provider_token_fd_rejected"
+    raw = bytearray(_read_private_turn_fd(descriptor, maximum=16385, code=code))
+    try:
+        # Permit the final newline convention of a private token file only.
+        if raw.endswith(b"\n"):
+            del raw[-1:]
+        try:
+            token = raw.decode("ascii", "strict")
+        except UnicodeError:
+            raise CodexBodyError(code) from None
+        return validate_native_provider_token(token)
+    finally:
+        raw[:] = bytes(len(raw))
+
+
+def validate_turn_intent(value: Any) -> dict[str, Any]:
+    """Validate local intent metadata; it grants no Matrix or provider authority."""
+    row = _closed(
+        value,
+        {
+            *_TURN_BINDING_FIELDS,
+            "schema",
+            "intent_id",
+            "request_id",
+            "input_sha256",
+            "input_bytes",
+            "timeout_seconds",
+            "max_response_bytes",
+            "retain_until_ms",
+            "active_handle_id",
+        },
+        "invalid_turn_intent",
+    )
+    if row["schema"] != TURN_INTENT_SCHEMA:
+        raise CodexBodyError("invalid_turn_intent")
+    _turn_request_uuid(row["request_id"])
+    for field in (
+        "input_sha256",
+        "plan_hash",
+        "capability_set_hash",
+        "certificate_hash",
+    ):
+        _hash(row[field], "invalid_turn_intent")
+    for field, maximum in (
+        ("input_bytes", 4096),
+        ("timeout_seconds", 300),
+        ("max_response_bytes", 65536),
+    ):
+        if not 1 <= _uint(row[field], "invalid_turn_intent") <= maximum:
+            raise CodexBodyError("invalid_turn_intent")
+    _uint(row["retain_until_ms"], "invalid_turn_intent")
+    _derived_id(row["active_handle_id"], "dm:codex-handle:v2:", "invalid_turn_intent")
+    _derived_id(row["profile_id"], "dm:codex-profile:v2:", "invalid_turn_intent")
+    for field in (
+        "being_ref",
+        "body_ref",
+        "embodiment_id",
+        "incarnation_id",
+        "matrix_session_id",
+    ):
+        _text(row[field], "invalid_turn_intent", maximum=256)
+    if row["codex_version"] != SUCCESSOR_RELEASE.version:
+        raise CodexBodyError("invalid_turn_intent")
+    core = {key: item for key, item in row.items() if key != "intent_id"}
+    if row["intent_id"] != _derived(
+        "dm:codex-turn-intent:v1:", TURN_INTENT_DOMAIN, core
+    ):
+        raise CodexBodyError("turn_intent_digest_mismatch")
+    return copy.deepcopy(dict(row))
+
+
+def prepare_turn_intent(
+    plan: CodexBodyPlan,
+    *,
+    request_id: str,
+    input_text: str,
+    active_handle: Mapping[str, Any],
+    timeout_seconds: int,
+    max_response_bytes: int,
+    retain_until_ms: int,
+    at_ms: int,
+) -> dict[str, Any]:
+    """Reserve an immutable request before inference; retries cannot replace it.
+
+    Only an input digest/size is retained here. Native rollouts are distinct from
+    canonical memory and remain private for explicitly selected owner recovery.
+    The retention date records that selection; this function installs no cleanup
+    job and deletes no native, canonical or personal history.
+    """
+    binding = _journal_binding(plan)
+    handle = validate_runtime_handle(active_handle)
+    saved = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    ).load()
+    if not saved or saved[-1] != handle or handle["state"] != "active":
+        raise CodexBodyError("turn_intent_requires_active_handle")
+    request_id = _turn_request_uuid(request_id)
+    input_bytes = _turn_input_bytes(input_text)
+    now = _uint(at_ms, "invalid_current_time")
+    until = _uint(retain_until_ms, "invalid_turn_retention")
+    if not now < until <= now + 30 * 24 * 60 * 60 * 1000:
+        raise CodexBodyError("invalid_turn_retention")
+    core = {
+        **binding,
+        "schema": TURN_INTENT_SCHEMA,
+        "request_id": request_id,
+        "active_handle_id": handle["handle_id"],
+        "input_sha256": hashlib.sha256(input_bytes).hexdigest(),
+        "input_bytes": len(input_bytes),
+        "timeout_seconds": timeout_seconds,
+        "max_response_bytes": max_response_bytes,
+        "retain_until_ms": until,
+    }
+    intent = validate_turn_intent(
+        {
+            **core,
+            "intent_id": _derived("dm:codex-turn-intent:v1:", TURN_INTENT_DOMAIN, core),
+        }
+    )
+    directory = plan.profile_root / "turn-requests"
+    try:
+        directory.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exception:
+        raise CodexBodyError("turn_intent_directory_rejected") from exception
+    _secure_directory(directory, "turn_intent_directory_rejected")
+    path = directory / (request_id + ".json")
+    if path.exists() or path.is_symlink():
+        raise CodexBodyError("turn_request_already_reserved")
+    _write_new_file(path, _canonical(intent, "invalid_turn_intent") + b"\n", 0o600)
+    _fsync_directory(directory)
+    _fsync_directory(plan.profile_root)
+    return intent
+
+
+def read_turn_intent(plan: CodexBodyPlan, request_id: str) -> dict[str, Any]:
+    """Inspect a reserved local request without inference or recovery effects."""
+    binding = _journal_binding(plan)
+    request_id = _turn_request_uuid(request_id)
+    path = plan.profile_root / "turn-requests" / (request_id + ".json")
+    intent = validate_turn_intent(
+        _json_load(
+            _read_secure_file(path, "turn_intent_file_rejected"), "invalid_turn_intent"
+        )
+    )
+    if intent["request_id"] != request_id or any(
+        intent[key] != item for key, item in binding.items()
+    ):
+        raise CodexBodyError("turn_intent_profile_mismatch")
+    handles = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    ).load()
+    if not any(
+        handle["handle_id"] == intent["active_handle_id"]
+        and handle["state"] == "active"
+        for handle in handles
+    ):
+        raise CodexBodyError("turn_intent_handle_unproved")
+    return intent
+
+
+def save_native_turn_result(
+    plan: CodexBodyPlan,
+    intent: Mapping[str, Any],
+    turn: Mapping[str, Any],
+    pending_handle: Mapping[str, Any],
+    *,
+    recovered: bool = False,
+) -> dict[str, Any]:
+    """Retain a terminal result privately before clearing the pending handle.
+
+    This local artifact is recovery data, never Matrix authority or canonical
+    memory. No existing or torn result is replaced.
+    """
+    intent = validate_turn_intent(intent)
+    saved_intent = read_turn_intent(plan, intent["request_id"])
+    handles = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    ).load()
+    if (
+        intent != saved_intent
+        or not handles
+        or handles[-1] != pending_handle
+        or pending_handle["state"] != "turning"
+    ):
+        raise CodexBodyError("codex_turn_result_binding_rejected")
+    observed = _validate_native_turn(turn)
+    if (
+        observed["status"] == "inProgress"
+        or observed["id"] != pending_handle["turn_id"]
+    ):
+        raise CodexBodyError("codex_turn_terminal_unproved")
+    native = copy.deepcopy(dict(observed))
+    if native.get("error") is not None:
+        native["error"] = None
+    if (
+        len(_native_json_bytes(native, "codex_turn_result_rejected"))
+        > intent["max_response_bytes"]
+    ):
+        raise CodexBodyError("codex_turn_output_limit")
+    core = {
+        "schema": "dm.codex-body.turn-result/v1",
+        "request_id": intent["request_id"],
+        "intent_id": intent["intent_id"],
+        "pending_handle_id": pending_handle["handle_id"],
+        "native_turn": native,
+    }
+    value = {
+        **core,
+        "result_id": _native_result_id(core),
+    }
+    directory = plan.profile_root / "turn-results"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    _secure_directory(directory, "codex_turn_result_directory_rejected")
+    suffix = ".recovered.json" if recovered else ".json"
+    path = directory / (intent["request_id"] + suffix)
+    if recovered and (path.exists() or path.is_symlink()):
+        saved = read_native_turn_result(plan, intent["request_id"], recovered=True)
+        observed = {name: native[name] for name in ("id", "status", "items")}
+        retained = {
+            name: saved["native_turn"][name] for name in ("id", "status", "items")
+        }
+        if saved["pending_handle_id"] != pending_handle[
+            "handle_id"
+        ] or _native_json_bytes(
+            observed, "codex_turn_result_rejected"
+        ) != _native_json_bytes(retained, "codex_turn_result_rejected"):
+            raise CodexBodyError("codex_turn_recovery_result_drift")
+        return saved
+    _write_new_file(
+        path,
+        _native_json_bytes(value, "codex_turn_result_rejected") + b"\n",
+        0o600,
+    )
+    _fsync_directory(directory)
+    _fsync_directory(plan.profile_root)
+    return value
+
+
+def _prepare_turn_result_location(plan: CodexBodyPlan, request_id: str) -> None:
+    directory = plan.profile_root / "turn-results"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    _secure_directory(directory, "codex_turn_result_directory_rejected")
+    path = directory / (_turn_request_uuid(request_id) + ".json")
+    if path.exists() or path.is_symlink():
+        raise CodexBodyError("codex_turn_result_already_exists")
+
+
+def validate_native_turn_result(value: Any) -> dict[str, Any]:
+    """Validate a private result codec; it supplies no authority or disposition."""
+    code = "codex_turn_result_rejected"
+    value = _closed(
+        value,
+        {
+            "schema",
+            "request_id",
+            "intent_id",
+            "pending_handle_id",
+            "native_turn",
+            "result_id",
+        },
+        code,
+    )
+    _turn_request_uuid(value["request_id"])
+    _derived_id(value["intent_id"], "dm:codex-turn-intent:v1:", code)
+    _derived_id(value["pending_handle_id"], "dm:codex-handle:v2:", code)
+    core = {key: item for key, item in value.items() if key != "result_id"}
+    if value["schema"] != "dm.codex-body.turn-result/v1" or value[
+        "result_id"
+    ] != _native_result_id(core):
+        raise CodexBodyError(code)
+    turn = _validate_native_turn(value["native_turn"])
+    if turn["status"] == "inProgress" or turn.get("error") is not None:
+        raise CodexBodyError(code)
+    return copy.deepcopy(dict(value))
+
+
+def read_native_turn_result(
+    plan: CodexBodyPlan, request_id: str, *, recovered: bool = False
+) -> dict[str, Any]:
+    """Read an explicitly selected private result without dispatch or disposition."""
+    intent = read_turn_intent(plan, request_id)
+    code = "codex_turn_result_rejected"
+    _secure_directory(plan.profile_root / "turn-results", code)
+    suffix = ".recovered.json" if recovered else ".json"
+    value = validate_native_turn_result(
+        _decode_json(
+            _read_secure_file(
+                plan.profile_root / "turn-results" / (intent["request_id"] + suffix),
+                code,
+                maximum=intent["max_response_bytes"] + 2048,
+            ),
+            code,
+        )
+    )
+    if (
+        value["request_id"] != intent["request_id"]
+        or value["intent_id"] != intent["intent_id"]
+    ):
+        raise CodexBodyError("codex_turn_result_binding_rejected")
+    turn = value["native_turn"]
+    if len(_native_json_bytes(turn, code)) > intent["max_response_bytes"]:
+        raise CodexBodyError("codex_turn_output_limit")
+    handles = RuntimeHandleJournal(
+        plan.profile_root / "runtime-handles.jsonl", plan=plan
+    ).load()
+    if not any(
+        handle["handle_id"] == value["pending_handle_id"]
+        and handle["state"] == "turning"
+        and handle["turn_id"] == turn["id"]
+        for handle in handles
+    ):
+        raise CodexBodyError("codex_turn_result_binding_rejected")
+    return copy.deepcopy(dict(value))
+
+
 def describe_native_launch_state(plan: CodexBodyPlan) -> dict[str, Any]:
     """Report verified local evidence without recovering or changing anything.
 
@@ -2003,7 +2460,13 @@ def describe_native_launch_state(plan: CodexBodyPlan) -> dict[str, Any]:
         "matrix_session_id": tip["matrix_session_id"],
         "state": tip["state"],
         "native_ids_saved": not unknown,
-        "outcome": "unknown-first-start" if unknown else "saved-native-handle",
+        "outcome": (
+            "unknown-first-start"
+            if unknown
+            else "unknown-turn-outcome"
+            if tip["state"] == "turning"
+            else "saved-native-handle"
+        ),
         "automatic_retry_allowed": False,
         "process_termination_proven": False,
         "evidence_changed": False,
@@ -2387,6 +2850,7 @@ class AppServerProcess:
         self._read_buffer = bytearray()
         self._next_id = 1
         self._pending: set[int] = set()
+        self._native_turn_data = False
         self._seen: set[int] = set()
         self._configuration_request_id: int | None = None
 
@@ -2430,11 +2894,13 @@ class AppServerProcess:
         raw = bytes(frame + separator)
         if len(raw) > MAX_RPC_LINE_BYTES:
             raise CodexBodyError("app_server_frame_invalid")
-        value = (
-            _json_load(raw, "app_server_frame_invalid")
-            if self._configuration_request_id is None
-            else _native_configuration_frame(raw, self._configuration_request_id)
-        )
+        if self._configuration_request_id is not None:
+            value = _native_configuration_frame(raw, self._configuration_request_id)
+        elif getattr(self, "_native_turn_data", False):
+            value = _decode_json(raw, "app_server_frame_invalid")
+            _native_json_bytes(value, "app_server_frame_invalid")
+        else:
+            value = _json_load(raw, "app_server_frame_invalid")
         if not isinstance(value, Mapping):
             raise CodexBodyError("app_server_frame_invalid")
         return value
@@ -2460,11 +2926,105 @@ class AppServerProcess:
         finally:
             self._configuration_request_id = None
 
-    def _await_response(self, request_id: int) -> Mapping[str, Any]:
+    def request_bounded(
+        self, method: str, params: Mapping[str, Any], *, deadline: float
+    ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]]]:
+        """One request with a shared write/read deadline and retained notifications.
+
+        The caller retains its durable intent before invoking this boundary. A
+        timeout can follow accepted native work and never authorizes resubmission.
+        Notifications emitted before the reply remain available for correlation.
+        """
+        remaining = deadline - time.monotonic()
+        if not math.isfinite(remaining) or not 0 < remaining <= 300:
+            raise CodexBodyError("invalid_app_server_timeout")
+        request_id = self._next_id
+        self._next_id += 1
+        self._pending.add(request_id)
+        native_turn = (
+            method
+            in {
+                "turn/start",
+                "thread/read",
+                "thread/turns/list",
+            }
+            and not self._automatic_hooks
+        )
+        if native_turn:
+            self._native_turn_data = True
+        encode = _native_json_bytes if native_turn else _canonical
+        raw = (
+            encode(
+                {"method": method, "id": request_id, "params": dict(params)},
+                "app_server_message_invalid",
+            )
+            + b"\n"
+        )
+        if len(raw) > MAX_RPC_LINE_BYTES:
+            raise CodexBodyError("app_server_message_too_large")
+        descriptor = self._stdin.fileno()
+        blocking = os.get_blocking(descriptor)
+        captured: list[Mapping[str, Any]] = []
+        try:
+            os.set_blocking(descriptor, False)
+            offset = 0
+            while offset < len(raw):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise CodexBodyError("app_server_timeout", retryable=True)
+                if not select.select([], [descriptor], [], remaining)[1]:
+                    raise CodexBodyError("app_server_timeout", retryable=True)
+                try:
+                    written = os.write(descriptor, raw[offset:])
+                except BlockingIOError:
+                    continue
+                if written == 0:
+                    raise CodexBodyError("app_server_unavailable", retryable=True)
+                offset += written
+            result = self._await_response(
+                request_id,
+                deadline=deadline,
+                captured=captured,
+                native_turn=native_turn,
+            )
+            return result, captured
+        except (BrokenPipeError, OSError) as exception:
+            raise CodexBodyError(
+                "app_server_unavailable", retryable=True
+            ) from exception
+        finally:
+            with suppress(OSError):
+                os.set_blocking(descriptor, blocking)
+
+    def _await_response(
+        self,
+        request_id: int,
+        *,
+        deadline: float | None = None,
+        captured: list[Mapping[str, Any]] | None = None,
+        native_turn: bool = False,
+    ) -> Mapping[str, Any]:
+        captured_bytes = 0
         while True:
-            message = self.read_message(30)
+            timeout = 30.0 if deadline is None else deadline - time.monotonic()
+            if timeout <= 0:
+                raise CodexBodyError("app_server_timeout", retryable=True)
+            message = self.read_message(min(timeout, 300))
+            if deadline is not None and time.monotonic() >= deadline:
+                raise CodexBodyError("app_server_timeout", retryable=True)
             if "id" not in message:
-                _validate_notification(message, allow_hooks=self._automatic_hooks)
+                _validate_notification(
+                    message, allow_hooks=self._automatic_hooks, native_turn=native_turn
+                )
+                if captured is not None:
+                    captured_bytes += len(
+                        (_native_json_bytes if native_turn else _canonical)(
+                            message, "app_server_notification_invalid"
+                        )
+                    )
+                    if captured_bytes > MAX_RPC_LINE_BYTES or len(captured) >= 64:
+                        raise CodexBodyError("app_server_notifications_overflow")
+                    captured.append(copy.deepcopy(dict(message)))
                 continue
             if set(message) not in ({"id", "result"}, {"error", "id"}):
                 raise CodexBodyError("app_server_response_invalid")
@@ -2553,8 +3113,250 @@ def verify_effective_features(plan: CodexBodyPlan) -> None:
         raise CodexBodyError("codex_managed_override_conflict")
 
 
+def _validate_native_turn(value: Any) -> Mapping[str, Any]:
+    code = "codex_turn_response_drift"
+    if not isinstance(value, Mapping) or not {"id", "items", "status"} <= set(
+        value
+    ) <= {
+        "id",
+        "items",
+        "status",
+        "error",
+        "startedAt",
+        "completedAt",
+        "durationMs",
+        "itemsView",
+    }:
+        raise CodexBodyError(code)
+    _token(value["id"], code)
+    if (
+        not isinstance(value["status"], str)
+        or value["status"] not in {"inProgress", "completed", "failed", "interrupted"}
+        or not isinstance(value["items"], list)
+    ):
+        raise CodexBodyError(code)
+    for item in value["items"]:
+        _validate_turn_item(item)
+    for name in ("startedAt", "completedAt", "durationMs"):
+        if (
+            name in value
+            and value[name] is not None
+            and (
+                not isinstance(value[name], int)
+                or isinstance(value[name], bool)
+                or not -(2**63) <= value[name] < 2**63
+            )
+        ):
+            raise CodexBodyError(code)
+    if "itemsView" in value and value["itemsView"] not in (
+        "notLoaded",
+        "summary",
+        "full",
+    ):
+        raise CodexBodyError(code)
+    if value.get("error") is not None:
+        error = value["error"]
+        if (
+            value["status"] != "failed"
+            or not isinstance(error, Mapping)
+            or not {"message"}
+            <= set(error)
+            <= {
+                "message",
+                "additionalDetails",
+                "codexErrorInfo",
+                "misalignment",
+            }
+            or not isinstance(error["message"], str)
+            or (
+                error.get("additionalDetails") is not None
+                and not isinstance(error["additionalDetails"], str)
+            )
+        ):
+            raise CodexBodyError(code)
+    return value
+
+
+_TURN_EVENT_FIELDS: Final = {
+    "item/agentMessage/delta": "delta itemId threadId turnId",
+    "item/reasoning/textDelta": "contentIndex delta itemId threadId turnId",
+    "item/reasoning/summaryTextDelta": "delta itemId summaryIndex threadId turnId",
+    "item/reasoning/summaryPartAdded": "itemId summaryIndex threadId turnId",
+    "item/plan/delta": "delta itemId threadId turnId",
+    "item/commandExecution/outputDelta": "delta itemId threadId turnId",
+    "item/fileChange/outputDelta": "delta itemId threadId turnId",
+    "item/mcpToolCall/progress": "itemId message threadId turnId",
+    "item/started": "item startedAtMs threadId turnId",
+    "item/completed": "completedAtMs item threadId turnId",
+    "thread/tokenUsage/updated": "threadId tokenUsage turnId",
+    "thread/status/changed": "status threadId",
+    "turn/started": "threadId turn",
+    "turn/completed": "threadId turn",
+    "turn/diff/updated": "diff threadId turnId",
+    "turn/plan/updated": "plan threadId turnId",
+    "thread/compacted": "threadId turnId",
+    "thread/name/updated": "threadId",
+    "warning": "message",
+    "mcpServer/startupStatus/updated": "name status",
+    "model/rerouted": "fromModel reason threadId toModel turnId",
+}
+_TURN_EVENT_OPTIONAL: Final = {
+    "turn/plan/updated": {"explanation"},
+    "thread/name/updated": {"threadName"},
+    "warning": {"threadId"},
+    "mcpServer/startupStatus/updated": {"error", "failureReason", "threadId"},
+}
+
+
+def _validate_turn_notification(method: str, params: Mapping[str, Any]) -> None:
+    """Check pinned 0.155.1 turn envelopes; opaque payloads remain bounded data.
+
+    This path is exclusive to the successor's explicit inference controller;
+    historical lifecycle notification acceptance is unchanged.
+    """
+    code = "codex_turn_notification_rejected"
+    fields = _TURN_EVENT_FIELDS.get(method)
+    if fields is None:
+        raise CodexBodyError("app_server_protocol_drift")
+    required = set(fields.split())
+    if (
+        not required
+        <= set(params)
+        <= (required | _TURN_EVENT_OPTIONAL.get(method, set()))
+    ):
+        raise CodexBodyError(code)
+    for name in ("threadId", "turnId", "itemId"):
+        if name in params and params[name] is not None:
+            _token(params[name], code)
+    for name in ("delta", "message", "diff", "name", "fromModel", "toModel"):
+        if name in params and not isinstance(params[name], str):
+            raise CodexBodyError(code)
+    for name in ("contentIndex", "summaryIndex", "startedAtMs", "completedAtMs"):
+        if name in params:
+            _uint(params[name], code)
+    if "item" in params:
+        _validate_turn_item(params["item"])
+    if method == "model/rerouted" and params["reason"] != "highRiskCyberActivity":
+        raise CodexBodyError(code)
+    if method == "mcpServer/startupStatus/updated":
+        if params["status"] not in ("starting", "ready", "failed"):
+            raise CodexBodyError(code)
+        if params["status"] == "failed":
+            raise CodexBodyError("matrix_mcp_not_ready")
+    if "plan" in params:
+        if not isinstance(params["plan"], list):
+            raise CodexBodyError(code)
+        for step in params["plan"]:
+            row = _closed(step, {"step", "status"}, code)
+            if not isinstance(row["step"], str) or row["status"] not in (
+                "pending",
+                "inProgress",
+                "completed",
+            ):
+                raise CodexBodyError(code)
+    if method == "thread/status/changed":
+        status = params["status"]
+        if not isinstance(status, Mapping):
+            raise CodexBodyError(code)
+        kind = status.get("type")
+        if not isinstance(kind, str):
+            raise CodexBodyError(code)
+        if kind == "active":
+            _closed(status, {"type", "activeFlags"}, code)
+            flags = status["activeFlags"]
+            if not isinstance(flags, list) or any(
+                not isinstance(flag, str)
+                or flag not in {"waitingOnApproval", "waitingOnUserInput"}
+                for flag in flags
+            ):
+                raise CodexBodyError(code)
+        elif kind in {"notLoaded", "idle", "systemError"}:
+            _closed(status, {"type"}, code)
+        else:
+            raise CodexBodyError(code)
+    if "tokenUsage" in params:
+        usage = params["tokenUsage"]
+        if not isinstance(usage, Mapping) or not {"last", "total"} <= set(usage) <= {
+            "last",
+            "total",
+            "modelContextWindow",
+        }:
+            raise CodexBodyError(code)
+        if usage.get("modelContextWindow") is not None:
+            _uint(usage["modelContextWindow"], code)
+        count_fields = {
+            "cachedInputTokens",
+            "inputTokens",
+            "outputTokens",
+            "reasoningOutputTokens",
+            "totalTokens",
+        }
+        for name in ("last", "total"):
+            counts = usage[name]
+            if not isinstance(counts, Mapping) or not count_fields <= set(counts) <= (
+                count_fields | {"cacheWriteInputTokens"}
+            ):
+                raise CodexBodyError(code)
+            for count in counts.values():
+                _uint(count, code)
+
+
+def _validate_turn_item(value: Any) -> None:
+    """Validate the ordinary text/reasoning items used by the model canary.
+
+    Other native item variants are preserved as bounded tagged data; their
+    effect/authority is never inferred from an app-server item.
+    """
+    code = "codex_turn_item_rejected"
+    if not isinstance(value, Mapping) or not {"id", "type"} <= set(value):
+        raise CodexBodyError(code)
+    _token(value["id"], code)
+    kind = value["type"]
+    if not isinstance(kind, str):
+        raise CodexBodyError(code)
+    if kind == "hookPrompt":
+        raise CodexBodyError("codex_automatic_hooks_forbidden")
+    if kind in {"agentMessage", "plan"}:
+        optional = (
+            {"delivery", "memoryCitation", "phase", "questions"}
+            if kind == "agentMessage"
+            else set()
+        )
+        if not {"id", "type", "text"} <= set(value) <= (
+            {"id", "type", "text"} | optional
+        ) or not isinstance(value["text"], str):
+            raise CodexBodyError(code)
+    elif kind == "reasoning":
+        if not set(value) <= {"id", "type", "content", "summary"}:
+            raise CodexBodyError(code)
+        for name in ("content", "summary"):
+            if name in value and (
+                not isinstance(value[name], list)
+                or any(not isinstance(text, str) for text in value[name])
+            ):
+                raise CodexBodyError(code)
+    elif kind not in {
+        "userMessage",
+        "functionCallOutput",
+        "commandExecution",
+        "fileChange",
+        "mcpToolCall",
+        "dynamicToolCall",
+        "collabAgentToolCall",
+        "subAgentActivity",
+        "webSearch",
+        "imageView",
+        "sleep",
+        "imageGeneration",
+        "enteredReviewMode",
+        "exitedReviewMode",
+        "contextCompaction",
+    }:
+        raise CodexBodyError("app_server_protocol_drift")
+
+
 def _validate_notification(
-    value: Mapping[str, Any], *, allow_hooks: bool = True
+    value: Mapping[str, Any], *, allow_hooks: bool = True, native_turn: bool = False
 ) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(value, Mapping) or set(value) not in (
         {"method", "params"},
@@ -2572,10 +3374,15 @@ def _validate_notification(
         method not in KNOWN_NOTIFICATIONS
         and method not in KNOWN_SERVER_REQUESTS
         and not successor_error
+        and not (native_turn and method in _TURN_EVENT_FIELDS)
     ):
         raise CodexBodyError("app_server_protocol_drift")
     if not isinstance(row["params"], Mapping):
         raise CodexBodyError("app_server_notification_invalid")
+    if native_turn and not successor_error:
+        if allow_hooks:
+            raise CodexBodyError("codex_native_turn_profile_required")
+        _validate_turn_notification(method, row["params"])
     if successor_error:
         params = _closed(
             row["params"],
@@ -3024,7 +3831,15 @@ class CodexBodyAdapter:
         if not _profile_contract(self.plan.value).automatic_hooks:
             # RPC and MCP discovery can outlast the admission freshness window.
             presence = self._verify_presence(prior["matrix_high_water"])
-        return self._record_handle(thread_id, session_tree_id, None, "active", presence)
+        return self._record_handle(
+            thread_id,
+            session_tree_id,
+            prior["turn_id"]
+            if not _profile_contract(self.plan.value).automatic_hooks
+            else None,
+            "active",
+            presence,
+        )
 
     def record_turn(self, thread_id: str, turn_id: str) -> dict[str, Any]:
         handles = self.journal.load()
@@ -3042,6 +3857,374 @@ class CodexBodyAdapter:
             "active",
             presence,
         )
+
+    def run_turn(
+        self,
+        input_text: str,
+        *,
+        request_id: str,
+        timeout_seconds: int,
+        max_response_bytes: int,
+        retain_until_ms: int,
+    ) -> dict[str, Any]:
+        """One explicit model input; no failure authorizes automatic replay."""
+        try:
+            return self._run_turn_once(
+                input_text,
+                request_id=request_id,
+                timeout_seconds=timeout_seconds,
+                max_response_bytes=max_response_bytes,
+                retain_until_ms=retain_until_ms,
+            )
+        except CodexBodyError as exception:
+            # A transport timeout may follow acceptance by the vendor. Keep its
+            # diagnostic code but never expose the transport's retry flag here.
+            raise CodexBodyError(exception.code, retryable=False) from None
+        except OSError:
+            raise CodexBodyError("codex_turn_io_failed", retryable=False) from None
+
+    def recover_turn(self, *, request_id: str) -> dict[str, Any]:
+        """Reconcile a selected pending input without resume or replacement input."""
+        try:
+            return self._recover_turn_once(request_id=request_id)
+        except CodexBodyError as exception:
+            raise CodexBodyError(exception.code, retryable=False) from None
+        except OSError:
+            raise CodexBodyError("codex_turn_io_failed", retryable=False) from None
+
+    def _recover_turn_once(self, *, request_id: str) -> dict[str, Any]:
+        if not self.initialized or not isinstance(self.transport, AppServerProcess):
+            raise CodexBodyError("codex_native_turn_transport_required")
+        intent = read_turn_intent(self.plan, request_id)
+        handles = self.journal.load()
+        anchor_index = next(
+            index
+            for index, handle in enumerate(handles)
+            if handle["handle_id"] == intent["active_handle_id"]
+        )
+        anchor = handles[anchor_index]
+        pending = handles[-1]
+        if anchor_index == len(handles) - 1 or any(
+            handle["state"] != "turning"
+            or any(
+                handle[field] != anchor[field]
+                for field in ("thread_id", "session_tree_id")
+            )
+            for handle in handles[anchor_index + 1 :]
+        ):
+            raise CodexBodyError("codex_turn_recovery_not_pending")
+        self._verify_presence(pending["matrix_high_water"])
+        deadline = time.monotonic() + intent["timeout_seconds"]
+        notifications: list[Mapping[str, Any]] = []
+        total = 0
+
+        def rpc(method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
+            nonlocal total
+            assert isinstance(self.transport, AppServerProcess)
+            response, captured = self.transport.request_bounded(
+                method, params, deadline=deadline
+            )
+            total += len(_native_json_bytes(response, "codex_turn_recovery_rejected"))
+            for message in captured:
+                total += len(
+                    _native_json_bytes(message, "codex_turn_recovery_rejected")
+                )
+            if total > intent["max_response_bytes"]:
+                raise CodexBodyError("codex_turn_output_limit")
+            notifications.extend(captured)
+            return response
+
+        metadata = _closed(
+            rpc(
+                "thread/read", {"threadId": pending["thread_id"], "includeTurns": False}
+            ),
+            {"thread"},
+            "codex_turn_recovery_rejected",
+        )["thread"]
+        required = {
+            "cliVersion",
+            "createdAt",
+            "cwd",
+            "ephemeral",
+            "id",
+            "modelProvider",
+            "preview",
+            "projectId",
+            "sessionId",
+            "source",
+            "status",
+            "turns",
+            "updatedAt",
+        }
+        optional = {
+            "agentNickname",
+            "agentRole",
+            "canAcceptDirectInput",
+            "daybreakEnabled",
+            "environments",
+            "extra",
+            "forkedFromId",
+            "gitInfo",
+            "historyMode",
+            "model",
+            "name",
+            "originator",
+            "parentThreadId",
+            "path",
+            "reasoningEffort",
+            "recencyAt",
+            "section",
+            "sectionEnteredAt",
+            "threadSource",
+        }
+        if not isinstance(metadata, Mapping) or not required <= set(metadata) <= (
+            required | optional
+        ):
+            raise CodexBodyError("codex_turn_recovery_thread_drift")
+        if (
+            metadata["id"] != pending["thread_id"]
+            or metadata["sessionId"] != pending["session_tree_id"]
+            or metadata["cliVersion"] != SUCCESSOR_RELEASE.version
+            or metadata["modelProvider"] != self.plan.value["codex"]["provider"]
+            or metadata["cwd"] != os.fspath(self.plan.workspace)
+            or metadata["ephemeral"] is not False
+            or metadata["turns"] != []
+        ):
+            raise CodexBodyError("codex_turn_recovery_thread_drift")
+
+        def page(*, cursor: str | None, view: str) -> Mapping[str, Any]:
+            row = rpc(
+                "thread/turns/list",
+                {
+                    "threadId": pending["thread_id"],
+                    "limit": 1,
+                    "sortDirection": "desc",
+                    "itemsView": view,
+                    "cursor": cursor,
+                },
+            )
+            if not {"data"} <= set(row) <= {"data", "nextCursor", "backwardsCursor"}:
+                raise CodexBodyError("codex_turn_recovery_rejected")
+            if not isinstance(row["data"], list) or len(row["data"]) != 1:
+                raise CodexBodyError("codex_turn_outcome_unknown")
+            for name in ("nextCursor", "backwardsCursor"):
+                if row.get(name) is not None:
+                    _text(row[name], "codex_turn_recovery_rejected", maximum=8192)
+            return row
+
+        latest = page(cursor=None, view="full")
+        turn = _validate_native_turn(latest["data"][0])
+        turn_id = turn["id"]
+        if turn["status"] == "inProgress" or turn.get("itemsView", "full") != "full":
+            raise CodexBodyError("codex_turn_outcome_unknown")
+        if turn_id == anchor["turn_id"] or (
+            pending["turn_id"] is not None and pending["turn_id"] != turn_id
+        ):
+            raise CodexBodyError("codex_turn_recovery_id_drift")
+        if pending["turn_id"] is None:
+            if anchor["turn_id"] is None:
+                if latest.get("nextCursor") is not None:
+                    raise CodexBodyError("codex_turn_recovery_ambiguous")
+            else:
+                cursor = latest.get("nextCursor")
+                if cursor is None:
+                    raise CodexBodyError("codex_turn_recovery_ambiguous")
+                preceding = _validate_native_turn(
+                    page(cursor=cursor, view="notLoaded")["data"][0]
+                )
+                if preceding["id"] != anchor["turn_id"] or preceding["items"] != []:
+                    raise CodexBodyError("codex_turn_recovery_ambiguous")
+        users = [item for item in turn["items"] if item["type"] == "userMessage"]
+        if len(users) != 1:
+            raise CodexBodyError("codex_turn_recovery_input_drift")
+        content = users[0].get("content")
+        if not isinstance(content, list) or len(content) != 1:
+            raise CodexBodyError("codex_turn_recovery_input_drift")
+        text = content[0]
+        if (
+            not isinstance(text, Mapping)
+            or not {"type", "text"}
+            <= set(text)
+            <= {
+                "type",
+                "text",
+                "text_elements",
+            }
+            or text["type"] != "text"
+            or text.get("text_elements", []) != []
+        ):
+            raise CodexBodyError("codex_turn_recovery_input_drift")
+        raw = _turn_input_bytes(text["text"])
+        if (
+            len(raw) != intent["input_bytes"]
+            or hashlib.sha256(raw).hexdigest() != intent["input_sha256"]
+        ):
+            raise CodexBodyError("codex_turn_recovery_input_drift")
+        for message in notifications:
+            method, params = _validate_notification(
+                message, allow_hooks=False, native_turn=True
+            )
+            global_event = method in {"warning", "mcpServer/startupStatus/updated"}
+            if params.get("threadId") != pending["thread_id"] and not (
+                global_event and params.get("threadId") is None
+            ):
+                raise CodexBodyError("codex_turn_thread_drift")
+            if "turnId" in params and params["turnId"] != turn_id:
+                raise CodexBodyError("codex_turn_id_drift")
+            if method in {"turn/started", "turn/completed"}:
+                observed = _validate_native_turn(params["turn"])
+                if observed["id"] != turn_id:
+                    raise CodexBodyError("codex_turn_id_drift")
+                if method == "turn/completed" and observed["status"] != turn["status"]:
+                    raise CodexBodyError("codex_turn_terminal_drift")
+        presence = self._verify_presence(pending["matrix_high_water"])
+        if pending["turn_id"] is None:
+            pending = self._record_handle(
+                pending["thread_id"],
+                pending["session_tree_id"],
+                turn_id,
+                "turning",
+                presence,
+            )
+        saved = save_native_turn_result(
+            self.plan, intent, turn, pending, recovered=True
+        )
+        presence = self._verify_presence(pending["matrix_high_water"])
+        handle = self._record_handle(
+            pending["thread_id"],
+            pending["session_tree_id"],
+            turn_id,
+            "active",
+            presence,
+        )
+        return {
+            "intent": intent,
+            "handle": handle,
+            "turn_status": turn["status"],
+            "native_turn": saved["native_turn"],
+            "result_id": saved["result_id"],
+            "model_inputs": 0,
+        }
+
+    def _run_turn_once(
+        self,
+        input_text: str,
+        *,
+        request_id: str,
+        timeout_seconds: int,
+        max_response_bytes: int,
+        retain_until_ms: int,
+    ) -> dict[str, Any]:
+        """Dispatch one explicitly requested input; uncertain outcomes remain pending.
+
+        No retry, approval response, thread discovery or automatic resume occurs.
+        This returns bounded native data to the caller, never logs provider errors
+        or output, and never declares an interrupted/failed turn completed.
+        """
+        if not self.initialized or not isinstance(self.transport, AppServerProcess):
+            raise CodexBodyError("codex_native_turn_transport_required")
+        handles = self.journal.load()
+        if not handles or handles[-1]["state"] != "active":
+            raise CodexBodyError("codex_turn_handle_rejected")
+        prior = handles[-1]
+        presence = self._verify_presence(prior["matrix_high_water"])
+        _prepare_turn_result_location(self.plan, request_id)
+        intent = prepare_turn_intent(
+            self.plan,
+            request_id=request_id,
+            input_text=input_text,
+            active_handle=prior,
+            timeout_seconds=timeout_seconds,
+            max_response_bytes=max_response_bytes,
+            retain_until_ms=retain_until_ms,
+            at_ms=self.clock(),
+        )
+        self._record_handle(
+            prior["thread_id"], prior["session_tree_id"], None, "turning", presence
+        )
+        # Intent/journal fsync can outlast the previously observed presence.
+        self._verify_presence(prior["matrix_high_water"])
+        deadline = time.monotonic() + timeout_seconds
+        response, captured = self.transport.request_bounded(
+            "turn/start",
+            {
+                "threadId": prior["thread_id"],
+                "input": [{"type": "text", "text": input_text, "text_elements": []}],
+            },
+            deadline=deadline,
+        )
+        value = _closed(response, {"turn"}, "codex_turn_response_drift")
+
+        turn = _validate_native_turn(value["turn"])
+        turn_id = turn["id"]
+        presence = self._verify_presence(prior["matrix_high_water"])
+        self._record_handle(
+            prior["thread_id"], prior["session_tree_id"], turn_id, "turning", presence
+        )
+        total_bytes = len(_native_json_bytes(response, "codex_turn_response_drift"))
+        if total_bytes > max_response_bytes:
+            raise CodexBodyError("codex_turn_output_limit")
+        messages = 0
+        final = turn if turn["status"] != "inProgress" else None
+        while captured or final is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CodexBodyError("app_server_timeout", retryable=True)
+            message = (
+                captured.pop(0) if captured else self.transport.read_message(remaining)
+            )
+            if time.monotonic() >= deadline:
+                raise CodexBodyError("app_server_timeout", retryable=True)
+            method, params = _validate_notification(
+                message, allow_hooks=False, native_turn=True
+            )
+            messages += 1
+            total_bytes += len(
+                _native_json_bytes(message, "codex_turn_notification_rejected")
+            )
+            if messages > 4096 or total_bytes > max_response_bytes:
+                raise CodexBodyError("codex_turn_output_limit")
+            global_event = method in {"warning", "mcpServer/startupStatus/updated"}
+            if params.get("threadId") != prior["thread_id"] and not (
+                global_event and params.get("threadId") is None
+            ):
+                raise CodexBodyError("codex_turn_thread_drift")
+            if "turnId" in params and params["turnId"] != turn_id:
+                raise CodexBodyError("codex_turn_id_drift")
+            if method == "error":
+                raise CodexBodyError("codex_turn_provider_error")
+            if method in {"turn/started", "turn/completed"}:
+                if set(params) != {"threadId", "turn"}:
+                    raise CodexBodyError("codex_turn_notification_rejected")
+                observed = _validate_native_turn(params["turn"])
+                if observed["id"] != turn_id:
+                    raise CodexBodyError("codex_turn_id_drift")
+                if method == "turn/completed":
+                    if observed["status"] == "inProgress":
+                        raise CodexBodyError("codex_turn_terminal_unproved")
+                    if final is not None and final["status"] != observed["status"]:
+                        raise CodexBodyError("codex_turn_terminal_drift")
+                    final = observed
+        if (
+            len(_native_json_bytes(final, "codex_turn_response_drift"))
+            > max_response_bytes
+        ):
+            raise CodexBodyError("codex_turn_output_limit")
+        presence = self._verify_presence(prior["matrix_high_water"])
+        pending = self.journal.load()[-1]
+        saved_result = save_native_turn_result(self.plan, intent, final, pending)
+        presence = self._verify_presence(prior["matrix_high_water"])
+        handle = self._record_handle(
+            prior["thread_id"], prior["session_tree_id"], turn_id, "active", presence
+        )
+        return {
+            "intent": intent,
+            "handle": handle,
+            "turn_status": final["status"],
+            "native_turn": saved_result["native_turn"],
+            "result_id": saved_result["result_id"],
+            "model_inputs": 1,
+        }
 
     def park(self) -> dict[str, Any]:
         handles = self.journal.load()
@@ -3332,26 +4515,40 @@ def parser() -> argparse.ArgumentParser:
     native = commands.add_parser(
         "native-lifecycle", help="perform one explicit no-model lifecycle qualification"
     )
-    native.add_argument("--skill-source", type=Path)
-    for name in (
-        "bundle",
-        "client-config",
-        "socket",
-        "document",
-        "profile-root",
-        "workspace",
-        "binary",
-        "mcp-binary",
-        "request-dir",
-    ):
-        native.add_argument("--" + name, type=Path, required=True)
-    native.add_argument("--capability-key-fd", type=int, required=True)
-    for name in ("proof-journal", "cluster-checkout", "cluster-state"):
-        native.add_argument("--" + name, type=Path)
-    native.add_argument("--cluster-reader-socket", type=Path)
-    native.add_argument("--cluster-reader-owner-uid", type=int)
-    native.add_argument("--max-age-ms", type=int)
-    native.add_argument("--create-profile", action="store_true")
+    turn = commands.add_parser(
+        "native-turn",
+        help="dispatch one explicit input or reconcile its saved native outcome",
+    )
+    for command in (native, turn):
+        command.add_argument("--skill-source", type=Path)
+        for name in (
+            "bundle",
+            "client-config",
+            "socket",
+            "document",
+            "profile-root",
+            "workspace",
+            "binary",
+            "mcp-binary",
+            "request-dir",
+        ):
+            command.add_argument("--" + name, type=Path, required=True)
+        command.add_argument("--capability-key-fd", type=int, required=True)
+        for name in ("proof-journal", "cluster-checkout", "cluster-state"):
+            command.add_argument("--" + name, type=Path)
+        command.add_argument("--cluster-reader-socket", type=Path)
+        command.add_argument("--cluster-reader-owner-uid", type=int)
+        command.add_argument("--max-age-ms", type=int)
+        command.add_argument("--create-profile", action="store_true")
+    turn.add_argument(
+        "--action", choices=("start-turn", "resume-turn", "recover-turn"), required=True
+    )
+    turn.add_argument("--input-fd", type=int)
+    turn.add_argument("--provider-token-fd", type=int, required=True)
+    turn.add_argument("--request-id", required=True)
+    turn.add_argument("--timeout-seconds", type=int)
+    turn.add_argument("--max-response-bytes", type=int)
+    turn.add_argument("--retain-until-ms", type=int)
     native.add_argument(
         "--action",
         choices=(
@@ -3375,7 +4572,52 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    exit_code = 0
     try:
+        provider_token = None
+        input_text = None
+        if args.command == "native-turn":
+            _turn_request_uuid(args.request_id)
+            recovering = args.action == "recover-turn"
+            selection = (
+                args.input_fd,
+                args.timeout_seconds,
+                args.max_response_bytes,
+                args.retain_until_ms,
+            )
+            if recovering:
+                if any(value is not None for value in selection) or args.create_profile:
+                    raise CodexBodyError("codex_turn_recovery_input_forbidden")
+            elif any(value is None for value in selection):
+                raise CodexBodyError("codex_turn_input_selection_required")
+            descriptors: tuple[int, ...] = (
+                args.provider_token_fd,
+                args.capability_key_fd,
+            )
+            if not recovering:
+                descriptors += (args.input_fd,)
+            try:
+                sources = {
+                    (os.fstat(fd).st_dev, os.fstat(fd).st_ino) for fd in descriptors
+                }
+            except OSError:
+                raise CodexBodyError("codex_turn_descriptor_rejected") from None
+            if len(sources) != len(descriptors):
+                raise CodexBodyError("codex_turn_descriptor_alias")
+            if not recovering:
+                input_text = read_native_turn_input(args.input_fd)
+            provider_token = read_native_provider_token(args.provider_token_fd)
+            if not recovering and (
+                not 1 <= args.timeout_seconds <= 300
+                or not 1 <= args.max_response_bytes <= 65536
+                or not time.time_ns() // 1_000_000
+                < args.retain_until_ms
+                <= time.time_ns() // 1_000_000 + 30 * 24 * 60 * 60 * 1000
+            ):
+                raise CodexBodyError("codex_turn_limits_rejected")
+            reserved = args.profile_root / "turn-requests" / (args.request_id + ".json")
+            if not recovering and (reserved.exists() or reserved.is_symlink()):
+                raise CodexBodyError("turn_request_already_reserved")
         if args.command == "hook":
             return hook_entrypoint(
                 [args.event, os.fspath(args.bootstrap), os.fspath(args.observation)]
@@ -3385,6 +4627,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "bootstrap-prepare",
             "bootstrap-attest",
             "native-lifecycle",
+            "native-turn",
         }:
             from .client import ClientConfig, ClientError, LocalClient
             from .codex_matrix_binding import (
@@ -3452,7 +4695,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "matrix_high_water": bootstrap["matrix_high_water"],
                         "status": "attested; proof retained",
                     }
-                elif args.command == "native-lifecycle":
+                elif args.command in {"native-lifecycle", "native-turn"}:
                     document = _json_load(
                         _read_secure_file(args.document, "plan_document_rejected"),
                         "plan_document_rejected",
@@ -3485,8 +4728,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         return 0
                     if args.proof_journal is None or args.max_age_ms is None:
                         raise CodexBodyError("owner_cluster_locations_required")
-                    if args.create_profile and args.action != "start-park":
+                    if args.create_profile and args.action not in {
+                        "start-park",
+                        "start-turn",
+                    }:
                         raise CodexBodyError("owner_native_create_requires_start")
+                    if args.command == "native-turn" and args.action == "recover-turn":
+                        read_turn_intent(native_plan, args.request_id)
                     reader = owner_cluster_body_reader(
                         checkout=args.cluster_checkout,
                         state_root=args.cluster_state,
@@ -3502,10 +4750,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                         proof_journal_path=args.proof_journal,
                         max_age_ms=args.max_age_ms,
                         create=args.create_profile,
+                        provider_token=provider_token,
                     )
                     try:
                         adapter = session.adapter
-                        if args.action == "recover-park":
+                        if args.command == "native-turn":
+                            if args.action == "recover-turn":
+                                result = adapter.recover_turn(
+                                    request_id=args.request_id
+                                )
+                            else:
+                                if input_text is None:
+                                    raise CodexBodyError("invalid_turn_input")
+                                if args.action == "start-turn":
+                                    adapter.start()
+                                else:
+                                    adapter.resume()
+                                result = adapter.run_turn(
+                                    input_text,
+                                    request_id=args.request_id,
+                                    timeout_seconds=args.timeout_seconds,
+                                    max_response_bytes=args.max_response_bytes,
+                                    retain_until_ms=args.retain_until_ms,
+                                )
+                            value = {
+                                "schema": "dm.codex-body.owner-native-turn/v1",
+                                "action": args.action,
+                                "request_id": args.request_id,
+                                "intent_id": result["intent"]["intent_id"],
+                                "result_id": result["result_id"],
+                                "handle": result["handle"],
+                                "turn_status": result["turn_status"],
+                                "model_inputs": result["model_inputs"],
+                                "native_result_sha256": hashlib.sha256(
+                                    _native_json_bytes(
+                                        result["native_turn"],
+                                        "codex_turn_result_rejected",
+                                    )
+                                ).hexdigest(),
+                            }
+                        elif args.action == "recover-park":
                             handle = adapter.recover_park()
                         else:
                             if args.action == "start-park":
@@ -3515,16 +4799,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                             else:
                                 adapter.recover_resume()
                             handle = adapter.park()
-                        value = {
-                            "schema": "dm.codex-body.owner-native-lifecycle/v1",
-                            "action": args.action,
-                            "handle": handle,
-                            "native_exit_code": session.process.process.poll(),
-                            "model_inputs": 0,
-                            "status": "local-native-parked",
-                        }
+                        if args.command == "native-lifecycle":
+                            value = {
+                                "schema": "dm.codex-body.owner-native-lifecycle/v1",
+                                "action": args.action,
+                                "handle": handle,
+                                "native_exit_code": session.process.process.poll(),
+                                "model_inputs": 0,
+                                "status": "local-native-parked",
+                            }
                     finally:
                         session.close()
+                    if args.command == "native-turn":
+                        value["native_exit_code"] = session.process.process.poll()
+                        exit_code = int(
+                            value["turn_status"] != "completed"
+                            or value["native_exit_code"] != 0
+                        )
             except ClientError as exception:
                 raise CodexBodyError("owner_local_client_rejected") from exception
             finally:
@@ -3586,7 +4877,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(code, file=sys.stderr)
         return 2
     sys.stdout.buffer.write(_canonical(value, "codex_cli_output_invalid") + b"\n")
-    return 0
+    return exit_code
 
 
 __all__ = [

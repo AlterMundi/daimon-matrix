@@ -149,6 +149,9 @@ class ReleaseAdmissionTests(unittest.TestCase):
             "valid/bootstrap.json": body.validate_bootstrap,
             "valid/plan.json": body.validate_plan,
             "valid/parking-handle.json": body.validate_runtime_handle,
+            "valid/turning-handle.json": body.validate_runtime_handle,
+            "valid/turn-intent.json": body.validate_turn_intent,
+            "valid/turn-result.json": body.validate_native_turn_result,
             "valid/launch-receipt.json": body.validate_launch_receipt,
         }
         for row in index["files"]:
@@ -456,6 +459,11 @@ class SuccessorProfileTests(unittest.TestCase):
         response: dict[str, Any] = {"config": expected, "origins": {}, "layers": None}
         expected["history"]["max_bytes"] = 12345
         body._validate_native_configuration(response, self.plan)
+        # The pinned binary emits null for an unconfigured skills table.
+        # It does not authorize an unexpected selected skill or malformed table.
+        native_default = copy.deepcopy(response)
+        native_default["config"]["skills"] = None
+        body._validate_native_configuration(native_default, self.plan)
         for field, value in (
             ("approval_policy", "never"),
             ("sandbox_mode", "danger-full-access"),
@@ -469,6 +477,8 @@ class SuccessorProfileTests(unittest.TestCase):
             ("notify", ["/bin/true"]),
             ("model_instructions_file", "/synthetic/instructions.txt"),
             ("experimental_compact_prompt_file", "/synthetic/compact.txt"),
+            ("skills", []),
+            ("skills", {"config": [{"path": "/unselected", "enabled": True}]}),
         ):
             changed = copy.deepcopy(response)
             changed["config"][field] = value
