@@ -3625,7 +3625,7 @@ def _validate_notification(
             ):
                 raise CodexBodyError("codex_external_auth_rejected")
         else:
-            if params["authMode"] != "chatgpt":
+            if params["authMode"] != "chatgptAuthTokens":
                 raise CodexBodyError("codex_external_auth_rejected")
             if params["planType"] is not None:
                 _text(

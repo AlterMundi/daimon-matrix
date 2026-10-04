@@ -634,3 +634,10 @@ ChatGPT OAuth login path. Native external-token authentication is documented
 in [OpenAI's app-server authentication guide](https://developers.openai.com/codex/app-server#authentication-modes).
 Authentication metadata alone does not prove a completed inference turn or
 access to the selected model; those remain operational acceptance checks.
+
+The pinned external-token login reports `account/updated.authMode` as
+`chatgptAuthTokens`, while `account/read.account.type` remains `chatgpt`.
+The explicit external authentication context accepts only that notification
+mode; managed OAuth (`chatgpt`), API-key, header and Agent Identity modes refuse.
+This distinction was verified against the pinned executable's generated
+`AccountUpdatedNotification` schema and actual in-memory Hermes-token login.
