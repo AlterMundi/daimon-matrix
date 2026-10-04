@@ -518,6 +518,108 @@
           ],
           "type": "object"
         },
+        "continuity": {
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "additionalProperties": false,
+              "properties": {
+                "FOUNDATION.md": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "bytes": {
+                      "maximum": 24000,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "source_ref": {
+                      "maxLength": 192,
+                      "minLength": 1,
+                      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "bytes",
+                    "sha256",
+                    "source_ref"
+                  ],
+                  "type": "object"
+                },
+                "MEMORY-ACCESS.md": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "bytes": {
+                      "maximum": 24000,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "source_ref": {
+                      "maxLength": 192,
+                      "minLength": 1,
+                      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "bytes",
+                    "sha256",
+                    "source_ref"
+                  ],
+                  "type": "object"
+                },
+                "SOUL.md": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "bytes": {
+                      "maximum": 24000,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    "source_ref": {
+                      "maxLength": 192,
+                      "minLength": 1,
+                      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "bytes",
+                    "sha256",
+                    "source_ref"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "SOUL.md",
+                "FOUNDATION.md",
+                "MEMORY-ACCESS.md"
+              ],
+              "type": "object"
+            },
+            "schema": {
+              "const": "dm.codex-continuity/v1"
+            }
+          },
+          "required": [
+            "schema",
+            "files"
+          ],
+          "type": "object"
+        },
         "profile_policy": {
           "additionalProperties": false,
           "properties": {
@@ -692,7 +794,10 @@
                     "enum": [
                       "AGENTS.md",
                       "bootstrap.json",
-                      "config.toml"
+                      "config.toml",
+                      "SOUL.md",
+                      "FOUNDATION.md",
+                      "MEMORY-ACCESS.md"
                     ]
                   },
                   {

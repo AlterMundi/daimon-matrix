@@ -2,6 +2,11 @@
   "codex_version": "0.155.1",
   "files": [
     {
+      "name": "negative/continuity-prefetch.json",
+      "sha256": "c7dda33789acd3c19143cc740daa5d215069a17c715fd15d008d60e97ac0bb66",
+      "valid": false
+    },
+    {
       "name": "negative/hook-policy.json",
       "sha256": "2e92489ca600f31645eed7c3fda570aef011d07ed433db099d763677b3838937",
       "valid": false
@@ -14,6 +19,11 @@
     {
       "name": "valid/bootstrap.json",
       "sha256": "0e06a6a6806ac5dd8dfb93b2fdffea12342bbe2e26b08fd54420d21099c7c3a6",
+      "valid": true
+    },
+    {
+      "name": "valid/continuity-plan.json",
+      "sha256": "359f925142b848cb7796db6760bce931d78534c43d731b5bd1d6814530a297ef",
       "valid": true
     },
     {

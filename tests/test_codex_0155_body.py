@@ -148,6 +148,7 @@ class ReleaseAdmissionTests(unittest.TestCase):
         validators = {
             "valid/bootstrap.json": body.validate_bootstrap,
             "valid/plan.json": body.validate_plan,
+            "valid/continuity-plan.json": body.validate_plan,
             "valid/parking-handle.json": body.validate_runtime_handle,
             "valid/turning-handle.json": body.validate_runtime_handle,
             "valid/turn-intent.json": body.validate_turn_intent,

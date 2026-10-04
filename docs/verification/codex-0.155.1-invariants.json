@@ -33,13 +33,14 @@
         "tests.test_codex_0155_body.SuccessorProfileTests",
         "effective-controls-progress.json",
         "source-native-effective-controls.json",
-        "config-admission-native-effective-controls.json"
+        "config-admission-native-effective-controls.json",
+        "tests.test_codex_continuity"
       ],
       "remaining": [
         "Independent exact-head review and full gates for native configuration admission",
-        "Trusted project instruction precedence",
         "Approved neutral skills/HMK source and binding",
-        "Accepted native rollout persistence/retention policy"
+        "Accepted native rollout persistence/retention policy",
+        "Owner-selected continuity live adoption and actual neutral HMK access from the isolated native environment"
       ],
       "requirement": "Effective policy, instruction, hooks, history, telemetry and neutral memory surface",
       "status": "partial"
