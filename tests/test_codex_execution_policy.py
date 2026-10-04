@@ -261,7 +261,7 @@ class ExternalAuthTests(unittest.TestCase):
             "read=json.loads(sys.stdin.readline())\n"
             "assert read['method']=='account/read'\n"
             "assert read['params']=={'refreshToken':False}\n"
-            "print(json.dumps({'method':'account/updated','params':{'authMode':'chatgpt','planType':'plus'}}),flush=True)\n"
+            "print(json.dumps({'method':'account/updated','params':{'authMode':'chatgptAuthTokens','planType':'plus'}}),flush=True)\n"
             "print(json.dumps({'id':read['id'],'result':{'account':{'type':'chatgpt'},'requiresOpenaiAuth':True}}),flush=True)\n"
         )
         before = body.verify_profile(self.plan)
@@ -300,7 +300,7 @@ class ExternalAuthTests(unittest.TestCase):
             "sys.stdin.readline()\n"
             "while True:\n"
             " print(json.dumps({'method':'account/updated','params':"
-            "{'authMode':'chatgpt','planType':'plus'}}),flush=True)\n"
+            "{'authMode':'chatgptAuthTokens','planType':'plus'}}),flush=True)\n"
             " time.sleep(.01)\n"
         )
         started = time.monotonic()
@@ -350,14 +350,18 @@ class ExternalAuthTests(unittest.TestCase):
     def test_auth_notifications_are_restricted_to_explicit_auth_requests(self) -> None:
         value: dict[str, Any] = {
             "method": "account/updated",
-            "params": {"authMode": "chatgpt", "planType": "plus"},
+            "params": {"authMode": "chatgptAuthTokens", "planType": "plus"},
         }
         with self.assertRaises(body.CodexBodyError):
             body._validate_notification(value, allow_hooks=False)
         body._validate_notification(value, allow_hooks=False, authenticating=True)
-        value["params"]["authMode"] = "apikey"
-        with self.assertRaises(body.CodexBodyError):
-            body._validate_notification(value, allow_hooks=False, authenticating=True)
+        for mode in ("chatgpt", "apikey", "headers", "agentIdentity", None):
+            with self.subTest(auth_mode=mode):
+                value["params"]["authMode"] = mode
+                with self.assertRaises(body.CodexBodyError):
+                    body._validate_notification(
+                        value, allow_hooks=False, authenticating=True
+                    )
 
     def test_auth_selection_requires_successor_and_openai_provider(self) -> None:
         value = copy.deepcopy(self.plan.value)
