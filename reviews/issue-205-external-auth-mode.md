@@ -1,0 +1,15 @@
+# Independent external-auth notification compatibility review
+
+Exact candidate: `67209ece1aabde143e21a0809244cd86256db8a5`; baseline `e751e0655c585d5595856edf98257fcee958f676`. Read-only, bounded review of the three-file compatibility delta. Prior OAuth/deadline/execution-policy approvals remain valid. No actual credentials, live services, provider requests, custody, Matrix or private memory accessed.
+
+The sole production change replaces the external-context expected `account/updated.authMode` from `chatgpt` to `chatgptAuthTokens`. This matches the public-safe owner evidence in `provider-catalog-preflight-before-fix.json`: the pinned executable accepted the external-token login, then emitted `chatgptAuthTokens` and the old adapter refused during account-read. `account/read.account.type` remains `chatgpt`; the patch correctly changes only notification-mode admission. Managed OAuth, API-key, header, Agent Identity and null modes refuse. Authentication context, closed notification fields, deadline, token storage/environment handling, signed admission and identity code are unchanged.
+
+Independent checks: all eight ExternalAuthTests passed with ResourceWarning treated as error, including real-pipe login/read, wrong-mode/context refusals, malformed claims, unchanged profile and no credential-file persistence. `/tmp/review_oauth_mode_fixed.py` replayed the existing independent timeout probes with the newly valid notification mode: continuous valid notification drip and a legal 4,096-byte stalled pipe each refused at approximately 180ms; sequential 120ms login/read delays also refused at the single 180ms deadline. Each cleared authentication context, restored pipe blocking mode and preserved profile bytes without auth.json/token-containing files. The checkout remained clean at the exact candidate.
+
+No blocking findings. Documentation accurately distinguishes external notification mode from account type and does not claim completed inference. Owner pinned schema/live-auth observations are reused as contract evidence rather than independently reauthenticating. These tests establish adapter compatibility and retained safety boundaries, not selected-model entitlement, completed inference, live rollout or full operational acceptance.
+
+Verdict: **APPROVE** exact `67209ece1aabde143e21a0809244cd86256db8a5` within this compatibility-fix scope.
+
+## Generated-artifact successor
+
+Approval carries to exact `99b23a37bed889a4646c820235c7a803d016a073`. The `67209ec..99b23a3` diff is confined to the four Hermes provenance/index/profile/launch artifacts. Production source, tests, documentation, policy and authentication bytes are unchanged. Independently ran the official `tools/generate_dm041_vectors.py --check` successfully at the successor, confirming regeneration matches the reviewed source and derived artifact closure. No new blocking findings or expanded acceptance claims; prior test evidence remains valid without rerun. **APPROVE** exact `99b23a37bed889a4646c820235c7a803d016a073`.
