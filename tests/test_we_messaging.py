@@ -3,11 +3,28 @@
 from __future__ import annotations
 
 import copy
+import sqlite3
 import unittest
 import uuid
-from typing import Any
+from contextlib import closing
+from types import SimpleNamespace
+from typing import Any, cast
 
 from daimon_matrix.communication import RESOLUTION_PAYLOAD_SCHEMA
+from daimon_matrix.identity import (
+    create_embodiment_credential,
+    create_incarnation_authorization,
+    x25519_public,
+)
+from daimon_matrix.ledger import Ledger
+from daimon_matrix.local_api import create_capability
+from daimon_matrix.peer_transport import (
+    PeerTransportAmbiguous,
+    PeerTransportBusy,
+    PeerTransportConflict,
+    PeerTransportError,
+)
+from daimon_matrix.scopes import ScopeResolver
 from daimon_matrix.sealed import (
     DisclosureAuthorization,
     SealedDeliveryError,
@@ -16,6 +33,7 @@ from daimon_matrix.sealed import (
     seal_event,
     sender_descriptor,
 )
+from daimon_matrix.service import HostedWeave
 from daimon_matrix.we_messaging import (
     WeConversation,
     WeLaneError,
@@ -29,8 +47,8 @@ from daimon_matrix.we_messaging import (
     we_receipt_payload,
     we_recipient_targets,
 )
-from daimon_matrix.weave import create_event
-from tests.test_dm022_ledger import NOW
+from daimon_matrix.weave import BeingManifest, RootAuthority, create_event
+from tests.test_dm022_ledger import NOW, seed, transport
 from tests.test_dm051_sealed import SealedFixture
 
 MESSAGE_SCHEMA = "dm.communication.message/v1"
@@ -534,6 +552,187 @@ class WeLaneTests(SealedFixture):
             if event["subject"] == "communication"
         ]
         self.assertEqual(len(messages), 1)
+
+    def test_unavailable_sibling_does_not_hide_a_later_genuine_receipt(self) -> None:
+        offline = "embodiment:aaa-offline"
+        signing = seed("offline-signing")
+        credential = create_embodiment_credential(
+            self.state,
+            self.root_seeds,
+            signing,
+            x25519_public(seed("offline-encryption")),
+            embodiment_id=offline,
+            body_ref="cluster:offline:compaii",
+            purposes=["dm.we", "messages"],
+            valid_from_ms=NOW - 100,
+            valid_until_ms=NOW + 100_000,
+            transport_principals=[transport("offline", "compaii@offline")],
+        )
+        incarnation = create_incarnation_authorization(
+            credential,
+            signing,
+            incarnation_id="incarnation:offline:0",
+            incarnation_sequence=0,
+            started_at_ms=NOW - 10,
+        )
+        manifest = BeingManifest.from_value(
+            {
+                **self.authority.manifest.value,
+                "embodiments": sorted(
+                    [
+                        *self.authority.manifest.value["embodiments"],
+                        {
+                            "body_ref": "cluster:offline:compaii",
+                            "embodiment_id": offline,
+                            "embodiment_credential_id": credential["artifact_id"],
+                            "incarnation_id": "incarnation:offline:0",
+                            "incarnation_authorization_id": incarnation["artifact_id"],
+                            "status": "active",
+                        },
+                    ],
+                    key=lambda row: row["embodiment_id"],
+                ),
+            }
+        )
+        self.authority = RootAuthority(
+            manifest,
+            self.state,
+            {**self.credentials, credential["artifact_id"]: credential},
+            {**self.incarnations, incarnation["artifact_id"]: incarnation},
+        )
+        self.ledger_a = Ledger(
+            self.root_path / "fanout-a.sqlite",
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            clock=lambda: NOW,
+        )
+        self.ledger_b = Ledger(
+            self.root_path / "fanout-b.sqlite",
+            authority=self.authority,
+            local_origin=self.origins["daimonmatrix"],
+            clock=lambda: NOW + 5,
+        )
+        sender = self.lane("legion", at_ms=NOW)
+        receiver = self.lane("daimonmatrix", at_ms=NOW + 5)
+        capability = create_capability(
+            seed("fanout-client"),
+            client_id="client:fanout",
+            methods=["we.converse"],
+            not_before_ms=NOW - 100,
+            not_after_ms=NOW + 100_000,
+        )
+        for state, code, refusal in (
+            ("rejected", "peer_transport_rejected", PeerTransportError),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportAmbiguous),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportBusy),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportConflict),
+        ):
+            attempts: list[str] = []
+
+            def configured(
+                embodiment_id: str,
+                *,
+                attempts: list[str] = attempts,
+                refusal: type[PeerTransportError] = refusal,
+            ) -> Any:
+                attempts.append(embodiment_id)
+                if embodiment_id == offline:
+                    raise refusal()
+                return None, SimpleNamespace(
+                    call=lambda payload, **_kwargs: receiver.intake(payload)
+                )
+
+            service = HostedWeave(
+                self.ledger_a,
+                self.signers["legion"],
+                {capability.capability_id: capability},
+                lambda: NOW,
+                "dm:runtime:v1:" + "a" * 43,
+                "fanout",
+                scopes=ScopeResolver(self.ledger_a, clock=lambda: NOW),
+                peer_context=cast(
+                    Any,
+                    SimpleNamespace(
+                        configured=configured,
+                        authority=self.authority,
+                        local_origin=self.origins["legion"],
+                    ),
+                ),
+                we_lane=sender,
+            )
+            result = service._we_converse(
+                {
+                    "text": "online sibling still hears",
+                    "addressees": [REMOTE],
+                    "request_id": str(uuid.uuid4()),
+                    "ttl_ms": 30_000,
+                }
+            )
+            self.assertEqual(attempts, [offline, REMOTE])
+            self.assertEqual(result["audience"], [offline, REMOTE])
+            self.assertEqual(
+                result["deliveries"][0],
+                {
+                    "embodiment_id": offline,
+                    "state": state,
+                    "error": code,
+                },
+            )
+            delivered = result["deliveries"][1]
+            self.assertEqual(delivered["state"], "delivered")
+            self.assertIsNotNone(self.ledger_a.event(delivered["receipt_event_id"]))
+
+    def test_expired_saved_payload_refuses_before_another_delivery(self) -> None:
+        request_id = str(uuid.uuid4())
+        sender = self.lane("legion", at_ms=NOW)
+        sender.converse(
+            text="expiry",
+            addressees=[REMOTE],
+            request_id=request_id,
+            targets=self.canonical_targets(),
+            ttl_ms=1_000,
+        )
+        attempts: list[Any] = []
+
+        def unexpected_delivery(*args: Any) -> dict[str, Any]:
+            attempts.append(args)
+            return {}
+
+        with self.assertRaises((WeLaneError, SealedDeliveryError)):
+            self.lane("legion", at_ms=NOW + 1_000).converse(
+                text="expiry",
+                addressees=[REMOTE],
+                request_id=request_id,
+                targets=self.canonical_targets(),
+                ttl_ms=1_000,
+                deliver=unexpected_delivery,
+            )
+        self.assertEqual(attempts, [])
+
+    def test_tampered_saved_payload_refuses_before_delivery(self) -> None:
+        request_id = str(uuid.uuid4())
+        sender = self.lane("legion", at_ms=NOW)
+        sender.converse(
+            text="saved",
+            ttl_ms=30_000,
+            addressees=[REMOTE],
+            request_id=request_id,
+            targets=self.canonical_targets(),
+        )
+        with closing(sqlite3.connect(self.ledger_a.path)) as database, database:
+            database.execute(
+                "UPDATE rpc_requests SET response_json=? WHERE client_id=?",
+                (b'{"payload":{}}', "dm.we.sealed-payload/v1"),
+            )
+        with self.assertRaises((WeLaneError, SealedDeliveryError)):
+            sender.converse(
+                text="saved",
+                ttl_ms=30_000,
+                addressees=[REMOTE],
+                request_id=request_id,
+                targets=self.canonical_targets(),
+                deliver=lambda *_args: self.fail("tampered payload released"),
+            )
 
     def test_converse_seals_without_delivering_when_no_carrier_is_given(self) -> None:
         sender = self.lane("legion", at_ms=NOW)

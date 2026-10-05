@@ -161,3 +161,32 @@ Reading, sending and replying on this lane happen only when a human asks. No inb
 polling, startup or turn hooks, timers, notifications, wakeups, automatic reads or
 autonomous replies are installed, and receiving a message never authorizes
 answering it.
+
+## Delivery outcomes and manual recovery
+
+A successful owner RPC is not proof every sibling received the message. Inspect
+`deliveries`: `delivered` carries the sibling's authenticated signed receipt;
+`rejected` records a definite carrier refusal; `undetermined` records a timeout
+or ambiguous carrier result. Local busy/conflicting requests are also
+`undetermined`: they cannot prove what an earlier attempt delivered. An unavailable sibling does not interrupt attempts
+to the remaining signed audience. Malformed or forged receipts still fail closed.
+No status authorizes a reply or an automatic retry.
+
+The sender persists the first sealed conversation payload in its existing owner
+RPC journal before transport. An exact manual retry, including after a cold
+restart, reuses that payload and the original signed message/resolution. Live
+carriers reuse their confirmed mirrors and original receipt. Expired carriers can
+use the peer outbox's existing generation recovery while the inner message remains
+valid; a new encrypted carrier can require a separate mirror confirmation. An
+expired inner message, changed request, authority mismatch or tampered saved
+payload refuses before delivery; it is never silently reauthored or resealed.
+
+Older attempts without a saved payload do not gain a reconstructed retry artifact.
+Retain their native outcomes and confirmed echoes; do not reset their outbox or
+hide an undetermined delivery with a fresh message ID. A definite rejected attempt
+may be followed by an explicitly bounded new message after correcting its cause.
+
+If a recipient reports a signed sequence gap, converge its missing history through
+the official owner-requested `we.sync.peer-pull` operation before conversation
+recovery. This is state convergence, not an inbox read, an agent reply or a mirror
+post. Preserve the original author's sequence and all existing embodiments.

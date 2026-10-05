@@ -51,6 +51,8 @@ from .messaging import MessagingChannel, MessagingDelivery
 from .peer_transport import (
     PeerClientContext,
     PeerTransportAmbiguous,
+    PeerTransportBusy,
+    PeerTransportConflict,
     PeerTransportError,
 )
 from .projections import ProjectionEngine, ProjectionError
@@ -79,6 +81,7 @@ from .we_messaging import (
     WE_RECEIPT_CONTENT_TYPE,
     WE_RECEIPT_SCHEMA,
     WeConversation,
+    WeDeliveryError,
     WeLaneError,
 )
 from .weave import DECISIONS, SENSITIVITIES, EventSigner, WeaveProtocolError
@@ -2277,15 +2280,28 @@ class HostedWeave:
         def deliver(
             embodiment_id: str, payload: Mapping[str, Any]
         ) -> Mapping[str, Any]:
-            target, peer = peer_context.configured(embodiment_id)
-            return peer.call(
-                payload,
-                recipient_target=target,
-                request_content_type=WE_MESSAGE_CONTENT_TYPE,
-                response_content_type=WE_RECEIPT_CONTENT_TYPE,
-                correlation_id=converse_id,
-                deadline_ms=_uint(self.clock()) + WE_CONVERSE_DEADLINE_MS,
-            )
+            try:
+                target, peer = peer_context.configured(embodiment_id)
+                return peer.call(
+                    payload,
+                    recipient_target=target,
+                    request_content_type=WE_MESSAGE_CONTENT_TYPE,
+                    response_content_type=WE_RECEIPT_CONTENT_TYPE,
+                    correlation_id=converse_id,
+                    deadline_ms=_uint(self.clock()) + WE_CONVERSE_DEADLINE_MS,
+                )
+            except (
+                PeerTransportAmbiguous,
+                PeerTransportBusy,
+                PeerTransportConflict,
+            ) as exception:
+                raise WeDeliveryError(
+                    state="undetermined", code="peer_transport_ambiguous"
+                ) from exception
+            except PeerTransportError as exception:
+                raise WeDeliveryError(
+                    state="rejected", code="peer_transport_rejected"
+                ) from exception
 
         return lane.converse(
             text=text,
