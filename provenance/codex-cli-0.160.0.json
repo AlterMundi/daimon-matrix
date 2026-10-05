@@ -1,0 +1,66 @@
+{
+  "app_server": {
+    "generated_contracts": [
+      {
+        "command": "generate-json-schema",
+        "digest": "78e85c089aceb5efb631a62483d6c41362c1c1278d64c8b20e7c0fd7b8189ba8",
+        "exit_code": 0,
+        "experimental": false,
+        "files": 314
+      },
+      {
+        "command": "generate-ts",
+        "digest": "c79e0261d85c98229105c65fd117a890b08f9b4b8e4a31de7797a08921270d0d",
+        "exit_code": 0,
+        "experimental": false,
+        "files": 734
+      }
+    ],
+    "normalization": "relative-path + NUL + canonical-json + NUL for JSON; relative-path + NUL + bytes + NUL for TypeScript"
+  },
+  "codex_version": "0.160.0",
+  "install": {
+    "archive_bytes": 163273896,
+    "installed_native_match": true,
+    "native_payloads": [
+      {
+        "bytes": 289101384,
+        "path": "package/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "sha256": "12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad"
+      }
+    ],
+    "new_installation": false
+  },
+  "qualification": {
+    "isolated_native_lifecycle": true,
+    "live_supported": false,
+    "matrix_live_inference": false,
+    "private_continuity_input": false,
+    "provider_reasoning_effort": "medium",
+    "provider_requested_model": "gpt-6.1-sol",
+    "provider_single_marker_completed": true,
+    "scope": "Verified registry artifact and generated native contracts; Matrix native lifecycle, exact-head review and deployed acceptance remain pending."
+  },
+  "schema": "dm.codex-cli-provenance/v1",
+  "scope": "Artifact and native contract qualification; no Matrix activation or private context egress",
+  "source": {
+    "integrity": "sha512-KI/73OqGrHmR18s7ya7E1NqV6rT0y3lxr0s8S1qR2m6zU6QRF/HlR529jALLh5vjdUnsRT4Ahoxt0axb4kY99g==",
+    "package": "@openai/codex",
+    "registry": "https://registry.npmjs.org",
+    "registry_public_keys_sha256": "faf23d8753d5bb79df250f10391ac89b63ecf7743e48487a544a99c847f9c8df",
+    "registry_signatures_verified": [
+      {
+        "algorithm": "ecdsa-sha2-nistp256",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "valid": true
+      },
+      {
+        "algorithm": "ecdsa-sha2-nistp256",
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "valid": true
+      }
+    ],
+    "trust_boundary": "Registry signatures verified against HTTPS-published registry keys; no independent SLSA or source-build verification claimed.",
+    "version": "0.160.0-linux-x64"
+  }
+}

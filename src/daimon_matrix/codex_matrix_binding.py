@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import hmac
 import os
+import select
 import stat
 import sys
 import time
@@ -33,6 +34,7 @@ from .client import (
 from .cluster import ClusterEvidenceError, validate_body_snapshot
 from .codex_body import (
     ATTESTED_BOOTSTRAP_SCHEMA,
+    CURRENT_RELEASE,
     AppServerProcess,
     CodexBodyAdapter,
     CodexBodyError,
@@ -462,11 +464,77 @@ def read_native_capability_key(descriptor: int) -> bytearray:
         raise CodexBodyError("native_capability_descriptor_unavailable") from exception
 
 
+def _open_native_parent_capability(descriptor: int) -> int:
+    """Recover the exact parent's protected FD after native close-on-exec.
+
+    Linux kernel parent identity, same UID and the pinned native executable are
+    checked before opening the known descriptor. No key bytes or secret paths
+    enter config, argv, environment or diagnostics. The existing key validator
+    still enforces the protected regular-file boundary. This grants no Matrix
+    authority; the configured capability must authenticate against the daemon.
+    """
+    code = "native_capability_parent_rejected"
+    if type(descriptor) is not int or not 3 <= descriptor <= 1024:
+        raise CodexBodyError(code)
+    parent = os.getppid()
+    if parent <= 1 or not hasattr(os, "pidfd_open"):
+        raise CodexBodyError(code)
+    process_fd = -1
+    executable_fd = -1
+    source_fd = -1
+    try:
+        process_fd = os.pidfd_open(parent)
+        parent_root = Path(f"/proc/{parent}")
+        if parent_root.stat().st_uid != os.geteuid():
+            raise CodexBodyError(code)
+        executable_fd = os.open(parent_root / "exe", os.O_RDONLY | os.O_CLOEXEC)
+        info = os.fstat(executable_fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid not in {0, os.geteuid()}
+            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not 1 <= info.st_size <= 512 * 1024 * 1024
+        ):
+            raise CodexBodyError(code)
+        digest = hashlib.sha256()
+        while chunk := os.read(executable_fd, 65536):
+            digest.update(chunk)
+        if digest.hexdigest() != CURRENT_RELEASE.binary_sha256:
+            raise CodexBodyError(code)
+        source_fd = os.open(
+            parent_root / "fd" / str(descriptor),
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK,
+        )
+        current_executable = (parent_root / "exe").stat()
+        if (
+            os.getppid() != parent
+            or select.select([process_fd], [], [], 0)[0]
+            or (current_executable.st_dev, current_executable.st_ino)
+            != (info.st_dev, info.st_ino)
+        ):
+            raise CodexBodyError(code)
+        result, source_fd = source_fd, -1
+        return result
+    except OSError as exception:
+        raise CodexBodyError(code) from exception
+    finally:
+        for opened in (source_fd, executable_fd, process_fd):
+            if opened >= 0:
+                os.close(opened)
+
+
 def native_mcp_main(argv: list[str] | None = None) -> int:
     """Explicit native MCP entry point with one private key pipe per child."""
     from .mcp_server import main, parser
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    parent_flag = "--capability-from-native-parent"
+    from_parent = parent_flag in arguments
+    if from_parent:
+        if arguments.count(parent_flag) != 1:
+            print("native_capability_argument_invalid", file=sys.stderr)
+            return 2
+        arguments.remove(parent_flag)
     args = parser().parse_args(arguments)
     if arguments.count("--capability-key-fd") != 1:
         print("native_capability_argument_invalid", file=sys.stderr)
@@ -474,6 +542,8 @@ def native_mcp_main(argv: list[str] | None = None) -> int:
     position = arguments.index("--capability-key-fd") + 1
     source = args.capability_key_fd
     try:
+        if from_parent:
+            source = _open_native_parent_capability(source)
         key = read_native_capability_key(source)
     except CodexBodyError as exception:
         print(exception.code, file=sys.stderr)

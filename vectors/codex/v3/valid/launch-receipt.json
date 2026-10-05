@@ -1,0 +1,51 @@
+{
+  "compatibility": {
+    "adapter_version": "3.0.0",
+    "app_server_schema_digest": "78e85c089aceb5efb631a62483d6c41362c1c1278d64c8b20e7c0fd7b8189ba8",
+    "app_server_typescript_digest": "c79e0261d85c98229105c65fd117a890b08f9b4b8e4a31de7797a08921270d0d",
+    "codex_binary_sha256": "12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad",
+    "codex_version": "0.160.0",
+    "lifecycle": "human-request-only",
+    "matrix_mcp_binary_sha256": "30b3ea6a556809ffa2f5f391fa024e60cfd9dd2a8e2e1b71ac7a5d5d0510811f",
+    "matrix_mcp_name": "daimon-matrix",
+    "matrix_mcp_version": "0.1.0rc1",
+    "matrix_tools": [
+      "daimon_status",
+      "scope_me",
+      "scope_we",
+      "we_heads",
+      "we_observe",
+      "we_projection_get"
+    ]
+  },
+  "matrix_binding": {
+    "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
+    "body_ref": "cluster:legion:compaii",
+    "embodiment_id": "embodiment:legion",
+    "incarnation_id": "incarnation:legion:0",
+    "matrix_high_water": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+    "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms"
+  },
+  "observed_at_ms": 1800000000000,
+  "outcome": "started",
+  "plan_hash": "9c0ea738457d4d2cebfe2b638651988f14d65c1a7ac896186c4705f627961891",
+  "profile_id": "dm:codex-profile:v3:9Na5na7MTBQb76lILeeKZ6uEAvwc4c--l3VajFdTK30",
+  "receipt_id": "dm:codex-launch-receipt:v3:bRyhsf6IMXqTmfMKyAF4pMh4Gf6PrQoSs6HGACR0xQk",
+  "reviewed_files": {
+    "agents_sha256": "6b9a86c76f56660b5d7f45adf6c72234fbb998e8b803dcbe8104be17741311f2",
+    "bootstrap_sha256": "36f2a0933ee87f448f75b479ed4035d668b465a87c8d140f28fa08fae9e7a711",
+    "config_sha256": "c7375948cc05269ff8643754615d605a6a54c7f5a0ef83c118a8f3adb7245e0a"
+  },
+  "runtime": {
+    "approval_policy": "on-request",
+    "model": "dm_probe",
+    "network": "disabled",
+    "provider": "openai",
+    "sandbox": "workspace-write",
+    "session_tree_id": "synthetic-native-session",
+    "thread_id": "synthetic-native-thread",
+    "turn_id": null,
+    "workspace_ref": "dm:workspace:v1:tZNFI7EX8k9K15FwwRl0huIU-56Sq71OF314mRT5Yps"
+  },
+  "schema": "dm.codex-body.launch-receipt/v3"
+}

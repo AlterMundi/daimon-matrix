@@ -7,6 +7,8 @@ import hashlib
 import importlib
 import json
 import os
+import shutil
+import site
 import subprocess
 import sys
 import threading
@@ -305,6 +307,127 @@ sys.exit(2)
                 read_native_capability_key(descriptor)
         finally:
             os.close(descriptor)
+
+    def test_native_parent_descriptor_checks_real_kernel_parent_and_pin(self) -> None:
+        # Hosted tool-cache Python may be owned by a different UID or writable
+        # by its group. The production boundary correctly refuses such parents.
+        # Pin a protected temporary executable for this actual kernel fixture.
+        fixture_executable = os.environ.get("COMPAII_PARENT_FIXTURE_EXECUTABLE")
+        if fixture_executable is None:
+            executable = self.root_path / "protected-parent-python"
+            shutil.copyfile(Path("/proc/self/exe"), executable)
+            executable.chmod(0o700)
+            environment = os.environ.copy()
+            environment["COMPAII_PARENT_FIXTURE_EXECUTABLE"] = str(executable)
+            environment["PYTHONHOME"] = sys.base_prefix
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [
+                    str(Path(codex_body.__file__).resolve().parent.parent),
+                    *site.getsitepackages(),
+                    environment.get("PYTHONPATH", ""),
+                ]
+            )
+            environment["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [
+                    str(Path(sys.base_prefix) / "lib"),
+                    environment.get("LD_LIBRARY_PATH", ""),
+                ]
+            )
+            result = subprocess.run(
+                [
+                    str(executable),
+                    "-W",
+                    "error::ResourceWarning",
+                    "-m",
+                    "unittest",
+                    "tests.test_codex_matrix_binding.MatrixBindingTests.test_native_parent_descriptor_checks_real_kernel_parent_and_pin",
+                    "-q",
+                ],
+                env=environment,
+                capture_output=True,
+                timeout=8,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            return
+        self.assertTrue(Path("/proc/self/exe").samefile(fixture_executable))
+        path = self.root_path / "native-parent-capability"
+        path.write_bytes(self.capability.key)
+        path.chmod(0o600)
+        descriptor = os.open(path, os.O_RDONLY)
+        self.addCleanup(os.close, descriptor)
+        os.lseek(descriptor, 32, os.SEEK_SET)
+        python_hash = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
+        code = """
+import hashlib,os,sys
+from dataclasses import replace
+from daimon_matrix import codex_matrix_binding as bridge
+from daimon_matrix.codex_body import CodexBodyError
+source=int(sys.argv[1])
+os.close(source)
+bridge.CURRENT_RELEASE=replace(bridge.CURRENT_RELEASE,binary_sha256=sys.argv[2])
+opened=-1
+try:
+    opened=bridge._open_native_parent_capability(source)
+    key=bridge.read_native_capability_key(opened)
+    try:
+        assert hashlib.sha256(key).hexdigest()==sys.argv[3]
+    finally:
+        key[:]=bytes(len(key))
+except CodexBodyError as error:
+    if error.code!=sys.argv[4]:print(error.code,file=sys.stderr)
+    sys.exit(0 if error.code==sys.argv[4] else 2)
+finally:
+    if opened>=0:os.close(opened)
+sys.exit(0 if sys.argv[4]=='pass' else 3)
+"""
+        for pin, permission, expected in (
+            (python_hash, 0o600, "pass"),
+            ("0" * 64, 0o600, "native_capability_parent_rejected"),
+            (python_hash, 0o640, "native_capability_descriptor_unsafe"),
+        ):
+            with self.subTest(expected=expected):
+                path.chmod(permission)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        code,
+                        str(descriptor),
+                        pin,
+                        hashlib.sha256(self.capability.key).hexdigest(),
+                        expected,
+                    ],
+                    pass_fds=(descriptor,),
+                    capture_output=True,
+                    timeout=3,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(os.lseek(descriptor, 0, os.SEEK_CUR), 32)
+        path.chmod(0o600)
+        fifo = self.root_path / "parent-capability-fifo"
+        os.mkfifo(fifo, 0o600)
+        fifo_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    code,
+                    str(fifo_fd),
+                    python_hash,
+                    hashlib.sha256(self.capability.key).hexdigest(),
+                    "native_capability_descriptor_unsafe",
+                ],
+                pass_fds=(fifo_fd,),
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+        finally:
+            os.close(fifo_fd)
 
     def test_native_descriptor_rejects_single_consumer_pipe(self) -> None:
         read_fd, write_fd = os.pipe()

@@ -100,6 +100,15 @@ SUCCESSOR_RELEASE: Final = CodexReleaseContract(
     "959f9c082cd867a934f3cd745ef981e4228fef92663a0ff5f745060806561c6d",
 )
 
+CURRENT_RELEASE: Final = CodexReleaseContract(
+    "0.160.0",
+    "12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad",
+    314,
+    "78e85c089aceb5efb631a62483d6c41362c1c1278d64c8b20e7c0fd7b8189ba8",
+    734,
+    "c79e0261d85c98229105c65fd117a890b08f9b4b8e4a31de7797a08921270d0d",
+)
+
 PLAN_SCHEMA: Final = "dm.codex-body.plan/v1"
 BOOTSTRAP_SCHEMA: Final = "dm.codex-body.bootstrap/v1"
 ATTESTED_BOOTSTRAP_SCHEMA: Final = "dm.codex-body.bootstrap/v2"
@@ -214,6 +223,8 @@ def release_contract(version: str) -> CodexReleaseContract:
         return HISTORICAL_RELEASE
     if version == SUCCESSOR_RELEASE.version:
         return SUCCESSOR_RELEASE
+    if version == CURRENT_RELEASE.version:
+        return CURRENT_RELEASE
     raise CodexBodyError("codex_release_unsupported")
 
 
@@ -234,7 +245,19 @@ def _profile_contract(value: Mapping[str, Any]) -> CodexProfileContract:
         and value.get("adapter_version") == "2.0.0"
     ):
         return CodexProfileContract(SUCCESSOR_RELEASE, 2, "2.0.0", False)
+    if (
+        value.get("schema") == "dm.codex-body.plan/v3"
+        and value.get("adapter_version") == "3.0.0"
+    ):
+        return CodexProfileContract(CURRENT_RELEASE, 3, "3.0.0", False)
     raise CodexBodyError("unsupported_codex_body_plan")
+
+
+def _successor_profile(version: Any, code: str) -> CodexProfileContract:
+    for release, wire in ((SUCCESSOR_RELEASE, 2), (CURRENT_RELEASE, 3)):
+        if version == release.version:
+            return CodexProfileContract(release, wire, f"{wire}.0.0", False)
+    raise CodexBodyError(code)
 
 
 class BootstrapVerifier(Protocol):
@@ -1060,9 +1083,10 @@ def create_plan_value(
         contract = _profile_contract(
             {"schema": PLAN_SCHEMA, "adapter_version": "1.0.0"}
         ).release
+    wire = 1 if historical else (3 if contract == CURRENT_RELEASE else 2)
     core = {
-        "schema": PLAN_SCHEMA if historical else "dm.codex-body.plan/v2",
-        "adapter_version": "1.0.0" if historical else "2.0.0",
+        "schema": f"dm.codex-body.plan/v{wire}",
+        "adapter_version": f"{wire}.0.0",
         "workspace_ref": workspace_ref,
         "bootstrap": copy.deepcopy(dict(bootstrap)),
         "codex": {
@@ -1184,6 +1208,14 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _native_mcp_arguments(plan: CodexBodyPlan) -> tuple[str, ...]:
+    # 0.160 closes inherited descriptors before spawning its MCP subprocess.
+    # The bridge explicitly reads the descriptor from its pinned native parent.
+    if _profile_contract(plan.value).release == CURRENT_RELEASE:
+        return (*plan.mcp_args, "--capability-from-native-parent")
+    return plan.mcp_args
+
+
 def render_config(plan: CodexBodyPlan) -> bytes:
     value = validate_plan(plan.value)
     profile = _profile_contract(value)
@@ -1259,7 +1291,9 @@ def render_config(plan: CodexBodyPlan) -> bytes:
         "enabled = true",
         "required = true",
         f"command = {_toml_string(os.fspath(plan.mcp_binary))}",
-        "args = [" + ", ".join(_toml_string(item) for item in plan.mcp_args) + "]",
+        "args = ["
+        + ", ".join(_toml_string(item) for item in _native_mcp_arguments(plan))
+        + "]",
         "env_vars = ["
         + ", ".join(_toml_string(item) for item in SAFE_MCP_ENV_NAMES)
         + "]",
@@ -1375,7 +1409,7 @@ def _validate_effective_config(value: Mapping[str, Any], plan: CodexBodyPlan) ->
         server.get("enabled") is not True
         or server.get("required") is not True
         or server.get("command") != os.fspath(plan.mcp_binary)
-        or server.get("args") != list(plan.mcp_args)
+        or server.get("args") != list(_native_mcp_arguments(plan))
         or server.get("env_vars") != list(SAFE_MCP_ENV_NAMES)
         or server.get("enabled_tools") != list(MATRIX_TOOLS)
     ):
@@ -1963,12 +1997,13 @@ class RuntimeHandleJournal:
     def __init__(self, path: Path, *, plan: CodexBodyPlan | None = None) -> None:
         self.path = _safe_absolute(path, "invalid_handle_journal")
         self.profile_binding = None if plan is None else _journal_binding(plan)
+        self.profile = None if plan is None else _profile_contract(plan.value)
 
     def _check_binding(self, handle: Mapping[str, Any]) -> None:
         expected_schema = (
             RUNTIME_HANDLE_SCHEMA
-            if self.profile_binding is None
-            else "dm.codex-body.runtime-handle/v2"
+            if self.profile is None
+            else self.profile.schema("runtime-handle")
         )
         if handle["schema"] != expected_schema or (
             self.profile_binding is not None
@@ -2052,8 +2087,8 @@ class RuntimeHandleJournal:
                 **(self.profile_binding or {}),
                 "schema": (
                     RUNTIME_HANDLE_SCHEMA
-                    if self.profile_binding is None
-                    else "dm.codex-body.runtime-handle/v2"
+                    if self.profile is None
+                    else self.profile.schema("runtime-handle")
                 ),
                 "generation": len(current),
                 "previous_handle_id": previous,
@@ -2062,11 +2097,11 @@ class RuntimeHandleJournal:
                 **value,
                 "handle_id": _derived(
                     "dm:codex-handle:v1:"
-                    if self.profile_binding is None
-                    else "dm:codex-handle:v2:",
+                    if self.profile is None
+                    else self.profile.identifier_prefix("handle"),
                     HANDLE_DOMAIN
-                    if self.profile_binding is None
-                    else b"daimon/codex-body/runtime-handle/v2\x00",
+                    if self.profile is None
+                    else self.profile.domain("runtime-handle"),
                     value,
                 ),
             }
@@ -2090,10 +2125,11 @@ class RuntimeHandleJournal:
 
 
 def validate_runtime_handle(value: Any) -> dict[str, Any]:
-    successor = (
-        isinstance(value, Mapping)
-        and value.get("schema") == "dm.codex-body.runtime-handle/v2"
-    )
+    wire = {
+        "dm.codex-body.runtime-handle/v2": 2,
+        "dm.codex-body.runtime-handle/v3": 3,
+    }.get(str(value.get("schema")) if isinstance(value, Mapping) else "", 1)
+    successor = wire > 1
     binding_fields = (
         {
             "profile_id",
@@ -2127,16 +2163,21 @@ def validate_runtime_handle(value: Any) -> dict[str, Any]:
         },
         "invalid_runtime_handle",
     )
-    expected_schema = (
-        "dm.codex-body.runtime-handle/v2" if successor else RUNTIME_HANDLE_SCHEMA
-    )
-    prefix = "dm:codex-handle:v2:" if successor else "dm:codex-handle:v1:"
-    domain = b"daimon/codex-body/runtime-handle/v2\x00" if successor else HANDLE_DOMAIN
+    expected_schema = f"dm.codex-body.runtime-handle/v{wire}"
+    prefix = f"dm:codex-handle:v{wire}:"
+    domain = f"daimon/codex-body/runtime-handle/v{wire}\x00".encode("ascii")
     if successor:
-        _derived_id(row["profile_id"], "dm:codex-profile:v2:", "invalid_runtime_handle")
+        _derived_id(
+            row["profile_id"], f"dm:codex-profile:v{wire}:", "invalid_runtime_handle"
+        )
         for field in ("plan_hash", "capability_set_hash", "certificate_hash"):
             _hash(row[field], "invalid_runtime_handle")
-        if row["codex_version"] != SUCCESSOR_RELEASE.version:
+        if (
+            _successor_profile(
+                row["codex_version"], "invalid_runtime_handle"
+            ).wire_version
+            != wire
+        ):
             raise CodexBodyError("invalid_runtime_handle")
     states = {
         "active",
@@ -2392,8 +2433,15 @@ def validate_turn_intent(value: Any) -> dict[str, Any]:
         if not 1 <= _uint(row[field], "invalid_turn_intent") <= maximum:
             raise CodexBodyError("invalid_turn_intent")
     _uint(row["retain_until_ms"], "invalid_turn_intent")
-    _derived_id(row["active_handle_id"], "dm:codex-handle:v2:", "invalid_turn_intent")
-    _derived_id(row["profile_id"], "dm:codex-profile:v2:", "invalid_turn_intent")
+    profile = _successor_profile(row["codex_version"], "invalid_turn_intent")
+    _derived_id(
+        row["active_handle_id"],
+        profile.identifier_prefix("handle"),
+        "invalid_turn_intent",
+    )
+    _derived_id(
+        row["profile_id"], profile.identifier_prefix("profile"), "invalid_turn_intent"
+    )
     for field in (
         "being_ref",
         "body_ref",
@@ -2402,8 +2450,6 @@ def validate_turn_intent(value: Any) -> dict[str, Any]:
         "matrix_session_id",
     ):
         _text(row[field], "invalid_turn_intent", maximum=256)
-    if row["codex_version"] != SUCCESSOR_RELEASE.version:
-        raise CodexBodyError("invalid_turn_intent")
     core = {key: item for key, item in row.items() if key != "intent_id"}
     if row["intent_id"] != _derived(
         "dm:codex-turn-intent:v1:", TURN_INTENT_DOMAIN, core
@@ -2605,7 +2651,13 @@ def validate_native_turn_result(value: Any) -> dict[str, Any]:
     )
     _turn_request_uuid(value["request_id"])
     _derived_id(value["intent_id"], "dm:codex-turn-intent:v1:", code)
-    _derived_id(value["pending_handle_id"], "dm:codex-handle:v2:", code)
+    handle_prefix = (
+        "dm:codex-handle:v3:"
+        if isinstance(value["pending_handle_id"], str)
+        and value["pending_handle_id"].startswith("dm:codex-handle:v3:")
+        else "dm:codex-handle:v2:"
+    )
+    _derived_id(value["pending_handle_id"], handle_prefix, code)
     core = {key: item for key, item in value.items() if key != "result_id"}
     if value["schema"] != "dm.codex-body.turn-result/v1" or value[
         "result_id"
@@ -2712,7 +2764,7 @@ def create_launch_receipt(
     if not profile.automatic_hooks and handle["state"] != "active":
         raise CodexBodyError("launch_outcome_not_observed")
     if not profile.automatic_hooks and (
-        handle["schema"] != "dm.codex-body.runtime-handle/v2"
+        handle["schema"] != profile.schema("runtime-handle")
         or any(handle.get(key) != item for key, item in _journal_binding(plan).items())
     ):
         raise CodexBodyError("launch_profile_mismatch")
@@ -2810,6 +2862,10 @@ def validate_launch_receipt(value: Any) -> dict[str, Any]:
     elif row["schema"] == "dm.codex-body.launch-receipt/v2":
         profile = _profile_contract(
             {"schema": "dm.codex-body.plan/v2", "adapter_version": "2.0.0"}
+        )
+    elif row["schema"] == "dm.codex-body.launch-receipt/v3":
+        profile = _profile_contract(
+            {"schema": "dm.codex-body.plan/v3", "adapter_version": "3.0.0"}
         )
     else:
         raise CodexBodyError("invalid_launch_receipt")
@@ -3696,6 +3752,10 @@ def _thread_result(
         "thread",
         "turnsBackwardsCursor",
     }
+    if profile.release == CURRENT_RELEASE:
+        allowed.add("disabledPluginIds")
+        if value.get("disabledPluginIds") != []:
+            raise CodexBodyError("app_server_policy_drift")
     required = {
         "approvalPolicy",
         "approvalsReviewer",
@@ -3779,7 +3839,7 @@ def _verify_matrix_mcp(
     release: str = CODEX_VERSION,
 ) -> None:
     contract = release_contract(release)
-    successor = contract.version == SUCCESSOR_RELEASE.version
+    successor = contract.version in (SUCCESSOR_RELEASE.version, CURRENT_RELEASE.version)
     if not {"data"} <= set(value) or not set(value) <= {"data", "nextCursor"}:
         raise CodexBodyError("matrix_mcp_inventory_invalid")
     if value.get("nextCursor") is not None:
@@ -3792,6 +3852,8 @@ def _verify_matrix_mcp(
     allowed = {*required, "serverInfo"}
     if successor:
         required.update({"serverInfo", "runtimeStatus", "pluginId", "toolsError"})
+        if contract == CURRENT_RELEASE:
+            required.update({"httpOrigin", "serverCapabilities"})
         allowed = set(required)
     if (
         not required <= set(server)
@@ -3806,6 +3868,16 @@ def _verify_matrix_mcp(
         or server["authStatus"] != "unsupported"
         or server["serverInfo"] is None
         or server["resourceTemplates"] != []
+    ):
+        raise CodexBodyError("matrix_mcp_not_ready")
+    if contract == CURRENT_RELEASE and (
+        server["httpOrigin"] is not None
+        or server["serverCapabilities"]
+        != {
+            "experimental": {},
+            "resources": {"subscribe": False, "listChanged": False},
+            "tools": {"listChanged": False},
+        }
     ):
         raise CodexBodyError("matrix_mcp_not_ready")
     if successor:
@@ -4247,7 +4319,7 @@ class CodexBodyAdapter:
         if (
             metadata["id"] != pending["thread_id"]
             or metadata["sessionId"] != pending["session_tree_id"]
-            or metadata["cliVersion"] != SUCCESSOR_RELEASE.version
+            or metadata["cliVersion"] != self.plan.value["codex"]["version"]
             or metadata["modelProvider"] != self.plan.value["codex"]["provider"]
             or metadata["cwd"] != os.fspath(self.plan.workspace)
             or metadata["ephemeral"] is not False
@@ -4724,7 +4796,11 @@ def verify_compatibility_bundle(
         "schema": (
             COMPATIBILITY_SCHEMA
             if contract == HISTORICAL_RELEASE
-            else "dm.codex-body.compatibility/v2"
+            else (
+                "dm.codex-body.compatibility/v3"
+                if contract == CURRENT_RELEASE
+                else "dm.codex-body.compatibility/v2"
+            )
         ),
         "codex_version": contract.version,
         "codex_binary_sha256": binary_hash,
@@ -4747,12 +4823,21 @@ def parser() -> argparse.ArgumentParser:
     contract.add_argument("--typescript-dir", type=Path, required=True)
     contract.add_argument(
         "--release",
-        choices=(HISTORICAL_RELEASE.version, SUCCESSOR_RELEASE.version),
+        choices=(
+            HISTORICAL_RELEASE.version,
+            SUCCESSOR_RELEASE.version,
+            CURRENT_RELEASE.version,
+        ),
         default=CODEX_VERSION,
     )
     plan = commands.add_parser("plan-check")
     plan.add_argument("--document", type=Path, required=True)
     plan_create = commands.add_parser("plan-create")
+    plan_create.add_argument(
+        "--release",
+        choices=(SUCCESSOR_RELEASE.version, CURRENT_RELEASE.version),
+        default=SUCCESSOR_RELEASE.version,
+    )
     plan_create.add_argument("--bootstrap", type=Path, required=True)
     plan_create.add_argument("--model", required=True)
     plan_create.add_argument("--provider", required=True)
@@ -5114,7 +5199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reasoning_effort=args.reasoning_effort,
                 full_access=args.full_access,
                 workspace_ref=args.workspace_ref,
-                release=SUCCESSOR_RELEASE.version,
+                release=args.release,
                 skill_packages=_json_load(
                     _read_secure_file(
                         args.skill_packages, "owner_skill_inventory_rejected"

@@ -39,12 +39,15 @@ from tools.generate_dm074_profiles import (  # noqa: E402
 )
 
 
-def contracts_schema() -> dict[str, Any]:
+def contracts_schema(
+    release: body.CodexReleaseContract = body.SUCCESSOR_RELEASE,
+) -> dict[str, Any]:
+    wire = 3 if release == body.CURRENT_RELEASE else 2
     schema = copy.deepcopy(historical_schema())
     schema["$id"] = (
-        "https://schemas.altermundi.net/daimon-matrix/codex/v2/contracts.schema.json"
+        f"https://schemas.altermundi.net/daimon-matrix/codex/v{wire}/contracts.schema.json"
     )
-    schema["title"] = "Daimon Matrix Codex 0.155.1 successor contracts"
+    schema["title"] = f"Daimon Matrix Codex {release.version} successor contracts"
     definitions = schema["$defs"]
     definitions.pop("observation")
     bootstrap = definitions["bootstrap"]
@@ -77,13 +80,12 @@ def contracts_schema() -> dict[str, Any]:
         ]
     }
     bootstrap["required"].append("attestation")
-    release = body.SUCCESSOR_RELEASE
     replacements = {
         body.CODEX_VERSION: release.version,
         body.CODEX_BINARY_SHA256: release.binary_sha256,
         body.APP_SERVER_SCHEMA_DIGEST: release.schema_digest,
         body.APP_SERVER_TYPESCRIPT_DIGEST: release.typescript_digest,
-        "1.0.0": "2.0.0",
+        "1.0.0": f"{wire}.0.0",
     }
 
     def replace(value: Any) -> None:
@@ -98,7 +100,7 @@ def contracts_schema() -> dict[str, Any]:
                         "codex-launch-receipt",
                     ):
                         value[key] = value[key].replace(
-                            f"dm:{kind}:v1:", f"dm:{kind}:v2:"
+                            f"dm:{kind}:v1:", f"dm:{kind}:v{wire}:"
                         )
                 else:
                     replace(item)
@@ -115,7 +117,9 @@ def contracts_schema() -> dict[str, Any]:
         "compatibility",
     ):
         old = definitions[kind]["properties"]["schema"]["const"]
-        definitions[kind]["properties"]["schema"]["const"] = old.replace("/v1", "/v2")
+        definitions[kind]["properties"]["schema"]["const"] = old.replace(
+            "/v1", f"/v{wire}"
+        )
     plan = definitions["plan"]["properties"]
     plan["bootstrap"] = {
         "oneOf": [
@@ -379,13 +383,16 @@ def contracts_schema() -> dict[str, Any]:
 def codec_profile(plan: dict[str, Any]) -> dict[str, Any]:
     """Path-free synthetic file hashes; this is not an installed profile."""
     bootstrap = plan["bootstrap"]
-    release = body.SUCCESSOR_RELEASE
+    profile = body._profile_contract(plan)
+    release = profile.release
+    wire = profile.wire_version
     core = {
-        "schema": "dm.codex-body.profile-manifest/v2",
+        "schema": f"dm.codex-body.profile-manifest/v{wire}",
         "plan_hash": hashlib.sha256(
-            b"daimon/codex-body/plan/v2\x00" + canonical_bytes(plan)
+            f"daimon/codex-body/plan/v{wire}\x00".encode("ascii")
+            + canonical_bytes(plan)
         ).hexdigest(),
-        "adapter_version": "2.0.0",
+        "adapter_version": f"{wire}.0.0",
         "codex_version": release.version,
         "codex_binary_sha256": release.binary_sha256,
         "matrix_mcp_binary_sha256": hashlib.sha256(b"synthetic-mcp").hexdigest(),
@@ -413,7 +420,9 @@ def codec_profile(plan: dict[str, Any]) -> dict[str, Any]:
     return {
         **core,
         "profile_id": body._derived(
-            "dm:codex-profile:v2:", b"daimon/codex-body/profile/v2\x00", core
+            f"dm:codex-profile:v{wire}:",
+            f"daimon/codex-body/profile/v{wire}\x00".encode("ascii"),
+            core,
         ),
     }
 
@@ -421,15 +430,17 @@ def codec_profile(plan: dict[str, Any]) -> dict[str, Any]:
 def codec_launch(
     plan: dict[str, Any], manifest: dict[str, Any], handle: dict[str, Any]
 ) -> dict[str, Any]:
-    release = body.SUCCESSOR_RELEASE
+    profile = body._profile_contract(plan)
+    release = profile.release
+    wire = profile.wire_version
     core = {
-        "schema": "dm.codex-body.launch-receipt/v2",
+        "schema": f"dm.codex-body.launch-receipt/v{wire}",
         "outcome": "started",
         "observed_at_ms": handle["observed_at_ms"],
         "profile_id": manifest["profile_id"],
         "plan_hash": manifest["plan_hash"],
         "compatibility": {
-            "adapter_version": "2.0.0",
+            "adapter_version": f"{wire}.0.0",
             "codex_version": release.version,
             "codex_binary_sha256": release.binary_sha256,
             "app_server_schema_digest": release.schema_digest,
@@ -473,15 +484,18 @@ def codec_launch(
         {
             **core,
             "receipt_id": body._derived(
-                "dm:codex-launch-receipt:v2:",
-                b"daimon/codex-body/launch-receipt/v2\x00",
+                f"dm:codex-launch-receipt:v{wire}:",
+                f"daimon/codex-body/launch-receipt/v{wire}\x00".encode("ascii"),
                 core,
             ),
         }
     )
 
 
-def outputs() -> dict[Path, bytes]:
+def outputs(
+    release: body.CodexReleaseContract = body.SUCCESSOR_RELEASE,
+) -> dict[Path, bytes]:
+    wire = 3 if release == body.CURRENT_RELEASE else 2
     fixture = MatrixBindingTests()
     fixture.setUp()
     try:
@@ -509,11 +523,11 @@ def outputs() -> dict[Path, bytes]:
             provider="openai",
             workspace_ref="dm:workspace:v1:"
             + b64url(hashlib.sha256(b"codex-v2-workspace").digest()),
-            release="0.155.1",
+            release=release.version,
         )
         manifest = codec_profile(plan)
         handle_core = {
-            "schema": "dm.codex-body.runtime-handle/v2",
+            "schema": f"dm.codex-body.runtime-handle/v{wire}",
             "generation": 0,
             "previous_handle_id": None,
             **{
@@ -531,7 +545,7 @@ def outputs() -> dict[Path, bytes]:
             },
             "profile_id": manifest["profile_id"],
             "plan_hash": manifest["plan_hash"],
-            "codex_version": "0.155.1",
+            "codex_version": release.version,
             "thread_id": "synthetic-native-thread",
             "session_tree_id": "synthetic-native-session",
             "turn_id": None,
@@ -542,16 +556,16 @@ def outputs() -> dict[Path, bytes]:
             {
                 **handle_core,
                 "handle_id": body._derived(
-                    "dm:codex-handle:v2:",
-                    b"daimon/codex-body/runtime-handle/v2\x00",
+                    f"dm:codex-handle:v{wire}:",
+                    f"daimon/codex-body/runtime-handle/v{wire}\x00".encode("ascii"),
                     handle_core,
                 ),
             }
         )
         active_core = {**handle_core, "state": "active"}
         active_id = body._derived(
-            "dm:codex-handle:v2:",
-            b"daimon/codex-body/runtime-handle/v2\x00",
+            f"dm:codex-handle:v{wire}:",
+            f"daimon/codex-body/runtime-handle/v{wire}\x00".encode("ascii"),
             active_core,
         )
         turning_core = {
@@ -565,8 +579,8 @@ def outputs() -> dict[Path, bytes]:
             {
                 **turning_core,
                 "handle_id": body._derived(
-                    "dm:codex-handle:v2:",
-                    b"daimon/codex-body/runtime-handle/v2\x00",
+                    f"dm:codex-handle:v{wire}:",
+                    f"daimon/codex-body/runtime-handle/v{wire}\x00".encode("ascii"),
                     turning_core,
                 ),
             }
@@ -691,41 +705,44 @@ def outputs() -> dict[Path, bytes]:
         }
     finally:
         fixture.tearDown()
-    vector_root = ROOT / "vectors/codex/v2"
+    vector_root = ROOT / f"vectors/codex/v{wire}"
     result = {
-        ROOT / "schemas/codex/v2/contracts.schema.json": json_bytes(contracts_schema())
+        ROOT / f"schemas/codex/v{wire}/contracts.schema.json": json_bytes(
+            contracts_schema(release)
+        )
     }
-    candidate = codex_successor_candidate()
-    result[vector_root / "adoption/profile.json"] = json_bytes(candidate)
-    result[vector_root / "adoption/report.json"] = json_bytes(
-        codex_successor_report(candidate)
-    )
-    result[vector_root / "adoption/sources.json"] = json_bytes(
-        {
-            "schema": "dm.harness-source-inventory/v0",
-            "accessed_on": "2026-10-03",
-            "sources": [
-                {
-                    "source_id": "codex-0-155-1-candidate",
-                    "owner": "AlterMundi",
-                    "title": "Exact Codex 0.155.1 provenance and acceptance",
-                    "url": "provenance/codex-cli-0.155.1.json",
-                    "pin": "rust-v0.155.1/be2951ea34f0d295ed0becf97079f92fa5f6950e",
-                    "content_digest": "sha256:"
-                    + hashlib.sha256(
-                        (ROOT / "provenance/codex-cli-0.155.1.json").read_bytes()
-                    ).hexdigest(),
-                    "accessed_on": "2026-10-03",
-                }
-            ],
-        }
-    )
+    if release == body.SUCCESSOR_RELEASE:
+        candidate = codex_successor_candidate()
+        result[vector_root / "adoption/profile.json"] = json_bytes(candidate)
+        result[vector_root / "adoption/report.json"] = json_bytes(
+            codex_successor_report(candidate)
+        )
+        result[vector_root / "adoption/sources.json"] = json_bytes(
+            {
+                "schema": "dm.harness-source-inventory/v0",
+                "accessed_on": "2026-10-03",
+                "sources": [
+                    {
+                        "source_id": "codex-0-155-1-candidate",
+                        "owner": "AlterMundi",
+                        "title": "Exact Codex 0.155.1 provenance and acceptance",
+                        "url": "provenance/codex-cli-0.155.1.json",
+                        "pin": "rust-v0.155.1/be2951ea34f0d295ed0becf97079f92fa5f6950e",
+                        "content_digest": "sha256:"
+                        + hashlib.sha256(
+                            (ROOT / "provenance/codex-cli-0.155.1.json").read_bytes()
+                        ).hexdigest(),
+                        "accessed_on": "2026-10-03",
+                    }
+                ],
+            }
+        )
     for name, value in values.items():
         result[vector_root / name] = json_bytes(value)
     result[vector_root / "index.json"] = json_bytes(
         {
-            "schema": "dm.codex-body.vector-index/v2",
-            "codex_version": "0.155.1",
+            "schema": f"dm.codex-body.vector-index/v{wire}",
+            "codex_version": release.version,
             "scope": (
                 "public deterministic signed fixture and synthetic codec records; "
                 "no native launch or live authority proof"

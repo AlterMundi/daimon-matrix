@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "src" / "daimon_matrix"
 GENERATORS = (
     "generate_codex_0155_vectors.py",
+    "generate_codex_0160_vectors.py",
     "generate_dm036_vectors.py",
     "generate_dm041_vectors.py",
     "generate_dm042_vectors.py",

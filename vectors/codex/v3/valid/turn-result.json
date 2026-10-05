@@ -1,0 +1,18 @@
+{
+  "intent_id": "dm:codex-turn-intent:v1:FJ2oGE_nobzcQqGwbjTRaclv2CCWKACLFd3qPc86Vjs",
+  "native_turn": {
+    "id": "synthetic-native-turn",
+    "items": [
+      {
+        "id": "synthetic-answer",
+        "text": "Synthetic native result",
+        "type": "agentMessage"
+      }
+    ],
+    "status": "completed"
+  },
+  "pending_handle_id": "dm:codex-handle:v3:p0tKm3xALPJuCxGUqQsE9-EqJrw_9w6E-N8IzRbhljs",
+  "request_id": "00000205-0000-4000-8000-000000000003",
+  "result_id": "dm:codex-turn-result:v1:kiGqlkEPFicRAQ-rIHoc4d12ZBKfKDQWPFGDS6lThvQ",
+  "schema": "dm.codex-body.turn-result/v1"
+}
