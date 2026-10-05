@@ -167,7 +167,8 @@ answering it.
 A successful owner RPC is not proof every sibling received the message. Inspect
 `deliveries`: `delivered` carries the sibling's authenticated signed receipt;
 `rejected` records a definite carrier refusal; `undetermined` records a timeout
-or ambiguous carrier result. An unavailable sibling does not interrupt attempts
+or ambiguous carrier result. Local busy/conflicting requests are also
+`undetermined`: they cannot prove what an earlier attempt delivered. An unavailable sibling does not interrupt attempts
 to the remaining signed audience. Malformed or forged receipts still fail closed.
 No status authorizes a reply or an automatic retry.
 

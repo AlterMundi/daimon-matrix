@@ -51,6 +51,8 @@ from .messaging import MessagingChannel, MessagingDelivery
 from .peer_transport import (
     PeerClientContext,
     PeerTransportAmbiguous,
+    PeerTransportBusy,
+    PeerTransportConflict,
     PeerTransportError,
 )
 from .projections import ProjectionEngine, ProjectionError
@@ -2288,7 +2290,11 @@ class HostedWeave:
                     correlation_id=converse_id,
                     deadline_ms=_uint(self.clock()) + WE_CONVERSE_DEADLINE_MS,
                 )
-            except PeerTransportAmbiguous as exception:
+            except (
+                PeerTransportAmbiguous,
+                PeerTransportBusy,
+                PeerTransportConflict,
+            ) as exception:
                 raise WeDeliveryError(
                     state="undetermined", code="peer_transport_ambiguous"
                 ) from exception

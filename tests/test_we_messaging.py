@@ -18,7 +18,12 @@ from daimon_matrix.identity import (
 )
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import create_capability
-from daimon_matrix.peer_transport import PeerTransportAmbiguous, PeerTransportError
+from daimon_matrix.peer_transport import (
+    PeerTransportAmbiguous,
+    PeerTransportBusy,
+    PeerTransportConflict,
+    PeerTransportError,
+)
 from daimon_matrix.scopes import ScopeResolver
 from daimon_matrix.sealed import (
     DisclosureAuthorization,
@@ -616,9 +621,11 @@ class WeLaneTests(SealedFixture):
             not_before_ms=NOW - 100,
             not_after_ms=NOW + 100_000,
         )
-        for state, code in (
-            ("rejected", "peer_transport_rejected"),
-            ("undetermined", "peer_transport_ambiguous"),
+        for state, code, refusal in (
+            ("rejected", "peer_transport_rejected", PeerTransportError),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportAmbiguous),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportBusy),
+            ("undetermined", "peer_transport_ambiguous", PeerTransportConflict),
         ):
             attempts: list[str] = []
 
@@ -626,13 +633,11 @@ class WeLaneTests(SealedFixture):
                 embodiment_id: str,
                 *,
                 attempts: list[str] = attempts,
-                state: str = state,
+                refusal: type[PeerTransportError] = refusal,
             ) -> Any:
                 attempts.append(embodiment_id)
                 if embodiment_id == offline:
-                    if state == "undetermined":
-                        raise PeerTransportAmbiguous()
-                    raise PeerTransportError()
+                    raise refusal()
                 return None, SimpleNamespace(
                     call=lambda payload, **_kwargs: receiver.intake(payload)
                 )
