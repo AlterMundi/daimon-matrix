@@ -279,16 +279,14 @@ def load_owner_visibility(
             or type(disclosure["issued_at_ms"]) is not int
             or not 0 <= disclosure["issued_at_ms"] < 2**52
             or disclosure["scope_sha256"] != _digest(canonical_bytes(scope))
-            or scope["mode"] != "all-inter-daimon-communications"
+            or scope["mode"] not in VISIBILITY_SCOPE_RISKS
             or scope["projected_content"] != "complete-plaintext-content-and-metadata"
             or not isinstance(channels, list)
             or not channels
             or not isinstance(participants, list)
             or participants != sorted(set(participants))
             or owner_actor not in participants
-            or disclosure["risk"]
-            != "all-inter-daimon-communication-will-be-posted-as-plaintext-"
-            "to-the-fixed-telegram-destination"
+            or disclosure["risk"] != VISIBILITY_SCOPE_RISKS.get(scope["mode"])
         ):
             raise ValueError
         disclosed_participants: set[str] = set()
@@ -431,6 +429,9 @@ def load_owner_visibility(
             installation_digest=installation_sha256,
             owner_actor=owner_actor,
             verify_owner_binding=verify_owner_binding,
+            mirror_sibling_conversations=(
+                scope["mode"] == "all-inter-daimon-and-sibling-conversations"
+            ),
         )
     except NativeEgressError:
         raise
@@ -472,12 +473,27 @@ def load_owner_visibility_file(
 
 # One being's own `/we` lane: scope resolution, state convergence and sibling
 # conversation between its embodiments. These paths never carry an inter-daimon
-# logical message, so the mandatory inter-daimon mirror does not apply to them.
+# logical message. Scope/sync stay private; conversation may be explicitly
+# selected by a verified signed owner disclosure for a confirmed mirror.
 # The lane is not a bypass flag: it is derived from the catalog's own
 # authoritative store tables, it stays authorized and digest-bound, every
 # operation is still journaled with a release count, and every event remains in
 # the being's ledger where an operator can read it on request. Inter-daimon
 # message and evidence egress keeps its confirmed echo.
+VISIBILITY_SCOPE_RISKS: Final[dict[str, str]] = {
+    "all-inter-daimon-communications": (
+        "all-inter-daimon-communication-will-be-posted-as-plaintext-"
+        "to-the-fixed-telegram-destination"
+    ),
+    "all-inter-daimon-and-sibling-conversations": (
+        "all-inter-daimon-communication-and-sibling-conversations-will-be-posted-"
+        "as-plaintext-to-the-fixed-telegram-destination"
+    ),
+}
+SIBLING_CONVERSATION_PATHS: Final[frozenset[str]] = frozenset(
+    {"peer-converse-request", "peer-converse-response"}
+)
+
 INTRA_BEING_LANE_PATHS: Final[frozenset[str]] = frozenset(
     {
         "peer-scope-request",
@@ -701,6 +717,7 @@ class MandatoryEgressController:
         installation_digest: str | None = None,
         owner_actor: str | None = None,
         verify_owner_binding: OwnerBindingVerifier | None = None,
+        mirror_sibling_conversations: bool = False,
     ) -> None:
         if not isinstance(proof_key, bytes) or len(proof_key) != 32:
             raise NativeEgressError("egress_proof_key_invalid")
@@ -719,6 +736,12 @@ class MandatoryEgressController:
             or verify_owner_binding is None
         ):
             raise NativeEgressError("egress_installation_invalid")
+        if type(mirror_sibling_conversations) is not bool or (
+            mirror_sibling_conversations
+            and (transport is None or installation_digest is None)
+        ):
+            raise NativeEgressError("egress_installation_invalid")
+        self._mirror_sibling_conversations = mirror_sibling_conversations
         self._installation_digest = installation_digest
         self._owner_actor = owner_actor
         self._verify_owner_binding = verify_owner_binding
@@ -751,6 +774,11 @@ class MandatoryEgressController:
         if self._owner_actor is None:
             raise NativeEgressError("egress_recovery_unavailable")
         return self._owner_actor
+
+    @property
+    def mirror_sibling_conversations(self) -> bool:
+        """Derived from the verified owner disclosure, never from an RPC flag."""
+        return self._mirror_sibling_conversations
 
     @property
     def release_enabled(self) -> bool:
@@ -1713,7 +1741,10 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_operation_mismatch")
         if not self._authorize(binding, catalog):
             raise NativeEgressError("egress_authority_blocked")
-        if binding.path_id in INTRA_BEING_LANE_PATHS:
+        if binding.path_id in INTRA_BEING_LANE_PATHS and not (
+            self._mirror_sibling_conversations
+            and binding.path_id in SIBLING_CONVERSATION_PATHS
+        ):
             nonce = str(uuid.uuid4())
             self._live_permits.add(nonce)
             return ReleasePermit(binding, nonce, self._permit_marker)

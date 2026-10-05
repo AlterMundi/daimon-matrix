@@ -44,13 +44,19 @@ from .native_egress import (
     native_projection,
 )
 from .scopes import ScopeExchangeStore, ScopeResolver, serve_scope_request
-from .sealed import RecipientTarget, SealedDeliveryError, recipient_descriptor
+from .sealed import (
+    DeliveryCustody,
+    RecipientTarget,
+    SealedDeliveryError,
+    recipient_descriptor,
+)
 from .sync import SyncEngine
 from .we_messaging import (
     WE_MESSAGE_CONTENT_TYPE,
     WE_RECEIPT_CONTENT_TYPE,
     WeConversation,
     WeLaneError,
+    open_we_conversation_for_projection,
 )
 from .weave import EventSigner, RootAuthority, WeaveProtocolError
 
@@ -96,6 +102,54 @@ RESPONSE_EGRESS: Final = {
 REQUEST_CONTENT_TYPES: Final = frozenset(REQUEST_EGRESS)
 RESPONSE_CONTENT_TYPES: Final = frozenset(RESPONSE_EGRESS)
 _SUITE: Final = Suite(KEM.X25519, KDF.HKDF_SHA256, AEAD.CHACHA20_POLY1305)
+
+
+def _conversation_projection(
+    native: bytes,
+    *,
+    controller: MandatoryEgressController,
+    payload: Mapping[str, Any],
+    authority: RootAuthority,
+    local_target: RecipientTarget,
+    custody: PeerCustody,
+    at_ms: int,
+    operation_id: str,
+    sender: str,
+    recipient: str,
+    thread_id: str,
+    stage: str,
+    mirror_recipient: str | None = None,
+) -> Mapping[str, Any]:
+    projection = native_projection(
+        operation_id=operation_id,
+        native=native,
+        sender=sender,
+        recipient=recipient,
+        thread_id=thread_id,
+        kind="authorization-control",
+        stage=stage,
+    )
+    if stage != "converse" or not controller.mirror_sibling_conversations:
+        return projection
+    # Reuse the sealed lane's complete authority/evidence/carrier checks. The
+    # private unwrap operation is shared; no signing operation is used here.
+    opened = open_we_conversation_for_projection(
+        payload,
+        authority=authority,
+        local_credential_id=local_target.credential_id,
+        custody=cast(DeliveryCustody, custody),
+        at_ms=at_ms,
+    )
+    message = opened["message"]
+    projection.update(
+        event_id=message["event_id"],
+        sender=message["being_ref"] + "/" + message["origin"]["embodiment_id"],
+        recipients=[mirror_recipient or recipient],
+        thread_id=message["payload"]["intent"]["thread_id"],
+        kind="message",
+        content={"text": message["payload"]["body"]["text"]},
+    )
+    return projection
 
 
 class PeerTransportError(ValueError):
@@ -1343,13 +1397,19 @@ class PeerDispatcher:
                     path_id=RESPONSE_EGRESS[response_type][0],
                     deadline_ms=opened.expires_at_ms,
                     authority_head=self.authority.state.head,
-                    projection=lambda native: native_projection(
+                    projection=lambda native: _conversation_projection(
+                        controller=self.egress,
+                        payload=opened.payload,
+                        authority=self.authority,
+                        local_target=self.local_target,
+                        custody=self.custody,
+                        at_ms=now,
                         operation_id=opened.envelope_id,
                         native=native,
                         sender=self.authority.state.being_ref,
                         recipient=opened.sender["credential_id"],
+                        mirror_recipient=self.local_target.credential_id,
                         thread_id=opened.correlation_id,
-                        kind="authorization-control",
                         stage=RESPONSE_EGRESS[response_type][1],
                     ),
                 ),
@@ -1523,13 +1583,19 @@ class PeerClient:
             path_id=REQUEST_EGRESS[request_content_type][0],
             deadline_ms=deadline,
             authority_head=self.authority.state.head,
-            projection=lambda native: native_projection(
+            projection=lambda native: _conversation_projection(
+                controller=self.egress,
+                payload=payload,
+                authority=self.authority,
+                local_target=self.local_target,
+                custody=self.custody,
+                at_ms=now,
                 operation_id=logical_request_id,
                 native=native,
                 sender=self.authority.state.being_ref,
                 recipient=current_target.authority.state.being_ref,
+                mirror_recipient=current_recipient["credential_id"],
                 thread_id=correlation_id,
-                kind="authorization-control",
                 stage=REQUEST_EGRESS[request_content_type][1],
             ),
             target_credential_id=current_recipient["credential_id"],

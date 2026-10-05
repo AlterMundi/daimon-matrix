@@ -229,6 +229,43 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             clock=lambda: 1_900_000_000_001,
         )
 
+    def _sibling_document(self) -> dict[str, Any]:
+        document = copy.deepcopy(self.document)
+        disclosure = document["disclosure"]
+        disclosure["scope"]["mode"] = "all-inter-daimon-and-sibling-conversations"
+        disclosure["risk"] = (
+            "all-inter-daimon-communication-and-sibling-conversations-will-be-posted-"
+            "as-plaintext-to-the-fixed-telegram-destination"
+        )
+        disclosure["scope_sha256"] = self._digest(disclosure["scope"])
+        acceptance = document["acceptance_set"]
+        acceptance["disclosure_sha256"] = self._digest(disclosure)
+        acceptance["bindings"] = [
+            self._binding(participant, disclosure)
+            for participant in disclosure["participants"]
+        ]
+        document["policy"]["acceptance_digest"] = self._digest(acceptance)
+        return document
+
+    def test_sibling_mirror_requires_signed_scope_and_acceptances(
+        self,
+    ) -> None:
+        self.assertFalse(self._load(self.document).mirror_sibling_conversations)
+        self.assertTrue(
+            self._load(self._sibling_document()).mirror_sibling_conversations
+        )
+        for change in ("risk", "acceptance"):
+            document = self._sibling_document()
+            if change == "risk":
+                document["disclosure"]["risk"] = self.disclosure["risk"]
+            else:
+                document["acceptance_set"] = self.document["acceptance_set"]
+                document["policy"]["acceptance_digest"] = self._digest(
+                    document["acceptance_set"]
+                )
+            with self.subTest(change=change), self.assertRaises(NativeEgressError):
+                self._load(document)
+
     def test_owner_signed_installation_loads_offline_and_binds_all_inputs(self) -> None:
         controller = self._load(self.document)
 
@@ -391,6 +428,69 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
             authorize=lambda _binding: self.current,
         )
         self.controller.register_path("peer-scope-request", "integration-native")
+
+    def _enable_sibling_mirror(self) -> None:
+        self.controller = MandatoryEgressController(
+            policy=POLICY,
+            proof_key=b"k" * 32,
+            transport=self.transport,
+            clock=lambda: self.now,
+            catalog_mode="synthetic",
+            installation_digest="1" * 64,
+            owner_actor="dm:being:owner",
+            verify_owner_binding=self._verify_owner,
+            mirror_sibling_conversations=True,
+        )
+        self.controller.register_catalog(
+            catalog_id="integration-native",
+            path=self.path,
+            resolve=self._resolve,
+            authorize=lambda _binding: self.current,
+        )
+        for path in (
+            "peer-scope-request",
+            "peer-scope-response",
+            "peer-sync-request",
+            "peer-sync-response",
+            "peer-converse-request",
+            "peer-converse-response",
+        ):
+            self.controller.register_path(path, "integration-native")
+
+    def test_sibling_mirror_confirms_conversations_and_exempts_sync(
+        self,
+    ) -> None:
+        self._enable_sibling_mirror()
+        for path in (
+            "peer-scope-request",
+            "peer-scope-response",
+            "peer-sync-request",
+            "peer-sync-response",
+        ):
+            binding = self._admit(path, path_id=path)
+            self.controller.release(binding, b"native-request", lambda value: value)
+        self.assertEqual(self.transport.calls, [])
+        for path in ("peer-converse-request", "peer-converse-response"):
+            binding = self._admit(path, path_id=path)
+            native_calls: list[bytes] = []
+            self.controller.release(binding, b"native-request", native_calls.append)
+            self.assertEqual(native_calls, [b"native-request"])
+            self.assertEqual(self.controller.inspect(binding)["state"], "confirmed")
+            posted = len(self.transport.calls)
+            self.controller.release(binding, b"native-request", native_calls.append)
+            self.assertEqual(len(self.transport.calls), posted)
+        self.current = False
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(binding, b"native-request", lambda _value: None)
+
+    def test_sibling_opt_in_blocks_native_effect_when_mirror_fails(self) -> None:
+        self._enable_sibling_mirror()
+        self.transport.send = lambda _request: b'{"ok":false,"error_code":403}'
+        binding = self._admit("refused-converse", path_id="peer-converse-request")
+        native_calls: list[bytes] = []
+        with self.assertRaises(NativeEgressError):
+            self.controller.release(binding, b"native-request", native_calls.append)
+        self.assertEqual(native_calls, [])
 
     def _resolve(self, locator: str) -> bytes:
         with closing(sqlite3.connect(self.path)) as database:

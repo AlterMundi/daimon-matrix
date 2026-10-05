@@ -17,10 +17,10 @@ answer is visible as such instead of being silently ambiguous.
 
 The lane is not a bypass of anything. Events are ordinary signed ledger events,
 sealed per recipient with the existing root-bound delivery profile, and every
-recipient authors its own receipt. What the lane does not do is post one being's
-internal conversation to a shared human channel: the mandatory inter-daimon mirror
-covers message, evidence, intake-result and route-submission egress, and this lane
-is inventoried as intra-being in `docs/mandatory-telegram-visibility.md`.
+recipient authors its own receipt. Internal conversation is private by default;
+an explicit owner-signed visibility disclosure may select its Telegram mirror.
+Scope and state convergence remain private in either mode. The path inventory
+and disclosure contract live in `docs/mandatory-telegram-visibility.md`.
 """
 
 from __future__ import annotations
@@ -334,6 +334,49 @@ def open_we_conversation(
     message addressed to nobody inside that audience, or a sender that is not an
     active sibling all fail closed.
     """
+    return _open_we_conversation(
+        payload,
+        authority=authority,
+        local_credential_id=local_credential_id,
+        custody=custody,
+        at_ms=at_ms,
+        include_author=False,
+    )
+
+
+def open_we_conversation_for_projection(
+    payload: Mapping[str, Any],
+    *,
+    authority: RootAuthority,
+    local_credential_id: str,
+    custody: DeliveryCustody,
+    at_ms: int,
+) -> dict[str, Any]:
+    """Read the authenticated carrier copy for an explicit owner mirror.
+
+    The author belongs to the sealed carrier set and may decrypt its own copy.
+    This function neither intakes a message nor authors a receipt; normal intake
+    still rejects the author and requires membership in the sibling audience.
+    """
+    return _open_we_conversation(
+        payload,
+        authority=authority,
+        local_credential_id=local_credential_id,
+        custody=custody,
+        at_ms=at_ms,
+        include_author=True,
+    )
+
+
+def _open_we_conversation(
+    payload: Mapping[str, Any],
+    *,
+    authority: RootAuthority,
+    local_credential_id: str,
+    custody: DeliveryCustody,
+    at_ms: int,
+    include_author: bool,
+) -> dict[str, Any]:
     if not isinstance(payload, Mapping) or set(payload) != {
         "envelope",
         "resolution",
@@ -358,7 +401,7 @@ def open_we_conversation(
         resolution, message_id=message_id, local_embodiment_id=sender_embodiment
     )
     local_embodiment = _local_embodiment(authority, local_credential_id)
-    if local_embodiment == sender_embodiment:
+    if local_embodiment == sender_embodiment and not include_author:
         raise WeLaneError("we_lane_sender_is_local")
     targets = we_sealed_targets(authority, resolution, message_id)
     authorized_at_ms = _uint(resolution["occurred_at_ms"], "we_lane_resolution_invalid")
@@ -398,7 +441,9 @@ def open_we_conversation(
     if not isinstance(addressees, list) or not addressees:
         raise WeLaneError("we_lane_addressee_empty")
     known = {row["recipient_id"] for row in audience}
-    if local_embodiment not in known:
+    if local_embodiment not in known and not (
+        include_author and local_embodiment == sender_embodiment
+    ):
         raise WeLaneError("we_lane_not_in_audience")
     validated = we_addressees(audience, [str(row) for row in addressees])
     if message["origin"]["embodiment_id"] != sender_embodiment:

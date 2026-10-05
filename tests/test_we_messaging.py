@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import unittest
 import uuid
 from typing import Any
@@ -19,6 +20,7 @@ from daimon_matrix.we_messaging import (
     WeConversation,
     WeLaneError,
     open_we_conversation,
+    open_we_conversation_for_projection,
     seal_we_message,
     we_addressees,
     we_audience,
@@ -264,6 +266,37 @@ class WeLaneTests(SealedFixture):
         self.assertEqual(receipt["thread_id"], thread_id)
         self.assertEqual(receipt["message_ref"]["event_id"], message["event_id"])
         self.assertEqual(receipt["resolution_ref"]["event_id"], resolution["event_id"])
+
+    def test_projection_preserves_carrier_authorization(self) -> None:
+        message, _resolution, _thread, payload, _opened = self.send_and_receive()
+        projected = open_we_conversation_for_projection(
+            payload,
+            authority=self.authority,
+            local_credential_id=self.targets["daimonmatrix"].credential_id,
+            custody=self.custodies["daimonmatrix"],
+            at_ms=NOW + 2,
+        )
+        self.assertEqual(projected["message"], message)
+        # This historical fixture excludes the author from its signed carrier.
+        # Projection must not invent an entry even though the author has keys.
+        with self.assertRaises(SealedDeliveryError):
+            open_we_conversation_for_projection(
+                payload,
+                authority=self.authority,
+                local_credential_id=self.targets["legion"].credential_id,
+                custody=self.custodies["legion"],
+                at_ms=NOW + 2,
+            )
+        bad = copy.deepcopy(payload)
+        bad["resolution"]["content_hash"] = "0" * 64
+        with self.assertRaises(ValueError):
+            open_we_conversation_for_projection(
+                bad,
+                authority=self.authority,
+                local_credential_id=self.targets["legion"].credential_id,
+                custody=self.custodies["legion"],
+                at_ms=NOW + 2,
+            )
 
     def test_sender_cannot_receive_its_own_message(self) -> None:
         message, resolution, _thread, _payload, _opened = self.send_and_receive()
