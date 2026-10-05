@@ -3896,8 +3896,30 @@ def _thread_result(
     }
     if profile.release == CURRENT_RELEASE:
         allowed.add("disabledPluginIds")
+        allowed.add("collaborationMode")
         if value.get("disabledPluginIds") != []:
             raise CodexBodyError("app_server_policy_drift")
+        # Current resume reports its effective collaboration settings; start
+        # omits them. They must not inject instructions or change selection.
+        if value.get("collaborationMode") is not None:
+            collaboration = _closed(
+                value["collaborationMode"],
+                {"mode", "settings"},
+                "app_server_policy_drift",
+            )
+            settings = _closed(
+                collaboration["settings"],
+                {"model", "reasoning_effort", "developer_instructions"},
+                "app_server_policy_drift",
+            )
+            if (
+                collaboration["mode"] != "default"
+                or settings["model"] != plan.value["codex"]["model"]
+                or settings["reasoning_effort"]
+                != plan.value["codex"].get("reasoning_effort")
+                or settings["developer_instructions"] is not None
+            ):
+                raise CodexBodyError("app_server_policy_drift")
     required = {
         "approvalPolicy",
         "approvalsReviewer",
@@ -5068,6 +5090,11 @@ def parser() -> argparse.ArgumentParser:
     turn.add_argument("--timeout-seconds", type=int)
     turn.add_argument("--max-response-bytes", type=int)
     turn.add_argument("--retain-until-ms", type=int)
+    turn.add_argument(
+        "--recover-native-resume",
+        action="store_true",
+        help="Explicitly reconcile saved native resume before a new input",
+    )
     native.add_argument(
         "--action",
         choices=(
@@ -5097,6 +5124,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         input_text = None
         if args.command == "native-turn":
             _turn_request_uuid(args.request_id)
+            if args.recover_native_resume and (
+                args.action != "resume-turn" or args.create_profile
+            ):
+                raise CodexBodyError("codex_resume_recovery_selection_invalid")
             recovering = args.action == "recover-turn"
             selection = (
                 args.input_fd,
@@ -5284,6 +5315,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                                     raise CodexBodyError("invalid_turn_input")
                                 if args.action == "start-turn":
                                     adapter.start()
+                                elif args.recover_native_resume:
+                                    adapter.recover_resume()
                                 else:
                                     adapter.resume()
                                 result = adapter.run_turn(

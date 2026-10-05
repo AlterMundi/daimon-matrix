@@ -27,6 +27,7 @@ class CurrentProfileTests(unittest.TestCase):
         self.fixture = profile_fixture.SuccessorProfileTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
+        self.historical_plan = self.fixture.plan
         pin = replace(
             body.CURRENT_RELEASE,
             binary_sha256=hashlib.sha256(self.fixture.binary.read_bytes()).hexdigest(),
@@ -212,6 +213,73 @@ class CurrentProfileTests(unittest.TestCase):
         del response["disabledPluginIds"]
         with self.assertRaises(body.CodexBodyError):
             body._thread_result(response, fixture.plan)
+
+    def test_resume_collaboration_cannot_override_owner_selection(self) -> None:
+        response = self.fixture.thread_response()
+        response["thread"]["cliVersion"] = "0.160.0"
+        response["disabledPluginIds"] = []
+        response["collaborationMode"] = {
+            "mode": "default",
+            "settings": {
+                "model": "dm_probe",
+                "reasoning_effort": None,
+                "developer_instructions": None,
+            },
+        }
+        self.assertEqual(
+            body._thread_result(response, self.fixture.plan)[0], "native-thread"
+        )
+        for field, substitute in (("mode", "plan"), ("mode", "unknown")):
+            changed = copy.deepcopy(response)
+            changed["collaborationMode"][field] = substitute
+            with self.assertRaises(body.CodexBodyError):
+                body._thread_result(changed, self.fixture.plan)
+        for field, substitute in (
+            ("model", "foreign"),
+            ("reasoning_effort", "high"),
+            ("developer_instructions", "replace identity"),
+            ("authority", "forged"),
+        ):
+            changed = copy.deepcopy(response)
+            changed["collaborationMode"]["settings"][field] = substitute
+            with self.assertRaises(body.CodexBodyError):
+                body._thread_result(changed, self.fixture.plan)
+        changed = copy.deepcopy(response)
+        changed["collaborationMode"] = None
+        body._thread_result(changed, self.fixture.plan)
+        historical = copy.deepcopy(response)
+        historical["thread"]["cliVersion"] = "0.155.1"
+        del historical["disabledPluginIds"]
+        with self.assertRaises(body.CodexBodyError):
+            body._thread_result(historical, self.historical_plan)
+
+    def test_explicit_cli_resume_recovery_precedes_one_new_input(self) -> None:
+        cli = turn_fixture.TurnCliTests(methodName="runTest")
+        cli.setUp()
+        self.addCleanup(cli.doCleanups)
+        fixture = cli.controller.fixture
+        latest = fixture.journal.load()[-1]
+        core = {
+            key: value
+            for key, value in latest.items()
+            if key not in ("handle_id", "schema", "profile_ref")
+        }
+        fixture.journal.append({**core, "state": "resuming"})
+        original_parser = body.parser
+
+        def recovery_parser() -> Any:
+            parser = original_parser()
+            parse = parser.parse_args
+            parser.parse_args = lambda args: parse([*args, "--recover-native-resume"])
+            return parser
+
+        with mock.patch.object(body, "parser", side_effect=recovery_parser):
+            code, output, errors = cli.invoke()
+        self.assertEqual((code, errors), (0, ""))
+        result = json.loads(output)
+        self.assertEqual(result["model_inputs"], 1)
+        self.assertEqual(result["turn_status"], "completed")
+        self.assertEqual(result["handle"]["thread_id"], latest["thread_id"])
 
     def test_current_profile_and_cold_journal_are_bound_to_exact_release(self) -> None:
         fixture = self.fixture
