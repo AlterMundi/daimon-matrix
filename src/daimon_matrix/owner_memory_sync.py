@@ -393,7 +393,7 @@ def execute_native_packet(
             env=transport.environment,
             cwd=isolated_home,
             capture_output=True,
-            timeout=300,
+            timeout=900,
             check=False,
         )
         if result.returncode:
