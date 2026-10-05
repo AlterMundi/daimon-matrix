@@ -361,6 +361,28 @@ sys.exit(0 if sys.argv[4]=='pass' else 3)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertEqual(os.lseek(descriptor, 0, os.SEEK_CUR), 32)
         path.chmod(0o600)
+        fifo = self.root_path / "parent-capability-fifo"
+        os.mkfifo(fifo, 0o600)
+        fifo_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    code,
+                    str(fifo_fd),
+                    python_hash,
+                    hashlib.sha256(self.capability.key).hexdigest(),
+                    "native_capability_descriptor_unsafe",
+                ],
+                pass_fds=(fifo_fd,),
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+        finally:
+            os.close(fifo_fd)
 
     def test_native_descriptor_rejects_single_consumer_pipe(self) -> None:
         read_fd, write_fd = os.pipe()

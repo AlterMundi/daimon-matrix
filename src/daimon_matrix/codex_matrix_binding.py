@@ -502,7 +502,8 @@ def _open_native_parent_capability(descriptor: int) -> int:
         if digest.hexdigest() != CURRENT_RELEASE.binary_sha256:
             raise CodexBodyError(code)
         source_fd = os.open(
-            parent_root / "fd" / str(descriptor), os.O_RDONLY | os.O_CLOEXEC
+            parent_root / "fd" / str(descriptor),
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK,
         )
         current_executable = (parent_root / "exe").stat()
         if (
