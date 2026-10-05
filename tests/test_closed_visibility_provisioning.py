@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -24,12 +25,20 @@ from unittest.mock import patch
 from daimon_matrix import daemon
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.daemon import _enabled_egress_paths, _safe_detail
+from daimon_matrix.mandatory_echo import EchoError, EchoJournal
+from daimon_matrix.messaging_config import config_digest, create_binding
 from daimon_matrix.native_egress import (
     NativeEgressError,
     closed_visibility,
 )
+from daimon_matrix.peer_transport import (
+    SCOPE_REQUEST,
+    SCOPE_RESPONSE,
+    PeerTransportError,
+)
 from daimon_matrix.runtime import load_runtime
 from tests.test_dm024_runtime import NOW, PASSWORD, RuntimeFixture
+from tests.test_mandatory_echo_integration import SignedVisibilityInstallationTests
 from tests.test_messaging_runtime import seed
 
 VISIBILITY_TABLES = {
@@ -149,6 +158,181 @@ class ClosedVisibilityProvisioningTests(RuntimeFixture):
         self.assertIn(b"visibility_provisioned", stderr.getvalue())
         return code
 
+    def installation(self, root: Path, runtime: Any) -> Path:
+        fixture = SignedVisibilityInstallationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        document = fixture._sibling_document()
+        document["runtime_id"] = runtime.service.runtime_id
+        document["application_sha256"] = config_digest(
+            json.loads((root / "runtime.json").read_bytes())
+        )
+        being = runtime.service.ledger.authority.manifest.being_ref
+        disclosure = document["disclosure"]
+        disclosure["participants"] = [being]
+        for channel in disclosure["scope"]["channels"]:
+            channel["local_being_ref"] = being
+            channel["peer_being_ref"] = being
+        disclosure["scope_sha256"] = config_digest(disclosure["scope"])
+        acceptance = document["acceptance_set"]
+        acceptance["disclosure_sha256"] = config_digest(disclosure)
+        acceptance["bindings"] = [create_binding(runtime, disclosure)]
+        document["policy"]["acceptance_digest"] = config_digest(acceptance)
+        path = fixture.root / "visibility.json"
+        path.write_bytes(
+            canonical_bytes(
+                {"document": document, "binding": create_binding(runtime, document)}
+            )
+        )
+        path.chmod(0o600)
+        return path
+
+    def adopt(self, root: Path, installation: Path) -> tuple[int, bytes]:
+        password_file = root.parent / f"{root.name}.adopt-password"
+        password_file.write_bytes(PASSWORD)
+        password_file.chmod(0o600)
+        descriptor = os.open(password_file, os.O_RDONLY)
+        with (
+            diagnostics() as stderr,
+            patch.object(daemon.time, "time_ns", return_value=NOW * 1_000_000),
+            patch.object(
+                daemon, "serve_forever", side_effect=AssertionError("must not serve")
+            ),
+        ):
+            code = daemon.main(
+                [
+                    "--state-root",
+                    str(root),
+                    "--visibility-installation",
+                    str(installation),
+                    "--adopt-owner-visibility",
+                    "--password-fd",
+                    str(descriptor),
+                ]
+            )
+        return code, stderr.getvalue()
+
+    def test_owner_adoption_preserves_real_native_history_and_is_idempotent(
+        self,
+    ) -> None:
+        root, runtime = self.body("owner-adoption")
+        self.assertEqual(self.provision(root), 0)
+        context = runtime.peer_context
+        assert context is not None
+        endpoint = context.endpoints["embodiment:daimonmatrix"][0]
+
+        def refuse(_request: bytes) -> bytes:
+            raise PeerTransportError()
+
+        client = context.client("embodiment:daimonmatrix", endpoint, refuse)
+        request_id = "05500000-0000-4000-8000-000000000055"
+        with self.assertRaises(PeerTransportError):
+            client.call(
+                {
+                    "schema": "dm.scope.request/v1",
+                    "request_id": request_id,
+                    "scope": "/we",
+                },
+                recipient_target=context.target("embodiment:daimonmatrix"),
+                request_content_type=SCOPE_REQUEST,
+                response_content_type=SCOPE_RESPONSE,
+                correlation_id=request_id,
+                deadline_ms=NOW + 30000,
+            )
+
+        def snapshot() -> dict[str, Any]:
+            result = {}
+            for name in ("peer-outbox.sqlite", "peer-exchange.sqlite"):
+                with contextlib.closing(sqlite3.connect(root / name)) as database:
+                    native = {
+                        table: database.execute(
+                            "SELECT * FROM " + table + " ORDER BY 1"
+                        ).fetchall()
+                        for table in sorted(_tables(root / name) - VISIBILITY_TABLES)
+                    }
+                    records = []
+                    for (raw,) in database.execute(
+                        "SELECT record FROM echo_v2_obligations ORDER BY operation_id"
+                    ):
+                        record = json.loads(raw)
+                        record.pop("authentication")
+                        records.append(record)
+                    result[name] = {
+                        "native": native,
+                        "operations": database.execute(
+                            "SELECT * FROM mandatory_egress_operations "
+                            "ORDER BY operation_id"
+                        ).fetchall(),
+                        "proofs": records,
+                    }
+            return result
+
+        before = snapshot()
+        self.assertEqual(len(before["peer-outbox.sqlite"]["operations"]), 1)
+        installation = self.installation(root, runtime)
+        code, diagnostic = self.adopt(root, installation)
+        self.assertEqual(code, 0, diagnostic)
+        self.assertIn(b"owner_visibility_adopted", diagnostic)
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(self.adopt(root, installation)[0], 0)
+        self.assertEqual(snapshot(), before)
+        restarted = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress_factory=daemon._visibility_factory(installation, clock=lambda: NOW),
+        )
+        restarted.egress.validate_registry(_enabled_egress_paths(restarted))
+        self.assertTrue(restarted.egress.mirror_sibling_conversations)
+
+    def test_owner_adoption_resumes_after_one_catalog_commits(self) -> None:
+        root, runtime = self.body("resumed-owner-adoption")
+        self.assertEqual(self.provision(root), 0)
+        installation = self.installation(root, runtime)
+        original = EchoJournal.reauthenticate
+        calls = 0
+
+        def interrupted(journal: EchoJournal, key: bytes) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise EchoError("echo_storage_unavailable")
+            original(journal, key)
+
+        with patch.object(EchoJournal, "reauthenticate", interrupted):
+            self.assertEqual(self.adopt(root, installation)[0], 1)
+        self.assertEqual(calls, 2)
+        self.assertEqual(self.adopt(root, installation)[0], 0)
+        restarted = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress_factory=daemon._visibility_factory(installation, clock=lambda: NOW),
+        )
+        restarted.egress.validate_registry(_enabled_egress_paths(restarted))
+
+    def test_owner_adoption_preflights_all_catalogs_and_refuses_bad_binding(
+        self,
+    ) -> None:
+        root, runtime = self.body("bad-owner-adoption")
+        self.assertEqual(self.provision(root), 0)
+        installation = self.installation(root, runtime)
+        with contextlib.closing(
+            sqlite3.connect(root / "peer-outbox.sqlite")
+        ) as database:
+            database.execute("DROP TABLE echo_v2_obligations")
+            database.commit()
+        before = (root / "peer-exchange.sqlite").read_bytes()
+        self.assertEqual(self.adopt(root, installation)[0], 1)
+        self.assertEqual((root / "peer-exchange.sqlite").read_bytes(), before)
+        envelope = json.loads(installation.read_bytes())
+        envelope["binding"]["signature"] = "A" * 86
+        installation.write_bytes(canonical_bytes(envelope))
+        self.assertEqual(self.adopt(root, installation)[0], 1)
+        self.assertEqual((root / "peer-exchange.sqlite").read_bytes(), before)
+
     def test_a_fresh_body_cannot_serve_until_it_is_provisioned(self) -> None:
         root, runtime = self.body("unprovisioned")
         # The reported defect, reproduced: the daemon's own pre-bind check refuses.
@@ -249,6 +433,31 @@ class ClosedVisibilityProvisioningTests(RuntimeFixture):
         installation.write_bytes(b"{}")
         installation.chmod(0o600)
         for argv, expected in (
+            (
+                [
+                    "--state-root",
+                    str(root),
+                    "--closed-visibility",
+                    "--adopt-owner-visibility",
+                    "--password-fd",
+                    "3",
+                ],
+                "owner_visibility_adoption_never_serves",
+            ),
+            (
+                [
+                    "--state-root",
+                    str(root),
+                    "--visibility-installation",
+                    str(installation),
+                    "--adopt-owner-visibility",
+                    "--ready-fd",
+                    "4",
+                    "--password-fd",
+                    "3",
+                ],
+                "owner_visibility_adoption_never_serves",
+            ),
             (
                 [
                     "--state-root",

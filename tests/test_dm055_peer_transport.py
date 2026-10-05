@@ -32,6 +32,7 @@ from daimon_matrix.identity import (
 from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.native_egress import (
     MandatoryEgressController,
+    SyntheticEchoTransport,
     synthetic_visibility,
 )
 from daimon_matrix.peer_transport import (
@@ -1059,7 +1060,35 @@ class PeerTransportTests(PeerTransportFixture):
             self.assertEqual(self.ledger_a.event(event["event_id"]), event)
 
     def test_real_conversation_handler_crosses_encrypted_boundary(self) -> None:
+        self._exercise_conversation(mirror=False)
+
+    def test_mirrored_conversation_posts_authenticated_text_both_ways(
+        self,
+    ) -> None:
+        self._exercise_conversation(mirror=True)
+
+    def _exercise_conversation(self, *, mirror: bool) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
+        transports: list[SyntheticEchoTransport] = []
+        if mirror:
+            controllers = []
+            for _side in range(2):
+                transport = SyntheticEchoTransport()
+                transports.append(transport)
+                controllers.append(
+                    MandatoryEgressController(
+                        policy=self.egress._policy,
+                        proof_key=b"\x89" * 32,
+                        transport=transport,
+                        clock=lambda: self.now,
+                        catalog_mode="synthetic",
+                        installation_digest="1" * 64,
+                        owner_actor=self.authority.state.being_ref,
+                        verify_owner_binding=lambda _document, _binding: None,
+                        mirror_sibling_conversations=True,
+                    )
+                )
+            self.egress, self.receiver_egress = controllers
         server_state = self.root_path / "peer-converse-server"
         client_state = self.root_path / "peer-converse-client"
         server_state.mkdir(mode=0o700)
@@ -1152,6 +1181,15 @@ class PeerTransportTests(PeerTransportFixture):
         retained = self.ledger_a.event(receipt_id)
         assert retained is not None
         self.assertEqual(retained["origin"]["embodiment_id"], sibling)
+
+        if mirror:
+            for transport in transports:
+                self.assertEqual(len(transport.requests), 1)
+                posted = transport.requests[0]["text"]
+                self.assertIn("hola hermano", posted)
+                self.assertIn(result["message_id"], posted)
+                self.assertIn("embodiment:legion", posted)
+                self.assertNotIn("wrapped_cek", posted)
 
     def test_http_client_rejects_unsafe_url_and_wrong_response_contract(self) -> None:
         for url, timeout in (

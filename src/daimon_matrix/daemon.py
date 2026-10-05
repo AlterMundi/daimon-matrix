@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from .canonical import canonical_bytes, unb64url
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
@@ -590,7 +590,10 @@ def _password_reader(descriptor: int) -> Callable[[], bytearray]:
 
 
 def _visibility_factory(
-    installation_path: Path, *, clock: Callable[[], int]
+    installation_path: Path,
+    *,
+    clock: Callable[[], int],
+    catalog_mode: Literal["validate", "migrate"] = "validate",
 ) -> VisibilityFactory:
     """Bind one installation to the verified runtime bundle and authorities."""
 
@@ -633,6 +636,7 @@ def _visibility_factory(
 
         return load_owner_visibility_file(
             installation_path,
+            catalog_mode=catalog_mode,
             expected_application_sha256=context.bundle_sha256,
             verify_owner_binding=verify_owner,
             verify_participant_binding=verify_participant,
@@ -666,12 +670,25 @@ def _parser() -> argparse.ArgumentParser:
             "application, which no other verb can provision"
         ),
     )
+    parser.add_argument(
+        "--adopt-owner-visibility",
+        action="store_true",
+        help=(
+            "adopt owner installation authentication in existing closed "
+            "catalogs and exit"
+        ),
+    )
     parser.add_argument("--ready-fd", type=int)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.adopt_owner_visibility and (
+        args.closed_visibility or args.provision_visibility or args.ready_fd is not None
+    ):
+        _log("owner_visibility_adoption_never_serves")
+        return 2
     if args.provision_visibility and not args.closed_visibility:
         # A body with an owner installation already has a supported provisioning
         # path, `operator_messaging migrate-visibility`, and that verb validates the
@@ -711,9 +728,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _password_reader(args.password_fd),
                 clock=clock,
                 egress_factory=_visibility_factory(
-                    args.visibility_installation, clock=clock
+                    args.visibility_installation,
+                    clock=clock,
+                    catalog_mode="migrate"
+                    if args.adopt_owner_visibility
+                    else "validate",
                 ),
             )
+
+        if args.adopt_owner_visibility:
+            runtime.egress.adopt_closed_visibility_catalogs(
+                version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs()
+            _log("owner_visibility_adopted")
+            return 0
 
         if args.provision_visibility:
             # Idempotent, and bounded to the catalogs this body just registered:

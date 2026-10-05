@@ -123,7 +123,7 @@ tables, never by a caller-supplied flag, so no path can opt itself out.
 | `route-provider-request` | message routing submission | yes |
 | `peer-scope-request`, `peer-scope-response` | one being's own `/we` scope resolution | no |
 | `peer-sync-request`, `peer-sync-response` | one being's own `/we` state convergence | no |
-| `peer-converse-request`, `peer-converse-response` | one being's own `/we` sibling conversation | no |
+| `peer-converse-request`, `peer-converse-response` | one being's own `/we` sibling conversation | only under the signed sibling-conversation opt-in |
 
 The six `peer-*` paths are the intra-being lane: they move one being's own scope
 resolution, ledger convergence and sibling conversation between its embodiments,
@@ -131,9 +131,33 @@ and they never carry a message authored for another being. Cross-being
 conversation travels the messaging paths above and keeps its confirmed echo. The
 intra-being lane is not a bypass: it remains authorized, digest-bound and
 journaled as egress operations, every event stays in the being's ledger, and an
-operator can read the projection on request. What it does not do is post one
-being's own internal conversation or private state convergence to a shared human
-channel, and it does not depend on Telegram being reachable.
+operator can read the projection on request. By default it does not post internal
+conversation or private state convergence to a shared human channel and does not
+depend on Telegram being reachable.
+
+An owner may explicitly select disclosure scope mode
+`all-inter-daimon-and-sibling-conversations`, with risk
+`all-inter-daimon-communication-and-sibling-conversations-will-be-posted-as-plaintext-to-the-fixed-telegram-destination`.
+The exact disclosure, including the fixed destination and scope digest, requires
+all disclosed participants' genuine bindings and the installation owner's binding.
+The loader derives the opt-in only after verifying these bindings. No RPC argument,
+message text or peer flag can enable it. The existing
+`all-inter-daimon-communications` mode and its risk remain unchanged.
+
+Under this opt-in, both `peer-converse-*` paths require confirmed echo before the
+native request or response leaves its body. Their projections decrypt the body's
+own authorized sealed carrier copy and include the full message text, signed
+message ID, original author embodiment, actual recipient credential, thread ID
+and exact outgoing native-byte digest. Projection alone never intakes a message
+or authors a receipt. Normal intake still rejects the author's own message.
+Both bodies opting in may produce two body-specific echoes of the same message.
+The four scope/sync paths remain exempt in every mode: memory, skills and private
+state convergence are never mirrored by this option. See the
+[owner rollout runbook](runbooks/owner-sibling-conversation-mirror.md).
+Existing closed journals require the explicit owner-locked authentication adoption
+command; ordinary schema provisioning does not replace their proof key. Adoption
+preserves native history and original echo policy/attempt/receipt records and does
+not itself perform a message or Telegram effect.
 
 ## 3. Fixed policy, trust and retained evidence
 

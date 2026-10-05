@@ -469,6 +469,55 @@ class EchoJournal:
         except Exception:
             raise EchoError("echo_catalog_invalid") from None
 
+    def reauthenticate(self, authentication_key: bytes) -> None:
+        """Change storage authentication inside a trusted owner transaction.
+
+        All original bindings, revisions, attempts and receipts are preserved.
+        The caller must hold its native writer lock and rollback on any failure.
+        This operation neither reauthorizes obligations nor performs delivery.
+        """
+        if type(authentication_key) is not bytes or len(authentication_key) != 32:
+            raise EchoError("echo_key_invalid")
+        if not self.db.in_transaction:
+            raise EchoError("echo_transaction_required")
+        self._check_catalog()
+        count, total = self.db.execute(
+            "SELECT count(*),coalesce(sum(length(CAST(record AS BLOB))),0) "
+            "FROM echo_v2_obligations"
+        ).fetchone()
+        if count > MAX_RECORDS or total > MAX_TOTAL_BYTES:
+            raise EchoError("echo_capacity")
+        records = []
+        for operation_id, raw in self.db.execute(
+            "SELECT operation_id,record FROM echo_v2_obligations ORDER BY operation_id"
+        ).fetchall():
+            try:
+                digest = json.loads(raw)["binding_digest"]
+            except Exception:
+                raise EchoError("echo_state_invalid") from None
+            records.append(self._load(operation_id, digest))
+        original_key = self.__key
+        try:
+            self.__key = authentication_key
+            tag = hmac.new(
+                authentication_key,
+                b"daimon-echo-catalog/v2\0"
+                + _json([self._catalog_id, TABLE_SQL]).encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            self.db.execute(
+                "UPDATE echo_v2_catalog SET authentication=? WHERE catalog_id=?",
+                (tag, self._catalog_id),
+            )
+            for record in records:
+                self._write(record)
+            self._check_catalog()
+            for record in records:
+                self._load(record["binding"]["operation_id"], record["binding_digest"])
+        except BaseException:
+            self.__key = original_key
+            raise
+
     def _authenticate(self, record: dict[str, Any]) -> str:
         value = {k: v for k, v in record.items() if k != "authentication"}
         return hmac.new(
