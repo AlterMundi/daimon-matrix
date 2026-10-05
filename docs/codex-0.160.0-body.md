@@ -48,3 +48,12 @@ unchanged. A quota update before the turn acknowledgement must not interrupt a
 single accepted input. Unknown fields, malformed values and substituted authority
 remain refused. An interrupted result recovered under retained identifiers stays
 interrupted even when it contains the requested model answer.
+
+The pinned current resume response additionally reports `collaborationMode`.
+An explicit non-null value must select default mode, the owner-selected model
+and reasoning effort, and null developer instructions. It cannot inject context
+or override execution policy. Historical response envelopes remain unchanged.
+If a resume response is lost or refused before an input intent exists, the
+owner can use `native-turn --action resume-turn --recover-native-resume` to
+reconcile the saved thread/session IDs before dispatching that input. This is
+explicit recovery, never a replacement thread or replay of an existing intent.
