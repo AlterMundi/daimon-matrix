@@ -107,6 +107,23 @@ exclude = ["PRIVATE_TOKEN"]
             MODULE.install(self.args)
         self.assertTrue(config.is_symlink())
 
+    def test_global_override_refuses_before_identity_or_config_change(self) -> None:
+        override = self.home / "AGENTS.override.md"
+        override.write_text("Another global identity takes precedence.")
+        with self.assertRaisesRegex(ValueError, "override_requires_owner_selection"):
+            MODULE.install(self.args)
+        self.assertEqual((self.home / "AGENTS.md").read_text(), "old context")
+        self.assertEqual((self.home / "config.toml").read_bytes(), self.config)
+        self.assertEqual(
+            override.read_text(), "Another global identity takes precedence."
+        )
+
+    def test_symlink_override_is_not_followed(self) -> None:
+        (self.home / "AGENTS.override.md").symlink_to(self.identity)
+        with self.assertRaises(OSError):
+            MODULE.install(self.args)
+        self.assertEqual((self.home / "AGENTS.md").read_text(), "old context")
+
     def test_partial_write_rolls_back_original_files(self) -> None:
         write = MODULE.atomic_write
         failed = False

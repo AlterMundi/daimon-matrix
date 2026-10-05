@@ -149,6 +149,10 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     )
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        override = home / "AGENTS.override.md"
+        if override.exists() or override.is_symlink():
+            if read_owned(override).strip():
+                raise ValueError("global_instruction_override_requires_owner_selection")
         originals: dict[str, bytes | None] = {}
         for name in ("AGENTS.md", "config.toml"):
             path = home / name
@@ -206,7 +210,11 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--codex-home", type=Path, default=Path.home() / ".codex")
+    parser.add_argument(
+        "--codex-home",
+        type=Path,
+        default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))),
+    )
     parser.add_argument("--identity-file", type=Path, required=True)
     parser.add_argument("--soul", type=Path)
     parser.add_argument("--foundation", type=Path)

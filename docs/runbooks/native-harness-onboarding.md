@@ -20,6 +20,10 @@ daily installation, workspace, being or embodiment to meet it.
    effective configuration. Preserve authentication and conversations; do not
    inspect or import unrelated personal conversations. Archive stale
    instructions before replacing their unsupported claims.
+   A nonempty global `AGENTS.override.md` takes precedence over `AGENTS.md`.
+   The installer refuses that conflict and unsafe override files before editing
+   either target. Explicitly select and archive a conflicting override under
+   the owner's authorized identity migration, then repeat installation.
 3. Write an owner-selected identity instruction file naming the existing body,
    runtime, authenticated rendered owner client and its actual capabilities.
    Include the manual shared-memory entry point and neutral skill directory.
