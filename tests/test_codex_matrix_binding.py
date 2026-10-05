@@ -7,6 +7,8 @@ import hashlib
 import importlib
 import json
 import os
+import shutil
+import site
 import subprocess
 import sys
 import threading
@@ -307,6 +309,48 @@ sys.exit(2)
             os.close(descriptor)
 
     def test_native_parent_descriptor_checks_real_kernel_parent_and_pin(self) -> None:
+        # Hosted tool-cache Python may be owned by a different UID or writable
+        # by its group. The production boundary correctly refuses such parents.
+        # Pin a protected temporary executable for this actual kernel fixture.
+        fixture_executable = os.environ.get("COMPAII_PARENT_FIXTURE_EXECUTABLE")
+        if fixture_executable is None:
+            executable = self.root_path / "protected-parent-python"
+            shutil.copyfile(Path("/proc/self/exe"), executable)
+            executable.chmod(0o700)
+            environment = os.environ.copy()
+            environment["COMPAII_PARENT_FIXTURE_EXECUTABLE"] = str(executable)
+            environment["PYTHONHOME"] = sys.base_prefix
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [
+                    str(Path(codex_body.__file__).resolve().parent.parent),
+                    *site.getsitepackages(),
+                    environment.get("PYTHONPATH", ""),
+                ]
+            )
+            environment["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [
+                    str(Path(sys.base_prefix) / "lib"),
+                    environment.get("LD_LIBRARY_PATH", ""),
+                ]
+            )
+            result = subprocess.run(
+                [
+                    str(executable),
+                    "-W",
+                    "error::ResourceWarning",
+                    "-m",
+                    "unittest",
+                    "tests.test_codex_matrix_binding.MatrixBindingTests.test_native_parent_descriptor_checks_real_kernel_parent_and_pin",
+                    "-q",
+                ],
+                env=environment,
+                capture_output=True,
+                timeout=8,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            return
+        self.assertTrue(Path("/proc/self/exe").samefile(fixture_executable))
         path = self.root_path / "native-parent-capability"
         path.write_bytes(self.capability.key)
         path.chmod(0o600)
@@ -331,6 +375,7 @@ try:
     finally:
         key[:]=bytes(len(key))
 except CodexBodyError as error:
+    if error.code!=sys.argv[4]:print(error.code,file=sys.stderr)
     sys.exit(0 if error.code==sys.argv[4] else 2)
 finally:
     if opened>=0:os.close(opened)
