@@ -39,3 +39,12 @@ live body. Live first selected SOUL turn, same-thread cold continuation,
 interrupted-turn recovery and on-demand credential renewal remain separate
 operational acceptance gates. No autonomous hooks, timers or inbox work are
 introduced.
+
+Current account/rateLimits/updated notifications carry strictly validated, bounded
+quota data. They are global account telemetry: they cannot select a thread,
+change Matrix authority or satisfy turn completion. Only the explicit current
+profile accepts this pinned envelope; historical notification behavior remains
+unchanged. A quota update before the turn acknowledgement must not interrupt a
+single accepted input. Unknown fields, malformed values and substituted authority
+remain refused. An interrupted result recovered under retained identifiers stays
+interrupted even when it contains the requested model answer.

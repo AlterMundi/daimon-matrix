@@ -3074,6 +3074,9 @@ class AppServerProcess:
         self._automatic_hooks = _profile_contract(
             validate_plan(plan.value)
         ).automatic_hooks
+        self._current_profile = (
+            plan.value["codex"]["version"] == CURRENT_RELEASE.version
+        )
         environment = _process_environment(plan)
         capability_fd = _capability_fd(plan)
         if tuple(pass_fds) != (capability_fd,):
@@ -3300,6 +3303,7 @@ class AppServerProcess:
                     message,
                     allow_hooks=self._automatic_hooks,
                     native_turn=native_turn,
+                    current_profile=getattr(self, "_current_profile", False),
                     authenticating=getattr(self, "_authentication_request_id", None)
                     == request_id,
                 )
@@ -3642,12 +3646,125 @@ def _validate_turn_item(value: Any) -> None:
         raise CodexBodyError("app_server_protocol_drift")
 
 
+def _validate_current_rate_limits(params: Any) -> None:
+    """Pinned current account telemetry is data, never turn or Matrix authority."""
+    code = "codex_rate_limits_notification_rejected"
+    envelope = _closed(params, {"rateLimits"}, code)
+    snapshot = _closed(
+        envelope["rateLimits"],
+        set(
+            [
+                "limitId",
+                "limitName",
+                "normalModelSlug",
+                "primary",
+                "secondary",
+                "credits",
+                "individualLimit",
+                "spendControlReached",
+                "planType",
+                "rateLimitReachedType",
+            ]
+        ),
+        code,
+    )
+    for name in ("limitId", "limitName", "normalModelSlug"):
+        if snapshot[name] is not None:
+            _text(snapshot[name], code, maximum=256)
+    for name in ("primary", "secondary"):
+        if snapshot[name] is not None:
+            window = _closed(
+                snapshot[name], {"usedPercent", "windowDurationMins", "resetsAt"}, code
+            )
+            percent = window["usedPercent"]
+            if (
+                isinstance(percent, bool)
+                or not isinstance(percent, (int, float))
+                or not math.isfinite(percent)
+            ):
+                raise CodexBodyError(code)
+            for field in ("windowDurationMins", "resetsAt"):
+                if window[field] is not None:
+                    _uint(window[field], code)
+    if snapshot["credits"] is not None:
+        credits = _closed(
+            snapshot["credits"], {"hasCredits", "unlimited", "balance"}, code
+        )
+        if not all(
+            isinstance(credits[name], bool) for name in ("hasCredits", "unlimited")
+        ):
+            raise CodexBodyError(code)
+        if credits["balance"] is not None:
+            _text(credits["balance"], code, maximum=256)
+    if snapshot["individualLimit"] is not None:
+        limit = _closed(
+            snapshot["individualLimit"],
+            {"limit", "used", "remainingPercent", "resetsAt"},
+            code,
+        )
+        for name in ("limit", "used"):
+            _text(limit[name], code, maximum=256)
+        percent = limit["remainingPercent"]
+        if (
+            isinstance(percent, bool)
+            or not isinstance(percent, (int, float))
+            or not math.isfinite(percent)
+        ):
+            raise CodexBodyError(code)
+        _uint(limit["resetsAt"], code)
+    if snapshot["spendControlReached"] is not None and not isinstance(
+        snapshot["spendControlReached"], bool
+    ):
+        raise CodexBodyError(code)
+    plans = set(
+        [
+            "free",
+            "go",
+            "plus",
+            "pro",
+            "prolite",
+            "promax",
+            "team",
+            "self_serve_business_prolite",
+            "self_serve_business_usage_based",
+            "business",
+            "ent26",
+            "enterprise_cbp_automation",
+            "enterprise_cbp_usage_based",
+            "enterprise",
+            "edu",
+            "edu_plus",
+            "edu_pro",
+            "unknown",
+        ]
+    )
+    if snapshot["planType"] is not None and (
+        not isinstance(snapshot["planType"], str) or snapshot["planType"] not in plans
+    ):
+        raise CodexBodyError(code)
+    reached = set(
+        [
+            "rate_limit_reached",
+            "workspace_owner_credits_depleted",
+            "workspace_member_credits_depleted",
+            "workspace_owner_usage_limit_reached",
+            "workspace_member_usage_limit_reached",
+        ]
+    )
+    if snapshot["rateLimitReachedType"] is not None and (
+        not isinstance(snapshot["rateLimitReachedType"], str)
+        or snapshot["rateLimitReachedType"] not in reached
+    ):
+        raise CodexBodyError(code)
+
+
 def _validate_notification(
     value: Mapping[str, Any],
     *,
     allow_hooks: bool = True,
     native_turn: bool = False,
     authenticating: bool = False,
+    current_profile: bool = False,
 ) -> tuple[str, Mapping[str, Any]]:
     if not isinstance(value, Mapping) or set(value) not in (
         {"method", "params"},
@@ -3690,6 +3807,9 @@ def _validate_notification(
                     maximum=256,
                 )
         return method, params
+    if current_profile and not allow_hooks and method == "account/rateLimits/updated":
+        _validate_current_rate_limits(row["params"])
+        return method, row["params"]
     successor_error = not allow_hooks and method == "error"
     if (
         method not in KNOWN_NOTIFICATIONS
@@ -4397,9 +4517,16 @@ class CodexBodyAdapter:
             raise CodexBodyError("codex_turn_recovery_input_drift")
         for message in notifications:
             method, params = _validate_notification(
-                message, allow_hooks=False, native_turn=True
+                message,
+                allow_hooks=False,
+                native_turn=True,
+                current_profile=self.plan.value["codex"]["version"]
+                == CURRENT_RELEASE.version,
             )
-            global_event = method in {"warning", "mcpServer/startupStatus/updated"}
+            global_event = method in {"warning", "mcpServer/startupStatus/updated"} or (
+                self.plan.value["codex"]["version"] == CURRENT_RELEASE.version
+                and method == "account/rateLimits/updated"
+            )
             if params.get("threadId") != pending["thread_id"] and not (
                 global_event and params.get("threadId") is None
             ):
@@ -4511,7 +4638,11 @@ class CodexBodyAdapter:
             if time.monotonic() >= deadline:
                 raise CodexBodyError("app_server_timeout", retryable=True)
             method, params = _validate_notification(
-                message, allow_hooks=False, native_turn=True
+                message,
+                allow_hooks=False,
+                native_turn=True,
+                current_profile=self.plan.value["codex"]["version"]
+                == CURRENT_RELEASE.version,
             )
             messages += 1
             total_bytes += len(
@@ -4519,7 +4650,10 @@ class CodexBodyAdapter:
             )
             if messages > 4096 or total_bytes > max_response_bytes:
                 raise CodexBodyError("codex_turn_output_limit")
-            global_event = method in {"warning", "mcpServer/startupStatus/updated"}
+            global_event = method in {"warning", "mcpServer/startupStatus/updated"} or (
+                self.plan.value["codex"]["version"] == CURRENT_RELEASE.version
+                and method == "account/rateLimits/updated"
+            )
             if params.get("threadId") != prior["thread_id"] and not (
                 global_event and params.get("threadId") is None
             ):
