@@ -135,9 +135,18 @@ def atomic_write(path: Path, raw: bytes) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        fsync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def install(args: argparse.Namespace) -> dict[str, Any]:
@@ -150,9 +159,10 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         override = home / "AGENTS.override.md"
-        if override.exists() or override.is_symlink():
-            if read_owned(override).strip():
-                raise ValueError("global_instruction_override_requires_owner_selection")
+        if (override.exists() or override.is_symlink()) and read_owned(
+            override
+        ).strip():
+            raise ValueError("global_instruction_override_requires_owner_selection")
         originals: dict[str, bytes | None] = {}
         for name in ("AGENTS.md", "config.toml"):
             path = home / name
@@ -181,8 +191,10 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
                 raise ValueError("unsafe_backup_directory")
         else:
             backup_root.mkdir(mode=0o700)
+            fsync_directory(home)
         backup = backup_root / str(uuid.uuid4())
         backup.mkdir(mode=0o700)
+        fsync_directory(backup_root)
         for name, raw in originals.items():
             if raw is not None:
                 atomic_write(backup / name, raw)
@@ -199,6 +211,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
             for name, raw in originals.items():
                 if raw is None:
                     (home / name).unlink(missing_ok=True)
+                    fsync_directory(home)
                 else:
                     atomic_write(home / name, raw)
             raise

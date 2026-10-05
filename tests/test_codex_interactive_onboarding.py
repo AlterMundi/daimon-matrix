@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
+import stat
 import tempfile
 import tomllib
 import unittest
@@ -146,6 +148,34 @@ exclude = ["PRIVATE_TOKEN"]
     def test_nested_config_roundtrip(self) -> None:
         value = {"a": [{"dotted.key": {"enabled": True}}], "table": {"empty": {}}}
         self.assertEqual(tomllib.loads(MODULE.config_bytes(value).decode()), value)
+
+    def test_backup_names_are_durable_before_first_replacement(self) -> None:
+        synced: list[str] = []
+        original_sync = os.fsync
+        original_write = MODULE.atomic_write
+
+        def sync(fd: int) -> None:
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                synced.append(os.readlink(f"/proc/self/fd/{fd}"))
+            original_sync(fd)
+
+        def write(path: Path, raw: bytes) -> None:
+            if path == self.home / "AGENTS.md":
+                self.assertIn(str(self.home), synced)
+                self.assertIn(str(self.home / "identity-install-backups"), synced)
+                self.assertTrue(
+                    any(
+                        Path(p).parent.name == "identity-install-backups"
+                        for p in synced
+                    )
+                )
+            original_write(path, raw)
+
+        with (
+            patch.object(MODULE.os, "fsync", side_effect=sync),
+            patch.object(MODULE, "atomic_write", side_effect=write),
+        ):
+            MODULE.install(self.args)
 
 
 if __name__ == "__main__":
