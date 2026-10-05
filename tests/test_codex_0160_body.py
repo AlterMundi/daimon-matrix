@@ -7,13 +7,18 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import unittest
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from daimon_matrix import codex_body as body
 from tests import test_codex_0155_body as profile_fixture
+from tests import test_codex_turn as turn_fixture
 from tools.generate_codex_0155_vectors import outputs
 
 
@@ -37,6 +42,159 @@ class CurrentProfileTests(unittest.TestCase):
             release="0.160.0",
         )
         self.fixture.plan = replace(self.fixture.plan, value=value)
+
+    @staticmethod
+    def quota_event() -> dict[str, Any]:
+        snapshot = dict.fromkeys(
+            [
+                "limitId",
+                "limitName",
+                "normalModelSlug",
+                "primary",
+                "secondary",
+                "credits",
+                "individualLimit",
+                "spendControlReached",
+                "planType",
+                "rateLimitReachedType",
+            ]
+        )
+        snapshot["primary"] = {
+            "usedPercent": 12.5,
+            "windowDurationMins": 300,
+            "resetsAt": 1000,
+        }
+        snapshot["planType"] = "plus"
+        return {
+            "method": "account/rateLimits/updated",
+            "params": {"rateLimits": snapshot},
+        }
+
+    def test_quota_update_is_current_only_closed_data(self) -> None:
+        event = self.quota_event()
+        self.assertEqual(
+            body._validate_notification(
+                event, allow_hooks=False, native_turn=True, current_profile=True
+            )[0],
+            event["method"],
+        )
+        for options in (
+            {},
+            {"allow_hooks": False},
+            {"allow_hooks": False, "native_turn": True},
+        ):
+            with self.assertRaises(body.CodexBodyError):
+                body._validate_notification(event, **options)
+        mutations: tuple[Callable[[dict[str, Any]], Any], ...] = (
+            lambda e: e["params"].update(threadId="foreign"),
+            lambda e: e["params"]["rateLimits"].update(capability="forged"),
+            lambda e: e["params"]["rateLimits"].update(planType="unknown-new-plan"),
+            lambda e: e["params"]["rateLimits"]["primary"].update(
+                usedPercent=float("nan")
+            ),
+            lambda e: e["params"]["rateLimits"]["primary"].update(usedPercent=True),
+            lambda e: e["params"]["rateLimits"].update(
+                credits={"hasCredits": True, "unlimited": "yes", "balance": None}
+            ),
+        )
+        for mutate in mutations:
+            changed = copy.deepcopy(event)
+            mutate(changed)
+            with self.assertRaises(body.CodexBodyError):
+                body._validate_notification(
+                    changed, allow_hooks=False, native_turn=True, current_profile=True
+                )
+
+    def test_fractional_quota_before_lifecycle_ack_uses_only_vendor_encoding(
+        self,
+    ) -> None:
+        io = turn_fixture.BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        for method in (
+            "account/read",
+            "thread/start",
+            "config/read",
+            "thread/unsubscribe",
+        ):
+            for bounded in (False, True):
+                with self.subTest(method=method, bounded=bounded):
+                    script = (
+                        "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                        f"print(json.dumps({self.quota_event()!r}),flush=True)\n"
+                        "print(json.dumps({'id':request['id'],'result':{'ok':True}}),flush=True)\n"
+                    )
+                    transport = io.transport(script)
+                    transport._current_profile = True
+                    if bounded:
+                        result, captured = transport.request_bounded(
+                            method, {}, deadline=time.monotonic() + 2
+                        )
+                        self.assertEqual(len(captured), 1)
+                    else:
+                        result = transport.request(method, {})
+                    self.assertEqual(result, {"ok": True})
+        for event in (
+            {
+                "method": "warning",
+                "params": {"message": "data", "unreviewedFloat": 12.5},
+            },
+            {
+                "method": "account/rateLimits/updated",
+                "params": {"rateLimits": {}, "unreviewedFloat": 12.5},
+            },
+        ):
+            transport = io.transport(
+                "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                + f"print(json.dumps({event!r}),flush=True)\n"
+            )
+            transport._current_profile = True
+            with self.assertRaises(body.CodexBodyError):
+                transport.request("account/read", {})
+
+    def test_quota_before_ack_does_not_abort_single_current_turn(self) -> None:
+        fixture = self.fixture
+        fixture.create()
+        journal = body.RuntimeHandleJournal(
+            fixture.plan.profile_root / "runtime-handles.jsonl", plan=fixture.plan
+        )
+        core = {
+            key: fixture.bootstrap[key]
+            for key in (
+                "being_ref",
+                "body_ref",
+                "embodiment_id",
+                "incarnation_id",
+                "matrix_session_id",
+                "matrix_high_water",
+            )
+        }
+        core.update(
+            thread_id="thread-fixture",
+            session_tree_id="session-fixture",
+            turn_id=None,
+            state="active",
+            observed_at_ms=fixture.now,
+        )
+        journal.append(core)
+        helper: Any = turn_fixture.TurnControllerTests(methodName="runTest")
+        helper.fixture = SimpleNamespace(
+            plan=fixture.plan,
+            journal=journal,
+            now=fixture.now,
+            request_id="00000205-0000-4000-8000-000000000161",
+        )
+        helper.io = turn_fixture.BoundedTransportTests(methodName="runTest")
+        helper.io.setUp()
+        self.addCleanup(helper.io.tearDown)
+        adapter = helper.adapter(
+            helper.script(notifications=[self.quota_event()], answer="Synthetic answer")
+        )
+        adapter.transport._current_profile = True
+        result = helper.run_turn(adapter)
+        self.assertEqual(result["turn_status"], "completed")
+        self.assertEqual((helper.io.root / "accepted").read_text(), "one")
+        self.assertEqual(journal.load()[-1]["state"], "active")
 
     def test_current_native_envelope_is_version_specific_and_plugins_disabled(
         self,
