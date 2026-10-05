@@ -70,6 +70,9 @@ the current public runtime authority and exact interpreter destination. The
 operator obtains the official runtime lock and preserves the source ledger.
 The native worker uses an isolated installed Python process, stripped environment
 and native API; it does not inherit provider keys or load harness configuration.
+Its worker deadline is 15 minutes, allowing the durable per-entry checkpoints
+of a full pool reconciliation to finish on slower storage. The deadline remains
+bounded; it does not authorize retries or relax the writer cutoff.
 
 Retain the exact packet and provenance after failure. A commit can succeed before
 its response is lost. Reapply the same plan to recover by native source URI and
