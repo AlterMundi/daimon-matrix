@@ -57,3 +57,11 @@ If a resume response is lost or refused before an input intent exists, the
 owner can use `native-turn --action resume-turn --recover-native-resume` to
 reconcile the saved thread/session IDs before dispatching that input. This is
 explicit recovery, never a replacement thread or replay of an existing intent.
+
+Current native session notifications can also arrive during lifecycle RPCs:
+the actual cold resume emits cached token usage from its previous turn before
+accepting another input. Validate the pinned current session data during those
+RPCs, including its bounds and closed notification shapes. This restores no
+input and does not mark a turn complete, execute a tool, change authority or
+select a thread. A dispatched turn still requires its own exact thread/turn
+correlation and terminal result; historical lifecycle behavior is unchanged.
