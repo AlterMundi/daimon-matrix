@@ -65,3 +65,11 @@ RPCs, including its bounds and closed notification shapes. This restores no
 input and does not mark a turn complete, execute a tool, change authority or
 select a thread. A dispatched turn still requires its own exact thread/turn
 correlation and terminal result; historical lifecycle behavior is unchanged.
+# Development turn output bounds
+
+The current profile bounds aggregate protocol traffic at 64 times the selected
+retained-result limit (at most 4 MiB). Tool output appears repeatedly in deltas,
+item snapshots and terminal turns; that traffic does not expand the final result
+limit of at most 64 KiB. The 4096-notification count and existing deadlines remain
+enforced. Exact-ID recovery uses the same bounded traffic allowance and original
+intent; it never replays input. Historical profiles retain their original limits.

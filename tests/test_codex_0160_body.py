@@ -223,7 +223,7 @@ class CurrentProfileTests(unittest.TestCase):
             with self.assertRaises(body.CodexBodyError):
                 transport.request("account/read", {})
 
-    def test_quota_before_ack_does_not_abort_single_current_turn(self) -> None:
+    def current_turn_helper(self) -> Any:
         fixture = self.fixture
         fixture.create()
         journal = body.RuntimeHandleJournal(
@@ -258,6 +258,10 @@ class CurrentProfileTests(unittest.TestCase):
         helper.io = turn_fixture.BoundedTransportTests(methodName="runTest")
         helper.io.setUp()
         self.addCleanup(helper.io.tearDown)
+        return helper
+
+    def test_quota_before_ack_does_not_abort_single_current_turn(self) -> None:
+        helper = self.current_turn_helper()
         adapter = helper.adapter(
             helper.script(notifications=[self.quota_event()], answer="Synthetic answer")
         )
@@ -265,7 +269,66 @@ class CurrentProfileTests(unittest.TestCase):
         result = helper.run_turn(adapter)
         self.assertEqual(result["turn_status"], "completed")
         self.assertEqual((helper.io.root / "accepted").read_text(), "one")
-        self.assertEqual(journal.load()[-1]["state"], "active")
+        self.assertEqual(helper.fixture.journal.load()[-1]["state"], "active")
+
+    def test_current_tool_stream_may_exceed_retained_result_budget(self) -> None:
+        helper = self.current_turn_helper()
+        event = {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thread-fixture",
+                "turnId": "turn-a",
+                "itemId": "answer-a",
+                "delta": "x" * 3000,
+            },
+        }
+        adapter = helper.adapter(helper.script(notifications=[event] * 4, answer="ok"))
+        adapter.transport._current_profile = True
+        result = helper.run_turn(adapter)
+        self.assertEqual(result["turn_status"], "completed")
+        self.assertEqual((helper.io.root / "accepted").read_text(), "one")
+        self.assertEqual(body._turn_stream_byte_limit(self.historical_plan, 4096), 4096)
+        self.assertEqual(
+            body._turn_stream_byte_limit(self.fixture.plan, 65536), 4194304
+        )
+
+    def test_current_stream_overflow_retains_original_pending_input(self) -> None:
+        helper = self.current_turn_helper()
+        event = {
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thread-fixture",
+                "turnId": "turn-a",
+                "itemId": "answer-a",
+                "delta": "x" * 270000,
+            },
+        }
+        # Build the oversized delta in the child, below the OS argv size cap.
+        script = helper.script(notifications=[event]).replace(
+            repr("x" * 270000), "'x' * 270000"
+        )
+        adapter = helper.adapter(script)
+        adapter.transport._current_profile = True
+        with self.assertRaisesRegex(body.CodexBodyError, "codex_turn_output_limit"):
+            helper.run_turn(adapter)
+        self.assertEqual((helper.io.root / "accepted").read_text(), "one")
+        self.assertEqual(helper.fixture.journal.load()[-1]["state"], "turning")
+        self.assertTrue(
+            (
+                self.fixture.plan.profile_root
+                / "turn-requests"
+                / (helper.fixture.request_id + ".json")
+            ).exists()
+        )
+
+    def test_current_final_result_limit_is_not_expanded_with_stream(self) -> None:
+        helper = self.current_turn_helper()
+        adapter = helper.adapter(helper.script(answer="x" * 5000))
+        adapter.transport._current_profile = True
+        with self.assertRaisesRegex(body.CodexBodyError, "codex_turn_output_limit"):
+            helper.run_turn(adapter)
+        self.assertEqual((helper.io.root / "accepted").read_text(), "one")
+        self.assertEqual(helper.fixture.journal.load()[-1]["state"], "turning")
 
     def test_current_native_envelope_is_version_specific_and_plugins_disabled(
         self,
