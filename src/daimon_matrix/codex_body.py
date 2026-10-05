@@ -2397,6 +2397,15 @@ def read_native_provider_token(descriptor: int) -> str:
         raw[:] = bytes(len(raw))
 
 
+def _turn_stream_byte_limit(plan: CodexBodyPlan, result_limit: int) -> int:
+    # Current tool turns repeat output in deltas, item snapshots and the final
+    # turn. Bound that protocol traffic separately from the retained result.
+    # Existing intents and historical profiles keep their original result cap.
+    return result_limit * (
+        64 if _profile_contract(plan.value).release == CURRENT_RELEASE else 1
+    )
+
+
 def validate_turn_intent(value: Any) -> dict[str, Any]:
     """Validate local intent metadata; it grants no Matrix or provider authority."""
     row = _closed(
@@ -4439,7 +4448,7 @@ class CodexBodyAdapter:
                 total += len(
                     _native_json_bytes(message, "codex_turn_recovery_rejected")
                 )
-            if total > intent["max_response_bytes"]:
+            if total > _turn_stream_byte_limit(self.plan, intent["max_response_bytes"]):
                 raise CodexBodyError("codex_turn_output_limit")
             notifications.extend(captured)
             return response
@@ -4679,7 +4688,7 @@ class CodexBodyAdapter:
             prior["thread_id"], prior["session_tree_id"], turn_id, "turning", presence
         )
         total_bytes = len(_native_json_bytes(response, "codex_turn_response_drift"))
-        if total_bytes > max_response_bytes:
+        if total_bytes > _turn_stream_byte_limit(self.plan, max_response_bytes):
             raise CodexBodyError("codex_turn_output_limit")
         messages = 0
         final = turn if turn["status"] != "inProgress" else None
@@ -4703,7 +4712,9 @@ class CodexBodyAdapter:
             total_bytes += len(
                 _native_json_bytes(message, "codex_turn_notification_rejected")
             )
-            if messages > 4096 or total_bytes > max_response_bytes:
+            if messages > 4096 or total_bytes > _turn_stream_byte_limit(
+                self.plan, max_response_bytes
+            ):
                 raise CodexBodyError("codex_turn_output_limit")
             global_event = method in {"warning", "mcpServer/startupStatus/updated"} or (
                 self.plan.value["codex"]["version"] == CURRENT_RELEASE.version
