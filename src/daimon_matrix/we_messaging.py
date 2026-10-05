@@ -71,6 +71,7 @@ WE_CLIENT_ID: Final = "dm.we.converse"
 WE_MESSAGE_CLIENT_ID: Final = "dm.we.message/v1"
 WE_RESOLUTION_CLIENT_ID: Final = "dm.we.resolution/v1"
 WE_RECEIPT_CLIENT_ID: Final = "dm.we.receipt/v1"
+WE_SEALED_CLIENT_ID: Final = "dm.we.sealed-payload/v1"
 WE_INTAKE_SCHEMA: Final = "dm.we.intake-result/v1"
 WE_CONVERSE_RESULT_SCHEMA: Final = "dm.we.converse-result/v1"
 MAX_ADDRESSEES: Final = 256
@@ -84,6 +85,20 @@ DeliverConversation = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
 
 class WeLaneError(ValueError):
     """Stable fail-closed error. The lane never guesses an audience or a target."""
+
+
+class WeDeliveryError(WeLaneError):
+    """One carrier refused or has an undetermined outcome; never a receipt."""
+
+    def __init__(self, *, state: str, code: str) -> None:
+        if state not in {"rejected", "undetermined"} or code not in {
+            "peer_transport_rejected",
+            "peer_transport_ambiguous",
+        }:
+            raise WeLaneError("we_lane_delivery_status_invalid")
+        self.state = state
+        self.code = code
+        super().__init__(code)
 
 
 def _text(value: Any, code: str, *, maximum: int = 240) -> str:
@@ -630,23 +645,75 @@ class WeConversation:
             occurred_at_ms=now,
             causal_parents=(message_id,),
         )
-        envelope = seal_we_message(
-            message,
-            resolution,
+        # Persist randomized sealing before transport. The signed message and
+        # resolution are idempotent already; a new envelope would otherwise
+        # conflict with the peer outbox's exact logical plan after cold recovery.
+        cache_identity = {
+            "client_id": WE_SEALED_CLIENT_ID,
+            "request_id": request,
+            "request_hash": hashlib.sha256(
+                canonical_bytes(
+                    {
+                        "message_hash": message["content_hash"],
+                        "resolution_hash": resolution["content_hash"],
+                        "authority_head": self.authority.state.head,
+                        "ttl_ms": ttl,
+                    }
+                )
+            ).hexdigest(),
+            "method": "we.converse.sealed-payload",
+        }
+        cached = self.ledger.begin_rpc(**cache_identity)
+        if cached is None:
+            envelope = seal_we_message(
+                message,
+                resolution,
+                authority=self.authority,
+                custody=self.custody,
+                issued_at_ms=now,
+                expires_at_ms=now + ttl,
+            )
+            cached = self.ledger.finish_rpc(
+                **cache_identity,
+                response={
+                    "payload": we_conversation_payload(
+                        envelope=envelope, resolution=resolution
+                    )
+                },
+            )
+        if set(cached) != {"payload"} or not isinstance(cached["payload"], Mapping):
+            raise WeLaneError("we_lane_saved_payload_invalid")
+        payload = cached["payload"]
+        opened = open_we_conversation_for_projection(
+            payload,
             authority=self.authority,
+            local_credential_id=self.local_credential_id,
             custody=self.custody,
-            issued_at_ms=now,
-            expires_at_ms=now + ttl,
+            at_ms=now,
         )
-        payload = we_conversation_payload(envelope=envelope, resolution=resolution)
+        if canonical_bytes(opened["message"]) != canonical_bytes(
+            message
+        ) or canonical_bytes(opened["resolution"]) != canonical_bytes(resolution):
+            raise WeLaneError("we_lane_saved_payload_invalid")
         deliveries: list[dict[str, Any]] = []
         for row in addressable:
             sibling = _text(row["recipient_id"], "we_lane_target_invalid")
             if deliver is None:
                 deliveries.append({"embodiment_id": sibling, "state": "sealed"})
                 continue
+            try:
+                delivered = deliver(sibling, payload)
+            except WeDeliveryError as exception:
+                deliveries.append(
+                    {
+                        "embodiment_id": sibling,
+                        "state": exception.state,
+                        "error": exception.code,
+                    }
+                )
+                continue
             receipt = self._accept_sibling_receipt(
-                deliver(sibling, payload), sibling=sibling, message=message
+                delivered, sibling=sibling, message=message
             )
             self._retain((receipt,), source=f"we:{sibling}")
             deliveries.append(

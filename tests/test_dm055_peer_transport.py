@@ -1067,7 +1067,15 @@ class PeerTransportTests(PeerTransportFixture):
     ) -> None:
         self._exercise_conversation(mirror=True)
 
-    def _exercise_conversation(self, *, mirror: bool) -> None:
+    def test_cold_conversation_retry_recovers_an_expired_outer_carrier(self) -> None:
+        self._exercise_conversation(mirror=False, renewed_carrier=True)
+
+    def test_mirrored_cold_retry_confirms_each_new_carrier_once(self) -> None:
+        self._exercise_conversation(mirror=True, renewed_carrier=True)
+
+    def _exercise_conversation(
+        self, *, mirror: bool, renewed_carrier: bool = False
+    ) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
         transports: list[SyntheticEchoTransport] = []
         if mirror:
@@ -1153,7 +1161,7 @@ class PeerTransportTests(PeerTransportFixture):
                 request_content_type=WE_MESSAGE_CONTENT_TYPE,
                 response_content_type=WE_RECEIPT_CONTENT_TYPE,
                 correlation_id=request_id,
-                deadline_ms=NOW + 30_000,
+                deadline_ms=self.now + 30_000,
             )
 
         result = sender.converse(
@@ -1161,7 +1169,7 @@ class PeerTransportTests(PeerTransportFixture):
             addressees=[sibling],
             request_id=request_id,
             targets=cast(list[Mapping[str, Any]], resolved["targets"]),
-            ttl_ms=30_000,
+            ttl_ms=60_000,
             deliver=deliver,
         )
         self.assertEqual(result["carrier"], sorted(["embodiment:legion", sibling]))
@@ -1182,9 +1190,29 @@ class PeerTransportTests(PeerTransportFixture):
         assert retained is not None
         self.assertEqual(retained["origin"]["embodiment_id"], sibling)
 
+        # A cold exact retry must reuse the original sealed payload through the
+        # real encrypted carrier, rather than conflict with its persisted plan.
+        self.now += 31_000 if renewed_carrier else 100
+        reopened = WeConversation(
+            self.ledger_a,
+            signer=self.signers["legion"],
+            custody=_RuntimeDeliveryCustody(self.custodies["legion"]),
+            clock=lambda: self.now,
+        )
+        retried = reopened.converse(
+            text="hola hermano",
+            addressees=[sibling],
+            request_id=request_id,
+            targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+            ttl_ms=60_000,
+            deliver=deliver,
+        )
+        self.assertEqual(retried["message_id"], result["message_id"])
+        self.assertEqual(retried["deliveries"], result["deliveries"])
+
         if mirror:
             for transport in transports:
-                self.assertEqual(len(transport.requests), 1)
+                self.assertEqual(len(transport.requests), 2 if renewed_carrier else 1)
                 posted = transport.requests[0]["text"]
                 self.assertIn("hola hermano", posted)
                 self.assertIn(result["message_id"], posted)
