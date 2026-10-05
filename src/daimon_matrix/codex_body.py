@@ -3173,7 +3173,22 @@ class AppServerProcess:
         raw = bytes(frame + separator)
         if len(raw) > MAX_RPC_LINE_BYTES:
             raise CodexBodyError("app_server_frame_invalid")
-        if self._configuration_request_id is not None:
+        current_quota = False
+        if getattr(self, "_current_profile", False) and not self._automatic_hooks:
+            candidate = _decode_json(raw, "app_server_frame_invalid")
+            current_quota = (
+                isinstance(candidate, Mapping)
+                and "id" not in candidate
+                and candidate.get("method") == "account/rateLimits/updated"
+            )
+            if current_quota:
+                _validate_notification(
+                    candidate, allow_hooks=False, current_profile=True
+                )
+                _native_json_bytes(candidate, "app_server_frame_invalid")
+        if current_quota:
+            value = candidate
+        elif self._configuration_request_id is not None:
             value = _native_configuration_frame(raw, self._configuration_request_id)
         elif getattr(self, "_native_turn_data", False):
             value = _decode_json(raw, "app_server_frame_invalid")
@@ -3309,9 +3324,16 @@ class AppServerProcess:
                 )
                 if captured is not None:
                     captured_bytes += len(
-                        (_native_json_bytes if native_turn else _canonical)(
-                            message, "app_server_notification_invalid"
-                        )
+                        (
+                            _native_json_bytes
+                            if native_turn
+                            or (
+                                getattr(self, "_current_profile", False)
+                                and message.get("method")
+                                == "account/rateLimits/updated"
+                            )
+                            else _canonical
+                        )(message, "app_server_notification_invalid")
                     )
                     if captured_bytes > MAX_RPC_LINE_BYTES or len(captured) >= 64:
                         raise CodexBodyError("app_server_notifications_overflow")

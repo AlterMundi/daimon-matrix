@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import unittest
 from collections.abc import Callable
 from dataclasses import replace
@@ -103,6 +104,53 @@ class CurrentProfileTests(unittest.TestCase):
                 body._validate_notification(
                     changed, allow_hooks=False, native_turn=True, current_profile=True
                 )
+
+    def test_fractional_quota_before_lifecycle_ack_uses_only_vendor_encoding(
+        self,
+    ) -> None:
+        io = turn_fixture.BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        for method in (
+            "account/read",
+            "thread/start",
+            "config/read",
+            "thread/unsubscribe",
+        ):
+            for bounded in (False, True):
+                with self.subTest(method=method, bounded=bounded):
+                    script = (
+                        "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                        f"print(json.dumps({self.quota_event()!r}),flush=True)\n"
+                        "print(json.dumps({'id':request['id'],'result':{'ok':True}}),flush=True)\n"
+                    )
+                    transport = io.transport(script)
+                    transport._current_profile = True
+                    if bounded:
+                        result, captured = transport.request_bounded(
+                            method, {}, deadline=time.monotonic() + 2
+                        )
+                        self.assertEqual(len(captured), 1)
+                    else:
+                        result = transport.request(method, {})
+                    self.assertEqual(result, {"ok": True})
+        for event in (
+            {
+                "method": "warning",
+                "params": {"message": "data", "unreviewedFloat": 12.5},
+            },
+            {
+                "method": "account/rateLimits/updated",
+                "params": {"rateLimits": {}, "unreviewedFloat": 12.5},
+            },
+        ):
+            transport = io.transport(
+                "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                + f"print(json.dumps({event!r}),flush=True)\n"
+            )
+            transport._current_profile = True
+            with self.assertRaises(body.CodexBodyError):
+                transport.request("account/read", {})
 
     def test_quota_before_ack_does_not_abort_single_current_turn(self) -> None:
         fixture = self.fixture
