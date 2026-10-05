@@ -1,0 +1,82 @@
+{
+  "codex_version": "0.160.0",
+  "files": [
+    {
+      "name": "negative/continuity-prefetch.json",
+      "sha256": "a58fe79f07d94974eafd7a3ff594845437e07b3b9fc1aa828929d88213c28654",
+      "valid": false
+    },
+    {
+      "name": "negative/hook-policy.json",
+      "sha256": "4f570ca35a38ab9798c0bbcf5e1679275fe9768927945e2e4a83bff299149c90",
+      "valid": false
+    },
+    {
+      "name": "negative/mixed-plan.json",
+      "sha256": "1209e2f8bfc5cdfb66724bac9c343b743cf0213c3c191b4266aa11f155ee1583",
+      "valid": false
+    },
+    {
+      "name": "valid/bootstrap.json",
+      "sha256": "0e06a6a6806ac5dd8dfb93b2fdffea12342bbe2e26b08fd54420d21099c7c3a6",
+      "valid": true
+    },
+    {
+      "name": "valid/continuity-plan.json",
+      "sha256": "2fc157ec5603df1e8411d0163965c111b3c886448e087fad568149d169f9040b",
+      "valid": true
+    },
+    {
+      "name": "valid/full-access-plan.json",
+      "sha256": "0642fa20e97eea93b9d9bdaa8ed6b3ef2cf254683f9985e777bdd642befc29c5",
+      "valid": true
+    },
+    {
+      "name": "valid/launch-receipt.json",
+      "sha256": "0d612915043551e3e55c648763936cb2b5bd287bd3e19de22460b7c9ac1dc7f9",
+      "valid": true
+    },
+    {
+      "name": "valid/parking-handle.json",
+      "sha256": "f9ad871be6d76d28f0977f39e78a311937b438aeb18b3b95ed01b01d7fd427e0",
+      "valid": true
+    },
+    {
+      "name": "valid/plan.json",
+      "sha256": "9d013bdb76e242ab37fdffc3c19fb6cc2e307594a31d1fe4ce0c4571f7113f64",
+      "valid": true
+    },
+    {
+      "name": "valid/profile-manifest.json",
+      "sha256": "0e3f50f02e4530a6d2d9bad6c15ece9bc8639c9deb1e3ffce9fe5c18e16c45d5",
+      "valid": true
+    },
+    {
+      "name": "valid/session-proof-record.json",
+      "sha256": "9a0d8cbc32374a3b7bf56ccb4a5fb20ddcd51f0470af57c284d2e95b8c7cba69",
+      "valid": true
+    },
+    {
+      "name": "valid/session-witness.json",
+      "sha256": "a5149342318755b8961e41c280d39e46b3ca4a4776885c4cd689077dc0bc9687",
+      "valid": true
+    },
+    {
+      "name": "valid/turn-intent.json",
+      "sha256": "3ddf437c4fedf4339a0b05a305ba5433c6c2c751cf934e87b93427dbf1af9e8d",
+      "valid": true
+    },
+    {
+      "name": "valid/turn-result.json",
+      "sha256": "917aad6e9c3b29b90c11d5d59bd70c0ef7f1c5553bf033ecd2d394bf76618752",
+      "valid": true
+    },
+    {
+      "name": "valid/turning-handle.json",
+      "sha256": "21fcb4ca2bc0e95544cbf6f71d7c675d7777889bbf44bcb6b0e66492724b0255",
+      "valid": true
+    }
+  ],
+  "schema": "dm.codex-body.vector-index/v3",
+  "scope": "public deterministic signed fixture and synthetic codec records; no native launch or live authority proof"
+}

@@ -306,6 +306,62 @@ sys.exit(2)
         finally:
             os.close(descriptor)
 
+    def test_native_parent_descriptor_checks_real_kernel_parent_and_pin(self) -> None:
+        path = self.root_path / "native-parent-capability"
+        path.write_bytes(self.capability.key)
+        path.chmod(0o600)
+        descriptor = os.open(path, os.O_RDONLY)
+        self.addCleanup(os.close, descriptor)
+        os.lseek(descriptor, 32, os.SEEK_SET)
+        python_hash = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
+        code = """
+import hashlib,os,sys
+from dataclasses import replace
+from daimon_matrix import codex_matrix_binding as bridge
+from daimon_matrix.codex_body import CodexBodyError
+source=int(sys.argv[1])
+os.close(source)
+bridge.CURRENT_RELEASE=replace(bridge.CURRENT_RELEASE,binary_sha256=sys.argv[2])
+opened=-1
+try:
+    opened=bridge._open_native_parent_capability(source)
+    key=bridge.read_native_capability_key(opened)
+    try:
+        assert hashlib.sha256(key).hexdigest()==sys.argv[3]
+    finally:
+        key[:]=bytes(len(key))
+except CodexBodyError as error:
+    sys.exit(0 if error.code==sys.argv[4] else 2)
+finally:
+    if opened>=0:os.close(opened)
+sys.exit(0 if sys.argv[4]=='pass' else 3)
+"""
+        for pin, permission, expected in (
+            (python_hash, 0o600, "pass"),
+            ("0" * 64, 0o600, "native_capability_parent_rejected"),
+            (python_hash, 0o640, "native_capability_descriptor_unsafe"),
+        ):
+            with self.subTest(expected=expected):
+                path.chmod(permission)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        code,
+                        str(descriptor),
+                        pin,
+                        hashlib.sha256(self.capability.key).hexdigest(),
+                        expected,
+                    ],
+                    pass_fds=(descriptor,),
+                    capture_output=True,
+                    timeout=3,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(os.lseek(descriptor, 0, os.SEEK_CUR), 32)
+        path.chmod(0o600)
+
     def test_native_descriptor_rejects_single_consumer_pipe(self) -> None:
         read_fd, write_fd = os.pipe()
         try:
