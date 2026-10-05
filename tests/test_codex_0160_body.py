@@ -270,7 +270,13 @@ class CurrentProfileTests(unittest.TestCase):
         def recovery_parser() -> Any:
             parser = original_parser()
             parse = parser.parse_args
-            parser.parse_args = lambda args: parse([*args, "--recover-native-resume"])
+            patch = mock.patch.object(
+                parser,
+                "parse_args",
+                side_effect=lambda args: parse([*args, "--recover-native-resume"]),
+            )
+            patch.start()
+            self.addCleanup(patch.stop)
             return parser
 
         with mock.patch.object(body, "parser", side_effect=recovery_parser):
