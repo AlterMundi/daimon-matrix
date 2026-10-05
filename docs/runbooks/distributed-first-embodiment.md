@@ -1,5 +1,10 @@
 # Distributed first embodiment and plural continuity
 
+After activating the body, complete [native interactive harness
+onboarding](native-harness-onboarding.md). The current everyday interface for
+every daimon is its ordinary interactive harness command; a task executor or
+daemon-only qualification is not operational onboarding acceptance.
+
 This is the operational path from a threshold-separated genesis to the first
 runnable embodiment, then to additional embodiments. No holder invocation opens
 more than one root holder package, and no target runtime custody receives a
