@@ -38,13 +38,32 @@ permit inbox polling, autonomous replies, model wakeups or background sends.
 Before activation, qualify the new installation against copies of every actual
 native catalog using the official loader and full history reconciliation.
 Closed-visibility catalogs use a different authentication key from an owner
-installation. The existing schema-provisioning migration does not change that
-key. Consequently, an existing closed catalog can refuse the new installation
-with `egress_catalog_invalid` even when its schema is current. Do not delete its
-obligations, use a public zero key for a live owner installation, rewrite their
-bindings or report schema migration as authentication migration. Such a body
-needs a separately qualified owner-authorized transition that preserves all
-accepted native/echo history before this mirror can be activated.
+installation. Schema provisioning alone does not change it. The explicit
+owner-local offline command performs the supported transition:
+
+```bash
+daimon-matrixd --state-root /owner/package/runtime \
+  --visibility-installation /owner/visibility/installation.json \
+  --adopt-owner-visibility --password-fd 3 3</owner/body.password
+```
+
+Stop and fence all consumers first, retain authenticated native-catalog snapshots
+and the original startup selection, and use the qualified exact SDK. The command
+acquires the writer lock, genuinely verifies the installation against this body's
+bundle/authority/custody, preflights every registered catalog, changes only storage
+authentication and exits without listeners, Telegram posts or model calls. It
+requires existing complete journals: corrupt or missing history is not repaired.
+Original native operations, release counts, projections, policy bindings, proof
+revisions, attempts and receipts remain unchanged. A public zero proof key is
+refused for the owner installation.
+
+Each catalog transaction is atomic. After interruption between catalogs, repeat
+the same command with the same verified installation: it recognizes its exact new
+key or the original closed key and completes forward. It does not accept an
+unrelated installation key or widen the original obligations' policy. Qualify
+normal startup with the new installation after all catalogs validate. The old
+closed daemon will refuse these adopted catalogs; configuration-only rollback is
+insufficient.
 
 ## Activate and verify
 
@@ -74,11 +93,17 @@ not rolled back. Verify scope/sync still produce no Telegram posts.
 ## Recovery and limits
 
 Retain the original startup selection and exact installation files before
-activation. Recover by restoring the explicitly authorized configuration and
-coherently refreshing process observation after any restart, preserving all
-accepted ledger, echo and Registry history. Switching an installation does not
-re-authorize old retained obligations under a different disclosure or policy:
-inspect and resolve existing queued or ambiguous operations before cutover.
+activation. Before any new native operation or mirror attempt, while all consumers
+remain fenced, recovery may restore the exact pre-adoption native-catalog snapshots
+and old configuration; this restores authentication without losing accepted history.
+After any new accepted operation or echo attempt, preserve that history and recover
+forward with the qualified owner installation. Never rewind a ledger or Registry.
+Coherently refresh process observation after any daemon restart.
+
+Switching an installation does not re-authorize old retained obligations under a
+different disclosure or policy. Old scope/sync remain private, while an old closed
+conversation obligation cannot be relabeled as newly approved mirrored delivery.
+Inspect and resolve existing queued or ambiguous operations before cutover.
 
 Default closed visibility and the existing `all-inter-daimon-communications`
 installation retain their prior behavior. The opt-in proves visibility and

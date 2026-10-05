@@ -25,3 +25,13 @@ No blocking findings in this source delta. Existing closed catalog authenticatio
 must transition without deleting or rebinding accepted history before live
 activation. This change does not perform that migration. Real sibling delivery,
 Telegram receipts and native model inference remain operative acceptance work.
+
+## Successor adoption delta
+
+The same delivery now includes the explicit offline owner visibility catalog
+adoption that the first review identified as a rollout prerequisite. The prior
+approval covers only its exact mirror candidate; the new storage-authentication
+and daemon command delta requires an additional exact-head independent review.
+The source gate now includes 116 focused tests, genuine owner-binding daemon
+adoption without serving, native-history preservation, partial-catalog recovery,
+transaction rollback and tampered-record refusal. No live adoption is claimed.

@@ -154,6 +154,10 @@ Both bodies opting in may produce two body-specific echoes of the same message.
 The four scope/sync paths remain exempt in every mode: memory, skills and private
 state convergence are never mirrored by this option. See the
 [owner rollout runbook](runbooks/owner-sibling-conversation-mirror.md).
+Existing closed journals require the explicit owner-locked authentication adoption
+command; ordinary schema provisioning does not replace their proof key. Adoption
+preserves native history and original echo policy/attempt/receipt records and does
+not itself perform a message or Telegram effect.
 
 ## 3. Fixed policy, trust and retained evidence
 

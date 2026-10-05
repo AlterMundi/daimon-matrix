@@ -906,6 +906,76 @@ class MandatoryEgressController:
             catalog = self._catalogs[catalog_id]
             self._provision(catalog.path, catalog_id)
 
+    def adopt_closed_visibility_catalogs(self, *, version: int) -> None:
+        """Explicit owner-locked closed-to-signed storage authentication adoption.
+
+        Validate all catalogs before changing any. Each catalog transaction is
+        atomic and retries accept only the original closed key or this exact new
+        installation key. No policy, native operation or echo attempt is rebound.
+        """
+        if (
+            self._catalog_mode != "migrate"
+            or self._registry_closed
+            or version != VISIBILITY_SCHEMA_VERSION
+            or self._installation_digest is None
+            or self._owner_actor is None
+            or self._verify_owner_binding is None
+            or self._transport is None
+            or self._proof_key == b"\0" * 32
+        ):
+            raise NativeEgressError("egress_migration_not_authorized")
+        prior = closed_visibility(clock=self._clock)
+
+        def validate(
+            database: sqlite3.Connection, catalog_id: str
+        ) -> EchoJournal | None:
+            try:
+                journal = self._validate_visibility_schema(database, catalog_id)
+            except NativeEgressError:
+                journal = prior._validate_visibility_schema(database, catalog_id)
+                self._reconcile_catalog(database, catalog_id, journal)
+                for row in database.execute(
+                    "SELECT echo_operation_id,echo_binding_digest "
+                    "FROM mandatory_egress_operations"
+                ).fetchall():
+                    record = journal._load(str(row[0]), str(row[1]))
+                    if record["binding"]["policy"] != prior._policy:
+                        raise NativeEgressError("egress_catalog_invalid") from None
+                return journal
+            self._reconcile_catalog(database, catalog_id, journal)
+            return None
+
+        # Registration never acquires authority: the daemon owns the runtime
+        # lock and verified installation before this offline command is invoked.
+        for catalog_id, catalog in sorted(self._catalogs.items()):
+            self._path_identity(catalog.path)
+            database = sqlite3.connect(catalog.path.as_uri() + "?mode=ro", uri=True)
+            try:
+                database.row_factory = sqlite3.Row
+                if tuple(database.execute("PRAGMA integrity_check").fetchone()) != (
+                    "ok",
+                ):
+                    raise NativeEgressError("egress_catalog_invalid")
+                validate(database, catalog_id)
+            finally:
+                database.close()
+        for catalog_id, catalog in sorted(self._catalogs.items()):
+            with self._database(catalog) as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    journal = validate(database, catalog_id)
+                    if journal is not None:
+                        journal.reauthenticate(self._proof_key)
+                    self._reconcile_catalog(
+                        database,
+                        catalog_id,
+                        self._validate_visibility_schema(database, catalog_id),
+                    )
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+
     def validate_registered_catalogs(
         self, catalog_ids: frozenset[str] | None = None
     ) -> None:

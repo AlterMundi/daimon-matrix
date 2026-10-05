@@ -106,6 +106,66 @@ class EchoTests(unittest.TestCase):
         self.db.commit()
         return binding
 
+    def test_authentication_transition_preserves_confirmed_proof(self):
+        digest = self.admit()
+        self.worker.advance("synthetic-op", digest)
+        original = self.journal._load("synthetic-op", digest)
+        self.db.execute("BEGIN IMMEDIATE")
+        self.journal.reauthenticate(b"n" * 32)
+        self.db.commit()
+        new = echo.EchoJournal(
+            self.db, catalog_id="synthetic-catalog", authentication_key=b"n" * 32
+        )
+        retained = new._load("synthetic-op", digest)
+        self.assertNotEqual(
+            original.pop("authentication"), retained.pop("authentication")
+        )
+        self.assertEqual(original, retained)
+        self.assertEqual(
+            self.worker_for(new).inspect("synthetic-op", digest)["state"], "confirmed"
+        )
+        self.assertEqual(len(self.transport.calls), 1)
+        with self.assertRaises(echo.EchoError):
+            self.reopen(self.db)
+
+    def test_authentication_transition_validates_before_write_and_rolls_back(self):
+        from unittest.mock import patch
+
+        digest = self.admit()
+        before = list(self.db.execute("SELECT * FROM echo_v2_catalog"))
+        proof = self.journal._load("synthetic-op", digest)
+        self.db.execute("BEGIN IMMEDIATE")
+        with (
+            patch.object(
+                self.journal, "_write", side_effect=echo.EchoError("echo_capacity")
+            ),
+            self.assertRaises(echo.EchoError),
+        ):
+            self.journal.reauthenticate(b"n" * 32)
+        self.db.rollback()
+        self.assertEqual(list(self.db.execute("SELECT * FROM echo_v2_catalog")), before)
+        self.assertEqual(self.reopen(self.db)._load("synthetic-op", digest), proof)
+        with self.assertRaisesRegex(echo.EchoError, "echo_transaction_required"):
+            self.journal.reauthenticate(b"n" * 32)
+
+    def test_authentication_transition_refuses_tampered_record_without_repair(self):
+        digest = self.admit()
+        record = self.journal._load("synthetic-op", digest)
+        record["parts"][0]["text"] = "forged"
+        raw = echo._json(record)
+        self.db.execute("UPDATE echo_v2_obligations SET record=?", (raw,))
+        catalog = list(self.db.execute("SELECT * FROM echo_v2_catalog"))
+        self.db.execute("BEGIN IMMEDIATE")
+        with self.assertRaises(echo.EchoError):
+            self.journal.reauthenticate(b"n" * 32)
+        self.db.rollback()
+        self.assertEqual(
+            list(self.db.execute("SELECT * FROM echo_v2_catalog")), catalog
+        )
+        self.assertEqual(
+            self.db.execute("SELECT record FROM echo_v2_obligations").fetchone()[0], raw
+        )
+
     def test_closed_policy_projection_and_control_registry(self):
         import copy
 
