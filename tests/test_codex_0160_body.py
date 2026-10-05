@@ -106,6 +106,76 @@ class CurrentProfileTests(unittest.TestCase):
                     changed, allow_hooks=False, native_turn=True, current_profile=True
                 )
 
+    @staticmethod
+    def restored_usage_event() -> dict[str, Any]:
+        counts = dict.fromkeys(
+            (
+                "totalTokens",
+                "inputTokens",
+                "cachedInputTokens",
+                "cacheWriteInputTokens",
+                "outputTokens",
+                "reasoningOutputTokens",
+            ),
+            0,
+        )
+        return {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "threadId": "restored-thread",
+                "turnId": "retained-prior-turn",
+                "tokenUsage": {
+                    "total": counts,
+                    "last": counts,
+                    "modelContextWindow": 258400,
+                },
+            },
+        }
+
+    def test_current_restored_session_data_precedes_lifecycle_response(self) -> None:
+        io = turn_fixture.BoundedTransportTests(methodName="runTest")
+        io.setUp()
+        self.addCleanup(io.tearDown)
+        usage = self.restored_usage_event()
+        for method in ("thread/resume", "mcpServerStatus/list", "thread/turns/list"):
+            for bounded in (False, True):
+                with self.subTest(method=method, bounded=bounded):
+                    script = (
+                        "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                        f"print(json.dumps({self.quota_event()!r}),flush=True)\n"
+                        f"print(json.dumps({usage!r}),flush=True)\n"
+                        "print(json.dumps({'id':request['id'],'result':{'ok':True}}),flush=True)\n"
+                    )
+                    transport = io.transport(script)
+                    transport._current_profile = True
+                    transport._native_turn_data = False
+                    if bounded:
+                        result, captured = transport.request_bounded(
+                            method, {}, deadline=time.monotonic() + 2
+                        )
+                        self.assertEqual(captured, [self.quota_event(), usage])
+                    else:
+                        result = transport.request(method, {})
+                    self.assertEqual(result, {"ok": True})
+        with self.assertRaises(body.CodexBodyError):
+            body._validate_notification(usage, allow_hooks=False)
+        mutations: tuple[Callable[[dict[str, Any]], Any], ...] = (
+            lambda e: e["params"]["tokenUsage"]["total"].update(inputTokens=12.5),
+            lambda e: e["params"].update(authority="forged"),
+            lambda e: e.update(method="unknown/vendor-event"),
+            lambda e: e.update(method={}),
+        )
+        for mutate in mutations:
+            changed = copy.deepcopy(usage)
+            mutate(changed)
+            transport = io.transport(
+                "import json,sys\nrequest=json.loads(sys.stdin.readline())\n"
+                + f"print(json.dumps({changed!r}),flush=True)\n"
+            )
+            transport._current_profile = True
+            with self.assertRaises(body.CodexBodyError):
+                transport.request("thread/resume", {})
+
     def test_fractional_quota_before_lifecycle_ack_uses_only_vendor_encoding(
         self,
     ) -> None:

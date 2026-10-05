@@ -3173,20 +3173,24 @@ class AppServerProcess:
         raw = bytes(frame + separator)
         if len(raw) > MAX_RPC_LINE_BYTES:
             raise CodexBodyError("app_server_frame_invalid")
-        current_quota = False
+        current_data = False
         if getattr(self, "_current_profile", False) and not self._automatic_hooks:
             candidate = _decode_json(raw, "app_server_frame_invalid")
-            current_quota = (
+            current_data = (
                 isinstance(candidate, Mapping)
                 and "id" not in candidate
-                and candidate.get("method") == "account/rateLimits/updated"
+                and isinstance(candidate.get("method"), str)
+                and (
+                    candidate.get("method") == "account/rateLimits/updated"
+                    or candidate.get("method") in _TURN_EVENT_FIELDS
+                )
             )
-            if current_quota:
+            if current_data:
                 _validate_notification(
                     candidate, allow_hooks=False, current_profile=True
                 )
                 _native_json_bytes(candidate, "app_server_frame_invalid")
-        if current_quota:
+        if current_data:
             value = candidate
         elif self._configuration_request_id is not None:
             value = _native_configuration_frame(raw, self._configuration_request_id)
@@ -3329,8 +3333,11 @@ class AppServerProcess:
                             if native_turn
                             or (
                                 getattr(self, "_current_profile", False)
-                                and message.get("method")
-                                == "account/rateLimits/updated"
+                                and (
+                                    message.get("method")
+                                    == "account/rateLimits/updated"
+                                    or message.get("method") in _TURN_EVENT_FIELDS
+                                )
                             )
                             else _canonical
                         )(message, "app_server_notification_invalid")
@@ -3524,8 +3531,8 @@ _TURN_EVENT_OPTIONAL: Final = {
 def _validate_turn_notification(method: str, params: Mapping[str, Any]) -> None:
     """Check pinned 0.155.1 turn envelopes; opaque payloads remain bounded data.
 
-    This path is exclusive to the successor's explicit inference controller;
-    historical lifecycle notification acceptance is unchanged.
+    Successor inference and current session restoration share these pinned
+    data shapes; historical lifecycle notification acceptance is unchanged.
     """
     code = "codex_turn_notification_rejected"
     fields = _TURN_EVENT_FIELDS.get(method)
@@ -3833,16 +3840,20 @@ def _validate_notification(
         _validate_current_rate_limits(row["params"])
         return method, row["params"]
     successor_error = not allow_hooks and method == "error"
+    current_session_data = (
+        current_profile and not allow_hooks and method in _TURN_EVENT_FIELDS
+    )
     if (
         method not in KNOWN_NOTIFICATIONS
         and method not in KNOWN_SERVER_REQUESTS
         and not successor_error
+        and not current_session_data
         and not (native_turn and method in _TURN_EVENT_FIELDS)
     ):
         raise CodexBodyError("app_server_protocol_drift")
     if not isinstance(row["params"], Mapping):
         raise CodexBodyError("app_server_notification_invalid")
-    if native_turn and not successor_error:
+    if (native_turn or current_session_data) and not successor_error:
         if allow_hooks:
             raise CodexBodyError("codex_native_turn_profile_required")
         _validate_turn_notification(method, row["params"])
