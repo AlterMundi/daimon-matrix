@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -180,12 +181,26 @@ class BeingExportTests(unittest.TestCase):
         self.put("SOUL.md", b"identity")
         self.pack()
         _, manifest = self.staged()
-        self.assertEqual(len(manifest["files"]), 1)
+        self.assertEqual(len(manifest["files"]), 2)
         self.assertEqual(
             {entry["path"] for entry in manifest["sources"][0]["omissions"]},
             {"auth.json", ".env"},
         )
-        self.assertNotIn("SENSITIVE", json.dumps(manifest))
+        self.assertNotIn("not for export", json.dumps(manifest))
+
+    def test_useful_dotenv_behavior_survives_without_provider_credentials(self) -> None:
+        token = "sk-" + "a" * 40
+        original = self.put(".env", f"HERMES_TUI=1\nOPENAI_API_KEY={token}\n".encode())
+        original_raw = original.read_bytes()
+        self.put("SOUL.md", b"identity")
+        self.pack()
+        destination, manifest = self.staged()
+        env = destination / "payload/hermes-001/.env.nonsecret"
+        self.assertIn("HERMES_TUI=1", env.read_text())
+        self.assertNotIn(token, env.read_text())
+        self.assertEqual(original.read_bytes(), original_raw)
+        entry = next(e for e in manifest["files"] if e.get("derivation"))
+        self.assertEqual(entry["private_variable_names"], ["OPENAI_API_KEY"])
 
     def test_embedded_credential_refuses_whole_export_without_mutating_memory(
         self,
@@ -211,6 +226,14 @@ class BeingExportTests(unittest.TestCase):
         with self.assertRaisesRegex(tool.ExportError, "writer_quiescence"):
             tool.export(self.plan(), self.archive, writers_stopped=False)
 
+    def test_credentials_in_continuity_metadata_are_not_archived(self) -> None:
+        self.put("SOUL.md", b"identity")
+        plan = self.plan()
+        plan["continuity_notes"] = "sk-" + "a" * 40
+        with self.assertRaisesRegex(tool.ExportError, "embedded_credential"):
+            self.pack(plan)
+        self.assertFalse(self.archive.exists())
+
     def test_source_drift_after_discovery_refuses(self) -> None:
         self.put("SOUL.md", b"before")
         plan = self.plan()
@@ -234,6 +257,97 @@ class BeingExportTests(unittest.TestCase):
         ):
             self.pack()
         self.assertFalse(self.archive.exists())
+
+    def test_earlier_root_changed_while_copying_later_root_is_detected(self) -> None:
+        self.put("SOUL.md", b"identity")
+        later = self.root / "later"
+        later.mkdir()
+        self.put("history.txt", b"later context", later)
+        plan = tool.discover("Fixture", [("hermes", self.source), ("context", later)])
+        original_copy = tool.copy_source
+
+        def changing_copy(source: Path, destination: Path):
+            result = original_copy(source, destination)
+            if source.parent == later:
+                self.put("new-memory.txt", b"arrived after first root was checked")
+            return result
+
+        with (
+            patch.object(tool, "copy_source", changing_copy),
+            self.assertRaisesRegex(tool.ExportError, "source_changed"),
+        ):
+            self.pack(plan)
+        self.assertFalse(self.archive.exists())
+
+    def test_sqlite_wal_only_changes_are_not_labeled_unchanged(self) -> None:
+        baseline = self.root / "baseline"
+        baseline.mkdir()
+        reference = baseline / "library.db"
+        with closing(sqlite3.connect(reference)) as connection:
+            connection.execute("CREATE TABLE memories(text TEXT)")
+            connection.commit()
+        original = self.source / "library.db"
+        shutil.copyfile(reference, original)
+        connection = sqlite3.connect(original)
+        self.addCleanup(connection.close)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("INSERT INTO memories VALUES ('new lived experience')")
+        connection.commit()
+        plan = tool.discover(
+            "Fixture", [("memory", self.source)], {"memory-001": baseline}
+        )
+        self.pack(plan)
+        _, manifest = self.staged()
+        entry = manifest["files"][0]
+        self.assertEqual(entry["delta"], "unknown")
+        self.assertEqual(entry["sqlite"]["table_counts"]["memories"], 1)
+
+    def test_wal_only_write_in_earlier_root_is_detected(self) -> None:
+        path = self.source / "library.db"
+        connection = sqlite3.connect(path)
+        self.addCleanup(connection.close)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE memories(text TEXT)")
+        connection.commit()
+        later = self.root / "later"
+        later.mkdir()
+        self.put("context.txt", b"later root", later)
+        plan = tool.discover("Fixture", [("memory", self.source), ("context", later)])
+        original_copy = tool.copy_source
+
+        def changing_copy(source: Path, destination: Path):
+            result = original_copy(source, destination)
+            if source.parent == later:
+                connection.execute("INSERT INTO memories VALUES ('new memory in WAL')")
+                connection.commit()
+            return result
+
+        with (
+            patch.object(tool, "copy_source", changing_copy),
+            self.assertRaisesRegex(tool.ExportError, "source_changed"),
+        ):
+            self.pack(plan)
+        self.assertFalse(self.archive.exists())
+
+    def test_baseline_symlinks_are_reported_without_reading_external_bytes(
+        self,
+    ) -> None:
+        baseline = self.root / "baseline"
+        baseline.mkdir()
+        external = self.root / "outside.txt"
+        external.write_bytes(b"outside baseline scope")
+        (baseline / "SOUL.md").symlink_to(external)
+        self.put("SOUL.md", b"identity")
+        plan = tool.discover(
+            "Fixture", [("hermes", self.source)], {"hermes-001": baseline}
+        )
+        self.pack(plan)
+        _, manifest = self.staged()
+        self.assertIsNone(manifest["files"][0]["baseline_sha256"])
+        self.assertEqual(
+            manifest["sources"][0]["baseline_omissions"][0]["reason"],
+            "unresolved_symlink",
+        )
 
     def test_symlink_is_reported_and_source_outside_scope_is_not_read(self) -> None:
         external = self.root / "external.txt"

@@ -7,12 +7,20 @@ being's original contextual material in one private `.tgz` or `.zip`, verifies
 it, and can restore it to a fresh staging directory.
 
 The aim is useful continuity: identity, remembered experience, learned skills,
-working tools, configuration and human/project context. Preserve originals
+working tools, configuration and relational/project context. Preserve originals
 completely within the selected sources. Adopt behavior that actually helps the
 receiving being work, remember and relate to its human. Source-machine operating
 rules and project-specific contribution procedures do not automatically become
 global receiving instructions. An archive records provenance; it does not grant
 authority or require a new ceremony.
+
+Relational continuity includes the being's tribe, humans and other daimons met
+through its life: shared experiences, commitments, agreements and the context
+that lets a future body recognize and continue those relationships. Preserve
+that history in its original memory/context sources, with provenance and scope.
+Do not reduce it to the primary human pairing. Matrix references and historical
+relationship records remain attributable records; this archive does not issue
+credentials or create relationships it has not observed.
 
 ## First use: Oliva and Eko
 
@@ -82,6 +90,12 @@ with SHA-256 references. Without a supplied baseline it records `unknown`.
 It never guesses a harness default from the current installation. Original
 selected files remain in the archive even when they match the baseline, so a
 future receiving adapter can reconstruct them without a disappearing download.
+SQLite contextual deltas remain `unknown`: a matching physical main file can
+have different memories in its WAL. Physical file hashes/comparison and the
+verified full snapshot remain separately available; there is no false claim of
+unchanged memory. Unknown SQLite extensions can prevent integrity/count checks;
+the export then fails without dropping or changing source data. Validate those
+databases with their supported source runtime before attempting migration.
 Regenerate the plan after pausing writers, retain the selected baseline/version
 information, then export:
 
@@ -126,9 +140,11 @@ Hermes transcript does not yet make it natively resumable in Codex.
 Known credential/custody files and rebuildable dependencies are recorded as
 omissions. Git internals are explicitly deferred to a future Git-history adapter.
 SQLite WAL/SHM files are replaced by coherent backup-API snapshots of the main
-database, with the omission recorded. `.env` files currently require separating
-their useful nonsecret settings from credential values; this tool does not
-silently rewrite the original. Detected embedded credentials stop the export,
+database, with the omission recorded. `.env`/`.envrc` files additionally produce
+an inactive `.nonsecret` copy retaining useful settings such as `HERMES_TUI=1`.
+Credential variable names remain visible for fresh private configuration; their
+values are removed. The original stays unchanged. No environment expression is
+evaluated. Detected remaining embedded credentials stop the export,
 preserving the unchanged source. Known-pattern scanning cannot guarantee that
 arbitrary binary/compressed historical material contains no secret.
 

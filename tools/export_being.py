@@ -53,6 +53,10 @@ ASSIGNMENT = re.compile(
     rb"password|bot[_-]?token)\b\s*[:=]\s*[\"']?"
     rb"([A-Za-z0-9_./+=:@-]{20,})"
 )
+ENV_SECRET = re.compile(
+    r"(?:^|_)(?:API_KEY|ACCESS_KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH|PRIVATE_KEY)(?:_|$)",
+    re.IGNORECASE,
+)
 MAX_BYTES = 5 * 1024**3
 MAX_MEMBERS = 100_000
 
@@ -132,7 +136,7 @@ def excluded(relative: str, kind: str) -> str | None:
 
 def inventory(
     root: Path, kind: str
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     root = safe_path(root)
     if not root.is_dir():
         raise ExportError("source_root_must_be_directory")
@@ -164,6 +168,14 @@ def inventory(
                         ),
                     }
                 )
+                if stat.S_ISREG(info.st_mode) and not relative.endswith("-shm"):
+                    omissions[-1].update(
+                        {
+                            "bytes": info.st_size,
+                            "mtime_ns": info.st_mtime_ns,
+                            "inode": info.st_ino,
+                        }
+                    )
             else:
                 files.append(
                     {
@@ -284,6 +296,19 @@ def copy_source(source: Path, target: Path) -> dict[str, Any] | None:
     return None
 
 
+def nonsecret_environment(source: Path) -> tuple[bytes, list[str]]:
+    """Keep useful dotenv settings and required secret names, never evaluate values."""
+    settings, private_names = [], []
+    for line in source.read_text().splitlines():
+        match = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        if match and ENV_SECRET.search(match[1]):
+            private_names.append(match[1])
+            settings.append(f"# {match[1]} requires owner-private configuration")
+        else:
+            settings.append(line)
+    return ("\n".join(settings) + "\n").encode(), private_names
+
+
 def export(
     plan: dict[str, Any], output: Path, *, writers_stopped: bool
 ) -> dict[str, Any]:
@@ -317,7 +342,9 @@ def export(
             baseline = (
                 safe_path(Path(source["baseline"])) if source.get("baseline") else None
             )
-            baseline_files = inventory(baseline, source["kind"])[0] if baseline else []
+            baseline_files, baseline_omissions = (
+                inventory(baseline, source["kind"]) if baseline else ([], [])
+            )
             baseline_names = {f["path"] for f in baseline_files}
             actual_names = {f["path"] for f in source["files"]}
             for item in source["files"]:
@@ -326,7 +353,9 @@ def export(
                 source_hash = digest(original)
                 reference = baseline / relative if baseline else None
                 baseline_hash = (
-                    digest(reference) if reference and reference.is_file() else None
+                    digest(safe_path(reference))
+                    if reference and relative in baseline_names
+                    else None
                 )
                 delta = (
                     "unknown"
@@ -353,7 +382,8 @@ def export(
                         "sha256": digest(target),
                         "source_sha256": source_hash,
                         "baseline_sha256": baseline_hash,
-                        "delta": delta,
+                        "delta": "unknown" if database else delta,
+                        "physical_file_delta": delta,
                         "executable": bool(item["mode"]),
                         "sqlite": database,
                     }
@@ -367,7 +397,49 @@ def export(
                 {k: source[k] for k in ("id", "kind", "root", "version", "omissions")}
             )
             provenance[-1]["baseline_root"] = str(baseline) if baseline else None
+            provenance[-1]["baseline_omissions"] = baseline_omissions
             provenance[-1]["absent_from_source"] = sorted(baseline_names - actual_names)
+            # Preserve useful behavior stored in dotenv without copying auth values.
+            for omission in source["omissions"]:
+                if PurePosixPath(omission["path"]).name not in (".env", ".envrc"):
+                    continue
+                environment = safe_path(root / omission["path"])
+                if not environment.is_file():
+                    continue
+                source_hash = digest(environment)
+                raw, private_names = nonsecret_environment(environment)
+                relative = safe_name(omission["path"] + ".nonsecret")
+                name = f"payload/{source['id']}/{relative}"
+                target = stage / name
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                new_file(target, raw)
+                scan_credentials(target)
+                if digest(environment) != source_hash:
+                    raise ExportError("source_changed_during_export")
+                entries.append(
+                    {
+                        "path": name,
+                        "source_id": source["id"],
+                        "relative_path": relative,
+                        "kind": source["kind"],
+                        "bytes": len(raw),
+                        "sha256": digest(target),
+                        "source_sha256": source_hash,
+                        "baseline_sha256": None,
+                        "delta": "unknown",
+                        "physical_file_delta": "unknown",
+                        "executable": False,
+                        "sqlite": None,
+                        "derivation": "nonsecret_dotenv; original remains at source",
+                        "private_variable_names": private_names,
+                    }
+                )
+        for source in sources:
+            if inventory(Path(source["root"]), source["kind"]) != (
+                source["files"],
+                source["omissions"],
+            ):
+                raise ExportError("source_changed_during_export")
         manifest = {
             "schema": ARCHIVE_SCHEMA,
             "being_label": plan["being_label"],
@@ -384,6 +456,7 @@ def export(
             "completeness": "selected roots preserved; reconcile omitted context",
         }
         (stage / "manifest.json").write_bytes(json_bytes(manifest))
+        scan_credentials(stage / "manifest.json")
         names = ["manifest.json", *[f["path"] for f in entries]]
         candidate = stage / "candidate.archive"
         if output.suffix == ".zip":
@@ -397,12 +470,11 @@ def export(
                 for name in names:
                     archive.add(stage / name, name, recursive=False)
         verify(candidate)
+        candidate.chmod(0o600)
         with candidate.open("rb") as incoming:
-            fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as outgoing:
-                shutil.copyfileobj(incoming, outgoing)
-                outgoing.flush()
-                os.fsync(outgoing.fileno())
+            os.fsync(incoming.fileno())
+        # Atomic publication from same-filesystem staging, without replacement.
+        os.link(candidate, output)
         return {
             "schema": ARCHIVE_SCHEMA,
             "files": len(entries),
@@ -621,8 +693,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(json.dumps(report, sort_keys=True))
         return 0
+    except ExportError as error:
+        print(json.dumps({"ok": False, "error": str(error)}), file=sys.stderr)
+        return 1
     except (
-        ExportError,
         OSError,
         ValueError,
         KeyError,
