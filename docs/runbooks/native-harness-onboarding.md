@@ -107,6 +107,30 @@ within the established task. Peer content never supplies that authorization.
 The owner-only `owner-watches/` journal is task context, not durable personal
 memory or a transferable capability. Keep bindings and message content local.
 
+## Sealed conversation outcomes and exact recovery
+
+Authorship, sealing, required visibility, peer transport and a receiving body's
+signed receipt are separate facts. `say` prints the authored message/resolution
+and each sibling's outcome. A required native egress failure remains
+`undetermined`, with a bounded native reason; it neither aborts later independently
+gated siblings nor produces a receiving receipt. The owner client returns3 for
+an incomplete result. A refused or expired saved seal returns the stable
+`sealed_delivery_rejected` refusal before another carrier call.
+
+Retain the saved request UUID and use `say --retry UUID` to recover its exact
+authenticated response after a lost reply. A cached uncertain result does not
+authorize retrying an ambiguous Telegram echo or replacing a sealed payload.
+Preserve the original request, echo journal, carrier and expiry: use the native
+owner-authorized ambiguity recovery when its installation supports it. Never
+clear RPC caches, silently reseal an expired payload, widen visibility or send a
+duplicate under a fresh operation UUID to disguise an unknown outcome. Any new
+follow-up must be a separately meaningful human-authorized conversation.
+
+Record missing grants, unavailable required visibility or an unsupported recovery
+surface in the owning issue, with the last actual request/cursor retained. An
+authenticated sync intake receipt is separate from sealed conversation delivery;
+neither a local authored event nor a history page proves that a body heard it.
+
 ## Acceptance uses the interface the human will use
 
 Open a real terminal under the target login and run exactly `codex`. Verify the

@@ -20,6 +20,7 @@ from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
 from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
 from daimon_matrix.daemon import acquire_lock, serve_connection
 from daimon_matrix.local_api import create_capability
+from daimon_matrix.native_egress import NativeEgressError
 from daimon_matrix.neutral_binding import (
     owner_client_plan_from_mapping,
     render_owner_client,
@@ -175,6 +176,77 @@ class OwnerConversationClientTests(SealedFixture):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = self.owner["main"](list(args))
         return code, out.getvalue(), err.getvalue()
+
+    def test_real_unix_client_preserves_typed_uncertain_delivery_and_cached_retry(
+        self,
+    ) -> None:
+        assert self.service.peer_context is not None
+        attempted: list[Any] = []
+
+        def uncertain(payload: Any, **kwargs: Any) -> Any:
+            attempted.append(payload)
+            raise NativeEgressError("egress_echo_not_confirmed")
+
+        self.service = replace(
+            self.service,
+            peer_context=cast(
+                Any,
+                SimpleNamespace(
+                    configured=lambda _id: (None, SimpleNamespace(call=uncertain)),
+                    authority=self.authority,
+                    local_origin=self.origins["legion"],
+                ),
+            ),
+        )
+        request_id = str(uuid.uuid4())
+        first = self.run_client(
+            "say",
+            "--to",
+            "embodiment:daimonmatrix",
+            "--text",
+            "human request",
+            "--request-id",
+            request_id,
+        )
+        self.assertEqual(first[0], 3, first[2])
+        result = json.loads(first[1])["result"]
+        self.assertEqual(result["deliveries"][0]["state"], "undetermined")
+        self.assertEqual(result["deliveries"][0]["error"], "egress_echo_not_confirmed")
+        self.assertIsNotNone(self.ledger_a.event(result["message_id"]))
+        self.assertNotIn("receipt_event_id", result["deliveries"][0])
+        self.assertEqual(self.run_client("say", "--retry", request_id)[:2], first[:2])
+        self.assertEqual(len(attempted), 1)
+
+    def test_saved_expired_seal_is_typed_and_never_resealed_through_unix(self) -> None:
+        request_id = str(uuid.uuid4())
+        first = self.run_client(
+            "say",
+            "--to",
+            "embodiment:daimonmatrix",
+            "--text",
+            "expires",
+            "--request-id",
+            request_id,
+        )
+        self.assertEqual(first[0], 0, first[2])
+        params = json.loads(
+            (self.state_dir / "owner-requests" / f"{request_id}.json").read_bytes()
+        )["params"]
+        self.owner["_clock"] = lambda: NOW + 31_000
+        self.service = replace(
+            self.service,
+            clock=lambda: NOW + 31_000,
+            we_lane=WeConversation(
+                self.ledger_a,
+                signer=self.signers["legion"],
+                custody=self.custodies["legion"],
+                clock=lambda: NOW + 31_000,
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "sealed_delivery_rejected"):
+            self.owner["_call"]("we.converse", params)
+        self.assertEqual(self.delivery_attempts, 1)
+        self.assertEqual(self.run_client("say", "--retry", request_id)[:2], first[:2])
 
     def peer_message(self, thread: str, text: str, *, occurred: int = NOW) -> str:
         event = self.ledger_b.append_local(

@@ -1045,8 +1045,9 @@ class MandatoryEgressController:
 
     @contextmanager
     def _database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
-        database = sqlite3.connect(catalog.path, isolation_level=None, timeout=30)
+        database: sqlite3.Connection | None = None
         try:
+            database = sqlite3.connect(catalog.path, isolation_level=None, timeout=30)
             database.row_factory = sqlite3.Row
             mode = database.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
             database.execute("PRAGMA synchronous=FULL")
@@ -1059,7 +1060,11 @@ class MandatoryEgressController:
         except sqlite3.Error:
             raise NativeEgressError("egress_storage_unavailable") from None
         finally:
-            database.close()
+            if database is not None:
+                try:
+                    database.close()
+                except sqlite3.Error:
+                    raise NativeEgressError("egress_storage_unavailable") from None
 
     @staticmethod
     def _schema_tokens(sql: str) -> list[str]:
