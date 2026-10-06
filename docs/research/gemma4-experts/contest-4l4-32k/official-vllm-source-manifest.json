@@ -1,0 +1,113 @@
+{
+  "source": "https://www.kaggle.com/api/v1/datasets/download/metric/gemma-4-developer-agent-wheelhouse/vllm-0.19.1-cp38-abi3-manylinux_2_31_x86_64.whl?datasetVersionNumber=28",
+  "wheelhouse_version": 28,
+  "wheel_bytes": 433132506,
+  "http_range_bytes_transferred": 2167770,
+  "members": [
+    {
+      "path": "vllm/model_executor/models/gemma4.py",
+      "bytes": 67424,
+      "sha256": "65ff34237b994f272341f3cc6928eb75dc6593652847697255211f5348b5a190"
+    },
+    {
+      "path": "vllm/model_executor/models/gemma4_mm.py",
+      "bytes": 55430,
+      "sha256": "f0b30d3bc89b01eaebe9542651c8e9089cfe530a8f4b6de4410757142b4ee50a"
+    },
+    {
+      "path": "vllm/model_executor/models/utils.py",
+      "bytes": 29874,
+      "sha256": "7749ca776714c3afc8489af2d063ee7f201e3fbf89895a722c323a41a907ffc4"
+    },
+    {
+      "path": "vllm/model_executor/models/interfaces.py",
+      "bytes": 51408,
+      "sha256": "6385a9a820de3e3b699e69a52e3f1dd86533bc6128e4e215c87870b45e012f32"
+    },
+    {
+      "path": "vllm/v1/core/kv_cache_utils.py",
+      "bytes": 66584,
+      "sha256": "3bccb51ba52e0a42422ff2f91ee55cf82ae1a71f8a839fa97281352d324da1a4"
+    },
+    {
+      "path": "vllm/v1/kv_cache_interface.py",
+      "bytes": 18082,
+      "sha256": "52237e1865f2bd47ef572821ca55ef2261fc96e0cee2f34dae0f1c7c4d0b15a7"
+    },
+    {
+      "path": "vllm/config/vllm.py",
+      "bytes": 82511,
+      "sha256": "1c1e1ad1fdcb5873bce60464c8dad303ac62e7978b322ccedf1a6d85288d3666"
+    },
+    {
+      "path": "vllm/config/lora.py",
+      "bytes": 4938,
+      "sha256": "e6d06d1e77ac7023852877a0e1ea36dc62e4847c62fcd163927764eca233c3e1"
+    },
+    {
+      "path": "vllm/lora/model_manager.py",
+      "bytes": 38644,
+      "sha256": "8a29fe6efae285f64e9c68b0abfa98db464d9819c550b692812bf0a69669eaf0"
+    },
+    {
+      "path": "vllm/lora/layers/base_linear.py",
+      "bytes": 5909,
+      "sha256": "8b1433278a205a0c884ca8ef50509beef654d51ba5fbde3deaf85578badb2a41"
+    },
+    {
+      "path": "vllm/lora/layers/column_parallel_linear.py",
+      "bytes": 23084,
+      "sha256": "215ecaf21d60c7bc484be45f16a94f9bd4bc6ff0817ed707703ae3f9a9082252"
+    },
+    {
+      "path": "vllm/lora/layers/row_parallel_linear.py",
+      "bytes": 6270,
+      "sha256": "e36b49cdf1b98bb66519a90ddfda492f7836a58a5530c188333bbe838ef02893"
+    },
+    {
+      "path": "vllm/model_executor/layers/attention/attention.py",
+      "bytes": 29060,
+      "sha256": "2e45ac35100a1396bd03f9fe8d7f3e4dd41f3dc0a78b3bc7e5e118b536a0fe3c"
+    },
+    {
+      "path": "vllm/v1/core/single_type_kv_cache_manager.py",
+      "bytes": 49019,
+      "sha256": "df7a8b8f5655c9cc15fedecb7de6b44a271d28aeae117f83ee2aa8016a2f612e"
+    },
+    {
+      "path": "vllm/v1/worker/lora_model_runner_mixin.py",
+      "bytes": 11014,
+      "sha256": "49bb6c5b684235fd53eb21766a5debc17617678801c16556f09762514a9214c6"
+    },
+    {
+      "path": "vllm/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa16.py",
+      "bytes": 7875,
+      "sha256": "a549e5c085842c3c527cac8e52721a1752cac9d08d8695bb71d1334e4e183465"
+    },
+    {
+      "path": "vllm/lora/utils.py",
+      "bytes": 12702,
+      "sha256": "f0fd4df62c028e2d408edf7020dae7374ff0c2f3d3f878315f96f869c26e65b4"
+    },
+    {
+      "path": "vllm/lora/layers/logits_processor.py",
+      "bytes": 6544,
+      "sha256": "eae518a38dc710befeb1faa90fb51d75b8e7196235368083459a7c06e5ec0948"
+    },
+    {
+      "path": "vllm/config/scheduler.py",
+      "bytes": 12991,
+      "sha256": "011cb6cda6625e9f05fc0a6479061e94ec5a449d984685f19985243e91c45a2d"
+    },
+    {
+      "path": "vllm/config/cache.py",
+      "bytes": 11300,
+      "sha256": "0f5728cafef37cc6af9b4ebc440a2cf0458e49f28f39268e20399aae15c696b3"
+    },
+    {
+      "path": "vllm/engine/arg_utils.py",
+      "bytes": 98258,
+      "sha256": "b576b4e3156e7669857e2ed6cbd9a4ac50062472501bc39a80d3642991b5f362"
+    }
+  ]
+}

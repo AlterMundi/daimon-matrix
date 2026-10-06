@@ -1,0 +1,268 @@
+{
+  "research_date": "2026-10-06",
+  "checkpoint": "google/gemma-4-31B-it-qat-w4a16-ct",
+  "checkpoint_revision": "52f3f65bc7a02d555763bc923bd1d9094898219d",
+  "sources": [
+    "https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct/blob/52f3f65bc7a02d555763bc923bd1d9094898219d/config.json",
+    "https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct/tree/52f3f65bc7a02d555763bc923bd1d9094898219d",
+    "https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/models/gemma4.py",
+    "https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/models/interfaces.py",
+    "https://docs.vllm.ai/en/latest/design/hybrid_kv_cache_manager/",
+    "https://www.kaggle.com/datasets/metric/gemma-4-developer-agent-wheelhouse"
+  ],
+  "assumptions": {
+    "nominal_gpu_GiB": 32,
+    "engine_allowance_GiB_for_scenarios": 2,
+    "cache": "Ideal working K/V tensors: full layers retain the full sequence; sliding layers retain the last 1024 tokens; K and V are separate.",
+    "excluded": "Runtime repacking, padding, cache scales, graph/prefill peaks, extra fused LoRA buffers and reserved CUDA/display memory are not measured.",
+    "adapters": "BF16 A/B weights on decoder attention and optionally MLP only; no embeddings, vision or modules_to_save; rank does not change the KV dimensions.",
+    "training": "All results concern inference. Gradients, activations and optimizer states for training are excluded.",
+    "offload": "Working KV size is not necessarily the RAM tier footprint: an offloader may retain additional historical blocks."
+  },
+  "architecture": {
+    "layer_counts": {
+      "sliding_attention": 50,
+      "full_attention": 10
+    },
+    "local_window": 1024,
+    "context_limit": 262144,
+    "decoder_linear_matrices": 410
+  },
+  "weights": {
+    "checkpoint_tensor_payload_GiB": 21.66729938238859,
+    "tied_head_saving_GiB": 2.625,
+    "resident_tied_tensor_payload_GiB": 19.04229938238859,
+    "global_K_projection_duplication_GiB": 0.05767837166786194,
+    "base_tensor_estimate_GiB": 19.099977754056454,
+    "vision_and_projection_GiB": 1.0724059045314789,
+    "text_only_base_tensor_estimate_GiB": 18.027571849524975
+  },
+  "cache_by_context": [
+    {
+      "tokens": 8192,
+      "BF16_GiB": 1.40625,
+      "FP8_GiB": 0.703125
+    },
+    {
+      "tokens": 16384,
+      "BF16_GiB": 2.03125,
+      "FP8_GiB": 1.015625
+    },
+    {
+      "tokens": 32768,
+      "BF16_GiB": 3.28125,
+      "FP8_GiB": 1.640625
+    },
+    {
+      "tokens": 65536,
+      "BF16_GiB": 5.78125,
+      "FP8_GiB": 2.890625
+    },
+    {
+      "tokens": 131072,
+      "BF16_GiB": 10.78125,
+      "FP8_GiB": 5.390625
+    },
+    {
+      "tokens": 262144,
+      "BF16_GiB": 20.78125,
+      "FP8_GiB": 10.390625
+    }
+  ],
+  "lora_by_rank": [
+    {
+      "rank": 16,
+      "attention_only_BF16_MiB": 85.859375,
+      "attention_and_MLP_BF16_MiB": 233.515625,
+      "attention_and_MLP_BF16_GiB": 0.2280426025390625
+    },
+    {
+      "rank": 32,
+      "attention_only_BF16_MiB": 171.71875,
+      "attention_and_MLP_BF16_MiB": 467.03125,
+      "attention_and_MLP_BF16_GiB": 0.456085205078125
+    },
+    {
+      "rank": 64,
+      "attention_only_BF16_MiB": 343.4375,
+      "attention_and_MLP_BF16_MiB": 934.0625,
+      "attention_and_MLP_BF16_GiB": 0.91217041015625
+    },
+    {
+      "rank": 128,
+      "attention_only_BF16_MiB": 686.875,
+      "attention_and_MLP_BF16_MiB": 1868.125,
+      "attention_and_MLP_BF16_GiB": 1.8243408203125
+    }
+  ],
+  "illustrative_scenarios": [
+    {
+      "tokens_per_session": 32768,
+      "sessions": 1,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 24.83731295913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 32768,
+      "sessions": 1,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 23.19668795913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 32768,
+      "sessions": 2,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 28.574648164212704,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 32768,
+      "sessions": 2,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 25.293398164212704,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 32768,
+      "sessions": 4,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 36.049318574368954,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 32768,
+      "sessions": 4,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 29.486818574368954,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 1,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 27.33731295913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 1,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 24.44668795913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 2,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 33.574648164212704,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 2,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 27.793398164212704,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 4,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 46.049318574368954,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 65536,
+      "sessions": 4,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 34.486818574368954,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 1,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 32.33731295913458,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 1,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 26.94668795913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 2,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 43.574648164212704,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 2,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 32.793398164212704,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 4,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 66.04931857436895,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 131072,
+      "sessions": 4,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 44.486818574368954,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 1,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 42.33731295913458,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 1,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 31.94668795913458,
+      "below_nominal_32_GiB": true
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 2,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 63.574648164212704,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 2,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 42.793398164212704,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 4,
+      "cache_dtype": "BF16",
+      "illustrative_total_GiB": 106.04931857436895,
+      "below_nominal_32_GiB": false
+    },
+    {
+      "tokens_per_session": 262144,
+      "sessions": 4,
+      "cache_dtype": "FP8",
+      "illustrative_total_GiB": 64.48681857436895,
+      "below_nominal_32_GiB": false
+    }
+  ]
+}
