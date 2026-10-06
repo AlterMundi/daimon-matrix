@@ -142,6 +142,28 @@ The PR body must contain `Closes #N`, the canonical UUID `Claim-ID`, an exact
 deployment declaration, and a non-empty `## Tests` section. The effective
 receipt must be live, `in_review`, and bind the same branch and PR number.
 
+### Review acceptance after PR creation
+
+Create the PR first, then post the signed `/review` naming its number. An audit
+can finish before that acceptance exists. The accepted review handler re-reads
+the authoritative receipt chain and current PR metadata, and requests one
+[native Actions job rerun](https://docs.github.com/en/rest/actions/workflow-runs#re-run-a-job-from-a-workflow-run)
+when the latest matching `pull-request` audit has failed on its first attempt.
+It requires the actual coordination workflow, PR association, repository,
+branch and current SHA; a push, release, expiry or different claim/session
+cannot transfer that qualification. A request for a rerun is not a passing check.
+
+If the initial audit is still running, its completion triggers
+`coordination-review-refresh`. That finite workflow checks out only the trusted
+default branch and performs the same fresh receipt/head checks. It never reads
+PR artifacts or runs PR code. Both paths use the coordination mutation
+concurrency group. A second attempt cannot trigger another automatic rerun,
+and successful audits are left alone. There is no new scheduled poller.
+
+Failures after receipt publication preserve the accepted append-only receipt
+and report the refresh failure separately. An unavailable API or a genuinely
+failing rerun remains visible and requires correcting its concrete cause.
+
 ## Recovery and rollback
 
 - A missing, edited, reordered, or forked receipt fails closed. Repair by

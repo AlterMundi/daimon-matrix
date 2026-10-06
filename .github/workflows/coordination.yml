@@ -26,6 +26,8 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: read
+      actions: write
     concurrency:
       group: daimon-coordination-mutations
       cancel-in-progress: false
