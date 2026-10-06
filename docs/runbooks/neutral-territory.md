@@ -204,6 +204,42 @@ same contract.
   `/tmp/nt-evidence/` on Legion.
 
 
+## Owner conversations and installed operation profiles
+
+Re-render the owner client from the reviewed `neutral_binding` release and the
+existing `dm.owner-client/v1` plan. Keep its body paths and interpreter; preserve
+the old client and binding manifest in an owner-only backup before replacing
+them. Record the release commit and rendered SHA256 in deployment evidence.
+Do not patch the installed script or create another body installation.
+
+The client selects the already issued operator profile for each method and
+verifies that it names the same server, runtime ID and label as the primary
+client. Profiles remain separate capabilities. `methods` reports the actual
+installed method sets and their current validity; `call METHOD` accepts JSON
+parameters on stdin for one explicitly requested operation. Missing, stale or
+misbound profiles refuse the call; the client never issues or widens grants.
+
+`say --text "..." --to <embodiment-or-label> --thread <UUID>` uses sealed
+`we.converse`, including its mandatory configured visibility and peer transport.
+Local authorship is insufficient: only each returned `delivered` entry with its
+recipient receipt proves intake. Output retains the native delivery states,
+including `rejected` and `undetermined`; exit 3 means incomplete delivery.
+Intake does not prove the receiving harness has read or executed the message.
+
+Before submission, `say` fsyncs an owner-only exact authenticated request in
+the body's `owner-requests` directory and prints its UUID. Recover a lost or
+uncertain response with `say --retry <UUID>`: this reuses the exact request,
+targets, text, thread and correlation. Replacement parameters are refused.
+`--request-id <UUID>` selects a new request's ID and refuses an existing file.
+An exact retry returns the service's recorded outcome; it does not silently
+re-author a message or invent a fresh ID to force another transport attempt.
+Reconcile an undetermined outcome through the native delivery/recovery workflow.
+
+Daemon calls use its owner-only socket. In-process fallback must first acquire
+the daemon's real writer lock; a timeout while that lock remains held cannot
+open custody or load a competing runtime. Responses verify against the selected
+client's exact body/runtime binding in both paths.
+
 ## Selected skill packages and native discovery
 
 The installed wheel ships `neutral_skill_assets/daimon-chat/`. Render with

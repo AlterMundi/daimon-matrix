@@ -686,7 +686,7 @@ class OwnerClientTests(unittest.TestCase):
         self.assertNotIn("@@", rendered)
         compile(rendered.split("\n", 1)[1], "<owner-client>", "exec")
         # socket first, with an explicit and narrow fallback condition
-        self.assertIn("LocalClient(socket_path, config).send(request)", rendered)
+        self.assertIn("LocalClient(socket_path, config, timeout_seconds=40)", rendered)
         self.assertIn('str(error) != "daemon_unavailable"', rendered)
         self.assertIn("runtime = _runtime()", rendered)
         # conversation reads go through the service, never around it
@@ -696,17 +696,17 @@ class OwnerClientTests(unittest.TestCase):
         # service, then verify the reply against that runtime's own identity
         for expected in (
             "response = runtime.service.handle(request)",
-            "expected_server=runtime.service.origin",
-            '"runtime_id": runtime.service.runtime_id',
-            '"runtime_label": runtime.service.runtime_label',
+            "expected_server=config.expected_server",
+            '"runtime_id": config.runtime_id',
+            '"runtime_label": config.runtime_label',
+            "descriptor = acquire_lock(RUNTIME)",
         ):
             self.assertIn(expected, rendered)
-        self.assertEqual(rendered.count("runtime.service."), 4)
+        self.assertEqual(rendered.count("runtime.service."), 1)
         # a stored capability that does not carry a method is reported in one line,
         # not raised as a traceback: creating the request already authenticates it
         # against the capability, so the refusal can arrive before anything is sent
-        self.assertIn("except (ClientError, LocalApiError) as error:", rendered)
-        self.assertIn("no está al alcance de la capability de este cuerpo", rendered)
+        self.assertIn("operator_profile_body_mismatch", rendered)
 
 
 class SkillDiscoveryTests(unittest.TestCase):
