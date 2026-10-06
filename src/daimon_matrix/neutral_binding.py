@@ -693,6 +693,9 @@ does both, because the daemon owns the state-root lock.
     compaii-codex we                       # this being's embodiments
     compaii-codex say --text "..." [--to EMBODIMENT_ID]... [--thread UUID]
     compaii-codex read [--thread UUID] [--limit N]
+    compaii-codex say --retry UUID        # recover the exact saved request
+    compaii-codex methods                 # installed, disjoint capabilities
+    compaii-codex call METHOD             # JSON parameters on stdin
 """
 
 from __future__ import annotations
@@ -701,6 +704,7 @@ import argparse
 import json
 import os
 import pathlib
+import stat
 import sys
 import uuid
 
@@ -708,8 +712,12 @@ from daimon_matrix.client import (
     ClientConfig,
     ClientError,
     LocalClient,
+    load_json_document,
+    load_prepared_request,
     read_capability_key,
+    store_prepared_request,
 )
+from daimon_matrix.daemon import DaemonError, acquire_lock
 from daimon_matrix.local_api import (
     LocalApiError,
     create_request,
@@ -718,10 +726,10 @@ from daimon_matrix.local_api import (
 )
 from daimon_matrix.native_egress import closed_visibility
 from daimon_matrix.runtime import load_runtime
+from daimon_matrix.service import OPERATOR_CAPABILITY_PROFILES
 
 STATE = pathlib.Path.home() / @@STATE_RELATIVE@@
 RUNTIME = STATE / "runtime"
-NOW = lambda: 1_800_000_000_000  # replaced by the real clock below
 
 
 def _clock() -> int:
@@ -741,10 +749,54 @@ def _runtime():
     )
 
 
-def _config():
+def _load_config(directory, key_name):
     # read_capability_key owns and closes the descriptor it is given.
-    key = read_capability_key(os.open(RUNTIME / "client.key", os.O_RDONLY))
-    return ClientConfig.load(RUNTIME / "client.json", key)
+    descriptor = os.open(directory / key_name, os.O_RDONLY | os.O_NOFOLLOW)
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or (
+        stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        os.close(descriptor)
+        raise ClientError("capability_key_not_owner_only")
+    key = read_capability_key(descriptor)
+    return ClientConfig.load(directory / "client.json", key)
+
+
+def _profile(primary, role):
+    config = _load_config(RUNTIME / "operator-clients" / role, "capability.key")
+    if (
+        config.expected_server != primary.expected_server
+        or config.runtime_id != primary.runtime_id
+        or config.runtime_label != primary.runtime_label
+    ):
+        raise ClientError("operator_profile_body_mismatch")
+    if frozenset(config.capability.methods) != OPERATOR_CAPABILITY_PROFILES[role]:
+        raise ClientError("operator_profile_methods_mismatch")
+    return config
+
+
+def _config(method):
+    primary = _load_config(RUNTIME, "client.key")
+    if method in primary.capability.methods:
+        return primary
+    for role, methods in OPERATOR_CAPABILITY_PROFILES.items():
+        if method in methods and role != "observe":
+            return _profile(primary, role)
+    raise ClientError("method_not_issued")
+
+
+def _methods():
+    primary = _load_config(RUNTIME, "client.key")
+    configs = {"primary": primary}
+    for role in sorted(OPERATOR_CAPABILITY_PROFILES):
+        directory = RUNTIME / "operator-clients" / role
+        if role != "observe" and directory.exists():
+            configs[role] = _profile(primary, role)
+    return {
+        role: {"active": config.capability.active_at(_clock()),
+               "methods": list(config.capability.methods)}
+        for role, config in configs.items()
+    }
 
 
 def _send(config, request: dict) -> dict:
@@ -758,63 +810,143 @@ def _send(config, request: dict) -> dict:
     socket_path = RUNTIME / "matrix.sock"
     if socket_path.exists():
         try:
-            return LocalClient(socket_path, config).send(request)
+            return LocalClient(socket_path, config, timeout_seconds=40).send(request)
         except ClientError as error:
             if str(error) != "daemon_unavailable":
                 raise
-    runtime = _runtime()
-    response = runtime.service.handle(request)
-    return verify_response(
-        response,
-        config.capability,
-        expected_request_id=request["request_id"],
-        expected_request_hash=request_hash(request),
-        expected_server=runtime.service.origin,
-        expected_runtime={
-            "runtime_id": runtime.service.runtime_id,
-            "runtime_label": runtime.service.runtime_label,
-        },
-    )
+    # A timeout does not establish that the daemon stopped. Acquire its actual
+    # writer lock before loading custody or touching the runtime in process.
+    try:
+        descriptor = acquire_lock(RUNTIME)
+    except BlockingIOError:
+        raise ClientError("daemon_unavailable_runtime_locked") from None
+    try:
+        runtime = _runtime()
+        response = runtime.service.handle(request)
+        return verify_response(
+            response,
+            config.capability,
+            expected_request_id=request["request_id"],
+            expected_request_hash=request_hash(request),
+            expected_server=config.expected_server,
+            expected_runtime={
+                "runtime_id": config.runtime_id,
+                "runtime_label": config.runtime_label,
+            },
+        )
+    finally:
+        os.close(descriptor)
 
 
 def _call(method: str, params: dict) -> dict:
-    config = _config()
-    try:
-        request = create_request(
-            config.capability,
-            request_id=str(uuid.uuid4()),
-            issued_at_ms=_clock(),
-            method=method,
-            params=params,
-            nonce=os.urandom(16),
-        )
-        response = _send(config, request)
-    except (ClientError, LocalApiError) as error:
-        # A stored capability that does not carry this method is a fact about the
-        # bundle, not a crash: name the method, say why, and stop without a
-        # traceback. Creating the request already authenticates it against the
-        # capability, so the refusal can arrive before anything is sent.
-        raise SystemExit(
-            f"{method} no está al alcance de la capability de este cuerpo: {error}"
-        ) from None
+    config = _config(method)
+    request = create_request(
+        config.capability,
+        request_id=str(uuid.uuid4()),
+        issued_at_ms=_clock(),
+        method=method,
+        params=params,
+        nonce=os.urandom(16),
+    )
+    return _result(_send(config, request), method)
+
+
+def _result(response, method):
     if response.get("error") is not None:
-        raise SystemExit(f"{method} rechazado: {response['error']}")
+        raise ClientError(f"{method}_rejected:{response['error']['code']}")
     return response["result"]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _say(args):
+    config = _config("we.converse")
+    directory = STATE / "owner-requests"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077):
+        raise ClientError("request_store_parent_not_owner_only")
+    if args.retry is not None:
+        request_id = str(uuid.UUID(args.retry))
+        path = directory / (request_id + ".json")
+        # First parse supplies expected operation data; the SDK then checks the
+        # owner-only file, authenticates every byte and checks those parameters.
+        with path.open("rb") as stream:
+            saved = load_json_document(stream.read(1_048_577))
+        request = load_prepared_request(
+            path, config.capability, method="we.converse", params=saved["params"]
+        )
+        if request["request_id"] != request_id or (
+            request["params"].get("request_id") != request_id
+        ):
+            raise ClientError("request_operation_mismatch")
+    else:
+        request_id = (str(uuid.UUID(args.request_id)) if args.request_id
+                      else str(uuid.uuid4()))
+        addressees = sorted(set(args.to))
+        if not addressees:
+            siblings = _call("scope.we", {})["embodiments"]
+            me = config.expected_server["embodiment_id"]
+            addressees = sorted(row["embodiment_id"] for row in siblings
+                               if row["embodiment_id"] != me
+                               and row.get("manifest_status") == "active")
+        if not addressees:
+            raise ClientError("no_active_sibling")
+        params = {"text": args.text, "addressees": addressees,
+                  "request_id": request_id, "thread_id": (
+                      str(uuid.UUID(args.thread)) if args.thread
+                      else str(uuid.uuid4()))}
+        if args.ttl_ms is not None:
+            params["ttl_ms"] = args.ttl_ms
+        request = create_request(
+            config.capability, request_id=request_id, issued_at_ms=_clock(),
+            method="we.converse", params=params, nonce=os.urandom(16),
+        )
+        store_prepared_request(directory / (request_id + ".json"), request)
+    print(f"Saved request: {request_id}; retry with say --retry {request_id}",
+          file=sys.stderr, flush=True)
+    result = _result(_send(config, request), "we.converse")
+    print(json.dumps({"request_id": request_id, "result": result},
+                     indent=2, sort_keys=True))
+    deliveries = result["deliveries"]
+    delivered = deliveries and all(row["state"] == "delivered" for row in deliveries)
+    return 0 if delivered else 3
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=@@PROG@@, description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="who this body is, and its integrity")
     commands.add_parser("we", help="this being's embodiments")
-    say = commands.add_parser("say", help="author one /we message, on request")
-    say.add_argument("--text", required=True)
+    commands.add_parser("methods", help="list this body's installed operation profiles")
+    call = commands.add_parser("call", help="invoke an issued method with JSON stdin")
+    call.add_argument("method")
+    say = commands.add_parser("say", help="deliver one sealed /we message, on request")
+    say.add_argument("--text")
     say.add_argument("--to", action="append", default=[])
     say.add_argument("--thread")
+    say.add_argument("--request-id")
+    say.add_argument("--ttl-ms", type=int)
+    say.add_argument("--retry", help="retry the exact saved request UUID")
     read = commands.add_parser("read", help="read this being's conversation")
     read.add_argument("--thread")
     read.add_argument("--limit", type=int, default=40)
     args = parser.parse_args(argv)
+
+    if args.command == "methods":
+        print(json.dumps(_methods(), indent=2, sort_keys=True))
+        return 0
+    if args.command == "call":
+        params = load_json_document(sys.stdin.buffer.read(1_048_577))
+        print(json.dumps(_call(args.method, params), indent=2, sort_keys=True))
+        return 0
+    if args.command == "say":
+        if args.retry is not None:
+            if (args.text is not None or args.to or args.thread or args.request_id
+                    or args.ttl_ms is not None):
+                parser.error("--retry accepts no replacement parameters")
+        elif args.text is None:
+            parser.error("say requires --text or --retry")
+        return _say(args)
 
     if args.command == "status":
         result = _call("runtime.status", {})
@@ -857,46 +989,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(page["entries"], indent=2, sort_keys=True, default=str))
         return 0
 
-    # say: one signed /we message authored by this body, on a human's request.
-    siblings = _call("scope.we", {})["embodiments"]
-    me = _call("runtime.status", {})["local_origin"]["embodiment_id"]
-    addressees = args.to or [
-        row["embodiment_id"]
-        for row in siblings
-        if row["embodiment_id"] != me and row.get("manifest_status") == "active"
-    ]
-    if not addressees:
-        raise SystemExit("sin hermanos a quienes dirigir el mensaje")
-    thread = args.thread or str(uuid.uuid4())
-    result = _call(
-        "we.observe",
-        {
-            "subject": "communication",
-            "payload": {
-                "schema": "dm.communication.message/v1",
-                "body": {"addressee": sorted(addressees), "text": args.text},
-                "intent": {
-                    "operation": "we.converse",
-                    "scope": "/we",
-                    "thread_id": thread,
-                },
-                "reply": None,
-            },
-            "sensitivity": "personal",
-            "causal_parents": [],
-            "occurred_at_ms": None,
-            "event_id": None,
-        },
-    )
-    print(
-        json.dumps(
-            {"thread_id": thread, "addressees": sorted(addressees), "event": result},
-            indent=2,
-            sort_keys=True,
-            default=str,
-        )
-    )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except (ClientError, LocalApiError, DaemonError,
+            OSError, ValueError, KeyError) as error:
+        # Error codes only: never dump configurations, authentication or content.
+        code = error.errno if isinstance(error, OSError) else str(error)
+        if type(error) in (KeyError, ValueError):
+            code = "invalid_owner_request"
+        print(f"owner-client: {code}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

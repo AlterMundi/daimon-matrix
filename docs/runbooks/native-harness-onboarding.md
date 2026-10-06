@@ -27,6 +27,10 @@ daily installation, workspace, being or embodiment to meet it.
 3. Write an owner-selected identity instruction file naming the existing body,
    runtime, authenticated rendered owner client and its actual capabilities.
    Include the manual shared-memory entry point and neutral skill directory.
+   Render the owner client from the approved release and the existing body plan.
+   Validate its actual issued profiles with `methods`; test `say` using native
+   recipient receipts and retain its request UUID for exact recovery. See
+   [owner conversations](neutral-territory.md#owner-conversations-and-installed-operation-profiles).
    Keep memory and Matrix human-request-only, with no hooks, prefetch, timers or
    autonomous replies. Source instructions cannot override signed authority.
 4. Install the selected instructions and ordinary configuration with the
