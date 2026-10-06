@@ -141,11 +141,14 @@ Known credential/custody files and rebuildable dependencies are recorded as
 omissions. Git internals are explicitly deferred to a future Git-history adapter.
 SQLite WAL/SHM files are replaced by coherent backup-API snapshots of the main
 database, with the omission recorded. `.env`/`.envrc` files additionally produce
-an inactive `.nonsecret` copy retaining useful settings such as `HERMES_TUI=1`.
+an inactive `.nonsecret` copy retaining simple scalar settings such as
+`HERMES_TUI=1`. Automatic separation supports `KEY=value`, optional `export`,
+blank lines and comments; complex shell syntax requires a separate source-agent
+adaptation. It is never guessed or executed.
 Credential variable names remain visible for fresh private configuration; their
 values are removed. The original stays unchanged. No environment expression is
 evaluated. Detected remaining embedded credentials stop the export,
-as do multiline or executable expressions in private environment assignments.
+as do multiline, array or executable environment expressions.
 preserving the unchanged source. Known-pattern scanning cannot guarantee that
 arbitrary binary/compressed historical material contains no secret.
 

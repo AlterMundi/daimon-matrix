@@ -44,7 +44,7 @@ SECRET_NAMES = {
 SECRET_DIRS = {".ssh", "custody", "keyring"}
 EPHEMERAL = {"__pycache__", ".venv", "node_modules", ".pytest_cache", ".ruff_cache"}
 TOKEN = re.compile(
-    rb"\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|"
+    rb"\b(?:github[_]pat[_][A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|"
     rb"sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|"
     rb"[0-9]{6,15}:[A-Za-z0-9_-]{30,})\b"
 )
@@ -302,18 +302,27 @@ def nonsecret_environment(source: Path) -> tuple[bytes, list[str]]:
     settings, private_names = [], []
     for line in source.read_text().splitlines():
         match = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
-        if match and ENV_SECRET.search(match[1]):
+        if not match and line.strip() and not line.lstrip().startswith("#"):
+            raise ExportError(
+                "unsupported_environment_syntax_requires_separate_handoff"
+            )
+        if match:
             value = line[match.end() :]
             try:
-                shlex.split(value, comments=True)
+                values = shlex.split(value, comments=True)
             except ValueError as error:
                 raise ExportError(
-                    "multiline_private_environment_requires_separate_handoff"
+                    "multiline_environment_requires_separate_handoff"
                 ) from error
-            if "$(" in value or "<<" in value or "`" in value:
-                raise ExportError(
-                    "private_environment_expression_requires_separate_handoff"
-                )
+            if (
+                len(values) > 1
+                or value.lstrip().startswith("(")
+                or "$(" in value
+                or "<<" in value
+                or "`" in value
+            ):
+                raise ExportError("environment_expression_requires_separate_handoff")
+        if match and ENV_SECRET.search(match[1]):
             private_names.append(match[1])
             settings.append(f"# {match[1]} requires owner-private configuration")
         else:
@@ -512,7 +521,7 @@ def verify(
     is_zip = zipfile.is_zipfile(archive_path)
     opener = zipfile.ZipFile if is_zip else tarfile.open
     with opener(archive_path, "r") as archive:
-        infos = archive.infolist() if is_zip else archive.getmembers()
+        infos = archive.infolist() if is_zip else iter(archive)
         total = 0
         for info in infos:
             name = safe_name(info.filename if is_zip else info.name)

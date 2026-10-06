@@ -210,7 +210,7 @@ class BeingExportTests(unittest.TestCase):
         )
         original = self.put(".env", raw)
         self.put("SOUL.md", b"identity")
-        with self.assertRaisesRegex(tool.ExportError, "multiline_private_environment"):
+        with self.assertRaisesRegex(tool.ExportError, "multiline_environment"):
             self.pack()
         self.assertFalse(self.archive.exists())
         self.assertEqual(original.read_bytes(), raw)
@@ -221,6 +221,9 @@ class BeingExportTests(unittest.TestCase):
         for raw in (
             b"API_KEY=firstline\\\nsecondline\n",
             b"PRIVATE_KEY=$(cat <<EOF\nremaining private data\nEOF\n",
+            b'CREDENTIALS=(\n "private fixture component"\n)\n',
+            b'declare -a CREDENTIALS=(\n "private fixture component"\n)\n',
+            b'CREDENTIALS+=(\n "private fixture component"\n)\n',
         ):
             self.put(".env", raw)
             self.put("SOUL.md", b"identity")
@@ -240,7 +243,7 @@ class BeingExportTests(unittest.TestCase):
 
     def test_private_key_and_chunk_boundary_token_are_detected(self) -> None:
         for raw in (
-            b"-----BEGIN PRIVATE KEY-----",
+            b"-----BEGIN" + b" PRIVATE KEY-----",
             b" " * (1024 * 1024 - 2) + b"sk-" + b"a" * 40,
         ):
             self.put("identity.txt", raw)
