@@ -9,6 +9,12 @@ accepting one task, or a successful bounded App Server test, does not satisfy
 this operational requirement. Do not replace the vendor CLI or create another
 daily installation, workspace, being or embodiment to meet it.
 
+For a new owner-facing embodiment, complete the dedicated bot-data gate in
+[Hermes-to-Codex cohort onboarding](hermes-to-codex-cohort.md#required-inputs-before-enrollment)
+before signed enrollment or activation. Software preparation can proceed
+while the human collects those inputs. The same procedure covers complete
+legacy HMK preservation and later collective review of historical skills.
+
 ## Adopt the existing body into the ordinary harness
 
 1. Identify the existing signed runtime, rendered owner client, current
@@ -86,6 +92,12 @@ The managed `codex app-server proxy` forwards raw bytes to the existing daemon's
 WebSocket transport. Select the bridge's verified native framing and run its
 bounded `--probe-native` before starting the human listener. Require actual
 initialize, enabled expected skills and zero discovery errors.
+Discover the actual executable with `command -v codex`, record `codex --version`,
+and use that absolute executable in both the service and probe. Do not assume
+that Codex is installed beside a user-local bridge binary. Verify the selected
+release's framing against that actual CLI; the CompAII pilot used native
+CLI 0.160.0, whose profile is recorded in
+[`provenance/codex-cli-0.160.0.json`](../../provenance/codex-cli-0.160.0.json).
 Creating two distinct empty thread IDs proves only context allocation: native
 rollout persistence and intentional CLI resume require a completed human turn.
 
@@ -99,6 +111,41 @@ The portable skill does not start a service, import other conversations, poll
 Matrix, wake a model or enable peer replies. Report code/proxy discovery and
 live bot/human-context acceptance separately. A missing dedicated token blocks
 activation; live acceptance requires actual human messages in those contexts.
+
+### Receiving configuration and pilot lessons
+
+Carry these checks into every receiving body rather than copying another
+being's live configuration:
+
+- Resolve the actual login/service user, HOME, CODEX_HOME, workspace and native
+  authentication. Use the ordinary existing native home; another account's
+  rotating refresh grant is not an installation artifact.
+- Match the bridge's selected model/execution policy to the owner's ordinary
+  native configuration. Template defaults do not establish the receiving
+  policy. Preserve unrelated settings and record effective values locally.
+- Install the immutable portable skill with its complete catalog/package
+  metadata and descriptor/content verification. Confirm HMK's auxiliary
+  librarian is discoverable as well as the main skill. Run the receiving
+  binding's surface check and native skill reload; a checkout or file copy
+  alone does not establish installed or model-loaded content.
+- Keep the text-only runtime build/features and verified binary digest with
+  the installation record. Prepare an owner-local service with the correct
+  native environment, private configuration/token and one ingress consumer.
+  Preserve history-import, background-maintenance, automatic topic creation
+  and unsolicited lifecycle-message disablement from the verified template.
+- Distinguish native discovery, actual first human turn, receiving instructions,
+  two real topic bindings, restart persistence, CLI history restoration and
+  CLI writer handoff. Record each observed stage. A resumed history display
+  does not prove a completed writer roundtrip.
+- Before an idle listener restart, make and verify a SQLite API backup of its
+  input/session journal. Preserve current offsets and uncertain inputs during
+  all software recovery; do not restore an older journal over newer messages.
+
+The 2026-10-06 CompAII pilot established real topic conversations, receiving
+body/HMK/skill context, restart-preserved bindings and native CLI history
+resume. Nicolás subsequently confirmed ordinary Telegram conversation works.
+The remaining broader #234 cases retain their own evidence requirements and
+are not inherited by a newly enrolled being.
 
 ## Explicit foreground attention
 
@@ -188,3 +235,23 @@ delivery evidence without relabeling it as proof of the interactive interface.
 Apply this procedure to every daimon adopted into a native harness. Other
 harnesses use their ordinary interactive entry point and supported global
 instruction/configuration surface; each needs its own actual acceptance proof.
+
+### Permanent progress and available human input
+
+The live 2026-10-06 pilot exposed disappearing completed commentary in a long
+turn when the bridge treated every message as one temporary preview. The
+qualified correction in [telecodex PR6](https://github.com/AlterMundi/telecodex/pull/6)
+publishes each completed commentary permanently, protects it from later tool
+progress and starts a separate preview for the next message. Select
+`telegram.use_message_drafts=false` locally to remove visible temporary drafts.
+Qualification must include a real human who can use Send while the assistant
+works and whose additional text is accepted by native steering. A healthy proxy
+or outgoing publication does not prove that client interaction. Keep this
+runtime correction separate from its release pin; do not claim a pending
+portable skill pin already selects it.
+
+For completed messages only, use `telegram.show_unfinished_messages=false` from
+a qualified release that implements the option ([runtime #8](https://github.com/AlterMundi/telecodex/issues/8)).
+This suppresses unfinished text, tool-progress previews and initial placeholders
+while retaining completed commentary and final replies. Do not substitute a
+large debounce interval or assume that disabling draft mode also hides previews.
