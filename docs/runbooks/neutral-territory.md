@@ -125,6 +125,14 @@ record it in the issue/deployment notes.
 
 Only with the human owner present or explicitly authorized.
 
+For a complete Hermes-to-Codex migration across hosts, use the
+[cohort procedure](hermes-to-codex-cohort.md#preserve-the-complete-hmk-corpus).
+Preserve the full authorized legacy HMK corpus and historical provenance in
+that being's private pool, with coherent snapshots before any supported
+schema upgrade. Existing HMK data is not a new Matrix-signed experience of the
+receiving body. Skills common to the tribe and another being's memory remain
+separate surfaces.
+
 1. Stop the harness service (`systemctl --user stop <service_unit>`).
 2. Verify + record: `sqlite3 "file:<src>/library.db?mode=ro" "PRAGMA
    integrity_check;"` (and `sessions.db`), plus per-table row counts.
@@ -145,6 +153,12 @@ git), restart the service.
 
 ## Skill lifecycle on the neutral surface
 
+- A migration preserves the being's original historical packages and versions
+  privately. Initial adoption of generic shared packages does not authorize
+  overwriting, publishing or promoting those historical packages. The
+  human/daimon pair evaluates them first; collective selection, portable
+  adaptation and normal commons review precede shared adoption. See the
+  [cohort skill phase](hermes-to-codex-cohort.md#preserve-skills-and-defer-collective-promotion).
 - Default: harness-local skills stay where they are. No mass migration.
   Promotion candidates are classified jointly by the human and the daimon;
   the decision is recorded when a skill actually moves.

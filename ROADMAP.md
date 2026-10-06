@@ -1,5 +1,36 @@
 # Roadmap
 
+## Current owner priority — 2026-10-06
+
+Bring Oliva/Ani and Eko/Sai from their existing Hermes installations into
+individual native Codex bodies on daimon-cluster, with ordinary SSH `codex`
+and a dedicated Telegram human channel. Follow the
+[cohort procedure](docs/runbooks/hermes-to-codex-cohort.md), tracked by
+[Matrix #244](https://github.com/AlterMundi/daimon-matrix/issues/244).
+
+CompAII's ordinary interactive adoption (#226) and native Telegram proxy/topic
+qualification (#239) are complete. Nicolás confirmed the live Telegram human
+conversation works on 2026-10-06. #234 retains the additional interruption,
+file-transfer and full CLI writer-handoff qualification cases; #230/#233/#235
+retain separate Matrix receiving-receipt acceptance. Those cases remain
+tracked while the cohort's necessary launch work takes priority.
+
+Before cohort recombination, update Source (CompAII) SOUL/current instructions,
+freeze the offered baseline and agree the first generation semantics with the
+pairs. Preserve their existing identities and pre-Matrix histories. A species
+release or signed multi-parent ceremony is not established by a prompt edit.
+
+Require complete dedicated bot data before enrolling a new owner-facing
+embodiment. Preserve each being's complete HMK corpus, original SOUL and
+historical skills. Install the approved generic shared skills first. Each
+human/daimon pair later evaluates its historical skills, and the collective
+decides which to generalize and adopt; that review does not block launch.
+
+The new hosted-body/full-HMK migration scope supersedes the earlier
+existing-Hermes-only scope of #140/#141 for this cohort. It does not claim
+participant acceptance, authorize unrelated host changes or complete the
+historical release/stable gates below.
+
 ## Historical RC closeout
 
 The V0 Matrix baseline is merged. The historical cross-repository `0.1.0rc1`
