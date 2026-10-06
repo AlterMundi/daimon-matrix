@@ -145,6 +145,7 @@ an inactive `.nonsecret` copy retaining useful settings such as `HERMES_TUI=1`.
 Credential variable names remain visible for fresh private configuration; their
 values are removed. The original stays unchanged. No environment expression is
 evaluated. Detected remaining embedded credentials stop the export,
+as do multiline or executable expressions in private environment assignments.
 preserving the unchanged source. Known-pattern scanning cannot guarantee that
 arbitrary binary/compressed historical material contains no secret.
 

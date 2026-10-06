@@ -202,6 +202,32 @@ class BeingExportTests(unittest.TestCase):
         entry = next(e for e in manifest["files"] if e.get("derivation"))
         self.assertEqual(entry["private_variable_names"], ["OPENAI_API_KEY"])
 
+    def test_multiline_private_dotenv_never_leaks_remaining_value(self) -> None:
+        # Synthetic body only, no real key material.
+        raw = (
+            b'PRIVATE_KEY="private first line\nprivate remaining lines\n"\n'
+            b"HERMES_TUI=1\n"
+        )
+        original = self.put(".env", raw)
+        self.put("SOUL.md", b"identity")
+        with self.assertRaisesRegex(tool.ExportError, "multiline_private_environment"):
+            self.pack()
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(original.read_bytes(), raw)
+
+    def test_private_environment_continuations_and_expressions_are_not_evaluated(
+        self,
+    ) -> None:
+        for raw in (
+            b"API_KEY=firstline\\\nsecondline\n",
+            b"PRIVATE_KEY=$(cat <<EOF\nremaining private data\nEOF\n",
+        ):
+            self.put(".env", raw)
+            self.put("SOUL.md", b"identity")
+            with self.assertRaises(tool.ExportError):
+                self.pack()
+            self.assertFalse(self.archive.exists())
+
     def test_embedded_credential_refuses_whole_export_without_mutating_memory(
         self,
     ) -> None:

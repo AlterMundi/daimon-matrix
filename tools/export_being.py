@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -302,6 +303,17 @@ def nonsecret_environment(source: Path) -> tuple[bytes, list[str]]:
     for line in source.read_text().splitlines():
         match = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
         if match and ENV_SECRET.search(match[1]):
+            value = line[match.end() :]
+            try:
+                shlex.split(value, comments=True)
+            except ValueError as error:
+                raise ExportError(
+                    "multiline_private_environment_requires_separate_handoff"
+                ) from error
+            if "$(" in value or "<<" in value or "`" in value:
+                raise ExportError(
+                    "private_environment_expression_requires_separate_handoff"
+                )
             private_names.append(match[1])
             settings.append(f"# {match[1]} requires owner-private configuration")
         else:
