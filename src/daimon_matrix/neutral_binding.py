@@ -701,12 +701,15 @@ does both, because the daemon owns the state-root lock.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import pathlib
 import stat
 import sys
+import time
 import uuid
+from contextlib import contextmanager
 
 from daimon_matrix.client import (
     ClientConfig,
@@ -799,7 +802,7 @@ def _methods():
     }
 
 
-def _send(config, request: dict) -> dict:
+def _send(config, request: dict, *, timeout: float = 40, daemon_only=False) -> dict:
     """Reach the body through its daemon when one is running, else in process.
 
     LocalClient.send authenticates the request and verifies the exact reply, so
@@ -810,10 +813,14 @@ def _send(config, request: dict) -> dict:
     socket_path = RUNTIME / "matrix.sock"
     if socket_path.exists():
         try:
-            return LocalClient(socket_path, config, timeout_seconds=40).send(request)
+            return LocalClient(socket_path, config, timeout_seconds=timeout).send(
+                request
+            )
         except ClientError as error:
             if str(error) != "daemon_unavailable":
                 raise
+    if daemon_only:
+        raise ClientError("watch_daemon_unavailable")
     # A timeout does not establish that the daemon stopped. Acquire its actual
     # writer lock before loading custody or touching the runtime in process.
     try:
@@ -838,8 +845,15 @@ def _send(config, request: dict) -> dict:
         os.close(descriptor)
 
 
-def _call(method: str, params: dict) -> dict:
-    config = _config(method)
+def _call(
+    method: str,
+    params: dict,
+    *,
+    timeout: float = 40,
+    daemon_only=False,
+    selected_config=None,
+) -> dict:
+    config = _config(method) if selected_config is None else selected_config
     request = create_request(
         config.capability,
         request_id=str(uuid.uuid4()),
@@ -848,8 +862,9 @@ def _call(method: str, params: dict) -> dict:
         params=params,
         nonce=os.urandom(16),
     )
-    return _result(_send(config, request), method)
-
+    return _result(
+        _send(config, request, timeout=timeout, daemon_only=daemon_only), method
+    )
 
 def _result(response, method):
     if response.get("error") is not None:
@@ -912,6 +927,328 @@ def _say(args):
     return 0 if delivered else 3
 
 
+def _watch_read(directory, name):
+    try:
+        descriptor = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+            or info.st_size > 2_097_152
+        ):
+            raise ClientError("watch_state_not_owner_only")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            return load_json_document(stream.read(2_097_153))
+    finally:
+        os.close(descriptor)
+
+
+def _watch_write(directory, name, value):
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
+    if len(raw) > 2_097_152:
+        raise ClientError("watch_state_too_large")
+    temporary = "." + str(uuid.uuid4())
+    descriptor = os.open(
+        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory
+    )
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(descriptor)
+        os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+@contextmanager
+def _watch_lock(directory, name):
+    descriptor = os.open(
+        name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory
+    )
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+        ):
+            raise ClientError("watch_lock_not_owner_only")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ClientError("watch_busy") from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _watch_bound(value, config, watch_id):
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "schema",
+            "watch_id",
+            "origin",
+            "runtime_id",
+            "runtime_label",
+            "peer",
+            "thread_id",
+            "task",
+            "cursor",
+            "active",
+            "pending",
+            "last_ack",
+        }
+        or value["schema"] != "dm.owner-watch/v1"
+        or value["watch_id"] != watch_id
+        or value["origin"] != config.expected_server
+        or value["runtime_id"] != config.runtime_id
+        or value["runtime_label"] != config.runtime_label
+        or not isinstance(value["peer"], str)
+        or not value["peer"].startswith("embodiment:")
+        or not isinstance(value["task"], str)
+        or not 1 <= len(value["task"]) <= 256
+        or type(value["active"]) is not bool
+    ):
+        raise ClientError("watch_binding_invalid")
+    try:
+        if value["thread_id"] is not None:
+            if str(uuid.UUID(value["thread_id"])) != value["thread_id"]:
+                raise ValueError
+        if value["last_ack"] is not None:
+            if str(uuid.UUID(value["last_ack"])) != value["last_ack"]:
+                raise ValueError
+        cursor = value["cursor"]
+        if cursor is not None and (
+            not isinstance(cursor, str) or not 1 <= len(cursor) <= 768
+        ):
+            raise ValueError
+        pending = value["pending"]
+        if pending is not None:
+            if (
+                not isinstance(pending, dict)
+                or set(pending) != {"page_id", "cursor", "entries", "more"}
+                or str(uuid.UUID(pending["page_id"])) != pending["page_id"]
+                or not isinstance(pending["cursor"], str)
+                or not 1 <= len(pending["cursor"]) <= 768
+                or type(pending["more"]) is not bool
+                or not isinstance(pending["entries"], list)
+                or not 1 <= len(pending["entries"]) <= 256
+                or any(
+                    not isinstance(entry, dict)
+                    or entry.get("author") != value["peer"]
+                    or (
+                        value["thread_id"] is not None
+                        and entry.get("thread_id") != value["thread_id"]
+                    )
+                    for entry in pending["entries"]
+                )
+            ):
+                raise ValueError
+    except (ValueError, TypeError, AttributeError, KeyError):
+        raise ClientError("watch_state_invalid") from None
+
+
+def _watch_output(value, status):
+    pending = value["pending"] if status == "page" else None
+    print(
+        json.dumps(
+            {
+                "schema": "dm.owner-watch-result/v1",
+                "watch_id": value["watch_id"],
+                "status": status,
+                "peer": value["peer"],
+                "thread_id": value["thread_id"],
+                "task": value["task"],
+                "cursor": value["cursor"],
+                "page": pending,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _watch(args):
+    config = _config("we.conversation.page")
+    watch_id = str(uuid.UUID(args.watch_id)) if args.watch_id else str(uuid.uuid4())
+    name = watch_id + ".json"
+    path = STATE / "owner-watches"
+    path.mkdir(mode=0o700, exist_ok=True)
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    info = os.fstat(directory)
+    try:
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ClientError("watch_parent_not_owner_only")
+        with _watch_lock(directory, watch_id + ".lock"):
+            value = _watch_read(directory, name)
+            if value is None:
+                if args.stop or args.ack or not args.peer or not args.task:
+                    raise ClientError("new_watch_requires_peer_and_task")
+                value = {
+                    "schema": "dm.owner-watch/v1",
+                    "watch_id": watch_id,
+                    "origin": config.expected_server,
+                    "runtime_id": config.runtime_id,
+                    "runtime_label": config.runtime_label,
+                    "peer": args.peer,
+                    "thread_id": str(uuid.UUID(args.thread)) if args.thread else None,
+                    "task": args.task,
+                    "cursor": "tail" if args.from_now else None,
+                    "active": True,
+                    "pending": None,
+                    "last_ack": None,
+                }
+                _watch_bound(value, config, watch_id)
+                if args.from_now:
+                    baseline = _call(
+                        "we.conversation.page",
+                        {
+                            "cursor": "tail",
+                            "limit": args.limit,
+                            "peer": value["peer"],
+                            "thread_id": value["thread_id"],
+                        },
+                        timeout=1.0,
+                        daemon_only=True,
+                        selected_config=config,
+                    )
+                    if (
+                        baseline.get("schema") != "dm.we.conversation-page/v2"
+                        or not isinstance(baseline.get("cursor"), str)
+                        or baseline.get("entries") != []
+                        or baseline.get("more") is not False
+                    ):
+                        raise ClientError("watch_native_page_invalid")
+                    value["cursor"] = baseline["cursor"]
+                _watch_write(directory, name, value)
+                print(
+                    f"Saved watch: {watch_id}; resume with watch --watch-id {watch_id}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                _watch_bound(value, config, watch_id)
+                if (
+                    args.from_now
+                    or (args.peer and args.peer != value["peer"])
+                    or (args.task and args.task != value["task"])
+                    or (
+                        args.thread
+                        and str(uuid.UUID(args.thread)) != value["thread_id"]
+                    )
+                ):
+                    raise ClientError("watch_scope_changed")
+            if args.stop:
+                value["active"] = False
+                _watch_write(directory, name, value)
+            elif not value["active"]:
+                raise ClientError("watch_revoked")
+            if args.ack:
+                ack = str(uuid.UUID(args.ack))
+                if value["pending"] and value["pending"]["page_id"] == ack:
+                    value["cursor"] = value["pending"]["cursor"]
+                    value["pending"] = None
+                    value["last_ack"] = ack
+                    _watch_write(directory, name, value)
+                elif value["last_ack"] != ack:
+                    raise ClientError("watch_ack_unknown")
+        if args.stop or args.ack:
+            return _watch_output(value, "stopped" if args.stop else "acknowledged")
+        # Only one foreground waiter per watch; stop/ack use the independent
+        # short state lock, so they can revoke an active finite wait.
+        with _watch_lock(directory, watch_id + ".wait"):
+            deadline = time.monotonic() + args.wait
+            while True:
+                with _watch_lock(directory, watch_id + ".lock"):
+                    value = _watch_read(directory, name)
+                    _watch_bound(value, config, watch_id)
+                    pending = value["pending"]
+                    cursor = pending["cursor"] if pending else value["cursor"]
+                if not value["active"]:
+                    return _watch_output(value, "stopped")
+                remaining = deadline - time.monotonic()
+                timeout = min(1.0, max(0.05, remaining)) if args.wait else 1.0
+                page = _call(
+                    "we.conversation.page",
+                    {
+                        "cursor": cursor,
+                        "limit": args.limit,
+                        "peer": value["peer"],
+                        "thread_id": value["thread_id"],
+                    },
+                    timeout=timeout,
+                    daemon_only=True,
+                    selected_config=config,
+                )
+                if (
+                    page.get("schema") != "dm.we.conversation-page/v2"
+                    or not isinstance(page.get("cursor"), str)
+                    or not isinstance(page.get("entries"), list)
+                    or type(page.get("more")) is not bool
+                    or any(
+                        not isinstance(entry, dict)
+                        or entry.get("author") != value["peer"]
+                        or (
+                            value["thread_id"] is not None
+                            and entry.get("thread_id") != value["thread_id"]
+                        )
+                        for entry in page["entries"]
+                    )
+                ):
+                    raise ClientError("watch_native_page_invalid")
+                with _watch_lock(directory, watch_id + ".lock"):
+                    current = _watch_read(directory, name)
+                    _watch_bound(current, config, watch_id)
+                    if not current["active"]:
+                        status = "stopped"
+                    elif current["pending"]:
+                        # A fresh authenticated read validates the saved boundary
+                        # before disclosing a pending page after restart/restore.
+                        if current["pending"] != pending:
+                            continue
+                        status = "page"
+                    elif current["cursor"] != value["cursor"]:
+                        continue
+                    elif page["entries"]:
+                        current["pending"] = {
+                            "page_id": str(uuid.uuid4()),
+                            "cursor": page["cursor"],
+                            "entries": page["entries"],
+                            "more": page["more"],
+                        }
+                        _watch_write(directory, name, current)
+                        status = "page"
+                    else:
+                        current["cursor"] = page["cursor"]
+                        _watch_write(directory, name, current)
+                        status = "waiting"
+                if status != "waiting":
+                    return _watch_output(current, status)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return _watch_output(current, "waiting")
+                if not page["more"]:
+                    time.sleep(min(0.25, remaining))
+    finally:
+        os.close(directory)
+
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=@@PROG@@, description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -930,8 +1267,24 @@ def _main(argv: list[str] | None = None) -> int:
     read = commands.add_parser("read", help="read this being's conversation")
     read.add_argument("--thread")
     read.add_argument("--limit", type=int, default=40)
+    watch = commands.add_parser("watch", help="explicit finite foreground attention")
+    watch.add_argument("--watch-id", help="resume/ack/stop this watch UUID")
+    watch.add_argument("--peer", help="selected same-being embodiment ID")
+    watch.add_argument("--thread")
+    watch.add_argument("--task", help="human-authorized task scope")
+    watch.add_argument("--from-now", action="store_true")
+    watch.add_argument("--wait", type=float, default=30)
+    watch.add_argument("--limit", type=int, default=64)
+    watch.add_argument("--ack", help="acknowledge the exact processed page UUID")
+    watch.add_argument("--stop", action="store_true")
     args = parser.parse_args(argv)
 
+    if args.command == "watch":
+        if (not 0 <= args.wait <= 50 or not 1 <= args.limit <= 256
+                or (args.stop and args.ack)):
+            parser.error("watch requires wait 0..50, limit 1..256; "
+                         "stop and ack are separate")
+        return _watch(args)
     if args.command == "methods":
         print(json.dumps(_methods(), indent=2, sort_keys=True))
         return 0

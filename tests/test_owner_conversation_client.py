@@ -8,12 +8,16 @@ import json
 import os
 import socket
 import threading
+import time
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
+from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
 from daimon_matrix.daemon import acquire_lock, serve_connection
 from daimon_matrix.local_api import create_capability
 from daimon_matrix.neutral_binding import (
@@ -110,8 +114,11 @@ class OwnerConversationClientTests(SealedFixture):
         self.listener.settimeout(0.1)
         self.stop = threading.Event()
         self.drop_reply = False
+        self.before_reply: Any = None
 
         def fault(stage: str) -> None:
+            if self.before_reply is not None and stage == "after_dispatch_before_write":
+                self.before_reply()
             if self.drop_reply and stage == "after_dispatch_before_write":
                 self.drop_reply = False
                 raise ConnectionError("synthetic lost reply")
@@ -132,7 +139,14 @@ class OwnerConversationClientTests(SealedFixture):
         self.thread = threading.Thread(target=serve)
         self.thread.start()
 
-    def write_config(self, directory: Any, capability: Any, key_name: str) -> None:
+    def write_config(
+        self,
+        directory: Any,
+        capability: Any,
+        key_name: str,
+        *,
+        runtime_id: str = "dm:runtime:v1:" + "a" * 43,
+    ) -> None:
         (directory / key_name).write_bytes(capability.key)
         (directory / key_name).chmod(0o600)
         (directory / "client.json").write_bytes(
@@ -141,7 +155,7 @@ class OwnerConversationClientTests(SealedFixture):
                     "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": capability.descriptor,
                     "expected_server": self.origins["legion"],
-                    "runtime_id": "dm:runtime:v1:" + "a" * 43,
+                    "runtime_id": runtime_id,
                     "runtime_label": "owner-test",
                 }
             )
@@ -161,6 +175,308 @@ class OwnerConversationClientTests(SealedFixture):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = self.owner["main"](list(args))
         return code, out.getvalue(), err.getvalue()
+
+    def peer_message(self, thread: str, text: str, *, occurred: int = NOW) -> str:
+        event = self.ledger_b.append_local(
+            kind="experience.observed",
+            subject="communication",
+            payload={
+                "schema": MESSAGE_PAYLOAD_SCHEMA,
+                "intent": {"scope": "/we", "operation": "read", "thread_id": thread},
+                "body": {"addressee": ["embodiment:legion"], "text": text},
+            },
+            signer=self.signers["daimonmatrix"],
+            occurred_at_ms=occurred,
+        )
+        self.ledger_a.ingest([event], source="peer")
+        return cast(str, event["event_id"])
+
+    def start_watch(self, thread: str, *extra: str) -> tuple[str, dict[str, Any]]:
+        watch_id = str(uuid.uuid4())
+        code, output, error = self.run_client(
+            "watch",
+            "--watch-id",
+            watch_id,
+            "--peer",
+            "embodiment:daimonmatrix",
+            "--thread",
+            thread,
+            "--task",
+            "human-directed skills update",
+            "--wait",
+            "0",
+            *extra,
+        )
+        self.assertEqual(code, 0, error)
+        return watch_id, json.loads(output)
+
+    def test_watch_scans_filtered_backlog_and_acknowledges_equal_time_pages(
+        self,
+    ) -> None:
+        selected = str(uuid.uuid4())
+        ignored = str(uuid.uuid4())
+        for i in range(5):
+            self.peer_message(ignored, f"other thread {i}")
+            self.append(self.ledger_a, "legion", "unrelated")
+        expected = [self.peer_message(selected, f"selected {i}") for i in range(5)]
+        watch_id, result = self.start_watch(selected, "--limit", "2")
+        received: list[str] = []
+        for _ in range(25):
+            if result["status"] == "page":
+                received.extend(row["event_id"] for row in result["page"]["entries"])
+                ack_args = (
+                    "watch",
+                    "--watch-id",
+                    watch_id,
+                    "--ack",
+                    result["page"]["page_id"],
+                )
+                first = self.run_client(*ack_args)
+                self.assertEqual(first[0], 0, first[2])
+                self.assertEqual(json.loads(first[1])["status"], "acknowledged")
+                self.assertEqual(self.run_client(*ack_args)[:2], first[:2])
+            code, output, error = self.run_client(
+                "watch", "--watch-id", watch_id, "--wait", "0", "--limit", "2"
+            )
+            self.assertEqual(code, 0, error)
+            result = json.loads(output)
+            if len(received) == len(expected) and result["status"] == "waiting":
+                break
+        self.assertEqual(received, expected)
+        late = self.peer_message(selected, "late older authoring", occurred=NOW - 5)
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0"
+        )
+        self.assertEqual(code, 0, error)
+        self.assertEqual(
+            [row["event_id"] for row in json.loads(output)["page"]["entries"]], [late]
+        )
+        self.assertEqual(self.delivery_attempts, 0)
+
+    def test_watch_persists_page_before_lost_output_and_refuses_restored_boundary(
+        self,
+    ) -> None:
+        selected = str(uuid.uuid4())
+        self.ledger_a.initialize()
+        original = self.ledger_a.path.read_bytes()
+        event_id = self.peer_message(selected, "must survive lost stdout")
+        watch_id = str(uuid.uuid4())
+        with patch.dict(
+            self.owner,
+            {"_watch_output": lambda *_: (_ for _ in ()).throw(BrokenPipeError())},
+        ):
+            self.assertEqual(
+                self.run_client(
+                    "watch",
+                    "--watch-id",
+                    watch_id,
+                    "--peer",
+                    "embodiment:daimonmatrix",
+                    "--thread",
+                    selected,
+                    "--task",
+                    "skills",
+                    "--wait",
+                    "0",
+                )[0],
+                2,
+            )
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        saved = json.loads(path.read_bytes())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        args = ("watch", "--watch-id", watch_id, "--wait", "0")
+        first = self.run_client(*args)
+        self.assertEqual(first[0], 0, first[2])
+        self.assertEqual(json.loads(first[1])["page"], saved["pending"])
+        self.assertEqual(
+            json.loads(first[1])["page"]["entries"][0]["event_id"], event_id
+        )
+        self.assertEqual(self.run_client(*args)[:2], first[:2])
+        self.ledger_a.path.write_bytes(original)
+        code, output, error = self.run_client(*args)
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("invalid_known_cursor", error)
+        self.assertEqual(json.loads(path.read_bytes())["pending"], saved["pending"])
+
+    def test_watch_scope_revocation_and_private_state(self) -> None:
+        selected = str(uuid.uuid4())
+        watch_id, _ = self.start_watch(selected)
+        args = ("watch", "--watch-id", watch_id, "--wait", "0")
+        for change in (
+            ("--task", "other"),
+            ("--peer", "embodiment:legion"),
+            ("--thread", str(uuid.uuid4())),
+            ("--from-now",),
+            ("--ack", str(uuid.uuid4())),
+        ):
+            self.assertEqual(self.run_client(*args, *change)[0], 2)
+        self.assertEqual(self.run_client(*args, "--stop")[0], 0)
+        self.assertIn("watch_revoked", self.run_client(*args)[2])
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        self.assertFalse(json.loads(path.read_bytes())["active"])
+        (self.state_dir / "owner-watches").chmod(0o755)
+        self.assertIn("watch_parent_not_owner_only", self.run_client(*args)[2])
+
+    def test_watch_fifo_is_rejected_without_waiting_for_a_writer(self) -> None:
+        watch_id, _ = self.start_watch(str(uuid.uuid4()))
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        start = time.monotonic()
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0.05"
+        )
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("watch_state_not_owner_only", error)
+        self.assertLess(time.monotonic() - start, 0.2)
+
+    def test_from_now_retains_anchor_when_initial_output_is_lost(self) -> None:
+        selected = str(uuid.uuid4())
+        self.peer_message(selected, "previous message")
+        watch_id = str(uuid.uuid4())
+        with patch.dict(
+            self.owner,
+            {"_watch_output": lambda *_: (_ for _ in ()).throw(BrokenPipeError())},
+        ):
+            self.assertEqual(
+                self.run_client(
+                    "watch",
+                    "--watch-id",
+                    watch_id,
+                    "--peer",
+                    "embodiment:daimonmatrix",
+                    "--thread",
+                    selected,
+                    "--task",
+                    "skills",
+                    "--from-now",
+                    "--wait",
+                    "0",
+                )[0],
+                2,
+            )
+        late = self.peer_message(
+            selected, "arrived after failed output", occurred=NOW - 5
+        )
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0"
+        )
+        self.assertEqual(code, 0, error)
+        self.assertEqual(
+            [row["event_id"] for row in json.loads(output)["page"]["entries"]], [late]
+        )
+
+    def test_wait_is_finite_and_stop_can_revoke_concurrent_reader(self) -> None:
+        selected = str(uuid.uuid4())
+        watch_id, _ = self.start_watch(selected)
+        args = SimpleNamespace(
+            watch_id=watch_id,
+            peer=None,
+            thread=None,
+            task=None,
+            from_now=False,
+            wait=2.0,
+            limit=64,
+            ack=None,
+            stop=False,
+        )
+        reached = threading.Event()
+        release = threading.Event()
+
+        def before_reply() -> None:
+            reached.set()
+            release.wait(0.5)
+
+        self.before_reply = before_reply
+        results: list[str] = []
+        errors: list[BaseException] = []
+
+        def waiting() -> None:
+            try:
+                self.owner["_watch"](args)
+            except BaseException as error:
+                errors.append(error)
+
+        def capture_output(_value: Any, status: str) -> int:
+            results.append(status)
+            return 0
+
+        with patch.dict(self.owner, {"_watch_output": capture_output}):
+            reader = threading.Thread(target=waiting)
+            reader.start()
+            self.assertTrue(reached.wait(1))
+            self.assertEqual(
+                self.run_client("watch", "--watch-id", watch_id, "--stop")[0], 0
+            )
+            release.set()
+            reader.join(timeout=1)
+            self.assertFalse(reader.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results, ["stopped", "stopped"])
+        self.before_reply = None
+        other, _ = self.start_watch(selected)
+        start = time.monotonic()
+        code, output, error = self.run_client(
+            "watch", "--watch-id", other, "--wait", "0.15"
+        )
+        elapsed = time.monotonic() - start
+        self.assertEqual(code, 0, error)
+        self.assertEqual(json.loads(output)["status"], "waiting")
+        self.assertLess(elapsed, 0.6)
+
+    def test_wait_transport_deadline_and_daemon_only_path(self) -> None:
+        selected = str(uuid.uuid4())
+        watch_id, _ = self.start_watch(selected)
+        self.before_reply = lambda: time.sleep(0.3)
+        start = time.monotonic()
+        code, _output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0.08"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("watch_daemon_unavailable", error)
+
+        self.assertLess(time.monotonic() - start, 0.25)
+        self.before_reply = None
+        self.stop.set()
+        self.thread.join(timeout=3)
+        self.listener.close()
+        code, _output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("watch_daemon_unavailable", error)
+
+    def test_active_wait_cannot_switch_its_authenticated_runtime(self) -> None:
+        selected = str(uuid.uuid4())
+        watch_id, _ = self.start_watch(selected)
+        changed = False
+
+        def change_runtime() -> None:
+            nonlocal changed
+            if changed:
+                return
+            changed = True
+            new_id = "dm:runtime:v1:" + "b" * 43
+            self.write_config(
+                self.runtime_dir, self.primary, "client.key", runtime_id=new_id
+            )
+            self.write_config(
+                self.profile_dir, self.weave, "capability.key", runtime_id=new_id
+            )
+            self.service = replace(self.service, runtime_id=new_id)
+            self.peer_message(selected, "new runtime must not enter old watch")
+
+        self.before_reply = change_runtime
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0.8"
+        )
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("daemon_response_rejected", error)
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        state = json.loads(path.read_bytes())
+        self.assertEqual(state["runtime_id"], "dm:runtime:v1:" + "a" * 43)
+        self.assertIsNone(state["pending"])
+        self.assertEqual(self.delivery_attempts, 0)
 
     def test_say_routes_issued_profile_and_proves_receiving_intake(self) -> None:
         primary_bytes = (self.runtime_dir / "client.json").read_bytes()

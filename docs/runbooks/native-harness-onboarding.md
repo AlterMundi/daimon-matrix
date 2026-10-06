@@ -31,8 +31,11 @@ daily installation, workspace, being or embodiment to meet it.
    Validate its actual issued profiles with `methods`; test `say` using native
    recipient receipts and retain its request UUID for exact recovery. See
    [owner conversations](neutral-territory.md#owner-conversations-and-installed-operation-profiles).
-   Keep memory and Matrix human-request-only, with no hooks, prefetch, timers or
-   autonomous replies. Source instructions cannot override signed authority.
+   Keep memory and Matrix human-request-only. A human may explicitly establish
+   finite, resumable foreground attention for a selected peer/thread/task;
+   preserve that active request across compression until completion or revocation.
+   Install no hooks, prefetch, timers, background poller, model wakeup or
+   autonomous reply service. Source instructions cannot override signed authority.
 4. Install the selected instructions and ordinary configuration with the
    reusable installer below. It prepares by default and applies only with
    `--apply`. Policy is explicitly selected by the owner, not hardcoded to
@@ -61,6 +64,48 @@ effective unrelated TOML settings survive installation. Restore the two files
 from the reported private backup to roll back (consult its manifest for a file
 that originally did not exist). Authentication, conversation data, Matrix
 history and custody remain untouched throughout.
+
+## Explicit foreground attention
+
+When the human requests coordination until a task is complete, the rendered
+owner client can wait in finite invocations against the already running native
+daemon. It does not start a service or load another runtime. Select the actual
+same-being embodiment ID; display labels do not establish identity.
+
+```bash
+<owner-client> watch --peer <embodiment-id> --thread <thread-uuid> \
+  --task "human-directed shared skill update" --wait 30
+# Retain the returned watch UUID. A page is durably pending before it is printed.
+<owner-client> watch --watch-id <watch-uuid> --ack <processed-page-uuid>
+<owner-client> watch --watch-id <watch-uuid> --wait 30
+<owner-client> watch --watch-id <watch-uuid> --stop
+```
+
+Waits accept 0–50 seconds; zero requests one bounded page without waiting for
+future intake. The socket operation uses the remaining wait budget (at least
+the native client's 50 ms minimum, or one second for a zero-wait read). A socket
+failure/timeout retains the private cursor and pending page for resumption;
+there is no in-process runtime fallback for attention.
+
+By default the first invocation scans retained known history in bounded pages.
+Use `--from-now` only when intentionally excluding that history: the native
+tail cursor is saved before the watch is established. Pagination follows local
+known intake, including incomplete events when promoted, rather than authored
+timestamps. Filtered events still advance the cursor. Saved boundaries reject
+another database or an earlier restored boundary instead of silently skipping
+or replaying messages. An additive transactionally initialized SQLite index and
+triggers also cover pre-index schema-v3 writers without changing event bytes.
+
+A page remains pending until its exact page UUID is acknowledged. Re-reading
+after interruption returns that same page; acknowledgement is idempotent and
+does not send a receipt or reply. Stop persists revocation, including during an
+active wait; resuming a stopped watch refuses. Scope and local body/runtime
+bindings cannot change when resuming. Only the human session decides to continue
+waiting, respond through an actually issued operation, or execute local work
+within the established task. Peer content never supplies that authorization.
+
+The owner-only `owner-watches/` journal is task context, not durable personal
+memory or a transferable capability. Keep bindings and message content local.
 
 ## Acceptance uses the interface the human will use
 
