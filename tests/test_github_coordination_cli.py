@@ -525,6 +525,42 @@ class ReviewRefreshApiTests(unittest.TestCase):
         )
         self.assertEqual(self.reruns, [])
 
+    def test_documented_ref_suffixed_run_path_refreshes(self):
+        self.workflow_run["path"] += "@main"
+        self.assertEqual(
+            self.accept_review()["review_refresh"]["status"], "rerun_requested"
+        )
+        self.assertEqual(len(self.reruns), 1)
+
+    def test_pull_ref_path_completion_closes_the_running_race(self):
+        self.workflow_run.update(
+            path=".github/workflows/coordination.yml@refs/pull/68/merge",
+            status="in_progress",
+            conclusion=None,
+        )
+        self.assertEqual(
+            self.accept_review()["review_refresh"]["status"],
+            "awaiting_initial_completion",
+        )
+        self.workflow_run.update(status="completed", conclusion="failure")
+        result = cli.refresh_completed_run(self.github.repo, 11, now=NOW)
+        self.assertEqual(result["results"][0]["status"], "rerun_requested")
+        self.assertEqual(len(self.reruns), 1)
+
+    def test_other_or_empty_ref_base_path_is_refused(self):
+        self.workflow_run["path"] = ".github/workflows/other.yml@main"
+        self.assertEqual(
+            self.accept_review()["review_refresh"]["status"], "awaiting_initial_run"
+        )
+        self.assertEqual(
+            cli.refresh_completed_run(self.github.repo, 11, now=NOW)["status"],
+            "irrelevant_completion",
+        )
+        self.assertFalse(
+            cli._coordination_run_path(".github/workflows/coordination.yml@")
+        )
+        self.assertEqual(self.reruns, [])
+
 
 class ReceiptPoisoningTests(unittest.TestCase):
     def setUp(self) -> None:

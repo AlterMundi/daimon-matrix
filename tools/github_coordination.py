@@ -521,6 +521,15 @@ def audit_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     }
 
 
+def _coordination_run_path(value: Any) -> bool:
+    # REST represents this as either the bare path or path@ref. The workflow
+    # ID remains independently bound; an arbitrary other base path is refused.
+    if not isinstance(value, str):
+        return False
+    path, separator, ref = value.partition("@")
+    return path == ".github/workflows/coordination.yml" and (not separator or bool(ref))
+
+
 def refresh_review_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     """Request one actual audit job rerun, never manufacture a passing check."""
     audit = audit_pr(repo, pr_number, now=now)
@@ -551,7 +560,7 @@ def refresh_review_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[st
         and run.get("head_sha") == head["sha"]
         and run.get("head_branch") == head["ref"]
         and run.get("head_repository", {}).get("full_name") == head["repo"]["full_name"]
-        and run.get("path") == workflow["path"]
+        and _coordination_run_path(run.get("path"))
         and any(
             item.get("number") == pr_number
             and item.get("head", {}).get("sha") == head["sha"]
@@ -615,7 +624,7 @@ def refresh_completed_run(
     workflow = _run_gh(["api", f"repos/{repo}/actions/workflows/coordination.yml"])
     if (
         run.get("workflow_id") != workflow["id"]
-        or run.get("path") != ".github/workflows/coordination.yml"
+        or not _coordination_run_path(run.get("path"))
         or run.get("event") != "pull_request"
         or run.get("status") != "completed"
         or run.get("conclusion") != "failure"
