@@ -1206,8 +1206,17 @@ class PeerTransportTests(PeerTransportFixture):
     def test_mirrored_cold_retry_confirms_each_new_carrier_once(self) -> None:
         self._exercise_conversation(mirror=True, renewed_carrier=True)
 
+    def test_authenticated_storage_failure_after_real_receipt_is_undetermined(
+        self,
+    ) -> None:
+        self._exercise_conversation(mirror=True, storage_failure=True)
+
     def _exercise_conversation(
-        self, *, mirror: bool, renewed_carrier: bool = False
+        self,
+        *,
+        mirror: bool,
+        renewed_carrier: bool = False,
+        storage_failure: bool = False,
     ) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
         transports: list[SyntheticEchoTransport] = []
@@ -1268,13 +1277,21 @@ class PeerTransportTests(PeerTransportFixture):
             egress=self.receiver_egress,
             egress_catalog_id="test-converse-response",
         )
+        outbox_path = client_state / "outbox.sqlite"
+
+        def dispatch(raw: bytes) -> bytes:
+            response = dispatcher.dispatch(raw)
+            if storage_failure:
+                outbox_path.chmod(0)
+            return response
+
         client = PeerClient(
             authority=self.authority,
             local_origin=self.origins["legion"],
             local_target=self.targets["legion"],
             custody=self.custodies["legion"],
-            outbox=PeerOutbox(client_state / "outbox.sqlite"),
-            round_trip=dispatcher.dispatch,
+            outbox=PeerOutbox(outbox_path),
+            round_trip=dispatch,
             clock=lambda: self.now,
             egress=self.egress,
             egress_catalog_id="test-converse-request",
@@ -1296,6 +1313,90 @@ class PeerTransportTests(PeerTransportFixture):
                 correlation_id=request_id,
                 deadline_ms=self.now + 30_000,
             )
+
+        if storage_failure:
+            capability = create_capability(
+                seed("post-carrier-storage-client"),
+                client_id="client:post-carrier-storage",
+                methods=["we.converse"],
+                not_before_ms=NOW - 1_000,
+                not_after_ms=NOW + 100_000,
+            )
+            service = HostedWeave(
+                self.ledger_a,
+                self.signers["legion"],
+                {capability.capability_id: capability},
+                lambda: self.now,
+                "dm:runtime:v1:" + "a" * 43,
+                "post-carrier-storage",
+                scopes=ScopeResolver(self.ledger_a, clock=lambda: self.now),
+                peer_context=cast(
+                    Any,
+                    SimpleNamespace(
+                        configured=lambda _id: (self.targets["daimonmatrix"], client),
+                        authority=self.authority,
+                        local_origin=self.origins["legion"],
+                    ),
+                ),
+                we_lane=sender,
+            )
+            request = create_request(
+                capability,
+                request_id="05500000-0000-4000-8000-000000000074",
+                issued_at_ms=NOW,
+                method="we.converse",
+                params={
+                    "text": "hola hermano",
+                    "addressees": [sibling],
+                    "request_id": request_id,
+                    "ttl_ms": 60_000,
+                },
+                nonce=b"\x74" * 16,
+            )
+            try:
+                response = service.handle(request)
+            finally:
+                outbox_path.chmod(0o600)
+            self.assertTrue(response["ok"], response.get("error"))
+            result = response["result"]
+            self.assertEqual(
+                result["deliveries"],
+                [
+                    {
+                        "embodiment_id": sibling,
+                        "state": "undetermined",
+                        "error": "egress_storage_unavailable",
+                    }
+                ],
+            )
+            receipts = [
+                row
+                for row in self.ledger_b.events()
+                if row["subject"] == "communication-receipt"
+            ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(
+                receipts[0]["payload"]["message_ref"]["event_id"],
+                result["message_id"],
+            )
+            self.assertEqual(
+                receipts[0]["payload"]["message_ref"]["event_hash"],
+                result["message_hash"],
+            )
+            self.assertIsNotNone(self.ledger_b.event(result["message_id"]))
+            self.assertIsNotNone(self.ledger_b.event(result["resolution_id"]))
+            self.assertIsNone(self.ledger_a.event(receipts[0]["event_id"]))
+            verify_response(
+                response,
+                capability,
+                expected_request_id=request["request_id"],
+                expected_request_hash=response["request_hash"],
+                expected_server=self.origins["legion"],
+                expected_runtime=service.runtime_identity,
+            )
+            self.assertEqual(service.handle(request), response)
+            self.assertEqual([len(item.requests) for item in transports], [1, 1])
+            return
 
         result = sender.converse(
             text="hola hermano",

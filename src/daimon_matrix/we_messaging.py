@@ -602,9 +602,10 @@ class WeConversation:
 
         Authoring is idempotent per caller-supplied request id, so an exact retry
         returns the same signed message and resolution instead of saying the same
-        thing twice. Byte-exact transport retry belongs to the peer outbox, not
-        here: re-sealing the same message is legitimate and produces a fresh
-        envelope for it.
+        thing twice. The randomized sealed payload is persisted and recovered
+        byte-exactly; an expired saved payload is never silently resealed.
+        The peer outbox may renew an expired outer carrier only while its saved
+        inner conversation remains valid and the native retry rules permit it.
 
         `ttl_ms` may not outlive the shortest credential validity in the carrier
         set; the sealed profile refuses an envelope whose deadline no credential
