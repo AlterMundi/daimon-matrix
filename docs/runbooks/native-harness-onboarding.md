@@ -65,6 +65,41 @@ from the reported private backup to roll back (consult its manifest for a file
 that originally did not exist). Authentication, conversation data, Matrix
 history and custody remain untouched throughout.
 
+## Add an owner-requested Telegram human channel
+
+Use the portable `telegram-codex` package from
+[AlterMundi/Skills](https://github.com/AlterMundi/Skills/tree/a82ab117c910cda45c02442b1b4b9de7d83a8ff2/skills/telegram-codex),
+version 1.0.1 at exact commit `a82ab117c910cda45c02442b1b4b9de7d83a8ff2`.
+Follow [selective shared-skill installation](shared-skill-updates.md) to verify
+its descriptor/content, preserve local changes and retain software rollback.
+The package's pinned `release.json`, preparation helper and deployment guide
+are the canonical runtime instructions; keep future portable changes there.
+The maintained runtime fork is [AlterMundi/telecodex](https://github.com/AlterMundi/telecodex).
+
+Resolve the bot, human ACL, workspace, native executable, HOME/CODEX_HOME and
+harness policy locally for the current signed body. Preserve native identity,
+custody, instructions, memory and authentication. Use a dedicated private-topic
+bot and its own ingress consumer. Store the token in an owner-only local file;
+never copy Hermes/Tribu tokens or embed credentials/bindings in shared skills.
+
+The managed `codex app-server proxy` forwards raw bytes to the existing daemon's
+WebSocket transport. Select the bridge's verified native framing and run its
+bounded `--probe-native` before starting the human listener. Require actual
+initialize, enabled expected skills and zero discovery errors.
+Creating two distinct empty thread IDs proves only context allocation: native
+rollout persistence and intentional CLI resume require a completed human turn.
+
+Activate the listener only under the human request. Verify the real dedicated
+bot's topic support and allowed human, exchange messages in two topics, restart
+the bridge and continue each distinct native context. Resume a completed topic
+through the existing CLI and verify its loaded body instructions, skills and
+memory binding. Retain uncertain ingress/turn outcomes and current offsets;
+software rollback never restores an older input journal over new observations.
+The portable skill does not start a service, import other conversations, poll
+Matrix, wake a model or enable peer replies. Report code/proxy discovery and
+live bot/human-context acceptance separately. A missing dedicated token blocks
+activation; live acceptance requires actual human messages in those contexts.
+
 ## Explicit foreground attention
 
 When the human requests coordination until a task is complete, the rendered
