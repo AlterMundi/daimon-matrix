@@ -37,6 +37,7 @@ from daimon_matrix.identity import (
 from daimon_matrix.ledger import (
     Ledger,
     LedgerEquivocationError,
+    LedgerError,
     LedgerGapError,
     LedgerStateError,
 )
@@ -190,6 +191,143 @@ class RootLedgerFixture(unittest.TestCase):
             signer=self.signers[label],
             occurred_at_ms=NOW,
         )
+
+
+class KnownFeedTests(RootLedgerFixture):
+    def test_same_time_pages_and_late_older_import_follow_known_intake(self) -> None:
+        expected = [
+            self.append(self.ledger_a, "legion", str(i))["event_id"] for i in range(9)
+        ]
+        cursor = None
+        received: list[str] = []
+        while True:
+            page = self.ledger_a.known_page(cursor=cursor, limit=2)
+            received.extend(row["event_id"] for row in page["events"])
+            cursor = page["cursor"]
+            if not page["more"]:
+                break
+        self.assertEqual(received, expected)
+        older = self.ledger_b.append_local(
+            kind="experience.observed",
+            subject="late older event",
+            payload={},
+            signer=self.signers["daimonmatrix"],
+            occurred_at_ms=NOW - 5,
+        )
+        self.ledger_a.ingest([older], source="remote")
+        page = self.ledger_a.known_page(cursor=cursor)
+        self.assertEqual(
+            [row["event_id"] for row in page["events"]], [older["event_id"]]
+        )
+        self.assertFalse(page["more"])
+        self.assertEqual(self.ledger_a.known_page(cursor="tail")["events"], [])
+
+    def test_incomplete_event_enters_feed_only_when_promoted(self) -> None:
+        parent_id = str(uuid.uuid4())
+        child = create_event(
+            self.authority,
+            self.origins["daimonmatrix"],
+            self.signers["daimonmatrix"],
+            event_id=str(uuid.uuid4()),
+            sequence=1,
+            previous_event_id=None,
+            occurred_at_ms=NOW - 4,
+            causal_parents=[parent_id],
+            kind="experience.observed",
+            subject="pending",
+            payload={},
+        )
+        self.ledger_a.ingest([child], source="remote")
+        cursor = self.ledger_a.known_page(cursor=None)["cursor"]
+        self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="parent",
+            payload={},
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+            event_id=parent_id,
+        )
+        page = self.ledger_a.known_page(cursor=cursor)
+        self.assertEqual(
+            [row["event_id"] for row in page["events"]], [parent_id, child["event_id"]]
+        )
+        self.assertEqual(canonical_bytes(page["events"][1]), canonical_bytes(child))
+
+    def remove_feed(self) -> None:
+        with self.ledger_a._database() as database:
+            database.executescript(
+                "DROP TRIGGER feed_known_insert; DROP TRIGGER feed_known_promotion;"
+                "DROP TABLE known_event_feed; DROP TABLE known_feed_state;"
+            )
+
+    def test_existing_v3_backfill_is_atomic_and_preserves_legacy_writers(self) -> None:
+        expected = [
+            self.append(self.ledger_a, "legion", str(i))["event_id"] for i in range(3)
+        ]
+        self.remove_feed()
+        with self.ledger_a._database() as database:
+
+            class FailingBootstrap:
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(database, name)
+
+                def execute(self, sql: str, *args: Any) -> Any:
+                    if sql.startswith("INSERT INTO known_event_feed(event_id) SELECT"):
+                        raise RuntimeError("synthetic interrupted backfill")
+                    return database.execute(sql, *args)
+
+            with self.assertRaisesRegex(RuntimeError, "interrupted backfill"):
+                Ledger._initialize_known_feed(cast(Any, FailingBootstrap()))
+            self.assertEqual(
+                database.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'known_%feed%'"
+                ).fetchone()[0],
+                0,
+            )
+        first = self.ledger_a.known_page(cursor=None)
+        self.assertEqual([row["event_id"] for row in first["events"]], expected)
+        older = self.append(self.ledger_b, "daimonmatrix", "legacy writer")
+        # This is the INSERT/status UPDATE used by pre-feed schema-v3 writers;
+        # SQLite triggers populate the index without requiring new SDK code.
+        with self.ledger_a._database() as database:
+            self.ledger_a._insert(database, older, source="legacy", status="incomplete")
+            database.execute(
+                "UPDATE events SET status='known' WHERE event_id=?",
+                (older["event_id"],),
+            )
+        self.assertEqual(
+            self.ledger_a.known_page(cursor=first["cursor"])["events"], [older]
+        )
+        complete = self.ledger_a.known_page(cursor=None)
+        self.assertEqual(
+            [row["event_id"] for row in complete["events"]],
+            [*expected, older["event_id"]],
+        )
+        self.ledger_a.initialize()
+        self.assertEqual(
+            self.ledger_a.known_page(cursor=complete["cursor"])["events"], []
+        )
+        with self.ledger_a._database() as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT value FROM metadata WHERE key='schema_version'"
+                ).fetchone()[0],
+                "3",
+            )
+
+    def test_cursor_refuses_other_store_and_restored_earlier_boundary(self) -> None:
+        self.append(self.ledger_a, "legion", "one")
+        original = self.ledger_a.path.read_bytes()
+        self.append(self.ledger_a, "legion", "two")
+        cursor = self.ledger_a.known_page(cursor=None)["cursor"]
+        with self.assertRaisesRegex(LedgerError, "invalid_known_cursor"):
+            self.ledger_b.known_page(cursor=cursor)
+        self.ledger_a.path.write_bytes(original)
+        with self.assertRaisesRegex(LedgerError, "invalid_known_cursor"):
+            self.ledger_a.known_page(cursor=cursor)
+        for invalid in ("garbage", "", 3, {"position": 1}):
+            with self.assertRaisesRegex(LedgerError, "invalid_known_cursor"):
+                self.ledger_a.known_page(cursor=cast(Any, invalid))
 
 
 class AuthorizationAndCompatibilityTests(RootLedgerFixture):

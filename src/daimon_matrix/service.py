@@ -2349,9 +2349,17 @@ class HostedWeave:
         """Read the being's own conversation. Nothing polls; a human asks."""
         if not isinstance(params, Mapping) or not set(params) <= {
             "after",
+            "cursor",
             "limit",
+            "peer",
             "thread_id",
         }:
+            raise ServiceError("invalid_params")
+        if "cursor" in params:
+            if "after" in params:
+                raise ServiceError("invalid_params")
+            return self._we_conversation_cursor_page(params)
+        if "peer" in params:
             raise ServiceError("invalid_params")
         requested_after = params.get("after")
         after = 0 if requested_after is None else _uint(requested_after)
@@ -2385,6 +2393,43 @@ class HostedWeave:
             "entries": page,
             "more": len(rows) > limit,
             "schema": "dm.we.conversation-page/v1",
+        }
+
+    def _we_conversation_cursor_page(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        limit = _uint(params.get("limit", 64), minimum=1, maximum=256)
+        thread_id = _optional_text(params.get("thread_id"), 36)
+        peer = _optional_text(params.get("peer"), 128)
+        if peer is not None and peer not in {
+            row["embodiment_id"]
+            for row in self.ledger.authority.manifest.value["embodiments"]
+        }:
+            raise ServiceError("conversation_peer_unknown")
+        try:
+            page = self.ledger.known_page(cursor=params["cursor"], limit=limit)
+        except LedgerError as exception:
+            raise ServiceError(str(exception)) from exception
+        entries = []
+        for event in page["events"]:
+            entry = _we_conversation_entry(event)
+            if (
+                entry is None
+                or (thread_id is not None and entry["thread_id"] != thread_id)
+                or (peer is not None and entry["author"] != peer)
+            ):
+                continue
+            entry["author_label"] = self._we_label(entry["author"])
+            if entry["kind"] == "message":
+                entry["addressee_labels"] = (
+                    None
+                    if self.labels is None
+                    else [self._we_label(row) for row in entry["addressees"]]
+                )
+            entries.append(entry)
+        return {
+            "schema": "dm.we.conversation-page/v2",
+            "cursor": page["cursor"],
+            "entries": entries,
+            "more": page["more"],
         }
 
     def _observe(

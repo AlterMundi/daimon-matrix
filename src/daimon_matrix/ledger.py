@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from .canonical import canonical_bytes
+from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .weave import (
     MAX_PAGE_BYTES,
     MAX_PAGE_EVENTS,
@@ -336,7 +336,155 @@ class Ledger:
                     self._commit_authority_epoch(database, expected)
                 else:
                     raise LedgerStateError("ledger_metadata_mismatch")
+            self._initialize_known_feed(database)
         _assert_owner_file(self.path)
+
+    @staticmethod
+    def _initialize_known_feed(database: sqlite3.Connection) -> None:
+        """Add a derived intake index, compatible with existing v3 writers.
+
+        SQLite triggers record an event when it becomes known, inside the same
+        transaction as intake/promotion. Historical authored times and the
+        original insertion order of incomplete events cannot serve as cursors.
+        """
+        database.execute("BEGIN IMMEDIATE")
+        try:
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS known_feed_state ("
+                "slot INTEGER PRIMARY KEY CHECK(slot=1), store_id TEXT NOT NULL)"
+            )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS known_event_feed ("
+                "position INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "event_id TEXT NOT NULL UNIQUE REFERENCES events(event_id))"
+            )
+            database.execute(
+                "CREATE TRIGGER IF NOT EXISTS feed_known_insert "
+                "AFTER INSERT ON events WHEN NEW.status='known' BEGIN "
+                "INSERT INTO known_event_feed(event_id) VALUES (NEW.event_id); END"
+            )
+            database.execute(
+                "CREATE TRIGGER IF NOT EXISTS feed_known_promotion "
+                "AFTER UPDATE OF status ON events "
+                "WHEN OLD.status!='known' AND NEW.status='known' BEGIN "
+                "INSERT INTO known_event_feed(event_id) VALUES (NEW.event_id); END"
+            )
+            rows = database.execute("SELECT store_id FROM known_feed_state").fetchall()
+            if not rows:
+                database.execute(
+                    "INSERT INTO known_feed_state VALUES (1, ?)", (str(uuid.uuid4()),)
+                )
+                database.execute(
+                    "INSERT INTO known_event_feed(event_id) "
+                    "SELECT event_id FROM events WHERE status='known' "
+                    "ORDER BY inserted_order"
+                )
+            elif len(rows) != 1:
+                raise LedgerStateError("known_feed_state_corrupt")
+            database.commit()
+        except BaseException:
+            database.rollback()
+            raise
+
+    def known_page(self, *, cursor: str | None, limit: int = 64) -> dict[str, Any]:
+        """Return known events by local intake, with a store-bound cursor.
+
+        ``tail`` explicitly establishes a cursor at the current known tip.
+        A retained cursor also checks its boundary so another store or a
+        restored earlier database cannot silently skip or replay the feed.
+        """
+        if type(limit) is not int or not 1 <= limit <= 256:
+            raise LedgerError("invalid_known_page_limit")
+        self.initialize()
+        with self._database() as database:
+            database.execute("BEGIN")
+            store_id = str(
+                database.execute(
+                    "SELECT store_id FROM known_feed_state WHERE slot=1"
+                ).fetchone()[0]
+            )
+            position = 0
+            if cursor == "tail":
+                position = int(
+                    database.execute(
+                        "SELECT COALESCE(MAX(position), 0) FROM known_event_feed"
+                    ).fetchone()[0]
+                )
+            elif cursor is not None:
+                try:
+                    if not isinstance(cursor, str) or not 1 <= len(cursor) <= 768:
+                        raise ValueError
+                    raw = unb64url(cursor)
+                    value = json.loads(raw)
+                    if (
+                        not isinstance(value, dict)
+                        or set(value)
+                        != {
+                            "schema",
+                            "store_id",
+                            "position",
+                            "event_id",
+                            "content_hash",
+                        }
+                        or canonical_bytes(value) != raw
+                        or value["schema"] != "dm.we.known-cursor/v1"
+                        or value["store_id"] != store_id
+                        or type(value["position"]) is not int
+                        or not 0 <= value["position"] <= 2**63 - 1
+                    ):
+                        raise ValueError
+                    position = value["position"]
+                    boundary = self._known_cursor(database, store_id, position)
+                    if boundary != cursor:
+                        raise ValueError
+                except (CanonicalError, ValueError, TypeError, KeyError) as exception:
+                    raise LedgerError("invalid_known_cursor") from exception
+            rows = database.execute(
+                "SELECT f.position, e.event_json FROM known_event_feed f "
+                "JOIN events e ON e.event_id=f.event_id "
+                "WHERE f.position>? ORDER BY f.position LIMIT ?",
+                (position, limit + 1),
+            ).fetchall()
+            events: list[Event] = []
+            size = 0
+            for row in rows[:limit]:
+                raw = bytes(row["event_json"])
+                if events and size + len(raw) > MAX_PAGE_BYTES:
+                    break
+                size += len(raw)
+                events.append(json.loads(raw))
+                position = int(row["position"])
+            return {
+                "cursor": self._known_cursor(database, store_id, position),
+                "events": events,
+                "more": len(rows) > len(events),
+            }
+
+    @staticmethod
+    def _known_cursor(
+        database: sqlite3.Connection, store_id: str, position: int
+    ) -> str:
+        event_id = content_hash = None
+        if position:
+            row = database.execute(
+                "SELECT e.event_id, e.content_hash FROM known_event_feed f "
+                "JOIN events e ON e.event_id=f.event_id WHERE f.position=?",
+                (position,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("invalid_known_cursor")
+            event_id, content_hash = row["event_id"], row["content_hash"]
+        return b64url(
+            canonical_bytes(
+                {
+                    "schema": "dm.we.known-cursor/v1",
+                    "store_id": store_id,
+                    "position": position,
+                    "event_id": event_id,
+                    "content_hash": content_hash,
+                }
+            )
+        )
 
     @staticmethod
     def _authority_epoch_advance(

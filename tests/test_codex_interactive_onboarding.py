@@ -77,6 +77,12 @@ exclude = ["PRIVATE_TOKEN"]
         )
         self.assertEqual((self.home / "AGENTS.md").stat().st_mode & 0o777, 0o600)
         self.assertFalse(MODULE.install(self.args)["changed"])
+        instructions = (self.home / "AGENTS.md").read_text()
+        self.assertIn("finite, resumable foreground inbox", instructions)
+        self.assertIn(
+            "selected peer/thread/task until completion or revocation", instructions
+        )
+        self.assertIn("do not install a background", instructions)
 
     def test_dry_run_has_no_configuration_effect(self) -> None:
         self.args.apply = False

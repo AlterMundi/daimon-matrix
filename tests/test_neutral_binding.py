@@ -686,7 +686,9 @@ class OwnerClientTests(unittest.TestCase):
         self.assertNotIn("@@", rendered)
         compile(rendered.split("\n", 1)[1], "<owner-client>", "exec")
         # socket first, with an explicit and narrow fallback condition
-        self.assertIn("LocalClient(socket_path, config, timeout_seconds=40)", rendered)
+        self.assertIn(
+            "LocalClient(socket_path, config, timeout_seconds=timeout)", rendered
+        )
         self.assertIn('str(error) != "daemon_unavailable"', rendered)
         self.assertIn("runtime = _runtime()", rendered)
         # conversation reads go through the service, never around it
