@@ -845,8 +845,15 @@ def _send(config, request: dict, *, timeout: float = 40, daemon_only=False) -> d
         os.close(descriptor)
 
 
-def _call(method: str, params: dict, *, timeout: float = 40, daemon_only=False) -> dict:
-    config = _config(method)
+def _call(
+    method: str,
+    params: dict,
+    *,
+    timeout: float = 40,
+    daemon_only=False,
+    selected_config=None,
+) -> dict:
+    config = _config(method) if selected_config is None else selected_config
     request = create_request(
         config.capability,
         request_id=str(uuid.uuid4()),
@@ -922,7 +929,9 @@ def _say(args):
 
 def _watch_read(directory, name):
     try:
-        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        descriptor = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
     except FileNotFoundError:
         return None
     try:
@@ -1118,6 +1127,7 @@ def _watch(args):
                         },
                         timeout=1.0,
                         daemon_only=True,
+                        selected_config=config,
                     )
                     if (
                         baseline.get("schema") != "dm.we.conversation-page/v2"
@@ -1185,6 +1195,7 @@ def _watch(args):
                     },
                     timeout=timeout,
                     daemon_only=True,
+                    selected_config=config,
                 )
                 if (
                     page.get("schema") != "dm.we.conversation-page/v2"

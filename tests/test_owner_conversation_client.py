@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -138,7 +139,14 @@ class OwnerConversationClientTests(SealedFixture):
         self.thread = threading.Thread(target=serve)
         self.thread.start()
 
-    def write_config(self, directory: Any, capability: Any, key_name: str) -> None:
+    def write_config(
+        self,
+        directory: Any,
+        capability: Any,
+        key_name: str,
+        *,
+        runtime_id: str = "dm:runtime:v1:" + "a" * 43,
+    ) -> None:
         (directory / key_name).write_bytes(capability.key)
         (directory / key_name).chmod(0o600)
         (directory / "client.json").write_bytes(
@@ -147,7 +155,7 @@ class OwnerConversationClientTests(SealedFixture):
                     "schema": CLIENT_CONFIG_SCHEMA_V3,
                     "capability": capability.descriptor,
                     "expected_server": self.origins["legion"],
-                    "runtime_id": "dm:runtime:v1:" + "a" * 43,
+                    "runtime_id": runtime_id,
                     "runtime_label": "owner-test",
                 }
             )
@@ -309,6 +317,19 @@ class OwnerConversationClientTests(SealedFixture):
         (self.state_dir / "owner-watches").chmod(0o755)
         self.assertIn("watch_parent_not_owner_only", self.run_client(*args)[2])
 
+    def test_watch_fifo_is_rejected_without_waiting_for_a_writer(self) -> None:
+        watch_id, _ = self.start_watch(str(uuid.uuid4()))
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        start = time.monotonic()
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0.05"
+        )
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("watch_state_not_owner_only", error)
+        self.assertLess(time.monotonic() - start, 0.2)
+
     def test_from_now_retains_anchor_when_initial_output_is_lost(self) -> None:
         selected = str(uuid.uuid4())
         self.peer_message(selected, "previous message")
@@ -413,6 +434,7 @@ class OwnerConversationClientTests(SealedFixture):
         )
         self.assertEqual(code, 2)
         self.assertIn("watch_daemon_unavailable", error)
+
         self.assertLess(time.monotonic() - start, 0.25)
         self.before_reply = None
         self.stop.set()
@@ -423,6 +445,38 @@ class OwnerConversationClientTests(SealedFixture):
         )
         self.assertEqual(code, 2)
         self.assertIn("watch_daemon_unavailable", error)
+
+    def test_active_wait_cannot_switch_its_authenticated_runtime(self) -> None:
+        selected = str(uuid.uuid4())
+        watch_id, _ = self.start_watch(selected)
+        changed = False
+
+        def change_runtime() -> None:
+            nonlocal changed
+            if changed:
+                return
+            changed = True
+            new_id = "dm:runtime:v1:" + "b" * 43
+            self.write_config(
+                self.runtime_dir, self.primary, "client.key", runtime_id=new_id
+            )
+            self.write_config(
+                self.profile_dir, self.weave, "capability.key", runtime_id=new_id
+            )
+            self.service = replace(self.service, runtime_id=new_id)
+            self.peer_message(selected, "new runtime must not enter old watch")
+
+        self.before_reply = change_runtime
+        code, output, error = self.run_client(
+            "watch", "--watch-id", watch_id, "--wait", "0.8"
+        )
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn("daemon_response_rejected", error)
+        path = self.state_dir / "owner-watches" / (watch_id + ".json")
+        state = json.loads(path.read_bytes())
+        self.assertEqual(state["runtime_id"], "dm:runtime:v1:" + "a" * 43)
+        self.assertIsNone(state["pending"])
+        self.assertEqual(self.delivery_attempts, 0)
 
     def test_say_routes_issued_profile_and_proves_receiving_intake(self) -> None:
         primary_bytes = (self.runtime_dir / "client.json").read_bytes()
