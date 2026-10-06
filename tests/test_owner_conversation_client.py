@@ -451,6 +451,42 @@ class OwnerConversationClientTests(SealedFixture):
         self.assertEqual(json.loads(output)["status"], "waiting")
         self.assertLess(elapsed, 1.6)
 
+    def test_ack_during_authenticated_read_does_not_restart_an_elapsed_wait(
+        self,
+    ) -> None:
+        selected = str(uuid.uuid4())
+        self.peer_message(selected, "pending page")
+        watch_id, initial = self.start_watch(selected)
+        original_call = self.owner["_call"]
+        calls: list[str] = []
+
+        def acknowledge_after_reply(method: str, *args: Any, **kwargs: Any) -> Any:
+            calls.append(method)
+            self.assertEqual(
+                len(calls), 1, "RPC repeated after acknowledgement and deadline"
+            )
+            page = original_call(method, *args, **kwargs)
+            code, _output, error = self.run_client(
+                "watch",
+                "--watch-id",
+                watch_id,
+                "--ack",
+                initial["page"]["page_id"],
+            )
+            self.assertEqual(code, 0, error)
+            # Simulate descheduling after an authenticated reply and a real local ack.
+            time.sleep(1.1)
+            return page
+
+        with patch.dict(self.owner, {"_call": acknowledge_after_reply}):
+            code, output, error = self.run_client(
+                "watch", "--watch-id", watch_id, "--wait", "1.0"
+            )
+        self.assertEqual(code, 0, error)
+        self.assertEqual(json.loads(output)["status"], "waiting")
+        self.assertIsNone(json.loads(output)["page"])
+        self.assertEqual(calls, ["we.conversation.page"])
+
     def test_wait_transport_deadline_and_daemon_only_path(self) -> None:
         selected = str(uuid.uuid4())
         watch_id, _ = self.start_watch(selected)

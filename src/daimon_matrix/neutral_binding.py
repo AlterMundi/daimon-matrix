@@ -1219,6 +1219,7 @@ def _watch(args):
                     )
                 ):
                     raise ClientError("watch_native_page_invalid")
+                authenticated = True
                 with _watch_lock(directory, watch_id + ".lock"):
                     current = _watch_read(directory, name)
                     _watch_bound(current, config, watch_id)
@@ -1247,7 +1248,6 @@ def _watch(args):
                         status = "waiting"
                 if status != "waiting":
                     return _watch_output(current, status)
-                authenticated = True
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return _watch_output(current, "waiting")
