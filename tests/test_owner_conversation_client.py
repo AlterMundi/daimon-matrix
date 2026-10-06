@@ -413,16 +413,43 @@ class OwnerConversationClientTests(SealedFixture):
             self.assertFalse(reader.is_alive())
         self.assertEqual(errors, [])
         self.assertEqual(results, ["stopped", "stopped"])
-        self.before_reply = None
+
+        # A successful real authenticated RPC gets a normal scheduling window.
+        # Preserve the separate80ms/300ms intentional deadline refusal below.
+        def delayed_first_reply() -> None:
+            self.before_reply = None
+            time.sleep(0.2)
+
         other, _ = self.start_watch(selected)
+        self.before_reply = delayed_first_reply
+        deadline: list[float] = []
+        original_call = self.owner["_call"]
+
+        def monotonic() -> float:
+            now = time.monotonic()
+            if not deadline:
+                deadline.append(now + 1.0)
+            return now
+
+        def call_before_deadline(*args: Any, **kwargs: Any) -> Any:
+            self.assertLess(time.monotonic(), deadline[0], "RPC began after wait ended")
+            return original_call(*args, **kwargs)
+
         start = time.monotonic()
-        code, output, error = self.run_client(
-            "watch", "--watch-id", other, "--wait", "0.15"
-        )
+        with patch.dict(
+            self.owner,
+            {
+                "time": SimpleNamespace(monotonic=monotonic, sleep=time.sleep),
+                "_call": call_before_deadline,
+            },
+        ):
+            code, output, error = self.run_client(
+                "watch", "--watch-id", other, "--wait", "1.0"
+            )
         elapsed = time.monotonic() - start
         self.assertEqual(code, 0, error)
         self.assertEqual(json.loads(output)["status"], "waiting")
-        self.assertLess(elapsed, 0.6)
+        self.assertLess(elapsed, 1.6)
 
     def test_wait_transport_deadline_and_daemon_only_path(self) -> None:
         selected = str(uuid.uuid4())

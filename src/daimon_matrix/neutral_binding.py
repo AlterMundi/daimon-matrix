@@ -1175,6 +1175,7 @@ def _watch(args):
         # short state lock, so they can revoke an active finite wait.
         with _watch_lock(directory, watch_id + ".wait"):
             deadline = time.monotonic() + args.wait
+            authenticated = False
             while True:
                 with _watch_lock(directory, watch_id + ".lock"):
                     value = _watch_read(directory, name)
@@ -1184,6 +1185,11 @@ def _watch(args):
                 if not value["active"]:
                     return _watch_output(value, "stopped")
                 remaining = deadline - time.monotonic()
+                # A finite wait must not begin another RPC after its deadline.
+                # Always require an authenticated read in this invocation first;
+                # stop and binding checks above still run after the final sleep.
+                if args.wait and authenticated and remaining <= 0:
+                    return _watch_output(value, "waiting")
                 timeout = min(1.0, max(0.05, remaining)) if args.wait else 1.0
                 page = _call(
                     "we.conversation.page",
@@ -1241,6 +1247,7 @@ def _watch(args):
                         status = "waiting"
                 if status != "waiting":
                     return _watch_output(current, status)
+                authenticated = True
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return _watch_output(current, "waiting")
