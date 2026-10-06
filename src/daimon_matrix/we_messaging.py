@@ -78,6 +78,16 @@ MAX_ADDRESSEES: Final = 256
 MAX_TEXT_BYTES: Final = 64 * 1024
 MAX_WE_TTL_MS: Final = MAX_TTL_MS
 DEFAULT_WE_TTL_MS: Final = 10 * 60 * 1000
+WE_EGRESS_ERROR_CODES: Final = frozenset(
+    {
+        "egress_echo_not_confirmed",
+        "egress_authority_blocked",
+        "egress_operation_ambiguous",
+        "egress_catalog_invalid",
+        "egress_storage_unavailable",
+        "native_egress_failed",
+    }
+)
 
 DeliverConversation = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
 """Hand one sealed conversation to a sibling and return its intake result."""
@@ -91,10 +101,16 @@ class WeDeliveryError(WeLaneError):
     """One carrier refused or has an undetermined outcome; never a receipt."""
 
     def __init__(self, *, state: str, code: str) -> None:
-        if state not in {"rejected", "undetermined"} or code not in {
-            "peer_transport_rejected",
-            "peer_transport_ambiguous",
-        }:
+        if (
+            state not in {"rejected", "undetermined"}
+            or code
+            not in {
+                "peer_transport_rejected",
+                "peer_transport_ambiguous",
+                *WE_EGRESS_ERROR_CODES,
+            }
+            or (code in WE_EGRESS_ERROR_CODES and state != "undetermined")
+        ):
             raise WeLaneError("we_lane_delivery_status_invalid")
         self.state = state
         self.code = code

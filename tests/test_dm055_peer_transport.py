@@ -13,6 +13,7 @@ from contextlib import closing
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -30,6 +31,7 @@ from daimon_matrix.identity import (
     verify_successor,
 )
 from daimon_matrix.keystore import EncryptedKeystore
+from daimon_matrix.local_api import create_capability, create_request, verify_response
 from daimon_matrix.native_egress import (
     MandatoryEgressController,
     SyntheticEchoTransport,
@@ -61,6 +63,7 @@ from daimon_matrix.scopes import (
     validate_scope_response,
 )
 from daimon_matrix.sealed import RecipientTarget
+from daimon_matrix.service import HostedWeave
 from daimon_matrix.sync import SyncEngine
 from daimon_matrix.we_messaging import (
     WE_MESSAGE_CONTENT_TYPE,
@@ -139,6 +142,136 @@ class PeerTransportFixture(RootLedgerFixture):
 
 
 class PeerTransportTests(PeerTransportFixture):
+    def test_authenticated_conversation_retains_ambiguous_required_echo_and_exact_retry(
+        self,
+    ) -> None:
+        class LostEchoReply(SyntheticEchoTransport):
+            def send(self, request: dict[str, Any]) -> bytes:
+                super().send(request)
+                raise TimeoutError("synthetic reply lost after external acceptance")
+
+        mirror = LostEchoReply()
+        egress = MandatoryEgressController(
+            policy=self.egress._policy,
+            proof_key=b"\x89" * 32,
+            transport=mirror,
+            clock=lambda: self.now,
+            catalog_mode="synthetic",
+            installation_digest="1" * 64,
+            owner_actor=self.authority.state.being_ref,
+            verify_owner_binding=lambda _document, _binding: None,
+            mirror_sibling_conversations=True,
+        )
+        sent: list[bytes] = []
+
+        def forbidden_carrier(raw: bytes) -> bytes:
+            sent.append(raw)
+            self.fail("unconfirmed required mirror released native peer bytes")
+
+        outbox_path = self.root_path / "ambiguous-mirror-outbox.sqlite"
+        client = PeerClient(
+            authority=self.authority,
+            local_origin=self.origins["legion"],
+            local_target=self.targets["legion"],
+            custody=self.custodies["legion"],
+            outbox=PeerOutbox(outbox_path),
+            round_trip=forbidden_carrier,
+            clock=lambda: self.now,
+            egress=egress,
+            egress_catalog_id="ambiguous-mirror-request",
+        )
+        capability = create_capability(
+            seed("ambiguous-mirror-api"),
+            client_id="client:ambiguous-mirror",
+            methods=["we.converse"],
+            not_before_ms=NOW - 1_000,
+            not_after_ms=NOW + 100_000,
+        )
+        lane = WeConversation(
+            self.ledger_a,
+            signer=self.signers["legion"],
+            custody=_RuntimeDeliveryCustody(self.custodies["legion"]),
+            clock=lambda: self.now,
+        )
+        service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {capability.capability_id: capability},
+            lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "ambiguous-mirror",
+            scopes=ScopeResolver(self.ledger_a, clock=lambda: self.now),
+            peer_context=cast(
+                Any,
+                SimpleNamespace(
+                    configured=lambda _id: (self.targets["daimonmatrix"], client),
+                    authority=self.authority,
+                    local_origin=self.origins["legion"],
+                ),
+            ),
+            we_lane=lane,
+        )
+        request = create_request(
+            capability,
+            request_id="05500000-0000-4000-8000-000000000071",
+            issued_at_ms=NOW,
+            method="we.converse",
+            params={
+                "request_id": "05500000-0000-4000-8000-000000000072",
+                "text": "the human authorized this conversation",
+                "addressees": ["embodiment:daimonmatrix"],
+                "ttl_ms": 30_000,
+            },
+            nonce=b"\x71" * 16,
+        )
+        response = service.handle(request)
+        verify_response(
+            response,
+            capability,
+            expected_request_id=request["request_id"],
+            expected_request_hash=response["request_hash"],
+            expected_server=self.origins["legion"],
+            expected_runtime=service.runtime_identity,
+        )
+        self.assertTrue(response["ok"], response.get("error"))
+        result = response["result"]
+        self.assertEqual(
+            result["deliveries"],
+            [
+                {
+                    "embodiment_id": "embodiment:daimonmatrix",
+                    "state": "undetermined",
+                    "error": "egress_echo_not_confirmed",
+                }
+            ],
+        )
+        self.assertIsNotNone(self.ledger_a.event(result["message_id"]))
+        self.assertIsNotNone(self.ledger_a.event(result["resolution_id"]))
+        self.assertFalse(self.ledger_b.events())
+        self.assertEqual(sent, [])
+        self.assertEqual(len(mirror.requests), 1)
+        with closing(sqlite3.connect(outbox_path)) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM peer_outbox_carriers"
+                ).fetchone()[0],
+                1,
+            )
+            record = json.loads(
+                database.execute("SELECT record FROM echo_v2_obligations").fetchone()[0]
+            )
+            self.assertIsNone(record["parts"][0]["attempts"][0]["response"])
+            self.assertEqual(
+                database.execute(
+                    "SELECT release_count FROM mandatory_egress_operations"
+                ).fetchone()[0],
+                0,
+            )
+        self.now += 100
+        self.assertEqual(service.handle(request), response)
+        self.assertEqual(len(mirror.requests), 1)
+        self.assertEqual(sent, [])
+
     def test_scope_request_and_response_round_trip_between_embodiments(self) -> None:
         request_raw = self.envelope()
         request = open_peer_payload(

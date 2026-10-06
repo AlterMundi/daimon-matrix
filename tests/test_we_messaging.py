@@ -6,6 +6,7 @@ import copy
 import sqlite3
 import unittest
 import uuid
+from collections.abc import Callable
 from contextlib import closing
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +19,7 @@ from daimon_matrix.identity import (
 )
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import create_capability
+from daimon_matrix.native_egress import NativeEgressError
 from daimon_matrix.peer_transport import (
     PeerTransportAmbiguous,
     PeerTransportBusy,
@@ -626,6 +628,16 @@ class WeLaneTests(SealedFixture):
             ("undetermined", "peer_transport_ambiguous", PeerTransportAmbiguous),
             ("undetermined", "peer_transport_ambiguous", PeerTransportBusy),
             ("undetermined", "peer_transport_ambiguous", PeerTransportConflict),
+            (
+                "undetermined",
+                "egress_echo_not_confirmed",
+                lambda: NativeEgressError("egress_echo_not_confirmed"),
+            ),
+            (
+                "undetermined",
+                "native_egress_failed",
+                lambda: NativeEgressError("private_endpoint_and_custody_material"),
+            ),
         ):
             attempts: list[str] = []
 
@@ -633,7 +645,7 @@ class WeLaneTests(SealedFixture):
                 embodiment_id: str,
                 *,
                 attempts: list[str] = attempts,
-                refusal: type[PeerTransportError] = refusal,
+                refusal: Callable[[], Exception] = refusal,
             ) -> Any:
                 attempts.append(embodiment_id)
                 if embodiment_id == offline:

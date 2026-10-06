@@ -48,6 +48,7 @@ from .memory_policy import (
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
 from .messaging import MessagingChannel, MessagingDelivery
+from .native_egress import NativeEgressError
 from .peer_transport import (
     PeerClientContext,
     PeerTransportAmbiguous,
@@ -69,6 +70,7 @@ from .relationships import (
 )
 from .routes import RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
+from .sealed import SealedDeliveryError
 from .sources import SourceError, SourceServiceContext
 from .species import APPLICATION_EVENT_KIND, SpeciesError, SpeciesServiceContext
 from .sync import SyncEngine, SyncProtocolError, validate_receipt
@@ -77,6 +79,7 @@ from .we_messaging import (
     MAX_ADDRESSEES,
     MAX_TEXT_BYTES,
     MAX_WE_TTL_MS,
+    WE_EGRESS_ERROR_CODES,
     WE_MESSAGE_CONTENT_TYPE,
     WE_RECEIPT_CONTENT_TYPE,
     WE_RECEIPT_SCHEMA,
@@ -755,6 +758,15 @@ class HostedWeave:
                 server=self.origin,
                 completed_at_ms=self.clock(),
                 error={"code": "peer_transport_rejected", "retryable": False},
+            )
+        except SealedDeliveryError:
+            response = create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": "sealed_delivery_rejected", "retryable": False},
             )
         except ProjectionError:
             response = create_response(
@@ -2302,6 +2314,16 @@ class HostedWeave:
                 raise WeDeliveryError(
                     state="rejected", code="peer_transport_rejected"
                 ) from exception
+            except NativeEgressError as exception:
+                # A failed required echo may already have reached Telegram;
+                # an egress journal error can also follow peer I/O. Neither
+                # proves rejection or a receiving receipt. Keep this sibling's
+                # outcome uncertain and continue the independently gated fanout.
+                # Only closed native codes may cross the authenticated boundary.
+                reason = str(exception)
+                if reason not in WE_EGRESS_ERROR_CODES:
+                    reason = "native_egress_failed"
+                raise WeDeliveryError(state="undetermined", code=reason) from exception
 
         return lane.converse(
             text=text,
