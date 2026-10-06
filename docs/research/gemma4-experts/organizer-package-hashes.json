@@ -1,0 +1,18 @@
+{
+  "wheelhouse_version": 28,
+  "source": "https://www.kaggle.com/datasets/metric/gemma-4-developer-agent-wheelhouse",
+  "public_package_hashes": {
+    "adk_submission-0.2.12-py3-none-any.whl": {
+      "bytes": 65642,
+      "sha256": "077c438c426e625b9f722081694e1d32856e6f7e932ef625002fc4a11aabdc10"
+    },
+    "swegemma-0.2.7-py3-none-any.whl": {
+      "bytes": 117587,
+      "sha256": "27a2f60f8db46c8fef5defc16df722dac0402446c9a6252e7e6b4c280e843c81"
+    },
+    "adk_eval_core-0.1.0-py3-none-any.whl": {
+      "bytes": 90060,
+      "sha256": "194dd8f9aab154857bfa0db9d9ec382db856ee124529e072509634d3071d8643"
+    }
+  }
+}

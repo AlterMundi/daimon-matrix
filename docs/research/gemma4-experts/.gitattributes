@@ -1,0 +1,2 @@
+# Python's CSV writer uses RFC-style CRLF; preserve archived output bytes.
+*.csv whitespace=cr-at-eol

@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-06",
+  "purpose": "Portable public research handoff; tensor accounting, not a GPU benchmark",
+  "source_revision": "52f3f65bc7a02d555763bc923bd1d9094898219d",
+  "wheelhouse_version": 28,
+  "sources": [
+    "https://www.kaggle.com/competitions/gemma-4-developer-agent/overview",
+    "https://www.kaggle.com/competitions/gemma-4-developer-agent/rules",
+    "https://www.kaggle.com/code/ryanholbrook/getting-started-gemma-4-developer-agent",
+    "https://www.kaggle.com/datasets/metric/gemma-4-developer-agent-wheelhouse"
+  ],
+  "files": {
+    ".gitignore": {
+      "bytes": 101,
+      "sha256": "3a5eb874210acca40edf825e6c50b20197981aef3f0c5895f4930e415f0f2f57"
+    },
+    "2026-10-06/cache-by-context.csv": {
+      "bytes": 173,
+      "sha256": "91baf38abef423cc23a2e5c9b30a6c1882ead1c0fea82f316a1437092fcb7bb2"
+    },
+    "2026-10-06/calculate_memory.py": {
+      "bytes": 6552,
+      "sha256": "5fe1beeb3ed337a533cc01f51ddd9fd764242e87de607d71da9559fa20c78411"
+    },
+    "2026-10-06/illustrative-scenarios.csv": {
+      "bytes": 1001,
+      "sha256": "476e233c4489c08abdefc5861ba4fdaffd5234dc2457a3fa4d2b3a910705ab34"
+    },
+    "2026-10-06/lora-by-rank.csv": {
+      "bytes": 247,
+      "sha256": "035d1dfaf9ee5c53720b886cf2b93446c8532c3b07b351bd852a1254be73212c"
+    },
+    "2026-10-06/memory-results.json": {
+      "bytes": 7934,
+      "sha256": "73176a218f2c0008268fc4210e7b6fc5772d37122a26f5fcba5494f90bb3a030"
+    },
+    "2026-10-06/model-config.json": {
+      "bytes": 18712,
+      "sha256": "d44e6c05ab3a9e4fd2a331738ac156fbc11b1a9d6d55beb6b00a00ab7989e54b"
+    },
+    "2026-10-06/official-wheelhouse-files.json": {
+      "bytes": 4050,
+      "sha256": "f2196970c2ccd57721b79962fce68b4462b9a726da6e655524ea5c2b78a8d06f"
+    },
+    "2026-10-06/official-wheelhouse-metadata.json": {
+      "bytes": 245,
+      "sha256": "7858236dde2b9e72c473bfcfc40d5235dd99b70910c65eabe75d56c1e4e3b472"
+    },
+    "2026-10-06/safetensors-header.json": {
+      "bytes": 386500,
+      "sha256": "db12e7875e157e7c03c30d14c4f1bdcdced2cfaa82bb33230fe0feb5717e714b"
+    },
+    "BACKGROUND.md": {
+      "bytes": 10405,
+      "sha256": "0477839d506fd84468e6e2a25f0ef8a6eac93c133cdf369f17329df583963623"
+    },
+    "CONTEST-ANALYSIS.md": {
+      "bytes": 18367,
+      "sha256": "a4979fef7fa08a5401601af896dff6e596c7e1eb6e1713a3a0cb845db697b70b"
+    },
+    "HANDOFF.md": {
+      "bytes": 7222,
+      "sha256": "153495ba0e4a4e3cb41f9bc5f769978abf64396c05cc6b0f577201210c23dcec"
+    },
+    "README.md": {
+      "bytes": 1522,
+      "sha256": "e1a36fdc86efce5ce8a01357c4544d87414daf0910e92c9e8a5b9de3d557a81d"
+    },
+    "contest-4l4-32k/cache-by-context.csv": {
+      "bytes": 536,
+      "sha256": "bf466074a1acbadaf45ef6a9895774c87aaef57ba1f05a51278467ccb78bbd21"
+    },
+    "contest-4l4-32k/calculate_contest.py": {
+      "bytes": 12505,
+      "sha256": "3f2b27a4b33350d80388b12c88f8b4f092c2bf9cba3f6460602f380b75c78250"
+    },
+    "contest-4l4-32k/contest-results.json": {
+      "bytes": 94237,
+      "sha256": "0c86263796f33e649de14337c73b5ee28d91434bb0569a8c5a534a6494f73ad0"
+    },
+    "contest-4l4-32k/extract_official_wheel.py": {
+      "bytes": 4516,
+      "sha256": "c093118667090f5f1a8060041fbe6fbfae0eab8173a8e9d5fd375104880ae176"
+    },
+    "contest-4l4-32k/live-wheelhouse-metadata.json": {
+      "bytes": 225,
+      "sha256": "79d1a13ca21dae846a7dac45d4c9710740e393f12086a49845f87b5048588091"
+    },
+    "contest-4l4-32k/lora-by-rank.csv": {
+      "bytes": 535,
+      "sha256": "ef41d293b8f7d0c5c29d98e618e2d76bbc6cd7f5fd8050e8930a6a65fc190e59"
+    },
+    "contest-4l4-32k/official-vllm-source-manifest.json": {
+      "bytes": 3884,
+      "sha256": "28b39257c8b32405fceaa04f5379407eb12a2642fb5c90ab1a3c428d0fef490d"
+    },
+    "contest-4l4-32k/scenarios.csv": {
+      "bytes": 18322,
+      "sha256": "4982b881f54ec4efc6e808f2427089dfac8c3505c6e588d3c6d9303251511589"
+    },
+    "organizer-package-hashes.json": {
+      "bytes": 625,
+      "sha256": "49d9b729316dfc2c71142842d677f59453c53aae154508a32dbfb3effbbde76c"
+    },
+    "verify_publication.py": {
+      "bytes": 2063,
+      "sha256": "ba1b8c20df036ba4e98d02981e0dea24a1af37ce9595e233ae73c95c1bd0ab9b"
+    },
+    ".gitattributes": {
+      "bytes": 102,
+      "sha256": "70fb9fa939d716c9b8e75735b33e3c8686f66abb6abe3535612d5ee9bbe4b718"
+    }
+  }
+}
