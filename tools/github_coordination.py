@@ -39,7 +39,6 @@ from coordination.github_claims import (  # noqa: E402
     validate_receipt,
 )
 
-
 REGISTRY_FILE = ROOT / "coordination" / "principals.json"
 _CLOSES = re.compile(
     r"(?im)^\s*(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+"
@@ -56,7 +55,12 @@ _CARD_ID = re.compile(r"\bDM-[0-9]{3}\b")
 _CARD_TITLE = re.compile(r"^\[(DM-[0-9]{3})\](?:\s|$)")
 
 
-def _run_gh(arguments: list[str], *, input_data: Mapping[str, Any] | None = None) -> Any:
+def _run_gh(
+    arguments: list[str],
+    *,
+    input_data: Mapping[str, Any] | None = None,
+    allow_empty: bool = False,
+) -> Any:
     environment = dict(os.environ)
     token = environment.get("GH_TOKEN") or environment.get("GITHUB_TOKEN")
     if token:
@@ -72,6 +76,8 @@ def _run_gh(arguments: list[str], *, input_data: Mapping[str, Any] | None = None
     if completed.returncode:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise CoordinationError(f"gh {' '.join(arguments)} failed: {detail}")
+    if allow_empty and not completed.stdout.strip():
+        return None
     try:
         return json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -102,7 +108,7 @@ def _issue(repo: str, issue: int) -> dict[str, Any]:
 
 
 def _now(value: str | None) -> dt.datetime:
-    return parse_timestamp(value, "now") if value else dt.datetime.now(dt.timezone.utc)
+    return parse_timestamp(value, "now") if value else dt.datetime.now(dt.UTC)
 
 
 def _workflow_sha(value: str | None) -> str:
@@ -117,7 +123,9 @@ def _state(repo: str, issue: int, registry: dict[str, Any]):
     receipts = []
     for comment in _comments(repo, issue):
         user = comment.get("user")
-        author = user.get("login") if isinstance(user, Mapping) else comment.get("author")
+        author = (
+            user.get("login") if isinstance(user, Mapping) else comment.get("author")
+        )
         # Public issue authors can reproduce marker text. Only an authorized
         # bot comment can be receipt evidence; untrusted lookalikes are inert.
         # Once the author is trusted, malformed or edited evidence still fails
@@ -168,7 +176,9 @@ def _status_label(state: str) -> str:
     }[state]
 
 
-def _set_status(repo: str, issue_number: int, issue: dict[str, Any], state: str) -> None:
+def _set_status(
+    repo: str, issue_number: int, issue: dict[str, Any], state: str
+) -> None:
     labels = [entry["name"] for entry in issue.get("labels", [])]
     labels = [label for label in labels if not label.startswith("status:")]
     labels.append(_status_label(state))
@@ -256,7 +266,7 @@ def handle_comment(
     posted.append(_post_receipt(repo, issue_number, wrapper))
     if receipt.decision == "accepted":
         _set_status(repo, issue_number, issue, receipt.state)
-    return {
+    result = {
         "ok": True,
         "accepted": receipt.decision == "accepted",
         "decision": receipt.decision,
@@ -264,6 +274,22 @@ def handle_comment(
         "receipt_id": receipt.receipt_id,
         "posted_comments": [item.get("html_url") for item in posted],
     }
+    if receipt.decision == "accepted" and command.action == "review":
+        try:
+            if command.pull_request is None:
+                raise CoordinationError("accepted review lacks a PR")
+            result["review_refresh"] = refresh_review_pr(
+                repo,
+                command.pull_request,
+                now=now,
+            )
+        except CoordinationError as exc:
+            # The append-only acceptance already exists. Never undo it or
+            # claim that requesting a rerun itself qualifies a PR.
+            result.update(
+                ok=False, review_refresh={"status": "failed", "message": str(exc)}
+            )
+    return result
 
 
 def expire_issue(
@@ -307,7 +333,9 @@ def _issues_with_label(repo: str, label: str) -> list[int]:
             f"repos/{repo}/issues?state=open&per_page=100&labels={label}",
         ]
     )
-    return [item["number"] for page in pages for item in page if "pull_request" not in item]
+    return [
+        item["number"] for page in pages for item in page if "pull_request" not in item
+    ]
 
 
 def _resource_conflict(
@@ -375,13 +403,30 @@ def audit_issue(repo: str, issue_number: int, *, now: dt.datetime) -> dict[str, 
     current, receipts = _state(repo, issue_number, registry)
     findings = []
     if current is None:
-        findings.append({"code": "missing_receipt", "message": "issue has no automation receipt"})
+        findings.append(
+            {"code": "missing_receipt", "message": "issue has no automation receipt"}
+        )
     else:
-        expected = _status_label("ready" if current.lease_until and current.lease_until <= now else current.state)
+        expected = _status_label(
+            "ready"
+            if current.lease_until and current.lease_until <= now
+            else current.state
+        )
         if expected not in _labels(issue):
             findings.append({"code": "label_drift", "message": f"expected {expected}"})
-        if current.state in ACTIVE_STATES and current.lease_until and current.lease_until <= now:
-            findings.append({"code": "expired_lease", "message": f"lease expired at {format_timestamp(current.lease_until)}"})
+        if (
+            current.state in ACTIVE_STATES
+            and current.lease_until
+            and current.lease_until <= now
+        ):
+            findings.append(
+                {
+                    "code": "expired_lease",
+                    "message": (
+                        "lease expired at " + format_timestamp(current.lease_until)
+                    ),
+                }
+            )
     return {
         "ok": not findings,
         "repository": repo,
@@ -407,29 +452,65 @@ def audit_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     issue_number = _linked_issue(body, repo)
     claim_match = _CLAIM_ID.search(body)
     if issue_number is None:
-        findings.append({"code": "missing_linked_issue", "message": "PR must contain Closes #N"})
+        findings.append(
+            {"code": "missing_linked_issue", "message": "PR must contain Closes #N"}
+        )
     if claim_match is None:
-        findings.append({"code": "missing_claim_id", "message": "PR must contain canonical Claim-ID"})
+        findings.append(
+            {
+                "code": "missing_claim_id",
+                "message": "PR must contain canonical Claim-ID",
+            }
+        )
     if _DEPLOYMENT.search(body) is None:
-        findings.append({"code": "missing_deployment", "message": "PR must declare Deployment"})
+        findings.append(
+            {"code": "missing_deployment", "message": "PR must declare Deployment"}
+        )
     tests_match = _TESTS.search(body)
     if tests_match is None or not tests_match.group(1).strip():
-        findings.append({"code": "missing_tests", "message": "PR must contain non-empty Tests section"})
+        findings.append(
+            {
+                "code": "missing_tests",
+                "message": "PR must contain non-empty Tests section",
+            }
+        )
     current = None
     if issue_number is not None:
         registry = _registry()
         current, _ = _state(repo, issue_number, registry)
         if current is None:
-            findings.append({"code": "missing_receipt", "message": "linked issue has no claim receipt"})
+            findings.append(
+                {
+                    "code": "missing_receipt",
+                    "message": "linked issue has no claim receipt",
+                }
+            )
         else:
             if claim_match and claim_match.group(1) != current.claim_id:
-                findings.append({"code": "claim_mismatch", "message": "PR Claim-ID is not effective"})
+                findings.append(
+                    {
+                        "code": "claim_mismatch",
+                        "message": "PR Claim-ID is not effective",
+                    }
+                )
             if current.state != "in_review" or not current.is_live(now):
-                findings.append({"code": "claim_not_live_review", "message": "claim is not live in review"})
+                findings.append(
+                    {
+                        "code": "claim_not_live_review",
+                        "message": "claim is not live in review",
+                    }
+                )
             if current.branch != pull.get("head", {}).get("ref"):
-                findings.append({"code": "branch_mismatch", "message": "claim branch differs from PR head"})
+                findings.append(
+                    {
+                        "code": "branch_mismatch",
+                        "message": "claim branch differs from PR head",
+                    }
+                )
             if current.pull_request != pr_number:
-                findings.append({"code": "pr_mismatch", "message": "claim receipt names another PR"})
+                findings.append(
+                    {"code": "pr_mismatch", "message": "claim receipt names another PR"}
+                )
     return {
         "ok": not findings,
         "repository": repo,
@@ -440,10 +521,140 @@ def audit_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     }
 
 
+def _coordination_run_path(value: Any) -> bool:
+    # REST represents this as either the bare path or path@ref. The workflow
+    # ID remains independently bound; an arbitrary other base path is refused.
+    if not isinstance(value, str):
+        return False
+    path, separator, ref = value.partition("@")
+    return path == ".github/workflows/coordination.yml" and (not separator or bool(ref))
+
+
+def refresh_review_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
+    """Request one actual audit job rerun, never manufacture a passing check."""
+    audit = audit_pr(repo, pr_number, now=now)
+    if not audit["ok"]:
+        return {"status": "not_eligible", "findings": audit["findings"]}
+    pull = _run_gh(["api", f"repos/{repo}/pulls/{pr_number}"])
+    if pull.get("state") != "open":
+        return {"status": "closed"}
+    head = pull["head"]
+    workflow = _run_gh(["api", f"repos/{repo}/actions/workflows/coordination.yml"])
+    if workflow.get("path") != ".github/workflows/coordination.yml":
+        raise CoordinationError("coordination workflow path differs")
+    runs = _run_gh(
+        [
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{repo}/actions/workflows/{workflow['id']}/runs"
+            f"?event=pull_request&head_sha={head['sha']}&per_page=100",
+        ]
+    )
+    candidates = [
+        run
+        for page in runs
+        for run in page["workflow_runs"]
+        if run.get("workflow_id") == workflow["id"]
+        and run.get("event") == "pull_request"
+        and run.get("head_sha") == head["sha"]
+        and run.get("head_branch") == head["ref"]
+        and run.get("head_repository", {}).get("full_name") == head["repo"]["full_name"]
+        and _coordination_run_path(run.get("path"))
+        and any(
+            item.get("number") == pr_number
+            and item.get("head", {}).get("sha") == head["sha"]
+            and item.get("head", {}).get("ref") == head["ref"]
+            for item in run.get("pull_requests", [])
+        )
+    ]
+    if not candidates:
+        return {"status": "awaiting_initial_run"}
+    run = max(candidates, key=lambda item: item["id"])
+    if run.get("status") != "completed":
+        return {"status": "awaiting_initial_completion", "run_id": run["id"]}
+    if run.get("run_attempt") != 1:
+        return {"status": "already_attempted", "run_id": run["id"]}
+    jobs = _run_gh(
+        [
+            "api",
+            f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100",
+        ]
+    )
+    audits = [job for job in jobs["jobs"] if job.get("name") == "pull-request"]
+    if len(audits) != 1:
+        raise CoordinationError("expected one native pull-request audit job")
+    job = audits[0]
+    if job.get("run_id") != run["id"] or job.get("head_sha") != head["sha"]:
+        raise CoordinationError("audit job binding differs")
+    if job.get("conclusion") == "success":
+        return {"status": "already_successful", "run_id": run["id"]}
+    if job.get("status") != "completed" or job.get("conclusion") != "failure":
+        return {"status": "not_failed_audit", "run_id": run["id"]}
+    # Fresh authority and head checks immediately precede the only effect.
+    # A later push cannot transfer the requested old-head check to its SHA.
+    current = _run_gh(["api", f"repos/{repo}/pulls/{pr_number}"])
+    if (
+        current.get("state") != "open"
+        or current["head"]["sha"] != head["sha"]
+        or current["head"]["ref"] != head["ref"]
+        or current.get("body") != pull.get("body")
+    ):
+        return {"status": "changed_head_or_body"}
+    fresh = audit_pr(repo, pr_number, now=_now(None))
+    if not fresh["ok"] or fresh["current"] != audit["current"]:
+        return {"status": "changed_authority", "findings": fresh["findings"]}
+    _run_gh(
+        ["api", "--method", "POST", f"repos/{repo}/actions/jobs/{job['id']}/rerun"],
+        allow_empty=True,
+    )
+    return {
+        "status": "rerun_requested",
+        "run_id": run["id"],
+        "job_id": job["id"],
+        "head_sha": head["sha"],
+    }
+
+
+def refresh_completed_run(
+    repo: str, run_id: int, *, now: dt.datetime
+) -> dict[str, Any]:
+    """Close review-before-audit-completion races from a finite trusted event."""
+    run = _run_gh(["api", f"repos/{repo}/actions/runs/{run_id}"])
+    workflow = _run_gh(["api", f"repos/{repo}/actions/workflows/coordination.yml"])
+    if (
+        run.get("workflow_id") != workflow["id"]
+        or not _coordination_run_path(run.get("path"))
+        or run.get("event") != "pull_request"
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "failure"
+        or run.get("run_attempt") != 1
+    ):
+        return {"ok": True, "status": "irrelevant_completion"}
+    associated = {item["number"] for item in run.get("pull_requests", [])}
+    pulls_by_number = [
+        _run_gh(["api", f"repos/{repo}/pulls/{number}"])
+        for number in sorted(associated)
+    ]
+    pulls = [
+        pull
+        for pull in pulls_by_number
+        if pull.get("state") == "open"
+        and pull.get("head", {}).get("sha") == run["head_sha"]
+        and pull["head"].get("ref") == run["head_branch"]
+        and pull["head"].get("repo", {}).get("full_name")
+        == run.get("head_repository", {}).get("full_name")
+    ]
+    results = [refresh_review_pr(repo, pull["number"], now=now) for pull in pulls]
+    return {"ok": True, "status": "completion_checked", "results": results}
+
+
 def sign_file(body_path: Path, key_path: Path) -> str:
     try:
         body = json.loads(body_path.read_text(encoding="utf-8"))
-        loaded = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+        loaded = serialization.load_pem_private_key(
+            key_path.read_bytes(), password=None
+        )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise CoordinationError(f"cannot load signing input: {exc}") from exc
     if not isinstance(loaded, Ed25519PrivateKey):
@@ -472,6 +683,8 @@ def main() -> int:
     issue.add_argument("--issue", type=int, required=True)
     pr = commands.add_parser("audit-pr")
     pr.add_argument("--pr", type=int, required=True)
+    refresh = commands.add_parser("refresh-completed-run")
+    refresh.add_argument("--run", type=int, required=True)
     sign = commands.add_parser("sign")
     sign.add_argument("--body", type=Path, required=True)
     sign.add_argument("--private-key", type=Path, required=True)
@@ -482,7 +695,9 @@ def main() -> int:
             print(sign_file(args.body, args.private_key))
             return 0
         if not args.repo or "/" not in args.repo:
-            raise CoordinationError("--repo owner/name or GITHUB_REPOSITORY is required")
+            raise CoordinationError(
+                "--repo owner/name or GITHUB_REPOSITORY is required"
+            )
         now = _now(args.now)
         if args.command == "handle-comment":
             result = handle_comment(
@@ -501,10 +716,15 @@ def main() -> int:
             )
         elif args.command == "audit-issue":
             result = audit_issue(args.repo, args.issue, now=now)
+        elif args.command == "refresh-completed-run":
+            result = refresh_completed_run(args.repo, args.run, now=now)
         else:
             result = audit_pr(args.repo, args.pr, now=now)
     except CoordinationError as exc:
-        result = {"ok": False, "findings": [{"code": "invalid_data", "message": str(exc)}]}
+        result = {
+            "ok": False,
+            "findings": [{"code": "invalid_data", "message": str(exc)}],
+        }
     return _print(result)
 
 
