@@ -965,11 +965,13 @@ class MessagingChannel:
         self, view: RelationshipView, *, at_ms: int
     ) -> dict[str, Any]:
         policy = self.policy
-        local = recipient_descriptor(self._local(), at_ms=at_ms)
+        # Membership and grants name the being; its card may advertise another
+        # active body. Independently validate this channel's exact receiving
+        # credential before using that being's signed membership.
+        recipient_descriptor(self._local(), at_ms=at_ms)
         snapshot = view.snapshot(policy.tribe_ref)
         if not any(
             member["principal_id"] == self.local_being_ref
-            and member["embodiment_id"] == local["embodiment_id"]
             and member["membership_ref"] == policy.membership_ref
             for member in snapshot.value["members"]
         ):

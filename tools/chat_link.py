@@ -250,8 +250,9 @@ def make_plan(
 
         card = reusable["payload"]
         verify_relationship_card_authority(card, authorities[0], at_ms=start)
-        if card["control_position"]["embodiment_id"] != origins[0]["embodiment_id"]:
-            raise ValueError("chat_link_existing_card_other_embodiment")
+        # The verified card belongs to the being. Another active body may
+        # initiate this link without rotating that being-wide card. Transport
+        # policies still pin each participant's actual credential and origin.
         candidates = [
             item
             for item in card["resources"]

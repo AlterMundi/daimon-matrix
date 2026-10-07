@@ -23,6 +23,140 @@ from tools.chat_link import (
 from tools.prepare_chat_identity import prepare
 
 
+def card_from_other_body(home, peer):
+    """Root-enroll a real second body and import its signed being-wide card."""
+    import secrets
+    import uuid
+
+    from daimon_matrix import authority_epochs, identity
+    from daimon_matrix.canonical import canonical_bytes
+    from daimon_matrix.keystore import EncryptedKeystore
+    from daimon_matrix.operator_rebirth import authority_from_runtime_bundle
+    from daimon_matrix.weave import BeingManifest, EventSigner, create_event
+    from tools.chat_link import public_identity
+
+    bundle_path = home / "package/runtime/runtime.json"
+    bundle = read_public(bundle_path)
+    previous = authority_from_runtime_bundle(bundle)
+    holder = EncryptedKeystore(home / "root/holder.json").open(
+        lambda: bytearray((home / "holder.password").read_bytes())
+    )
+    roots = [holder.secrets["genesis.root.v1:holder"]]
+    signing = secrets.token_bytes(32)
+    origin = dict(
+        body_ref="cli:disposable:other-body",
+        embodiment_id="embodiment:" + str(uuid.uuid4()),
+        incarnation_id="incarnation:" + str(uuid.uuid4()),
+        principal_id="other-body",
+    )
+    issued = now()
+    credential = identity.create_embodiment_credential_v2(
+        previous.state,
+        roots,
+        signing,
+        identity.x25519_public(secrets.token_bytes(32)),
+        embodiment_id=origin["embodiment_id"],
+        body_ref=origin["body_ref"],
+        purposes=["dm.we", "messages"],
+        validity=dict(mode="until-revoked", not_before_ms=issued),
+        transport_principals=[
+            dict(
+                scheme="dm-peer-v1",
+                principal_id=origin["principal_id"],
+                key=identity.signing_descriptor(secrets.token_bytes(32)),
+            )
+        ],
+    )
+    incarnation = identity.create_incarnation_authorization(
+        credential,
+        signing,
+        incarnation_id=origin["incarnation_id"],
+        incarnation_sequence=0,
+        started_at_ms=issued,
+    )
+    manifest = copy.deepcopy(dict(previous.manifest.value))
+    manifest["revision"] += 1
+    manifest["embodiments"].append(
+        dict(
+            body_ref=origin["body_ref"],
+            embodiment_id=origin["embodiment_id"],
+            incarnation_id=origin["incarnation_id"],
+            status="active",
+            embodiment_credential_id=credential["artifact_id"],
+            incarnation_authorization_id=incarnation["artifact_id"],
+        )
+    )
+    manifest["embodiments"].sort(
+        key=lambda row: (row["embodiment_id"], row["incarnation_id"])
+    )
+    transition = authority_epochs.create_embodiment_enrollment(
+        previous.manifest,
+        BeingManifest.from_value(manifest),
+        request_id="dm:rebirth-request:v1:" + identity.b64url(secrets.token_bytes(32)),
+        **origin,
+        embodiment_credential_id=credential["artifact_id"],
+        incarnation_authorization_id=incarnation["artifact_id"],
+        root_seeds=roots,
+        issued_at_ms=issued,
+    )
+    bundle["authority_history"].append(
+        dict(manifest=previous.manifest.value, successor=transition)
+    )
+    bundle["manifest"] = manifest
+    bundle["credentials"].append(credential)
+    bundle["incarnations"].append(incarnation)
+    bundle["peer_transport"]["targets"] = [
+        dict(
+            embodiment_id=origin["embodiment_id"],
+            endpoint="http://127.0.0.1:28688/dm-peer/v1",
+            timeout_ms=1000,
+        )
+    ]
+    bundle["relationships"] = dict(
+        store_filename="relationships.sqlite3", known_being_refs=[]
+    )
+    bundle_path.write_bytes(canonical_bytes(bundle))
+    runtime = load_runtime(
+        home / "package/runtime",
+        "runtime.json",
+        lambda: bytearray((home / "body.password").read_bytes()),
+        clock=now,
+        egress=closed_visibility(clock=now, catalog_mode="migrate"),
+    )
+    public = public_identity(runtime, bundle)
+    draft = make_plan(
+        runtime,
+        public,
+        peer,
+        ["http://127.0.0.1:28686", "http://127.0.0.1:28687"],
+        dict(
+            bot_id=123, chat_id=-100123, topic_id=None, representation="plain-json/v2"
+        ),
+    )["events"][0]
+    payload = copy.deepcopy(draft["payload"])
+    payload["control_position"].update(
+        embodiment_id=origin["embodiment_id"], incarnation_id=origin["incarnation_id"]
+    )
+    payload["encryption_key"] = credential["body"]["encryption_key"]
+    card = create_event(
+        verify_identity(public),
+        origin,
+        EventSigner(identity.signing_descriptor(signing)["key_id"], signing),
+        event_id=str(uuid.uuid4()),
+        sequence=1,
+        previous_event_id=None,
+        occurred_at_ms=payload["issued_at_ms"],
+        causal_parents=[],
+        kind=draft["kind"],
+        subject=draft["subject"],
+        payload=payload,
+        sensitivity="shareable",
+    )
+    runtime.service.ledger.ingest([card], source="disposable-other-body")
+    runtime.service.relationships.store.ingest(card)
+    return runtime, public, card
+
+
 class ChatLinkTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -129,14 +263,20 @@ class ChatLinkTests(unittest.TestCase):
     def test_additional_receiving_link_preserves_native_catalog_authentication(self):
         self._complete_signed_install_and_retry_without_network(additional_link=True)
 
+    def test_another_body_card_survives_complete_signed_additional_link(self):
+        self._complete_signed_install_and_retry_without_network(
+            additional_link=True, other_body_card=True
+        )
+
     def _complete_signed_install_and_retry_without_network(
-        self, *, additional_link=False
+        self, *, additional_link=False, other_body_card=False
     ):
         import hashlib
         import secrets
         import select
         import subprocess
         import sys
+        import uuid
         from unittest.mock import patch
 
         from daimon_matrix.canonical import b64url
@@ -164,6 +304,10 @@ class ChatLinkTests(unittest.TestCase):
                         egress=closed_visibility(clock=now, catalog_mode="migrate"),
                     )
                 )
+            if other_body_card:
+                runtimes[0], public[0], prior_card = card_from_other_body(
+                    root / "0", public[1]
+                )
             if additional_link:
                 from daimon_matrix.native_egress import VISIBILITY_SCHEMA_VERSION
 
@@ -183,6 +327,15 @@ class ChatLinkTests(unittest.TestCase):
                     "representation": "plain-json/v2",
                 },
             )
+            if other_body_card:
+                self.assertEqual(plan["prior_cards"], [prior_card])
+                self.assertFalse(
+                    any(
+                        event["kind"] == "matrix/relationship-card"
+                        and event["being_ref"] == prior_card["being_ref"]
+                        for event in plan["events"]
+                    )
+                )
             token = b"123:synthetic-unit-test-token"
             payload = {
                 "plan": plan,
@@ -318,6 +471,26 @@ class ChatLinkTests(unittest.TestCase):
                             view.service.relationships.store.path,
                             base.service.relationships.store.path,
                         )
+                        channel = view.service.messaging.channels["peer-in"]
+                        self.assertTrue(channel.disclosure()["authorized"])
+                        from dataclasses import replace
+
+                        original_policy = channel.policy
+                        channel.policy = replace(
+                            original_policy, membership_ref=str(uuid.uuid4())
+                        )
+                        try:
+                            with self.assertRaises(ValueError):
+                                channel.disclosure()
+                        finally:
+                            channel.policy = original_policy
+                        own_credential = channel.local_credential_id
+                        channel.local_credential_id = "not-a-root-authorized-credential"
+                        try:
+                            with self.assertRaises(ValueError):
+                                channel.disclosure()
+                        finally:
+                            channel.local_credential_id = own_credential
                     return
                 # Start the real transport once, with no inbox/model invocation.
                 ready_path = outputs[1] / "ready.json"
