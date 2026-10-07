@@ -181,6 +181,12 @@ deletes foreign rows, upgrades a schema or treats a coherent snapshot as
 proof of ownership. A genuinely mixed database needs a supported ownership
 adapter before its selected context can be exported. Keep the original intact.
 
+A selected SQLite main file implicitly includes its WAL in the coherent
+snapshot and source-drift evidence, even when only the main file is an include
+anchor. Sidecars remain omitted from payload. Explicitly declaring its WAL/SHM
+outside the context is contradictory and rejected; linked/special sidecars
+are rejected before SQLite can follow them. This is not a row-level selection.
+
 After the agreed writer pause, run:
 
 ```bash

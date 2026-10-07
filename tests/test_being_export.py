@@ -255,6 +255,73 @@ class BeingExportTests(unittest.TestCase):
         self.assertEqual(manifest["files"][0]["sqlite"]["table_counts"]["history"], 2)
         self.assertEqual(tool.digest(original), original_hash)
 
+    def test_file_only_sqlite_selection_tracks_wal_drift_in_earlier_root(self) -> None:
+        path = self.source / "library.db"
+        connection = sqlite3.connect(path)
+        self.addCleanup(connection.close)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE memories(text TEXT)")
+        connection.execute("INSERT INTO memories VALUES ('earlier memory')")
+        connection.commit()
+        later = self.root / "later"
+        self.put("history.txt", b"later context", later)
+        document = self.selection(["library.db"])
+        document["sources"].append(
+            {
+                "kind": "context",
+                "root": str(later),
+                "selection": self.selection(["."])["sources"][0]["selection"],
+            }
+        )
+        plan = tool.discover_selection(document)
+        wal = next(
+            item
+            for item in plan["sources"][0]["omissions"]
+            if item["path"].endswith("-wal")
+        )
+        self.assertIn("mtime_ns", wal)
+        original_copy = tool.copy_source
+
+        def changing_copy(source: Path, target: Path):
+            result = original_copy(source, target)
+            if source.parent == later:
+                connection.execute("INSERT INTO memories VALUES ('new memory in WAL')")
+                connection.commit()
+            return result
+
+        with (
+            patch.object(tool, "copy_source", changing_copy),
+            self.assertRaisesRegex(tool.ExportError, "source_changed"),
+        ):
+            self.pack(plan)
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(
+            connection.execute("SELECT count(*) FROM memories").fetchone()[0], 2
+        )
+
+    def test_selected_sqlite_sidecar_cannot_be_foreign_or_a_link(self) -> None:
+        path = self.source / "library.db"
+        connection = sqlite3.connect(path)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE memories(text TEXT)")
+        connection.commit()
+        with self.assertRaisesRegex(tool.ExportError, "sidecar_conflicts"):
+            tool.discover_selection(
+                self.selection(
+                    ["library.db"],
+                    [{"path": "library.db-wal", "reason": "foreign data"}],
+                )
+            )
+        connection.close()
+        external = self.root / "outside-wal"
+        external.write_bytes(b"unrelated context")
+        (self.source / "library.db-wal").symlink_to(external)
+        with self.assertRaisesRegex(
+            tool.ExportError, "sidecar_dependency_must_be_regular"
+        ):
+            tool.discover_selection(self.selection(["library.db"]))
+        self.assertEqual(external.read_bytes(), b"unrelated context")
+
     def test_shared_skills_do_not_copy_body_bindings_or_known_custody(self) -> None:
         self.put("helper/SKILL.md", b"portable useful behavior")
         self.put("binding/runtime.json", b"sk-" + b"a" * 40)

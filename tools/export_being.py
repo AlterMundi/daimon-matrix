@@ -229,6 +229,7 @@ def inventory(
     if selection is not None:
         validate_selection(selection)
     files, omissions = [], []
+    sqlite_dependencies: set[str] = set()
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in list(dirs):
             item = Path(directory) / name
@@ -246,10 +247,15 @@ def inventory(
         for name in sorted(names):
             item = Path(directory) / name
             relative = safe_name(item.relative_to(root).as_posix())
-            reason = selection_reason(relative, selection, directory=False) or excluded(
-                relative, kind
-            )
+            scope_reason = selection_reason(relative, selection, directory=False)
+            reason = scope_reason or excluded(relative, kind)
             info = item.lstat()
+            if relative in sqlite_dependencies:
+                if (scope_reason or "").startswith("owner_selected_omission:"):
+                    raise ExportError("sqlite_sidecar_conflicts_with_context_selection")
+                if not stat.S_ISREG(info.st_mode):
+                    raise ExportError("sqlite_sidecar_dependency_must_be_regular")
+                reason = "sqlite_sidecar_requires_verified_database_snapshot"
             if reason or not stat.S_ISREG(info.st_mode):
                 omissions.append(
                     {
@@ -286,6 +292,10 @@ def inventory(
                     if is_sqlite and selection["sqlite_ownership"] != "same-being":
                         raise ExportError(
                             "mixed_or_unknown_sqlite_requires_ownership_adapter"
+                        )
+                    if is_sqlite:
+                        sqlite_dependencies.update(
+                            (relative + "-wal", relative + "-shm")
                         )
                 files.append(
                     {
