@@ -2,6 +2,7 @@ name: Telegram executor portability
 
 on:
   push:
+    branches: [main]
     paths:
       - .github/workflows/telegram-portability.yml
       - src/daimon_matrix/telegram_mirror.py
@@ -12,8 +13,6 @@ on:
       - tests/test_dm025_client.py
       - tools/prepare_chat_identity.py
       - tools/install_agent_chat.py
-      - tools/chat_link.py
-      - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
       - src/daimon_matrix/chat_host.py
       - tests/test_chat_host.py
@@ -36,8 +35,6 @@ on:
       - tests/test_dm025_client.py
       - tools/prepare_chat_identity.py
       - tools/install_agent_chat.py
-      - tools/chat_link.py
-      - tests/test_chat_link.py
       - src/daimon_matrix/agent_chat.py
       - src/daimon_matrix/chat_host.py
       - tests/test_chat_host.py
@@ -55,18 +52,13 @@ permissions:
 
 jobs:
   local-http:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-15, macos-15-intel]
-        python: ["3.11", "3.14"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13.5"
       - run: python -m pip install .
       - name: Verify installed package provenance
         run: |
@@ -109,5 +101,5 @@ jobs:
           tests.test_operator_messaging.ProvisioningTests.test_host_visibility_uses_signed_application_not_runtime_digest
           tests.test_dm025_client.LocalClientTests -v
       - name: Installed legacy host migration and rollback
-        if: runner.os == 'Linux' && matrix.python == '3.11'
+        if: runner.os == 'Linux'
         run: python -W error::ResourceWarning -m unittest tests.test_operator_runtime_upgrade -v

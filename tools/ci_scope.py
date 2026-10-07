@@ -14,6 +14,7 @@ PEER_FILES = frozenset(
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
         ".github/workflows/tests.yml",
+        ".github/workflows/telegram-portability.yml",
     }
 )
 
