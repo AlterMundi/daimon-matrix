@@ -29,7 +29,13 @@ memory/harness writers without losing their active work. The command does not
 stop someone else's services or pretend to prove that they stopped. Its flag
 records the operator's declaration of a common snapshot cutoff.
 
-For Oliva, whose source is Hermes:
+The automatic whole-home commands below are for **exclusively same-being
+homes**. `--being Oliva` is a label, not an ownership filter. A Hermes/Codex
+home containing a `profiles/` boundary requires the explicit selection below;
+the tool refuses the unapproved traversal before reading profile contents.
+Oliva's reported multi-profile Hermes source must use that selection path.
+
+For an exclusively owned Hermes source:
 
 ```bash
 python3 tools/export_being.py export --being Oliva --harness hermes \
@@ -47,6 +53,12 @@ These inspect the selected owner's `.hermes` and/or `.codex` directories, plus
 shared `.agents/skills` when present. Familiar relocated `agent-memory`/`skills`
 roots referenced by direct harness symlinks are preserved as separate roots.
 Other symlinks are reported, not followed into unrelated history.
+
+Shared skill discovery does not establish that every artifact in the shared
+surface is portable. Review actual packages and exclude body-private bindings,
+signed runtimes, custody and capabilities explicitly. Known credential names
+and scanners cannot classify every arbitrary or encrypted artifact. Do not
+select signed runtime/custody homes as contextual roots.
 
 The source agent discovers other actual roots and adds them to that command,
 for example `--memory-root /owner/being-memory`, `--context-root /owner/wiki`,
@@ -103,6 +115,93 @@ information, then export:
 python3 tools/export_being.py export --plan Eko-plan.json \
   --writers-stopped --output Eko.tgz
 ```
+
+## Explicit source selection for a multi-profile home
+
+The source agent prepares a private `Oliva-sources.json` using the actual
+installation and the pair's ownership decision. Humans need not enumerate
+technical paths or assemble a tar file. This versioned selection feeds the
+same exporter, SQLite backup, source-drift and archive-verification path.
+
+For a default Oliva home whose entire nested `profiles/` tree belongs outside
+this handoff, the minimal selection is:
+
+```json
+{
+  "schema": "dm.being-source-selection/v1",
+  "being_label": "Oliva",
+  "sources": [
+    {
+      "kind": "hermes",
+      "root": "~/.hermes",
+      "selection": {
+        "ownership": "same-being",
+        "sqlite_ownership": "same-being",
+        "include": ["."],
+        "omit": [
+          {"path": "profiles", "reason": "Other beings; outside Oliva's handoff"}
+        ]
+      }
+    }
+  ]
+}
+```
+
+This keeps all default-body root files, unknown extensions, complete owned
+memory/history/skills and useful configuration, subject to the documented
+credential/dependency omissions. The excluded profile tree is recorded once
+and never traversed. Do not use this example unchanged if that tree contains
+owned Oliva history. To keep an owned historical profile, include its exact
+anchor, for example `[".", "profiles/oliva-old"]`, and omit each foreign
+profile explicitly instead of the entire tree. Every selected profile needs
+an explicit anchor; `"."` alone never approves nested profiles. A new
+unapproved profile makes that selection fail rather than silently joining
+the archive. The tool does not infer ownership from profile or being names.
+
+Alternatively, include selected root files and subtrees, for example
+`["SOUL.md", "AGENTS.md", "agent-memory", "history", "profiles/oliva-old"]`.
+Unselected frontier paths are recorded as `outside_explicit_context_selection`
+without inspecting their descendants. Check completeness: this example is
+not a complete discovery of anyone's actual installation. An explicitly
+omitted `.env` is not read or turned into a `.nonsecret` derivative.
+
+Add other sources as additional `{kind, root, selection}` entries, preserving
+each full owned HMK pool separately. Resolve approved memory/skill symlink
+targets as separate roots; this selection mode does not follow those links
+automatically. Use `ownership: "shared-commons"` for selected neutral common
+packages, with explicit omission reasons for any body-private artifacts.
+Paths are relative to each source root; traversal, missing include anchors,
+symlink anchors and contradictory include/omit choices are rejected.
+
+`sqlite_ownership` is an **owner declaration**, not a verified inference.
+Use `same-being` only after establishing that all selected database records
+are authorized context for this being. `unknown` or `mixed` refuses a selected
+SQLite database before packaging. This tool never filters rows by `--being`,
+deletes foreign rows, upgrades a schema or treats a coherent snapshot as
+proof of ownership. A genuinely mixed database needs a supported ownership
+adapter before its selected context can be exported. Keep the original intact.
+
+A selected SQLite main file implicitly includes its WAL in the coherent
+snapshot and source-drift evidence, even when only the main file is an include
+anchor. Sidecars remain omitted from payload. Explicitly declaring its WAL/SHM
+outside the context is contradictory and rejected; linked/special sidecars
+are rejected before SQLite can follow them. This is not a row-level selection.
+
+After the agreed writer pause, run:
+
+```bash
+python3 tools/export_being.py discover --selection Oliva-sources.json \
+  --output Oliva-plan.json
+python3 tools/export_being.py export --plan Oliva-plan.json \
+  --writers-stopped --output Oliva.tgz
+```
+
+The shorter `export --selection Oliva-sources.json --writers-stopped --output
+Oliva.tgz` regenerates the inventory at that cutoff. Selections and omission
+reasons travel in the archive manifest with the owner-declaration limitation.
+Changed selected files and added/removed frontier paths still require a fresh
+plan; excluded descendants are outside the snapshot. Keep the selection,
+plan, archive, source paths and memory private.
 
 ## Verify and stage on the receiving host
 

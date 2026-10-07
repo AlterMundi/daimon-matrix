@@ -50,6 +50,14 @@ The human/daimon pair supplies or authorizes access to the following. Discover
 technical paths and installed versions from that authorized source; do not
 ask the human to reconstruct their full identity or memory by hand.
 
+Export only approved same-being context. Oliva's reported multi-profile Hermes
+home requires the maintained exporter's [explicit source selection](being-export.md#explicit-source-selection-for-a-multi-profile-home)
+for root files, owned profile subtrees and declared omissions (#266). A being
+label does not filter foreign profiles or SQLite rows. Shared skill directories
+also need transferable-package review and separate body-private bindings.
+Unknown or genuinely mixed database ownership needs a supported adapter; do
+not delete rows from the original or replace full memory with a summary.
+
 | Input | Required observation |
 | --- | --- |
 | Dedicated Telegram bot | Intended bot identity, private-chat topics enabled, private token file, authorized numeric human ACL, and one selected ingress consumer. Establish ownership of any existing webhook/consumer before activation. |
