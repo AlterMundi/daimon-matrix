@@ -348,8 +348,70 @@ class BeingReceivingTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertNotIn(str(self.root), stdout.getvalue())
         self.assertEqual(
-            json.loads(stdout.getvalue())["error"], "receiving_preparation_refused"
+            json.loads(stdout.getvalue())["error"], "archive_sha256_mismatch"
         )
+
+    def test_missing_sqlite_module_cli_refuses_without_private_diagnostics(
+        self,
+    ) -> None:
+        _digest, selection = self.pack()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("CREATE VIRTUAL TABLE special USING fts5(text)")
+            connection.execute("PRAGMA writable_schema=ON")
+            connection.execute(
+                "UPDATE sqlite_master SET sql=replace(sql, 'fts5', ?) "
+                "WHERE name='special'",
+                ("private_fixture_native_module",),
+            )
+            connection.commit()
+        # This models a valid export from an engine with an additional module
+        # installed, received by an engine without that module. Keep archive
+        # membership/hash internally coherent; receiving SQLite must refuse.
+        with tarfile.open(self.archive) as archive:
+            members = {}
+            for info in archive:
+                with archive.extractfile(info) as stream:
+                    members[info.name] = stream.read()
+        manifest = json.loads(members["manifest.json"])
+        database_name = "payload/hermes-001/agent-memory/library.db"
+        raw = self.database.read_bytes()
+        for entry in manifest["files"]:
+            if entry["path"] == database_name:
+                entry.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        members[database_name] = raw
+        members["manifest.json"] = exporter.json_bytes(manifest)
+        with tarfile.open(self.archive, "w:gz") as archive:
+            for name, raw in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(raw)
+                archive.addfile(info, io.BytesIO(raw))
+        selection_path = self.root / "selected.json"
+        selection_path.write_bytes(exporter.json_bytes(selection))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "tools/receive_being.py",
+                "prepare",
+                "--archive",
+                str(self.archive),
+                "--sha256",
+                exporter.digest(self.archive),
+                "--selection",
+                str(selection_path),
+                "--output",
+                str(self.output),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(
+            json.loads(result.stdout)["error"], "sqlite_incompatible_or_corrupt"
+        )
+        self.assertNotIn("private_fixture_native_module", result.stdout)
+        self.assertNotIn(str(self.root), result.stdout)
+        self.assertFalse((self.output / "preparation.json").exists())
 
 
 if __name__ == "__main__":

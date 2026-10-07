@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import stat
 import tarfile
 import zipfile
@@ -457,9 +458,17 @@ def main(argv: list[str] | None = None) -> int:
         TypeError,
         tarfile.TarError,
         zipfile.BadZipFile,
-    ):
+        sqlite3.Error,
+    ) as error:
         # Private state remains inspectable; neither source content nor paths leak.
-        print(json.dumps({"prepared": False, "error": "receiving_preparation_refused"}))
+        code = str(error)
+        if isinstance(error, sqlite3.Error):
+            code = "sqlite_incompatible_or_corrupt"
+        elif isinstance(error, FileExistsError):
+            code = "receiving_output_exists_preserve_existing_state"
+        elif not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", code):
+            code = "receiving_preparation_refused"
+        print(json.dumps({"prepared": False, "error": code}))
         return 1
 
 
