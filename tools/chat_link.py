@@ -1199,6 +1199,8 @@ def accept(
     password: bytes,
     packet: dict[str, Any],
     output: Path,
+    *,
+    additional_link: bool = False,
 ) -> Path:
     payload = decrypt_packet(runtime, packet["sender_identity"], packet["packet"])
     plan = payload["plan"]
@@ -1218,7 +1220,14 @@ def accept(
         ]
         signed_payload["signed_at_ms"] = now()
         write(cached, signed_payload)
-    ready = install_link(runtime_root, password, output, signed_payload, 1)
+    ready = install_link(
+        runtime_root,
+        password,
+        output,
+        signed_payload,
+        1,
+        additional_link=additional_link,
+    )
     if not (output / "response.json").exists():
         document = {
             "schema": "dm.onboarding.peer-link-response/v1",
@@ -1363,7 +1372,14 @@ def main() -> None:
                 args.representation,
             )
         elif args.command == "accept":
-            result = accept(runtime, root, password, supplied, output)
+            result = accept(
+                runtime,
+                root,
+                password,
+                supplied,
+                output,
+                additional_link=args.additional_link,
+            )
         else:
             result = finish(
                 runtime,
