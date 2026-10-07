@@ -233,6 +233,12 @@ installed method sets and their current validity; `call METHOD` accepts JSON
 parameters on stdin for one explicitly requested operation. Missing, stale or
 misbound profiles refuse the call; the client never issues or widens grants.
 
+If an otherwise valid current bundle predates a needed method, use the separate
+[scoped owner capability upgrade](operator-capability-upgrade.md), preserving
+identity, history and original expiry, then re-render this client. A new client
+cannot repair missing signed authority by itself. Qualify read and sealed delivery
+separately before declaring an embodiment ready for conversations.
+
 `say --text "..." --to <embodiment-or-label> --thread <UUID>` uses sealed
 `we.converse`, including its mandatory configured visibility and peer transport.
 Local authorship is insufficient: only each returned `delivered` entry with its

@@ -701,9 +701,9 @@ def load_runtime(
         # holding less authority than the profile allows is not a violation — it is
         # least authority. Demanding exact equality instead meant that adding any
         # method made every live bundle unloadable, with no tool able to refresh a
-        # signed capability in place: bundles are immutable and advance only by
-        # rebirth. The call still fails closed at dispatch, since a method absent
-        # from the capability is not authorized for that client.
+        # signed capability in place. Rebirth, or the authenticated owner-local
+        # offline capability-upgrade transaction, issues a signed successor.
+        # Dispatch still refuses methods absent from this client's capability.
         if (
             dict(profile_value) != expected_profile
             or slot != expected_slot

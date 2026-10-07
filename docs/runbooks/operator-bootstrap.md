@@ -152,6 +152,13 @@ another embodiment.
 
 ## Expiry and reprovisioning
 
+For an active current bundle whose profiles predate a required method, use the
+[scoped owner capability upgrade](operator-capability-upgrade.md). It authenticates
+and signs an exact successor while preserving existing keys, identity, history
+and original expiry. Renderer refresh alone never adds signed methods. New
+onboarding must qualify actual observer read and sealed conversation with genuine
+receiving receipts; status and sync are not conversation acceptance.
+
 Every generated role capability expires 30 days after preparation. The public
 receipt records both `reprovision_at_ms` (seven days before expiry) and
 `expires_at_ms`. Schedule a fresh `daimon-rebirth prepare`/`authorize`/`activate`

@@ -172,6 +172,370 @@ class LegacyAcquisitionTests(unittest.TestCase):
                     acquire_legacy(Path(temp))
 
 
+class CurrentCapabilityUpgradeTests(unittest.TestCase):
+    """Fresh synthetic current bundles reproduce the actual missing-grant shape."""
+
+    @classmethod
+    def setUpClass(cls):
+        from daimon_matrix.canonical import canonical_bytes
+        from daimon_matrix.local_api import create_capability
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.operator_bootstrap import _create
+        from daimon_matrix.operator_capabilities import (
+            create_operator_capability_binding,
+        )
+        from daimon_matrix.runtime import load_runtime
+
+        cls.fixture = tempfile.TemporaryDirectory(prefix="dm-current-upgrade-")
+        cls.addClassCleanup(cls.fixture.cleanup)
+        cls.base = Path(cls.fixture.name)
+        profile = cls.base / "profile.json"
+        profile.write_bytes(
+            canonical_bytes(
+                {
+                    "schema": "dm.operator.bootstrap-profile/v1",
+                    "embodiments": [
+                        {
+                            "label": label,
+                            "body_ref": "codex:" + label + ":synthetic",
+                            "principal_id": "synthetic@" + label,
+                            "listen_host": "127.0.0.1",
+                            "listen_port": 47810 + i,
+                            "advertised_endpoint": (
+                                f"http://127.0.0.1:{47810 + i}/dm-peer/v1"
+                            ),
+                        }
+                        for i, label in enumerate(("alpha", "beta"))
+                    ],
+                }
+            )
+        )
+
+        def fd(value):
+            reader, writer = os.pipe()
+            os.write(writer, value)
+            os.close(writer)
+            return reader
+
+        _create(
+            cls.base / "ceremony",
+            profile,
+            fd(b"synthetic-root-password"),
+            [f"alpha={fd(PASSWORD)}", f"beta={fd(b'synthetic-beta-password')}"],
+        )
+        root = cls.base / "ceremony/runtimes/alpha"
+
+        def clock():
+            return time.time_ns() // 1000000
+
+        runtime = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=clock,
+            egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+        )
+        runtime.service.ledger.append_local(
+            kind="experience.observed",
+            subject="synthetic:retain-history",
+            payload={"text": "history must survive the grant upgrade"},
+            signer=runtime.service.signer,
+            sensitivity="private",
+            occurred_at_ms=clock(),
+        )
+        bundle = json.loads((root / "runtime.json").read_bytes())
+        custody = EncryptedKeystore(root / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        for row in bundle["capabilities"]:
+            role = row["profile"]["role"]
+            missing = {"observe": "we.conversation.page", "weave": "we.converse"}.get(
+                role
+            )
+            if missing is None:
+                continue
+            previous = row["descriptor"]
+            capability = create_capability(
+                custody.secrets[row["secret_slot"]],
+                client_id=previous["client_id"],
+                methods=[m for m in previous["methods"] if m != missing],
+                not_before_ms=previous["not_before_ms"],
+                not_after_ms=previous["not_after_ms"],
+            )
+            row["descriptor"] = capability.descriptor
+            path = root / row["profile"]["client_directory"] / "client.json"
+            config = json.loads(path.read_bytes())
+            config["capability"] = capability.descriptor
+            path.write_bytes(canonical_bytes(config))
+        bundle["operator_capability_binding"] = create_operator_capability_binding(
+            runtime_id=bundle["runtime_id"],
+            runtime_label=bundle["runtime_label"],
+            being_ref=bundle["manifest"]["being_ref"],
+            origin=bundle["local_origin"],
+            signing_seed=custody.secrets[bundle["keystore"]["signing_slot"]],
+            capability_rows=bundle["capabilities"],
+        )
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        (root / upgrade.LOCK).touch(mode=0o600)
+        cls.fixture_source = root
+
+    def setUp(self):
+        import shutil
+
+        self.temp = tempfile.TemporaryDirectory(prefix="dm-current-case-")
+        self.addCleanup(self.temp.cleanup)
+        self.parent = Path(self.temp.name)
+        self.source = self.parent / "runtime"
+        shutil.copytree(self.fixture_source, self.source)
+        self.transaction = self.parent / "upgrade"
+        self.bundle = json.loads((self.source / "runtime.json").read_bytes())
+        self.before = upgrade._snapshot(self.source)
+        self.args = {
+            "source": self.source,
+            "transaction": self.transaction,
+            "expected_source_sha256": upgrade.inventory_digest(self.source),
+            "expected_counter": self.bundle["keystore"]["counter"],
+            "expected_control_head": self.bundle["control_head"],
+            "expected_being_ref": self.bundle["manifest"]["being_ref"],
+            "expected_origin": self.bundle["local_origin"],
+            "add_methods": {
+                "observe": ["we.conversation.page"],
+                "weave": ["we.converse"],
+            },
+            "expires_at_ms": time.time_ns() // 1000000 + 3600000,
+            "password": PASSWORD,
+            "externally_quiesced": True,
+        }
+
+    def stage(self, **changes):
+        return upgrade.stage_capabilities(**{**self.args, **changes})
+
+    def publish(self):
+        return upgrade.publish(
+            source=self.source,
+            transaction=self.transaction,
+            expected_receipt_sha256=hashlib.sha256(
+                (self.transaction / "ready.json").read_bytes()
+            ).hexdigest(),
+            password=PASSWORD,
+            externally_quiesced=True,
+            capability_upgrade=True,
+        )
+
+    def test_upgrade_retains_identity_keys_history_expiry_and_enables_read(self):
+        from daimon_matrix.local_api import (
+            LocalApiError,
+            LocalCapability,
+            create_request,
+        )
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.runtime import load_runtime
+
+        now = time.time_ns() // 1000000
+        old_config = json.loads((self.source / "client.json").read_bytes())
+        key = (self.source / "client.key").read_bytes()
+        old = LocalCapability.from_value(old_config["capability"], key)
+        with self.assertRaises(LocalApiError):
+            create_request(
+                old,
+                request_id="00000000-0000-4000-8000-000000000101",
+                issued_at_ms=now,
+                method="we.conversation.page",
+                params={"after": 0, "limit": 10},
+            )
+        previous = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        self.stage()
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        published = self.publish()
+        self.assertEqual(published, self.publish())
+        after = upgrade._snapshot(self.source)
+        upgrade._capability_successor(self.before, after, self.args["add_methods"])
+        current = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        self.assertEqual(dict(previous.secrets), dict(current.secrets))
+        self.assertEqual(current.counter, previous.counter + 1)
+
+        def clock():
+            return time.time_ns() // 1000000
+
+        runtime = load_runtime(
+            self.source,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=clock,
+            egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+        )
+        config = json.loads((self.source / "client.json").read_bytes())
+        capability = LocalCapability.from_value(config["capability"], key)
+        request = create_request(
+            capability,
+            request_id="00000000-0000-4000-8000-000000000102",
+            issued_at_ms=clock(),
+            method="we.conversation.page",
+            params={"after": 0, "limit": 10},
+        )
+        response = runtime.service.handle(request)
+        self.assertIsNone(response.get("error"), response)
+        self.assertIn("entries", response["result"])
+        weave_config = json.loads(
+            (self.source / "operator-clients/weave/client.json").read_bytes()
+        )
+        weave_key = (self.source / "operator-clients/weave/capability.key").read_bytes()
+        weave = LocalCapability.from_value(weave_config["capability"], weave_key)
+        # Reach native dispatch with the newly issued grant, without sending any
+        # packet: invalid params must be refused after successful authentication.
+        request = create_request(
+            weave,
+            request_id="00000000-0000-4000-8000-000000000103",
+            issued_at_ms=clock(),
+            method="we.converse",
+            params={},
+        )
+        response = runtime.service.handle(request)
+        self.assertEqual(response["error"]["code"], "invalid_params")
+        for original, successor in zip(
+            self.bundle["capabilities"],
+            json.loads(after["runtime.json"])["capabilities"],
+            strict=True,
+        ):
+            self.assertEqual(
+                original["descriptor"]["not_after_ms"],
+                successor["descriptor"]["not_after_ms"],
+            )
+
+    def test_current_v8_bundle_is_supported_without_rebirth(self):
+        from daimon_matrix.canonical import canonical_bytes
+
+        self.bundle["schema"] = "dm.runtime.bundle/v8"
+        (self.source / "runtime.json").write_bytes(canonical_bytes(self.bundle))
+        self.before = upgrade._snapshot(self.source)
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        self.stage()
+        self.publish()
+        updated = json.loads((self.source / "runtime.json").read_bytes())
+        self.assertEqual(updated["schema"], "dm.runtime.bundle/v8")
+        self.assertEqual(updated["local_origin"], self.bundle["local_origin"])
+
+    def test_cli_uses_exact_request_and_ready_pins_and_password_fd(self):
+        import io
+        from contextlib import redirect_stdout
+
+        request = {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in self.args.items()
+            if key not in {"password", "externally_quiesced"}
+        }
+        path = self.parent / "request.json"
+        path.write_text(json.dumps(request))
+        path.chmod(0o600)
+        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+
+        def invoke(arguments):
+            reader, writer = os.pipe()
+            os.write(writer, PASSWORD)
+            os.close(writer)
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    result = upgrade.main(
+                        [
+                            *arguments,
+                            "--password-fd",
+                            str(reader),
+                            "--externally-quiesced",
+                        ]
+                    )
+                self.assertEqual(result, 0)
+                self.assertNotIn(PASSWORD.decode(), output.getvalue())
+                return json.loads(output.getvalue())
+            finally:
+                os.close(reader)
+
+        ready = invoke(
+            [
+                "stage-capabilities",
+                "--request",
+                str(path),
+                "--request-sha256",
+                sha,
+            ]
+        )
+        self.assertEqual(ready["add_methods"], self.args["add_methods"])
+        result = invoke(
+            [
+                "publish-capabilities",
+                "--source",
+                str(self.source),
+                "--transaction",
+                str(self.transaction),
+                "--ready-sha256",
+                hashlib.sha256(
+                    (self.transaction / "ready.json").read_bytes()
+                ).hexdigest(),
+            ]
+        )
+        self.assertEqual(result["state"], "published")
+
+    def test_invalid_request_refuses_without_changing_source(self):
+        cases = (
+            {"add_methods": {"observe": ["we.converse"]}},
+            {"add_methods": {"weave": ["we.conversation.page"]}},
+            {"add_methods": {"observe": ["runtime.status"]}},
+            {"password": b"synthetic-wrong-password"},
+            {"expected_counter": self.bundle["keystore"]["counter"] + 1},
+            {"expected_source_sha256": "0" * 64},
+            {"externally_quiesced": False},
+        )
+        for changes in cases:
+            with (
+                self.subTest(changes=list(changes)),
+                self.assertRaises(upgrade.UpgradeError),
+            ):
+                self.stage(**changes)
+            self.assertEqual(upgrade._snapshot(self.source), self.before)
+            self.assertFalse(self.transaction.exists())
+
+    def test_publication_refuses_candidate_history_changes_and_retains_evidence(self):
+        self.stage()
+        candidate = self.transaction / "successor"
+        (candidate / "private-history.txt").write_text("unrequested change")
+        with self.assertRaises(upgrade.UpgradeError):
+            self.publish()
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        self.assertTrue((candidate / "private-history.txt").exists())
+
+    def test_interrupted_exchange_recovers_without_reissuing_or_rewinding(self):
+        from unittest.mock import patch
+
+        self.stage()
+        exchange = upgrade._exchange
+
+        def interrupted(source, successor):
+            exchange(source, successor)
+            raise OSError("synthetic lost return after atomic exchange")
+
+        with (
+            patch.object(upgrade, "_exchange", side_effect=interrupted),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        after = upgrade.inventory_digest(self.source)
+        self.publish()
+        self.assertEqual(upgrade.inventory_digest(self.source), after)
+        (self.source / "later-effect.txt").write_text(
+            "retained post-publication effect"
+        )
+        with self.assertRaises(upgrade.UpgradeError):
+            self.publish()
+        self.assertEqual(
+            (self.source / "later-effect.txt").read_text(),
+            "retained post-publication effect",
+        )
+
+
 class RuntimeUpgradeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

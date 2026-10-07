@@ -1,6 +1,7 @@
-"""Trusted owner-local offline legacy conversion; never a model-facing tool.
+"""Trusted owner-local offline upgrades; never a model-facing tool.
 
-Only the pinned 915c56c legacy source artifact is executable as a validator.
+Legacy conversion executes only the pinned 915c56c source artifact as a validator.
+Current V7/V8 profile upgrades use this installed release's native validator.
 The owner must stop AND fence all consumers (including auto-restarts) before
 using this module. Advisory daemon locks are not host lifecycle fencing.
 Staging never changes the source. Failed stages are retained, not auto-repaired.
@@ -515,6 +516,233 @@ def _exchange(source: Path, successor: Path) -> None:
         os.close(left)
 
 
+def _additions(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict) or not value:
+        raise UpgradeError("upgrade_invalid_method_additions")
+    for role, methods in value.items():
+        if (
+            role not in OPERATOR_CAPABILITY_PROFILES
+            or not isinstance(methods, list)
+            or not methods
+            or any(not isinstance(method, str) for method in methods)
+            or methods != sorted(set(methods))
+            or not set(methods) <= OPERATOR_CAPABILITY_PROFILES[role]
+        ):
+            raise UpgradeError("upgrade_method_outside_profile")
+    return value
+
+
+def _capability_successor(
+    before: dict[str, bytes], after: dict[str, bytes], additions: Any
+) -> None:
+    """Allow exactly the requested profile additions and custody counter advance."""
+    additions = _additions(additions)
+    old = json.loads(before["runtime.json"])
+    new = json.loads(after["runtime.json"])
+    changed = {"capabilities", "operator_capability_binding", "keystore"}
+    if set(old) != set(new) or any(
+        old[key] != new[key] for key in old if key not in changed
+    ):
+        raise UpgradeError("upgrade_identity_or_history_changed")
+    expected_keystore = {**old["keystore"], "counter": old["keystore"]["counter"] + 1}
+    if new["keystore"] != expected_keystore:
+        raise UpgradeError("upgrade_custody_revision_conflict")
+    if len(old["capabilities"]) != len(new["capabilities"]):
+        raise UpgradeError("upgrade_unrelated_profile_changed")
+    allowed_files = {"runtime.json", "custody.json", ".custody.json.highwater"}
+    found = set()
+    for original, successor in zip(
+        old["capabilities"], new["capabilities"], strict=True
+    ):
+        role = original["profile"]["role"]
+        if original["profile"]["schema"] != profiles.OPERATOR_CAPABILITY_PROFILE_SCHEMA:
+            if original != successor:
+                raise UpgradeError("upgrade_unrelated_profile_changed")
+            continue
+        if role not in additions:
+            if original != successor:
+                raise UpgradeError("upgrade_unrelated_profile_changed")
+            continue
+        found.add(role)
+        descriptor = original["descriptor"]
+        updated = successor["descriptor"]
+        expected_methods = sorted(set(descriptor["methods"]) | set(additions[role]))
+        if (
+            {k: v for k, v in original.items() if k != "descriptor"}
+            != {k: v for k, v in successor.items() if k != "descriptor"}
+            or {
+                k: v
+                for k, v in descriptor.items()
+                if k not in {"methods", "capability_id"}
+            }
+            != {
+                k: v
+                for k, v in updated.items()
+                if k not in {"methods", "capability_id"}
+            }
+            or updated["methods"] != expected_methods
+        ):
+            raise UpgradeError("upgrade_unrequested_authority_change")
+        profile = original["profile"]
+        filename = str(
+            Path(profile["client_directory"]) / profile["client_config_filename"]
+        )
+        allowed_files.add(filename)
+        expected_config = json.loads(before[filename])
+        expected_config["capability"] = updated
+        if json.loads(after[filename]) != expected_config:
+            raise UpgradeError("upgrade_client_binding_changed")
+    if (
+        found != set(additions)
+        or set(before) != set(after)
+        or any(
+            before[name] != after[name] for name in before if name not in allowed_files
+        )
+    ):
+        raise UpgradeError("upgrade_history_or_unrelated_files_changed")
+
+
+def stage_capabilities(
+    *,
+    source: Path,
+    transaction: Path,
+    expected_source_sha256: str,
+    expected_counter: int,
+    expected_control_head: str,
+    expected_being_ref: str,
+    expected_origin: dict[str, Any],
+    add_methods: dict[str, list[str]],
+    expires_at_ms: int,
+    password: bytes,
+    externally_quiesced: bool,
+) -> dict[str, Any]:
+    """Issue only owner-requested missing methods, retaining all keys and identity.
+
+    This is a new signed bundle successor, not a capability-file edit or expiry
+    renewal. The original stays untouched until exact atomic publication.
+    """
+    if not externally_quiesced or not 1 <= len(password) <= 4096:
+        raise UpgradeError("upgrade_quiescence_and_password_required")
+    if transaction.parent != source.parent or transaction == source:
+        raise UpgradeError("upgrade_sibling_transaction_required")
+    additions = _additions(add_methods)
+    code = Path(__file__).resolve().parent.parent
+    with _locks(source):
+        snapshot = _snapshot(source)
+        if _inventory(snapshot) != expected_source_sha256:
+            raise UpgradeError("upgrade_source_conflict")
+        bundle = json.loads(snapshot["runtime.json"])
+        if (
+            bundle.get("schema") not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}
+            or bundle["keystore"]["filename"] != "custody.json"
+        ):
+            raise UpgradeError("upgrade_unsupported_current_shape")
+        if (
+            bundle["keystore"]["counter"] != expected_counter
+            or bundle["control_head"] != expected_control_head
+            or bundle["manifest"]["being_ref"] != expected_being_ref
+            or bundle["local_origin"] != expected_origin
+        ):
+            raise UpgradeError("upgrade_identity_or_revision_conflict")
+        _forward_authorization(bundle, expires_at_ms)
+        _validate(source, code, password)
+        selected = {
+            row["profile"]["role"]: row
+            for row in bundle["capabilities"]
+            if row["profile"]["schema"] == profiles.OPERATOR_CAPABILITY_PROFILE_SCHEMA
+            and row["profile"]["role"] in additions
+        }
+        if set(selected) != set(additions) or any(
+            set(additions[role]) & set(row["descriptor"]["methods"])
+            for role, row in selected.items()
+        ):
+            raise UpgradeError("upgrade_method_missing_or_already_issued")
+        transaction.mkdir(mode=0o700)
+        _sync(transaction.parent)
+        _copy(snapshot, transaction / "checkpoint")
+        candidate = transaction / "successor"
+        _copy(snapshot, candidate)
+        store = EncryptedKeystore(candidate / "custody.json")
+        current = store.open(
+            lambda: bytearray(password),
+            minimum_counter=expected_counter,
+            required_control_head=expected_control_head,
+        )
+        if current.counter != expected_counter:
+            raise UpgradeError("upgrade_custody_revision_conflict")
+        changes = {}
+        for role, row in selected.items():
+            previous = row["descriptor"]
+            capability = create_capability(
+                current.secrets[row["secret_slot"]],
+                client_id=previous["client_id"],
+                methods=sorted(set(previous["methods"]) | set(additions[role])),
+                not_before_ms=previous["not_before_ms"],
+                not_after_ms=previous["not_after_ms"],
+                status=previous["status"],
+            )
+            row["descriptor"] = capability.descriptor
+            profile = row["profile"]
+            path = (
+                candidate
+                / profile["client_directory"]
+                / profile["client_config_filename"]
+            )
+            config = json.loads(path.read_bytes())
+            config["capability"] = capability.descriptor
+            path.unlink()
+            _write(path, canonical_bytes(config))
+            changes[role] = {
+                "added_methods": additions[role],
+                "previous_capability_id": previous["capability_id"],
+                "capability_id": capability.capability_id,
+            }
+        updated = store.rotate(
+            lambda: bytearray(password),
+            lambda: bytearray(password),
+            expected_counter=current.counter,
+            control_head=current.control_head,
+            secrets=current.secrets,
+        )
+        bundle["keystore"]["counter"] = updated.counter
+        bundle["operator_capability_binding"] = (
+            profiles.create_operator_capability_binding(
+                runtime_id=bundle["runtime_id"],
+                runtime_label=bundle["runtime_label"],
+                being_ref=expected_being_ref,
+                origin=expected_origin,
+                signing_seed=current.secrets[bundle["keystore"]["signing_slot"]],
+                capability_rows=bundle["capabilities"],
+            )
+        )
+        (candidate / "runtime.json").unlink()
+        _write(candidate / "runtime.json", canonical_bytes(bundle))
+        _validate(candidate, code, password)
+        after = _snapshot(candidate)
+        _capability_successor(snapshot, after, additions)
+        if inventory_digest(source) != expected_source_sha256:
+            raise UpgradeError("upgrade_source_conflict")
+        _forward_authorization(json.loads(snapshot["runtime.json"]), expires_at_ms)
+        receipt = {
+            "schema": "dm.operator.capability-upgrade/v1",
+            "source": str(source),
+            "transaction": str(transaction),
+            "source_sha256": expected_source_sha256,
+            "successor_sha256": _inventory(after),
+            "counter_before": expected_counter,
+            "counter_after": updated.counter,
+            "control_head": expected_control_head,
+            "being_ref": expected_being_ref,
+            "origin": expected_origin,
+            "runtime_id": bundle["runtime_id"],
+            "expires_at_ms": expires_at_ms,
+            "add_methods": additions,
+            "changes": changes,
+        }
+        _write(transaction / "ready.json", canonical_bytes(receipt))
+        return receipt
+
+
 def publish(
     *,
     source: Path,
@@ -522,6 +750,7 @@ def publish(
     expected_receipt_sha256: str,
     password: bytes,
     externally_quiesced: bool,
+    capability_upgrade: bool = False,
 ) -> dict[str, Any]:
     """Activate or recover the exact staged transaction, without rewinding.
 
@@ -542,12 +771,22 @@ def publish(
         if hashlib.sha256(raw).hexdigest() != expected_receipt_sha256:
             raise UpgradeError("upgrade_receipt_conflict")
         receipt = json.loads(raw)
+        expected_schema = (
+            "dm.operator.capability-upgrade/v1"
+            if capability_upgrade
+            else "dm.operator.runtime-upgrade/v1"
+        )
         if (
-            receipt["schema"] != "dm.operator.runtime-upgrade/v1"
+            receipt["schema"] != expected_schema
             or receipt["source"] != str(source)
             or receipt["transaction"] != str(transaction)
-            or receipt["legacy_revision"] != LEGACY_REVISION
-            or receipt["legacy_sha256"] != LEGACY_SOURCE_SHA256
+            or (
+                not capability_upgrade
+                and (
+                    receipt["legacy_revision"] != LEGACY_REVISION
+                    or receipt["legacy_sha256"] != LEGACY_SOURCE_SHA256
+                )
+            )
         ):
             raise UpgradeError("upgrade_receipt_binding_conflict")
         old = receipt["source_sha256"]
@@ -560,6 +799,10 @@ def publish(
                 raise UpgradeError("upgrade_rewind_detected")
             legacy_bundle = json.loads(artifacts["checkpoint/runtime.json"])
             _forward_authorization(legacy_bundle, receipt["expires_at_ms"])
+            if capability_upgrade:
+                _capability_successor(
+                    _snapshot(source), _snapshot(successor), receipt["add_methods"]
+                )
             _validate(successor, Path(__file__).resolve().parent.parent, password)
             if (inventory_digest(source), inventory_digest(successor)) != (old, new):
                 raise UpgradeError("upgrade_source_or_candidate_conflict")
@@ -576,7 +819,11 @@ def publish(
         if (inventory_digest(source), inventory_digest(successor)) != (new, old):
             raise UpgradeError("upgrade_ambiguous_state_preserved")
         result = dict(
-            schema="dm.operator.runtime-upgrade-publication/v1",
+            schema=(
+                "dm.operator.capability-upgrade-publication/v1"
+                if capability_upgrade
+                else "dm.operator.runtime-upgrade-publication/v1"
+            ),
             state="published",
             ready_sha256=expected_receipt_sha256,
             source=str(source),
@@ -845,7 +1092,9 @@ def publish_rollback(
         return result
 
 
-def _read_request(path: Path, expected_sha256: str) -> dict[str, Any]:
+def _read_request(
+    path: Path, expected_sha256: str, *, capability_upgrade: bool = False
+) -> dict[str, Any]:
     _path(path.parent)
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
@@ -873,9 +1122,12 @@ def _read_request(path: Path, expected_sha256: str) -> dict[str, Any]:
         "expected_origin",
         "expires_at_ms",
     }
+    if capability_upgrade:
+        fields -= {"legacy_source", "legacy_sha256"}
+        fields.add("add_methods")
     if not isinstance(request, dict) or set(request) != fields:
         raise UpgradeError("upgrade_invalid_request")
-    for key in ("source", "transaction", "legacy_source"):
+    for key in {"source", "transaction", "legacy_source"} & fields:
         request[key] = Path(request[key])
     return request
 
@@ -900,6 +1152,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     staging.add_argument("--request", type=Path, required=True)
     staging.add_argument("--request-sha256", required=True)
+    capability_staging = commands.add_parser(
+        "stage-capabilities", help="issue exactly requested missing profile methods"
+    )
+    capability_staging.add_argument("--request", type=Path, required=True)
+    capability_staging.add_argument("--request-sha256", required=True)
+    capability_publication = commands.add_parser(
+        "publish-capabilities", help="publish the exact scoped capability successor"
+    )
     publication = commands.add_parser(
         "publish", help="atomic activation or exact interrupted retry"
     )
@@ -909,11 +1169,23 @@ def main(argv: list[str] | None = None) -> int:
     reverse_publish = commands.add_parser(
         "publish-rollback", help="publish or retry approved reverse conversion"
     )
-    for command in (publication, reverse_stage, reverse_publish):
+    for command in (
+        publication,
+        capability_publication,
+        reverse_stage,
+        reverse_publish,
+    ):
         command.add_argument("--source", type=Path, required=True)
         command.add_argument("--transaction", type=Path, required=True)
         command.add_argument("--ready-sha256", required=True)
-    for command in (staging, publication, reverse_stage, reverse_publish):
+    for command in (
+        staging,
+        capability_staging,
+        publication,
+        capability_publication,
+        reverse_stage,
+        reverse_publish,
+    ):
         command.add_argument("--password-fd", type=int, required=True)
         command.add_argument(
             "--externally-quiesced", action="store_true", required=True
@@ -929,25 +1201,33 @@ def main(argv: list[str] | None = None) -> int:
             password.extend(stream.read(4097))
         if not 1 <= len(password) <= 4096:
             raise UpgradeError("upgrade_invalid_password_length")
-        if args.command == "stage":
-            result = stage(
-                **_read_request(args.request, args.request_sha256),
+        if args.command in {"stage", "stage-capabilities"}:
+            is_capability = args.command == "stage-capabilities"
+            staging_operation = stage_capabilities if is_capability else stage
+            result = staging_operation(
+                **_read_request(
+                    args.request, args.request_sha256, capability_upgrade=is_capability
+                ),
                 password=bytes(password),
                 externally_quiesced=args.externally_quiesced,
             )
         else:
-            operation = {
-                "publish": publish,
-                "stage-rollback": stage_rollback,
-                "publish-rollback": publish_rollback,
-            }[args.command]
-            result = operation(
-                source=args.source,
-                transaction=args.transaction,
-                expected_receipt_sha256=args.ready_sha256,
-                password=bytes(password),
-                externally_quiesced=args.externally_quiesced,
-            )
+            publication_arguments: dict[str, Any] = {
+                "source": args.source,
+                "transaction": args.transaction,
+                "expected_receipt_sha256": args.ready_sha256,
+                "password": bytes(password),
+                "externally_quiesced": args.externally_quiesced,
+            }
+            if args.command == "publish-capabilities":
+                result = publish(**publication_arguments, capability_upgrade=True)
+            else:
+                operation = {
+                    "publish": publish,
+                    "stage-rollback": stage_rollback,
+                    "publish-rollback": publish_rollback,
+                }[args.command]
+                result = operation(**publication_arguments)
         print(canonical_bytes(result).decode())
         return 0
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
