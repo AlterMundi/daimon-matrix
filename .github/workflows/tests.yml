@@ -66,8 +66,8 @@ jobs:
             requirements-vectors.txt
       - name: Create owner-local installed SDK environment
         run: |
-          python -m venv .messaging-venv
-          echo "$PWD/.messaging-venv/bin" >> "$GITHUB_PATH"
+          python -m venv "$RUNNER_TEMP/dm-messaging-sdk"
+          echo "$RUNNER_TEMP/dm-messaging-sdk/bin" >> "$GITHUB_PATH"
       - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt .
       - run: python tools/check_frozen_invariants.py --skip-generated
       - run: python tools/generate_dm041_vectors.py --check
