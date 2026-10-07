@@ -5,18 +5,53 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  tests:
+  scope:
     runs-on: ubuntu-latest
-    # The full suite exceeded 15 minutes on 3.12/3.13; cancellation is not a pass.
+    outputs:
+      profile: ${{ steps.scope.outputs.profile }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/ci_scope.py --base "$CI_BASE"
+
+  peer:
+    name: native peer tools (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'peer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-build.txt
+            requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt .
+      - run: python -m ruff format --check tools/chat_link.py tests/test_chat_link.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/chat_link.py tests/test_chat_link.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: PYTHONPATH=src python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_chat_link tests.test_chat_host -v
+
+  tests:
+    needs: scope
+    if: needs.scope.outputs.profile == 'full'
+    runs-on: ubuntu-latest
     timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Preseed exact legacy migration fixture
@@ -28,7 +63,7 @@ jobs:
           path: .collective-memory-contract
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13.5"
           cache: pip
           cache-dependency-path: |
             requirements-build.txt
@@ -70,13 +105,15 @@ jobs:
         run: PYTHONPATH=src python -m unittest tests.test_dm070_multihost.DM070PublishedContractTests.test_cluster_checkout_matches_exact_pins -v
 
   static:
+    needs: scope
+    if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13.5"
       - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt
       # This file enables pip hash mode; install it separately from unhashed dev requirements.
       - run: python -m pip install -r requirements-species.txt
@@ -137,13 +174,15 @@ jobs:
       - run: MYPYPATH=src python -m mypy tools/qualify.py tests/test_qualification_runner.py tests/test_mandatory_echo_integration.py
 
   hermes-contract:
+    needs: scope
+    if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13.5"
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
@@ -165,13 +204,15 @@ jobs:
           DAIMON_DM041_HERMES_PYTHON="$(command -v python)" PYTHONPATH=src python -W error::ResourceWarning -m unittest tests.test_dm041_hermes_body.RealHermesImportTests -v
 
   package:
+    needs: scope
+    if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13.5"
           cache: pip
           cache-dependency-path: |
             requirements-build.txt
@@ -261,13 +302,15 @@ jobs:
           if-no-files-found: error
 
   conformance:
+    needs: scope
+    if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.13"
+          python-version: "3.13.5"
           cache: pip
           cache-dependency-path: |
             requirements-build.txt

@@ -124,6 +124,14 @@ class ChatLinkTests(unittest.TestCase):
             sign_proposals(self.runtimes[1], plan, 1)
 
     def test_complete_signed_install_and_retry_without_network(self):
+        self._complete_signed_install_and_retry_without_network()
+
+    def test_additional_receiving_link_preserves_native_catalog_authentication(self):
+        self._complete_signed_install_and_retry_without_network(additional_link=True)
+
+    def _complete_signed_install_and_retry_without_network(
+        self, *, additional_link=False
+    ):
         import hashlib
         import secrets
         import select
@@ -156,6 +164,14 @@ class ChatLinkTests(unittest.TestCase):
                         egress=closed_visibility(clock=now, catalog_mode="migrate"),
                     )
                 )
+            if additional_link:
+                from daimon_matrix.native_egress import VISIBILITY_SCHEMA_VERSION
+
+                for runtime in runtimes:
+                    runtime.egress.migrate_registered_catalogs(
+                        version=VISIBILITY_SCHEMA_VERSION
+                    )
+                    runtime.egress.validate_registered_catalogs()
             plan = make_plan(
                 runtimes[0],
                 *public,
@@ -211,6 +227,7 @@ class ChatLinkTests(unittest.TestCase):
                     passwords[1],
                     packet,
                     outputs[1],
+                    additional_link=additional_link,
                 )
                 response = read_public(response_path)
                 finish(
@@ -219,6 +236,7 @@ class ChatLinkTests(unittest.TestCase):
                     passwords[0],
                     response,
                     outputs[0],
+                    additional_link=additional_link,
                 )
                 self.assertNotIn("telegram_token", str(response))
                 self.assertNotIn("route_keys", str(response))
@@ -230,6 +248,7 @@ class ChatLinkTests(unittest.TestCase):
                         passwords[1],
                         packet,
                         outputs[1],
+                        additional_link=additional_link,
                     ),
                 )
                 finish(
@@ -238,6 +257,7 @@ class ChatLinkTests(unittest.TestCase):
                     passwords[0],
                     response,
                     outputs[0],
+                    additional_link=additional_link,
                 )
                 tampered = copy.deepcopy(response)
                 tampered["document"]["plan_sha256"] = "0" * 64
@@ -248,6 +268,7 @@ class ChatLinkTests(unittest.TestCase):
                         passwords[0],
                         tampered,
                         outputs[0],
+                        additional_link=additional_link,
                     )
                 payload = read_public(outputs[0] / "completed-private.json")
                 for i in range(2):
@@ -258,6 +279,7 @@ class ChatLinkTests(unittest.TestCase):
                         output,
                         payload,
                         i,
+                        additional_link=additional_link,
                     )
 
                     self.assertEqual(result["inbox_reads"], 0)
@@ -270,8 +292,33 @@ class ChatLinkTests(unittest.TestCase):
                             output,
                             payload,
                             i,
+                            additional_link=additional_link,
                         ),
                     )
+                if additional_link:
+                    from daimon_matrix.chat_host import application_view
+
+                    for i in range(2):
+                        base = load_runtime(
+                            root / str(i) / "package/runtime",
+                            "runtime.json",
+                            lambda i=i: bytearray(passwords[i]),
+                            clock=now,
+                            egress=closed_visibility(clock=now),
+                        )
+                        base.egress.validate_registered_catalogs()
+                        view = application_view(
+                            base,
+                            outputs[i] / "application",
+                            outputs[i] / "visibility/installation.json",
+                        )
+                        view.egress.validate_registered_catalogs()
+                        self.assertIsNot(view.egress, base.egress)
+                        self.assertEqual(
+                            view.service.relationships.store.path,
+                            base.service.relationships.store.path,
+                        )
+                    return
                 # Start the real transport once, with no inbox/model invocation.
                 ready_path = outputs[1] / "ready.json"
                 command = [
