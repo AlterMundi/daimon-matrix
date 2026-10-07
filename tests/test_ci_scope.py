@@ -36,6 +36,29 @@ class CIScopeTests(unittest.TestCase):
                 self.assertEqual(profile(["tools/chat_link.py", path]), "full")
         self.assertEqual(profile([]), "full")
 
+    def test_messaging_core_and_derived_package_evidence_run_messaging_checks(self):
+        changes = [
+            "src/daimon_matrix/messaging.py",
+            "tools/chat_link.py",
+            "tests/test_chat_link.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changes), "messaging")
+        self.assertEqual(profile(["provenance/hermes-agent-0.19.0.json"]), "full")
+        for path in (
+            "src/daimon_matrix/runtime.py",
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/relationship_store.py",
+            "pyproject.toml",
+            "specs/tribe-relationships.md",
+            "tools/generate_dm041_vectors.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(profile([*changes, path]), "full")
+
     def test_missing_base_and_failed_observation_keep_full_qualification(self):
         with patch("tools.ci_scope.subprocess.run") as run:
             self.assertEqual(select(""), "full")

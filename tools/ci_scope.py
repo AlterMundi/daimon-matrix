@@ -1,4 +1,4 @@
-"""Select the native peer-tool qualification; unknown changes keep full CI."""
+"""Select native peer/messaging qualification; unknown changes keep full CI."""
 
 from __future__ import annotations
 
@@ -17,10 +17,24 @@ PEER_FILES = frozenset(
         ".github/workflows/telegram-portability.yml",
     }
 )
+MESSAGING_FILES = PEER_FILES | frozenset(
+    {
+        "src/daimon_matrix/messaging.py",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
 
 
 def profile(paths: list[str]) -> str:
-    return "peer" if paths and set(paths) <= PEER_FILES else "full"
+    changed = set(paths)
+    if changed and changed <= PEER_FILES:
+        return "peer"
+    if "src/daimon_matrix/messaging.py" in changed and changed <= MESSAGING_FILES:
+        return "messaging"
+    return "full"
 
 
 def select(base: str) -> str:
