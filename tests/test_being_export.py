@@ -61,6 +61,293 @@ class BeingExportTests(unittest.TestCase):
                     info.size = len(raw)
                     archive.addfile(info, io.BytesIO(raw))
 
+    def selection(
+        self,
+        include: list[str],
+        omit: list[dict[str, str]] | None = None,
+        *,
+        sqlite_ownership: str = "same-being",
+        kind: str = "hermes",
+    ) -> dict:
+        return {
+            "schema": tool.SELECTION_SCHEMA,
+            "being_label": "Fixture",
+            "sources": [
+                {
+                    "kind": kind,
+                    "root": str(self.source),
+                    "selection": {
+                        "include": include,
+                        "omit": omit or [],
+                        "ownership": "same-being",
+                        "sqlite_ownership": sqlite_ownership,
+                    },
+                }
+            ],
+        }
+
+    def test_unapproved_profiles_fail_before_foreign_traversal(self) -> None:
+        self.put("SOUL.md", b"selected default body")
+        self.put("profiles/Other/SOUL.md", b"unrelated private context")
+        visited = []
+        original_walk = os.walk
+
+        def watching_walk(*args, **kwargs):
+            for result in original_walk(*args, **kwargs):
+                visited.append(Path(result[0]))
+                yield result
+
+        with (
+            patch.object(tool.os, "walk", watching_walk),
+            self.assertRaisesRegex(tool.ExportError, "profiles_require_explicit"),
+        ):
+            self.plan()
+        self.assertEqual(visited, [self.source])
+        self.assertFalse(self.archive.exists())
+
+    def test_multi_profile_round_trip_preserves_owned_roots_without_foreign_reads(
+        self,
+    ) -> None:
+        expected = {
+            "SOUL.md": b"selected identity",
+            "AGENTS.md": b"useful operating behavior",
+            "config.yaml": b"theme: green\n",
+            "history/old.txt": b"old lived context",
+            "profiles/Owned/SOUL.md": b"same being, historical body",
+            "profiles/Owned/history/older.txt": b"its history",
+        }
+        for path, raw in expected.items():
+            self.put(path, raw)
+        self.put(".env", b"HERMES_TUI=1\n")
+        foreign = self.source / "profiles/Other"
+        self.put("profiles/Other/SOUL.md", b"unrelated private context")
+        self.put("profiles/Other/.env", b'CREDENTIALS=(\n "private component"\n)\n')
+        selection = self.selection(
+            [".", "profiles/Owned"],
+            [{"path": "profiles/Other", "reason": "another being; outside handoff"}],
+        )
+        original_open = Path.open
+
+        def guarded_open(path, *args, **kwargs):
+            if foreign == path or foreign in path.parents:
+                raise AssertionError("foreign content must not be opened")
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(Path, "open", guarded_open):
+            plan = tool.discover_selection(selection)
+            self.pack(plan)
+            destination, manifest = self.staged()
+        for path, raw in expected.items():
+            self.assertEqual(
+                (destination / "payload/hermes-001" / path).read_bytes(), raw
+            )
+            self.assertEqual((self.source / path).read_bytes(), raw)
+        self.assertEqual(
+            (destination / "payload/hermes-001/.env.nonsecret").read_bytes(),
+            b"HERMES_TUI=1\n",
+        )
+        self.assertFalse((destination / "payload/hermes-001/profiles/Other").exists())
+        self.assertEqual(
+            manifest["sources"][0]["selection"], selection["sources"][0]["selection"]
+        )
+        self.assertEqual(len(manifest["sources"][0]["omissions"]), 2)
+        self.assertIn("owner declaration", manifest["sources"][0]["ownership_evidence"])
+
+    def test_select_root_files_and_owned_subtree_records_unselected_frontier(
+        self,
+    ) -> None:
+        self.put("SOUL.md", b"identity")
+        self.put("AGENTS.md", b"useful behavior")
+        self.put("history/old.txt", b"retained history")
+        self.put("profiles/Other/secret.txt", b"outside scope")
+        self.put(".env", b'CREDENTIALS=(\n "private component"\n)\n')
+        plan = tool.discover_selection(
+            self.selection(["SOUL.md", "AGENTS.md", "history"])
+        )
+        self.pack(plan)
+        _, manifest = self.staged()
+        self.assertEqual(len(manifest["files"]), 3)
+        self.assertEqual(
+            {
+                entry["path"]: entry["reason"]
+                for entry in manifest["sources"][0]["omissions"]
+            },
+            {
+                ".env": "outside_explicit_context_selection",
+                "profiles": "outside_explicit_context_selection",
+            },
+        )
+
+    def test_explicitly_omitted_dotenv_is_not_derived_or_read(self) -> None:
+        self.put("SOUL.md", b"identity")
+        original = self.put(".env", b'CREDENTIALS=(\n "private component"\n)\n')
+        plan = tool.discover_selection(
+            self.selection(
+                ["."], [{"path": ".env", "reason": "body-private configuration"}]
+            )
+        )
+        self.pack(plan)
+        _, manifest = self.staged()
+        self.assertEqual(len(manifest["files"]), 1)
+        self.assertTrue(original.exists())
+
+    def test_profile_anchors_are_required_and_new_unapproved_profile_is_rejected(
+        self,
+    ) -> None:
+        self.put("SOUL.md", b"identity")
+        self.put("profiles/Owned/SOUL.md", b"same being")
+        with self.assertRaisesRegex(tool.ExportError, "explicit_anchor"):
+            tool.discover_selection(self.selection(["."]))
+        plan = tool.discover_selection(self.selection([".", "profiles/Owned"]))
+        self.put("profiles/New/SOUL.md", b"unapproved profile")
+        with self.assertRaisesRegex(tool.ExportError, "explicit_anchor"):
+            self.pack(plan)
+        self.assertFalse(self.archive.exists())
+
+    def test_whole_profile_boundary_can_be_omitted_without_traversal(self) -> None:
+        self.put("SOUL.md", b"identity")
+        self.put("profiles/Other/SOUL.md", b"outside scope")
+        plan = tool.discover_selection(
+            self.selection(
+                ["."], [{"path": "profiles", "reason": "outside same-being context"}]
+            )
+        )
+        self.pack(plan)
+        _, manifest = self.staged()
+        self.assertEqual(len(manifest["files"]), 1)
+        self.assertEqual(manifest["sources"][0]["omissions"][0]["path"], "profiles")
+
+    def test_selected_and_unselected_root_additions_still_require_new_plan(
+        self,
+    ) -> None:
+        self.put("SOUL.md", b"identity")
+        self.put("history/old.txt", b"old memory")
+        for new in ("history/new.txt", "new-unselected.txt"):
+            plan = tool.discover_selection(self.selection(["SOUL.md", "history"]))
+            path = self.put(new, b"new context")
+            with self.assertRaisesRegex(tool.ExportError, "source_drift"):
+                self.pack(plan)
+            path.unlink()
+        self.assertFalse(self.archive.exists())
+
+    def test_explicit_sqlite_ownership_boundary_keeps_complete_rows_or_refuses(
+        self,
+    ) -> None:
+        original = self.source / "sessions.db"
+        with closing(sqlite3.connect(original)) as connection:
+            connection.execute("CREATE TABLE history(origin TEXT, text TEXT)")
+            connection.executemany(
+                "INSERT INTO history VALUES (?, ?)",
+                [
+                    ("old body", "historical context"),
+                    ("current body", "recent context"),
+                ],
+            )
+            connection.commit()
+        original_hash = tool.digest(original)
+        for ownership in ("mixed", "unknown"):
+            with self.assertRaisesRegex(tool.ExportError, "ownership_adapter"):
+                tool.discover_selection(
+                    self.selection(["."], sqlite_ownership=ownership)
+                )
+        self.pack(tool.discover_selection(self.selection(["."])))
+        _, manifest = self.staged()
+        self.assertEqual(manifest["files"][0]["sqlite"]["table_counts"]["history"], 2)
+        self.assertEqual(tool.digest(original), original_hash)
+
+    def test_shared_skills_do_not_copy_body_bindings_or_known_custody(self) -> None:
+        self.put("helper/SKILL.md", b"portable useful behavior")
+        self.put("binding/runtime.json", b"sk-" + b"a" * 40)
+        self.put("runtime/private.bin", b"body-private runtime")
+        self.put("custody.json", b"opaque custody fixture")
+        self.put("unknown-opaque.dat", b"arbitrarily named encrypted custody fixture")
+        document = self.selection(
+            ["."],
+            [
+                {"path": "binding", "reason": "body-private binding"},
+                {"path": "runtime", "reason": "signed body-private runtime"},
+                {"path": "unknown-opaque.dat", "reason": "owner-identified custody"},
+            ],
+            kind="skills",
+        )
+        document["sources"][0]["selection"]["ownership"] = "shared-commons"
+        self.pack(tool.discover_selection(document))
+        _, manifest = self.staged()
+        self.assertEqual(len(manifest["files"]), 1)
+        self.assertEqual(len(manifest["sources"][0]["omissions"]), 4)
+
+    def test_selection_validates_paths_missing_anchors_and_conflicts(self) -> None:
+        self.put("SOUL.md", b"identity")
+        for included, omitted in (
+            (["../escape"], []),
+            (["absent"], []),
+            (["SOUL.md"], [{"path": "../escape", "reason": "outside scope"}]),
+            (["SOUL.md"], [{"path": "SOUL.md", "reason": "conflicting choice"}]),
+        ):
+            with self.assertRaises(tool.ExportError):
+                tool.discover_selection(self.selection(included, omitted))
+
+    def test_project_runtime_is_useful_context_not_a_body_binding(self) -> None:
+        self.put("runtime/worker.py", b"print('useful project runtime')\n")
+        self.pack(self.plan("project"))
+        _, manifest = self.staged()
+        self.assertEqual(len(manifest["files"]), 1)
+
+    def test_cli_selection_discovery_export_and_unpack(self) -> None:
+        self.put("SOUL.md", b"identity")
+        self.put("profiles/Other/SOUL.md", b"outside scope")
+        document = self.selection(
+            ["."], [{"path": "profiles", "reason": "other beings"}]
+        )
+        selection = self.root / "selection.json"
+        selection.write_bytes(tool.json_bytes(document))
+        plan = self.root / "plan.json"
+        script = str(Path(tool.__file__))
+        for arguments in (
+            ["discover", "--selection", str(selection), "--output", str(plan)],
+            [
+                "export",
+                "--plan",
+                str(plan),
+                "--writers-stopped",
+                "--output",
+                str(self.archive),
+            ],
+            ["verify", "--archive", str(self.archive)],
+            [
+                "unpack",
+                "--archive",
+                str(self.archive),
+                "--destination",
+                str(self.root / "received"),
+            ],
+        ):
+            process = subprocess.run(
+                [sys.executable, script, *arguments], capture_output=True, text=True
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(
+            (self.root / "received/payload/hermes-001/SOUL.md").read_bytes(),
+            b"identity",
+        )
+        direct = self.root / "direct.zip"
+        process = subprocess.run(
+            [
+                sys.executable,
+                script,
+                "export",
+                "--selection",
+                str(selection),
+                "--writers-stopped",
+                "--output",
+                str(direct),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(tool.verify(direct)["verified"])
+
     def test_complete_selected_memory_and_historical_skill_bytes_round_trip(
         self,
     ) -> None:

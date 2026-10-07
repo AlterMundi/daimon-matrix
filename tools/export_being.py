@@ -3,6 +3,8 @@
 
 Python 3.11+ stdlib only. No harness execution, account access or live import.
 Selected source homes must belong to the same being. Review the private plan.
+The being label does not filter profiles or database rows. Multi-profile homes
+require --selection with explicit owned context and approved omissions.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import Any
 
 PLAN_SCHEMA = "dm.being-export-plan/v1"
 ARCHIVE_SCHEMA = "dm.being-context-archive/v1"
+SELECTION_SCHEMA = "dm.being-source-selection/v1"
 KINDS = ("hermes", "codex", "memory", "skills", "context", "sessions", "project")
 SECRET_NAMES = {
     ".env",
@@ -40,6 +43,9 @@ SECRET_NAMES = {
     ".netrc",
     ".npmrc",
     ".pypirc",
+    "custody.json",
+    "capability.json",
+    "capabilities.json",
 }
 SECRET_DIRS = {".ssh", "custody", "keyring"}
 EPHEMERAL = {"__pycache__", ".venv", "node_modules", ".pytest_cache", ".ruff_cache"}
@@ -135,27 +141,114 @@ def excluded(relative: str, kind: str) -> str | None:
     return None
 
 
+def validate_selection(selection: Any) -> dict[str, Any]:
+    if not isinstance(selection, dict) or set(selection) != {
+        "include",
+        "omit",
+        "ownership",
+        "sqlite_ownership",
+    }:
+        raise ExportError("explicit_source_selection_fields_required")
+    if selection["ownership"] not in ("same-being", "shared-commons"):
+        raise ExportError("explicit_context_ownership_required")
+    if selection["sqlite_ownership"] not in ("same-being", "unknown", "mixed"):
+        raise ExportError("invalid_sqlite_ownership_declaration")
+    included, omitted = selection["include"], selection["omit"]
+    if not isinstance(included, list) or not included:
+        raise ExportError("nonempty_context_selection_required")
+    if not isinstance(omitted, list):
+        raise ExportError("explicit_omissions_required")
+    for path in included:
+        if not isinstance(path, str):
+            raise ExportError("invalid_selection_path")
+        if path != ".":
+            safe_name(path)
+    for entry in omitted:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"path", "reason"}
+            or not isinstance(entry["path"], str)
+            or not isinstance(entry["reason"], str)
+            or not entry["reason"].strip()
+        ):
+            raise ExportError("omission_path_and_reason_required")
+        safe_name(entry["path"])
+    if len(set(included)) != len(included) or len(
+        {entry["path"] for entry in omitted}
+    ) != len(omitted):
+        raise ExportError("duplicate_selection_path")
+    if any(
+        anchor == entry["path"] or anchor.startswith(entry["path"] + "/")
+        for anchor in included
+        for entry in omitted
+    ):
+        raise ExportError("selected_anchor_conflicts_with_omission")
+    return selection
+
+
+def selection_reason(
+    relative: str, selection: dict[str, Any] | None, *, directory: bool
+) -> str | None:
+    if selection is None:
+        return None
+    for omission in selection["omit"]:
+        path = omission["path"]
+        if relative == path or relative.startswith(path + "/"):
+            return "owner_selected_omission: " + omission["reason"]
+    for path in selection["include"]:
+        if path == "." or relative == path or relative.startswith(path + "/"):
+            return None
+        if directory and path.startswith(relative + "/"):
+            return None
+    return "outside_explicit_context_selection"
+
+
+def check_profile_scope(
+    root: Path, relative: str, selection: dict[str, Any] | None
+) -> None:
+    # Enumerate only the boundary, never a foreign profile's contents.
+    if selection is None:
+        raise ExportError("profiles_require_explicit_source_selection")
+    for child in (root / relative).iterdir():
+        path = child.relative_to(root).as_posix()
+        if selection_reason(path, selection, directory=child.is_dir()) is not None:
+            continue
+        if not any(
+            anchor == path or anchor.startswith(path + "/")
+            for anchor in selection["include"]
+        ):
+            raise ExportError("each_selected_profile_requires_explicit_anchor")
+
+
 def inventory(
-    root: Path, kind: str
+    root: Path, kind: str, selection: dict[str, Any] | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     root = safe_path(root)
     if not root.is_dir():
         raise ExportError("source_root_must_be_directory")
+    if selection is not None:
+        validate_selection(selection)
     files, omissions = [], []
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in list(dirs):
             item = Path(directory) / name
             relative = item.relative_to(root).as_posix()
-            reason = excluded(relative, kind)
+            reason = selection_reason(relative, selection, directory=True) or excluded(
+                relative, kind
+            )
             if item.is_symlink() or reason:
                 omissions.append(
                     {"path": relative, "reason": reason or "unresolved_symlink"}
                 )
                 dirs.remove(name)
+            elif name == "profiles" and kind in ("hermes", "codex"):
+                check_profile_scope(root, relative, selection)
         for name in sorted(names):
             item = Path(directory) / name
             relative = safe_name(item.relative_to(root).as_posix())
-            reason = excluded(relative, kind)
+            reason = selection_reason(relative, selection, directory=False) or excluded(
+                relative, kind
+            )
             info = item.lstat()
             if reason or not stat.S_ISREG(info.st_mode):
                 omissions.append(
@@ -169,7 +262,16 @@ def inventory(
                         ),
                     }
                 )
-                if stat.S_ISREG(info.st_mode) and not relative.endswith("-shm"):
+                if (
+                    stat.S_ISREG(info.st_mode)
+                    and not relative.endswith("-shm")
+                    and not (reason or "").startswith(
+                        (
+                            "owner_selected_omission:",
+                            "outside_explicit_context_selection",
+                        )
+                    )
+                ):
                     omissions[-1].update(
                         {
                             "bytes": info.st_size,
@@ -178,6 +280,13 @@ def inventory(
                         }
                     )
             else:
+                if selection is not None:
+                    with item.open("rb") as stream:
+                        is_sqlite = stream.read(16) == b"SQLite format 3\x00"
+                    if is_sqlite and selection["sqlite_ownership"] != "same-being":
+                        raise ExportError(
+                            "mixed_or_unknown_sqlite_requires_ownership_adapter"
+                        )
                 files.append(
                     {
                         "path": relative,
@@ -197,6 +306,7 @@ def discover(
     roots: list[tuple[str, Path]],
     baselines: dict[str, Path] | None = None,
     versions: dict[str, str] | None = None,
+    selections: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not being.strip() or not roots:
         raise ExportError("being_and_sources_required")
@@ -205,7 +315,14 @@ def discover(
         if kind not in KINDS:
             raise ExportError("unknown_source_kind")
         source_id = f"{kind}-{index + 1:03d}"
-        files, omissions = inventory(root, kind)
+        selection = (selections or {}).get(source_id)
+        if selection is not None:
+            validate_selection(selection)
+            for anchor in selection["include"]:
+                selected = safe_path(root / anchor)
+                if not selected.exists():
+                    raise ExportError("selected_context_path_missing")
+        files, omissions = inventory(root, kind, selection)
         sources.append(
             {
                 "id": source_id,
@@ -217,6 +334,7 @@ def discover(
                 else None,
                 "files": files,
                 "omissions": omissions,
+                **({"selection": selection} if selection is not None else {}),
             }
         )
     return {
@@ -235,6 +353,33 @@ def discover(
         "external_references": [],
         "continuity_notes": "",
     }
+
+
+def discover_selection(document: Any) -> dict[str, Any]:
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema", "being_label", "sources"}
+        or document.get("schema") != SELECTION_SCHEMA
+        or not isinstance(document["being_label"], str)
+        or not document["being_label"].strip()
+        or not isinstance(document["sources"], list)
+        or not document["sources"]
+    ):
+        raise ExportError("supported_source_selection_required")
+    roots, selections = [], {}
+    for index, source in enumerate(document["sources"]):
+        if (
+            not isinstance(source, dict)
+            or set(source) != {"kind", "root", "selection"}
+            or not isinstance(source["root"], str)
+        ):
+            raise ExportError("source_kind_root_and_selection_required")
+        kind = source["kind"]
+        if kind not in KINDS:
+            raise ExportError("unknown_source_kind")
+        roots.append((kind, Path(source["root"])))
+        selections[f"{kind}-{index + 1:03d}"] = validate_selection(source["selection"])
+    return discover(document["being_label"], roots, selections=selections)
 
 
 def scan_credentials(path: Path) -> None:
@@ -351,7 +496,10 @@ def export(
         root = safe_path(Path(source["root"]))
         if output == root or root in output.parents:
             raise ExportError("output_must_be_outside_sources")
-        if inventory(root, source["kind"]) != (source["files"], source["omissions"]):
+        if inventory(root, source["kind"], source.get("selection")) != (
+            source["files"],
+            source["omissions"],
+        ):
             raise ExportError("source_drift_regenerate_plan")
     with tempfile.TemporaryDirectory(
         prefix="dm-being-export-", dir=output.parent
@@ -364,7 +512,9 @@ def export(
                 safe_path(Path(source["baseline"])) if source.get("baseline") else None
             )
             baseline_files, baseline_omissions = (
-                inventory(baseline, source["kind"]) if baseline else ([], [])
+                inventory(baseline, source["kind"], source.get("selection"))
+                if baseline
+                else ([], [])
             )
             baseline_names = {f["path"] for f in baseline_files}
             actual_names = {f["path"] for f in source["files"]}
@@ -409,7 +559,7 @@ def export(
                         "sqlite": database,
                     }
                 )
-            if inventory(root, source["kind"]) != (
+            if inventory(root, source["kind"], source.get("selection")) != (
                 source["files"],
                 source["omissions"],
             ):
@@ -418,11 +568,20 @@ def export(
                 {k: source[k] for k in ("id", "kind", "root", "version", "omissions")}
             )
             provenance[-1]["baseline_root"] = str(baseline) if baseline else None
+            if source.get("selection") is not None:
+                provenance[-1]["selection"] = source["selection"]
+                provenance[-1]["ownership_evidence"] = (
+                    "owner declaration; not inferred from labels"
+                )
             provenance[-1]["baseline_omissions"] = baseline_omissions
             provenance[-1]["absent_from_source"] = sorted(baseline_names - actual_names)
             # Preserve useful behavior stored in dotenv without copying auth values.
             for omission in source["omissions"]:
-                if PurePosixPath(omission["path"]).name not in (".env", ".envrc"):
+                if omission[
+                    "reason"
+                ] != "credential_or_custody_separate_handoff" or PurePosixPath(
+                    omission["path"]
+                ).name not in (".env", ".envrc"):
                     continue
                 environment = safe_path(root / omission["path"])
                 if not environment.is_file():
@@ -456,7 +615,9 @@ def export(
                     }
                 )
         for source in sources:
-            if inventory(Path(source["root"]), source["kind"]) != (
+            if inventory(
+                Path(source["root"]), source["kind"], source.get("selection")
+            ) != (
                 source["files"],
                 source["omissions"],
             ):
@@ -636,19 +797,25 @@ def main(argv: list[str] | None = None) -> int:
     discovery = commands.add_parser(
         "discover", help="Create a private source review plan"
     )
-    discovery.add_argument("--being", required=True)
+    discovery.add_argument("--being")
+    discovery.add_argument(
+        "--selection", type=Path, help="Reviewed source-selection JSON"
+    )
     discovery.add_argument("--output", type=Path, required=True)
     for kind in KINDS:
         discovery.add_argument(f"--{kind}-root", action="append", type=Path, default=[])
     packing = commands.add_parser("export", help="Preserve reviewed same-being sources")
     packing.add_argument("--plan", type=Path)
+    packing.add_argument(
+        "--selection", type=Path, help="Reviewed source-selection JSON"
+    )
     packing.add_argument("--being")
     packing.add_argument("--harness", choices=("hermes", "codex", "mixed"))
     packing.add_argument(
         "--source-home",
         type=Path,
         default=Path.home(),
-        help="Owner's home for automatic Hermes/Codex discovery",
+        help="Single-being home only; multi-profile homes require --selection",
     )
     for kind in ("memory", "skills", "context", "sessions", "project"):
         packing.add_argument(f"--{kind}-root", action="append", type=Path, default=[])
@@ -668,7 +835,16 @@ def main(argv: list[str] | None = None) -> int:
             roots = [
                 (kind, root) for kind in KINDS for root in getattr(args, f"{kind}_root")
             ]
-            plan = discover(args.being, roots)
+            if args.selection:
+                if roots or args.being:
+                    raise ExportError("choose_selection_or_source_roots")
+                plan = discover_selection(
+                    json.loads(safe_path(args.selection).read_bytes())
+                )
+            else:
+                if not args.being:
+                    raise ExportError("being_and_sources_required")
+                plan = discover(args.being, roots)
             new_file(args.output, json_bytes(plan))
             report = {
                 "schema": PLAN_SCHEMA,
@@ -676,10 +852,20 @@ def main(argv: list[str] | None = None) -> int:
                 "review_required": True,
             }
         elif args.command == "export":
+            extra_roots = any(
+                getattr(args, f"{kind}_root")
+                for kind in ("memory", "skills", "context", "sessions", "project")
+            )
             if args.plan:
-                if args.being or args.harness:
+                if args.being or args.harness or args.selection or extra_roots:
                     raise ExportError("choose_plan_or_automatic_discovery")
                 plan = json.loads(safe_path(args.plan).read_bytes())
+            elif args.selection:
+                if args.being or args.harness or extra_roots:
+                    raise ExportError("choose_selection_or_automatic_discovery")
+                plan = discover_selection(
+                    json.loads(safe_path(args.selection).read_bytes())
+                )
             else:
                 if not args.being or not args.harness:
                     raise ExportError("being_and_harness_required")
