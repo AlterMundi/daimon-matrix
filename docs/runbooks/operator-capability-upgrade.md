@@ -119,6 +119,24 @@ sealed send separately using genuine receiving receipts; local `we.observe`
 authorship is not delivery. Retain exact request IDs and native outcomes.
 Do not turn a rejected or ambiguous older send into an unrecorded fresh attempt.
 
+Before the conversation qualification, reconcile both bodies' signed history
+prefixes through their ordinary owner clients. A valid peer envelope and sealed
+message can still fail native intake with `origin_sequence_gap` when the receiver
+lacks earlier events in the author's incarnation lane. Inspect actual receiver
+evidence or a read-only native preview of the exact retained payload before
+attributing that refusal to grants, keys or transport compatibility. Use the
+supported `we.sync.peer-pull` operation with the exact peer, a retained
+`sync_request_id` and a bounded page limit, continuing only if the authenticated
+result reports `more`. Qualify the reverse prefix as well: accepting a returned
+receipt also requires the recipient's prior signed events.
+
+History convergence remains private and preserves existing journals. A message
+copied by sync is not conversational intake or receipt authoring. After
+reconciliation, qualify actual conversation delivery in both directions. Keep
+older terminal or undetermined attempts and distinguish any new qualification
+operation explicitly; never rewrite an older request or call it delivered merely
+because its history became readable.
+
 Closed visibility remains closed: this upgrade grants methods but changes no
 visibility policy, transport targets or Telegram installation. A body that
 needs an authorized sibling mirror must separately follow
