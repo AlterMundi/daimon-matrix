@@ -8,6 +8,21 @@ from tools.ci_scope import profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_memory_preservation_runs_archive_qualification(self):
+        changes = [
+            "tools/preserve_memory.py",
+            "tests/test_memory_preservation.py",
+            "tests/test_dm034_memory_projection.py",
+            "docs/runbooks/memory-preservation.md",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            ".github/workflows/tests.yml",
+        ]
+        self.assertEqual(profile(changes), "archive")
+        self.assertEqual(
+            profile([*changes, "src/daimon_matrix/memory_projection.py"]), "full"
+        )
+
     def test_protected_archive_qualifies_crypto_without_unchanged_runtime_jobs(self):
         changes = [
             "tools/export_being.py",

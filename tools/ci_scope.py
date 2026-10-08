@@ -31,6 +31,10 @@ ARCHIVE_FILES = frozenset(
     {
         "tools/export_being.py",
         "tests/test_being_export.py",
+        "tools/preserve_memory.py",
+        "tests/test_memory_preservation.py",
+        "tests/test_dm034_memory_projection.py",
+        "docs/runbooks/memory-preservation.md",
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
         ".github/workflows/tests.yml",
@@ -58,7 +62,10 @@ def profile(paths: list[str]) -> str:
         and changed <= PROTECTED_FILES
     ):
         return "protected-archive"
-    if "tools/export_being.py" in changed and changed <= ARCHIVE_FILES:
+    if (
+        changed & {"tools/export_being.py", "tools/preserve_memory.py"}
+        and changed <= ARCHIVE_FILES
+    ):
         return "archive"
     if changed and changed <= PEER_FILES:
         return "peer"
