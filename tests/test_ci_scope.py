@@ -8,6 +8,22 @@ from tools.ci_scope import profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_archive_scanner_keeps_own_export_receive_boundary(self):
+        changes = [
+            "tools/export_being.py",
+            "tests/test_being_export.py",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            ".github/workflows/tests.yml",
+        ]
+        self.assertEqual(profile(changes), "archive")
+        for path in (
+            "src/daimon_matrix/runtime.py",
+            "tools/receive_being.py",
+            "pyproject.toml",
+        ):
+            self.assertEqual(profile([*changes, path]), "full")
+
     def test_native_peer_tool_and_its_ci_have_a_focused_profile(self):
         self.assertEqual(
             profile(

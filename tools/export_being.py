@@ -10,6 +10,7 @@ require --selection with explicit owned context and approved omissions.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -66,6 +67,15 @@ ENV_SECRET = re.compile(
 )
 MAX_BYTES = 5 * 1024**3
 MAX_MEMBERS = 100_000
+# These complete public libjpeg AC symbol tables happen to contain ASCII
+# bytes resembling a Telegram token. Only structurally identified, exact
+# tables are exempt; JPEG metadata, appended data and unknown tables are scanned.
+JPEG_PUBLIC_AC_TABLES = frozenset(
+    {
+        "f27ce9b718f91cd426885e6ce4a37d0ba4900db219f719eef29ecc1f7f4fd5f0",
+        "8cf60aa835f8474bb590e73332bee9c246bec9ce1e368aa725674c096f3efd2c",
+    }
+)
 
 
 class ExportError(ValueError):
@@ -392,20 +402,137 @@ def discover_selection(document: Any) -> dict[str, Any]:
     return discover(document["being_label"], roots, selections=selections)
 
 
+def jpeg_public_tables(path: Path) -> list[tuple[int, int]]:
+    ranges = []
+    with path.open("rb") as stream:
+        if stream.read(2) != b"\xff\xd8":
+            return ranges
+        while True:
+            marker = stream.read(2)
+            if len(marker) != 2 or marker[0] != 255:
+                return ranges
+            while marker == b"\xff\xff":
+                marker = b"\xff" + stream.read(1)
+            if marker in (b"\xff\xda", b"\xff\xd9"):
+                return ranges
+            size = stream.read(2)
+            if len(size) != 2 or int.from_bytes(size, "big") < 2:
+                return ranges
+            offset = stream.tell()
+            raw = stream.read(int.from_bytes(size, "big") - 2)
+            if len(raw) != int.from_bytes(size, "big") - 2:
+                return ranges
+            if marker != b"\xff\xc4":
+                continue
+            cursor = 0
+            while cursor + 17 <= len(raw):
+                end = cursor + 17 + sum(raw[cursor + 1 : cursor + 17])
+                if end > len(raw):
+                    break
+                table = raw[cursor:end]
+                if hashlib.sha256(table).hexdigest() in JPEG_PUBLIC_AC_TABLES:
+                    ranges.append((offset + cursor, offset + end))
+                cursor = end
+
+
+def python_reference_assignments(path: Path) -> list[tuple[int, int, int]]:
+    if path.suffix.lower() not in {".py", ".pyi"} or path.stat().st_size > 8 * 1024**2:
+        return []
+    raw = path.read_bytes()
+    try:
+        tree = ast.parse(raw.decode("utf-8"))
+    except (SyntaxError, ValueError, RecursionError, UnicodeDecodeError):
+        return []
+    starts = [0]
+    for line in raw.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    ranges = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        value = node.value
+        # References are behavior, not literal credentials. A string, number,
+        # f-string or nested literal remains subject to the normal detector.
+        if any(
+            isinstance(child, (ast.Constant, ast.JoinedStr))
+            for child in ast.walk(value)
+        ):
+            continue
+        if value.end_lineno is None or value.end_col_offset is None:
+            continue
+        ranges.append(
+            (
+                starts[node.lineno - 1] + node.col_offset,
+                starts[value.lineno - 1] + value.col_offset,
+                starts[value.end_lineno - 1] + value.end_col_offset,
+            )
+        )
+    return ranges
+
+
 def scan_credentials(path: Path) -> None:
     overlap = b""
+    public_tables = jpeg_public_tables(path)
+    references = python_reference_assignments(path)
+    consumed = 0
     with path.open("rb") as stream:
         while chunk := stream.read(1024 * 1024):
             data = overlap + chunk
-            if PRIVATE_KEY.search(data) or TOKEN.search(data):
+            offset = consumed - len(overlap)
+            if PRIVATE_KEY.search(data):
                 raise ExportError("embedded_credential_requires_separate_handoff")
+            for match in TOKEN.finditer(data):
+                if not any(
+                    start <= offset + match.start() and offset + match.end() <= end
+                    for start, end in public_tables
+                ):
+                    raise ExportError("embedded_credential_requires_separate_handoff")
             for match in ASSIGNMENT.finditer(data):
+                if any(
+                    start <= offset + match.start()
+                    and value <= offset + match.start(1)
+                    and offset + match.end(1) <= end
+                    for start, value, end in references
+                ):
+                    continue
                 if not any(
                     p in match[1].lower()
                     for p in (b"placeholder", b"example", b"redacted")
                 ):
                     raise ExportError("embedded_credential_requires_separate_handoff")
             overlap = data[-4096:]
+            consumed += len(chunk)
+    with path.open("rb") as stream:
+        is_sqlite = stream.read(16) == b"SQLite format 3\x00"
+    if is_sqlite:
+        # SQLite serial-type bytes can resemble word characters immediately
+        # before a text cell. Scan logical values as well as physical bytes so
+        # those structural bytes cannot hide a real token boundary.
+        with closing(
+            sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        ) as connection:
+            tables = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            for (name,) in tables:
+                quoted = name.replace('"', '""')
+                for row in connection.execute(f'SELECT * FROM "{quoted}"'):
+                    for value in row:
+                        raw = value.encode() if isinstance(value, str) else value
+                        if not isinstance(raw, bytes):
+                            continue
+                        if PRIVATE_KEY.search(raw) or TOKEN.search(raw):
+                            raise ExportError(
+                                "embedded_credential_requires_separate_handoff"
+                            )
+                        for match in ASSIGNMENT.finditer(raw):
+                            if not any(
+                                p in match[1].lower()
+                                for p in (b"placeholder", b"example", b"redacted")
+                            ):
+                                raise ExportError(
+                                    "embedded_credential_requires_separate_handoff"
+                                )
 
 
 def sqlite_details(path: Path) -> dict[str, Any]:

@@ -27,10 +27,21 @@ MESSAGING_FILES = PEER_FILES | frozenset(
         "vectors/hermes/v1/valid/profile-manifest.json",
     }
 )
+ARCHIVE_FILES = frozenset(
+    {
+        "tools/export_being.py",
+        "tests/test_being_export.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
 
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if "tools/export_being.py" in changed and changed <= ARCHIVE_FILES:
+        return "archive"
     if changed and changed <= PEER_FILES:
         return "peer"
     if "src/daimon_matrix/messaging.py" in changed and changed <= MESSAGING_FILES:
