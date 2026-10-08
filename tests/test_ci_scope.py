@@ -10,7 +10,14 @@ from tools.ci_scope import profile, select
 class CIScopeTests(unittest.TestCase):
     def test_native_peer_tool_and_its_ci_have_a_focused_profile(self):
         self.assertEqual(
-            profile(["tools/chat_link.py", "tests/test_chat_link.py"]), "peer"
+            profile(
+                [
+                    "tools/chat_link.py",
+                    "tests/test_chat_link.py",
+                    "tests/test_chat_host.py",
+                ]
+            ),
+            "peer",
         )
         self.assertEqual(
             profile(
@@ -29,7 +36,7 @@ class CIScopeTests(unittest.TestCase):
             "requirements-dev.txt",
             "specs/DM-041.md",
             "docs/foundation/daimon-matrix.md",
-            "tests/test_chat_host.py",
+            "src/daimon_matrix/chat_host.py",
             "tools/prepare_chat_identity.py",
         ):
             with self.subTest(path=path):
