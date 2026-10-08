@@ -46,7 +46,7 @@ def card_from_other_body(home, peer, *, issue_card=True):
     signing = secrets.token_bytes(32)
     origin = dict(
         body_ref="cli:disposable:other-body",
-        embodiment_id="embodiment:" + str(uuid.uuid4()),
+        embodiment_id="embodiment:00000000-0000-4000-8000-000000000001",
         incarnation_id="incarnation:" + str(uuid.uuid4()),
         principal_id="other-body",
     )
@@ -350,6 +350,32 @@ class ChatLinkTests(unittest.TestCase):
                     )
                 )
             if existing_peer_successor:
+                old_card = next(
+                    event
+                    for event in make_plan(
+                        runtimes[1],
+                        public[1],
+                        public[0],
+                        ["http://127.0.0.1:28686", "http://127.0.0.1:28687"],
+                        dict(
+                            bot_id=123,
+                            chat_id=-100123,
+                            topic_id=None,
+                            representation="plain-json/v2",
+                        ),
+                    )["events"]
+                    if event["kind"] == "matrix/relationship-card"
+                    and event["being_ref"]
+                    == public[1]["document"]["authority"]["manifest"]["being_ref"]
+                )
+                runtimes[1].service.ledger.ingest(
+                    [old_card], source="existing-peer-card"
+                )
+                from tools.chat_link import public_identity
+
+                public[1] = public_identity(
+                    runtimes[1], read_public(root / "1/package/runtime/runtime.json")
+                )
                 bundle_path = root / "0/package/runtime/runtime.json"
                 bundle = read_public(bundle_path)
                 known = known_peer(
@@ -359,9 +385,26 @@ class ChatLinkTests(unittest.TestCase):
                     "cas_filename": "sources.sqlite3",
                     "known_beings": [known],
                 }
+                bundle["relationships"] = {
+                    "store_filename": "relationships.sqlite3",
+                    "known_being_refs": [known["manifest"]["being_ref"]],
+                }
                 from daimon_matrix.canonical import canonical_bytes
 
                 bundle_path.write_bytes(canonical_bytes(bundle))
+                runtimes[0] = load_runtime(
+                    root / "0/package/runtime",
+                    "runtime.json",
+                    lambda: bytearray(passwords[0]),
+                    clock=now,
+                    egress=closed_visibility(clock=now, catalog_mode="migrate"),
+                )
+                runtimes[0].service.relationships.store.ingest(old_card)
+                old_ledger = runtimes[0].service.sources.registry.known_ledgers[
+                    known["manifest"]["being_ref"]
+                ]
+                old_ledger.ingest([old_card], source="existing-peer-card")
+                preserved_events = old_ledger.events(include_incomplete=True)
                 runtimes[1], public[1], _ = card_from_other_body(
                     root / "1", public[0], issue_card=False
                 )
@@ -492,8 +535,19 @@ class ChatLinkTests(unittest.TestCase):
                         "sources"
                     ]["known_beings"]
                     self.assertEqual(len(saved), 1)
-                    self.assertEqual(
+                    self.assertNotEqual(
                         saved[0]["ledger_filename"], known["ledger_filename"]
+                    )
+                    self.assertEqual(
+                        old_ledger.events(include_incomplete=True), preserved_events
+                    )
+                    self.assertIn(old_card, payload["plan"]["prior_cards"])
+                    self.assertFalse(
+                        any(
+                            event["kind"] == "matrix/relationship-card"
+                            and event["being_ref"] == old_card["being_ref"]
+                            for event in payload["plan"]["events"]
+                        )
                     )
                     self.assertEqual(
                         saved[0]["manifest"],
