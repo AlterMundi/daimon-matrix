@@ -125,6 +125,53 @@ def write(path: Path, value: Any) -> None:
         os.fsync(stream.fileno())
 
 
+def known_peer(
+    document: dict[str, Any],
+    authority: RootHistoryAuthority,
+    existing: list[dict[str, Any]],
+    link_id: str,
+) -> dict[str, Any]:
+    """Advance a trusted peer along its signed history and retain its ledger."""
+    known = {k: v for k, v in document["authority"].items() if k != "schema"}
+    known.update(
+        authority_history=document["authority_history"],
+        ledger_filename="peer-" + link_id + ".sqlite",
+    )
+    matches = [
+        row
+        for row in existing
+        if row["manifest"]["being_ref"] == authority.state.being_ref
+    ]
+    if not matches:
+        return known
+    if len(matches) != 1:
+        raise ValueError("chat_link_peer_authority_conflict")
+    previous = matches[0]
+    controls, history = previous["control_artifacts"], previous["authority_history"]
+    if (
+        known["control_artifacts"][: len(controls)] != controls
+        or known["authority_history"][: len(history)] != history
+    ):
+        raise ValueError("chat_link_peer_authority_conflict")
+    anchored = next(
+        (
+            epoch
+            for epoch in (*authority.historical, authority.active)
+            if epoch.manifest.value == previous["manifest"]
+            and epoch.state.head == previous["control_head"]
+        ),
+        None,
+    )
+    if anchored is None or any(
+        getattr(anchored, field).get(artifact["artifact_id"]) != artifact
+        for field in ("credentials", "incarnations")
+        for artifact in previous[field]
+    ):
+        raise ValueError("chat_link_peer_authority_conflict")
+    known["ledger_filename"] = previous["ledger_filename"]
+    return known
+
+
 def public_identity(runtime: Any, bundle: dict[str, Any]) -> dict[str, Any]:
     document = {
         "schema": "dm.onboarding.prepared-chat-identity/v1",
@@ -880,20 +927,16 @@ def install_link(
     if not (output / "runtime-before.json").exists():
         put(output / "runtime-before.json", bundle)
     peer = plan["identities"][1 - actor]["document"]
-    known = {k: v for k, v in peer["authority"].items() if k != "schema"}
-    known.update(
-        authority_history=peer["authority_history"],
-        ledger_filename="peer-" + plan["link_id"] + ".sqlite",
-    )
     if bundle["sources"] is None:
         bundle["sources"] = {"cas_filename": "sources.sqlite3", "known_beings": []}
     existing = bundle["sources"]["known_beings"]
+    known = known_peer(peer, authorities[1 - actor], existing, plan["link_id"])
     matching = [
         item for item in existing if item["manifest"]["being_ref"] == beings[1 - actor]
     ]
-    if matching and matching != [known]:
-        raise ValueError("chat_link_peer_authority_conflict")
-    if not matching:
+    if matching:
+        existing[existing.index(matching[0])] = known
+    else:
         existing.append(known)
     if bundle["relationships"] is None:
         bundle["relationships"] = {
