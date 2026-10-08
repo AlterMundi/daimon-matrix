@@ -11,6 +11,7 @@ PEER_FILES = frozenset(
     {
         "tools/chat_link.py",
         "tests/test_chat_link.py",
+        "tests/test_chat_host.py",
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
         ".github/workflows/tests.yml",

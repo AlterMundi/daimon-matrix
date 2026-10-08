@@ -944,7 +944,11 @@ def install_link(
                 "endpoint": plan["endpoints"][target] + "/dm-messaging/v1/" + phase,
             }
     spec = {
-        "schema": "dm.messaging.application/v1",
+        "schema": (
+            "dm.messaging.application/v2"
+            if runtime.service.communication.receipts_v2
+            else "dm.messaging.application/v1"
+        ),
         "listen": {"host": endpoint.hostname, "port": endpoint.port},
         "authorities": [p["document"]["authority"] for p in plan["identities"]],
         "relationship_events": [*plan["prior_cards"], *events],
