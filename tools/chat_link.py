@@ -9,6 +9,7 @@ import os
 import secrets
 import time
 import uuid
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -54,18 +55,19 @@ def verify_identity(value: dict[str, Any]) -> RootHistoryAuthority:
     if set(value) != {"document", "binding"}:
         raise ValueError("chat_link_identity_shape")
     document = value["document"]
-    if (
-        set(document)
-        != {
-            "schema",
-            "authority",
-            "authority_history",
-            "origin",
-            "runtime_id",
-            "runtime_label",
-        }
-        or document["schema"] != "dm.onboarding.prepared-chat-identity/v1"
-    ):
+    expected = {
+        "schema",
+        "authority",
+        "authority_history",
+        "origin",
+        "runtime_id",
+        "runtime_label",
+    }
+    if document.get("schema") == "dm.onboarding.prepared-chat-identity/v2":
+        expected |= {"ledger_head", "relationship_cards"}
+    elif document.get("schema") != "dm.onboarding.prepared-chat-identity/v1":
+        raise ValueError("chat_link_identity_shape")
+    if set(document) != expected:
         raise ValueError("chat_link_identity_shape")
     active = authority_from_document(document["authority"])
     entries = document["authority_history"]
@@ -125,9 +127,62 @@ def write(path: Path, value: Any) -> None:
         os.fsync(stream.fileno())
 
 
+def known_peer(
+    document: dict[str, Any],
+    authority: RootHistoryAuthority,
+    existing: list[dict[str, Any]],
+    link_id: str,
+) -> dict[str, Any]:
+    """Advance a trusted peer along its signed history and retain its ledger."""
+    known = {k: v for k, v in document["authority"].items() if k != "schema"}
+    known.update(
+        authority_history=document["authority_history"],
+        ledger_filename="peer-" + link_id + ".sqlite",
+    )
+    matches = [
+        row
+        for row in existing
+        if row["manifest"]["being_ref"] == authority.state.being_ref
+    ]
+    if not matches:
+        return known
+    if len(matches) != 1:
+        raise ValueError("chat_link_peer_authority_conflict")
+    previous = matches[0]
+    controls, history = previous["control_artifacts"], previous["authority_history"]
+    if (
+        known["control_artifacts"][: len(controls)] != controls
+        or known["authority_history"][: len(history)] != history
+    ):
+        raise ValueError("chat_link_peer_authority_conflict")
+    anchored = next(
+        (
+            epoch
+            for epoch in (*authority.historical, authority.active)
+            if epoch.manifest.value == previous["manifest"]
+            and epoch.state.head == previous["control_head"]
+        ),
+        None,
+    )
+    if anchored is None or any(
+        getattr(anchored, field).get(artifact["artifact_id"]) != artifact
+        for field in ("credentials", "incarnations")
+        for artifact in previous[field]
+    ):
+        raise ValueError("chat_link_peer_authority_conflict")
+    known["ledger_filename"] = (
+        previous["ledger_filename"]
+        if known["manifest"] == previous["manifest"]
+        else "peer-successor-"
+        + hashlib.sha256(canonical_bytes(known["manifest"])).hexdigest()
+        + ".sqlite"
+    )
+    return known
+
+
 def public_identity(runtime: Any, bundle: dict[str, Any]) -> dict[str, Any]:
     document = {
-        "schema": "dm.onboarding.prepared-chat-identity/v1",
+        "schema": "dm.onboarding.prepared-chat-identity/v2",
         "authority": {
             "schema": AUTHORITY_SCHEMA,
             **{
@@ -145,6 +200,22 @@ def public_identity(runtime: Any, bundle: dict[str, Any]) -> dict[str, Any]:
         "origin": bundle["local_origin"],
         "runtime_id": bundle["runtime_id"],
         "runtime_label": bundle["runtime_label"],
+        "ledger_head": next(
+            (
+                head
+                for head in runtime.service.ledger.heads()
+                if head["incarnation_id"] == bundle["local_origin"]["incarnation_id"]
+            ),
+            None,
+        ),
+        "relationship_cards": [
+            event
+            for event in runtime.service.relationships.store.events()
+            if event["kind"] == "matrix/relationship-card"
+            and event["being_ref"] == bundle["manifest"]["being_ref"]
+        ]
+        if runtime.service.relationships
+        else [],
     }
     return {"document": document, "binding": create_binding(runtime, document)}
 
@@ -180,7 +251,7 @@ def make_plan(
         ),
         None,
     )
-    heads = [local_head, None]  # Joining a prepared, never-used peer is explicit.
+    heads = [local_head, remote_public["document"].get("ledger_head")]
     start = now()
     link_id = str(uuid.uuid4())
     events = []
@@ -193,9 +264,37 @@ def make_plan(
             if runtime.service.relationships
             else []
         )
-        if e["kind"] == "matrix/relationship-card" and e["being_ref"] == beings[0]
+        if e["kind"] == "matrix/relationship-card" and e["being_ref"] in beings
     ]
-    prior_cards.sort(key=lambda e: e["payload"]["sequence"])
+    prior_cards.extend(remote_public["document"].get("relationship_cards", []))
+    prior_cards = list(
+        {canonical_bytes(event): event for event in prior_cards}.values()
+    )
+    prior_cards.sort(key=lambda e: (e["being_ref"], e["payload"]["sequence"]))
+    from daimon_matrix.relationship_store import RelationshipView
+    from daimon_matrix.runtime import verify_relationship_card_authority
+
+    for card_event in prior_cards:
+        if (
+            card_event["kind"] != "matrix/relationship-card"
+            or card_event["being_ref"] not in beings
+        ):
+            raise ValueError("chat_link_existing_card_scope")
+        verify_event(card_event, authorities[beings.index(card_event["being_ref"])])
+    view = RelationshipView(
+        prior_cards,
+        at_ms=start,
+        card_verifier=lambda card, at: verify_relationship_card_authority(
+            card, authorities[beings.index(card["being_ref"])], at_ms=at
+        ),
+    )
+    reusable_cards = []
+    for being in beings:
+        rows = [event for event in prior_cards if event["being_ref"] == being]
+        current = view.cards.get(being, {}).get("current")
+        if rows and current is None:
+            raise ValueError("chat_link_existing_card_not_current")
+        reusable_cards.append(current)
 
     def append(actor: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload = rel.validate_relationship_event_payload(
@@ -244,7 +343,7 @@ def make_plan(
     resource_id = rel.resource_ref(resource)
     # Adding a peer must not rotate the being-wide card and stale every already
     # accepted relationship. Reuse the current valid card/resource when possible.
-    reusable = prior_cards[-1] if prior_cards else None
+    reusable = reusable_cards[0]
     if reusable is not None:
         from daimon_matrix.runtime import verify_relationship_card_authority
 
@@ -265,10 +364,10 @@ def make_plan(
         resource_id = candidates[0]["resource_ref"]
     cards = []
     for i in range(2):
-        if i == 0 and reusable is not None:
-            cards.append(reusable)
+        if reusable_cards[i] is not None:
+            cards.append(reusable_cards[i])
             continue
-        last = prior_cards[-1] if i == 0 and prior_cards else None
+        last = None
         cards.append(
             append(
                 i,
@@ -571,7 +670,7 @@ def sign_proposals(
         or dict(runtime.service.origin) != local["origin"]
     ):
         raise ValueError("chat_link_local_identity_mismatch")
-    if len(plan["events"]) not in (10, 11):
+    if len(plan["events"]) not in (9, 10, 11):
         raise ValueError("chat_link_event_count")
     actual = next(
         (
@@ -877,23 +976,36 @@ def install_link(
     ]
     if actual_head not in allowed_heads:
         raise ValueError("chat_link_local_head_changed")
+    if preflight.service.relationships is not None:
+        from daimon_matrix.relationship_store import RelationshipView
+
+        context = preflight.service.relationships
+        combined = [*context.store.events(), *plan["prior_cards"], *events]
+        combined = list({canonical_bytes(event): event for event in combined}.values())
+
+        def verify_card(card, at):
+            if card["being_ref"] in by_being:
+                return verify_relationship_card_authority(
+                    card, by_being[card["being_ref"]], at_ms=at
+                )
+            return context.card_verifier(card, at)
+
+        RelationshipView(combined, at_ms=now(), card_verifier=verify_card).snapshot(
+            plan["tribe_ref"]
+        )
     if not (output / "runtime-before.json").exists():
         put(output / "runtime-before.json", bundle)
     peer = plan["identities"][1 - actor]["document"]
-    known = {k: v for k, v in peer["authority"].items() if k != "schema"}
-    known.update(
-        authority_history=peer["authority_history"],
-        ledger_filename="peer-" + plan["link_id"] + ".sqlite",
-    )
     if bundle["sources"] is None:
         bundle["sources"] = {"cas_filename": "sources.sqlite3", "known_beings": []}
     existing = bundle["sources"]["known_beings"]
+    known = known_peer(peer, authorities[1 - actor], existing, plan["link_id"])
     matching = [
         item for item in existing if item["manifest"]["being_ref"] == beings[1 - actor]
     ]
-    if matching and matching != [known]:
-        raise ValueError("chat_link_peer_authority_conflict")
-    if not matching:
+    if matching:
+        existing[existing.index(matching[0])] = known
+    else:
         existing.append(known)
     if bundle["relationships"] is None:
         bundle["relationships"] = {
@@ -904,6 +1016,63 @@ def install_link(
     if beings[1 - actor] not in refs:
         refs.append(beings[1 - actor])
         refs.sort()
+    if matching and preflight.service.sources is not None:
+        # Known-source ledgers are remote evidence, not a local signing body.
+        # Verify their complete immutable history before advancing the binding.
+        ledger = preflight.service.sources.registry.known_ledgers[beings[1 - actor]]
+        import sqlite3
+
+        from daimon_matrix.ledger import Ledger
+
+        member = next(
+            row for row in known["manifest"]["embodiments"] if row["status"] == "active"
+        )
+        credential = authorities[1 - actor].credentials[
+            member["embodiment_credential_id"]
+        ]
+        origin = {
+            key: member[key] for key in ("body_ref", "embodiment_id", "incarnation_id")
+        }
+        origin["principal_id"] = credential["body"]["transport_principals"][0][
+            "principal_id"
+        ]
+        path = runtime_root / known["ledger_filename"]
+        if path != ledger.path:
+            if not path.exists():
+                put(path, b"")
+                with (
+                    ledger._database() as before,
+                    closing(sqlite3.connect(path)) as after,
+                ):
+                    before.backup(after)
+            with closing(sqlite3.connect(path)) as database:
+                selected = database.execute(
+                    "SELECT value FROM metadata WHERE key='local_embodiment_id'"
+                ).fetchone()[0]
+            if selected not in (
+                ledger.local_origin["embodiment_id"],
+                origin["embodiment_id"],
+            ):
+                raise ValueError("chat_link_peer_authority_conflict")
+            advanced = Ledger(
+                path,
+                authority=authorities[1 - actor],
+                local_origin=origin
+                if selected == origin["embodiment_id"]
+                else ledger.local_origin,
+                clock=now,
+            )
+            advanced.initialize()
+            with advanced._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                database.execute(
+                    "UPDATE metadata SET value=? WHERE key='local_embodiment_id'",
+                    (member["embodiment_id"],),
+                )
+                database.commit()
+            Ledger(
+                path, authority=authorities[1 - actor], local_origin=origin, clock=now
+            ).initialize()
     replace_document(bundle_path, bundle)
     runtime = load_runtime(
         runtime_root,
@@ -1165,14 +1334,28 @@ def offer(
         raise ValueError("chat_link_token_digest")
     if (output / "pending.json").exists():
         payload = read_public(output / "pending.json")
+        retained = payload["plan"]["identities"][0]
+        verify_identity(retained)
+        ignored = {"schema", "ledger_head", "relationship_cards"}
         if (
-            payload["plan"]["identities"] != [local, peer]
+            {
+                key: value
+                for key, value in retained["document"].items()
+                if key not in ignored
+            }
+            != {
+                key: value
+                for key, value in local["document"].items()
+                if key not in ignored
+            }
+            or payload["plan"]["identities"][1] != peer
             or payload["plan"]["endpoints"] != endpoints
             or payload["plan"]["destination"] != destination
         ):
             raise ValueError("chat_link_existing_offer_conflict")
         if (output / "offer.json").exists():
             return output / "offer.json"
+        local = retained
     else:
         plan = make_plan(runtime, local, peer, endpoints, destination)
         payload = {

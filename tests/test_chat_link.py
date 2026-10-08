@@ -13,6 +13,7 @@ from tools.chat_link import (
     disclosures,
     encrypt_packet,
     install_link,
+    known_peer,
     make_plan,
     now,
     policies,
@@ -23,7 +24,7 @@ from tools.chat_link import (
 from tools.prepare_chat_identity import prepare
 
 
-def card_from_other_body(home, peer):
+def card_from_other_body(home, peer, *, issue_card=True):
     """Root-enroll a real second body and import its signed being-wide card."""
     import secrets
     import uuid
@@ -45,7 +46,7 @@ def card_from_other_body(home, peer):
     signing = secrets.token_bytes(32)
     origin = dict(
         body_ref="cli:disposable:other-body",
-        embodiment_id="embodiment:" + str(uuid.uuid4()),
+        embodiment_id="embodiment:00000000-0000-4000-8000-000000000001",
         incarnation_id="incarnation:" + str(uuid.uuid4()),
         principal_id="other-body",
     )
@@ -124,6 +125,8 @@ def card_from_other_body(home, peer):
         egress=closed_visibility(clock=now, catalog_mode="migrate"),
     )
     public = public_identity(runtime, bundle)
+    if not issue_card:
+        return runtime, public, None
     draft = make_plan(
         runtime,
         public,
@@ -209,6 +212,28 @@ class ChatLinkTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_identity(changed)
 
+    def test_existing_peer_cannot_change_its_trusted_authority(self):
+        document = self.public[1]["document"]
+        authority = verify_identity(self.public[1])
+        known = known_peer(document, authority, [], "first-link")
+        for field in ("manifest", "control_head", "authority_history", "credentials"):
+            changed = copy.deepcopy(known)
+            if field == "manifest":
+                changed[field]["revision"] += 1
+            elif field == "control_head":
+                changed[field] = "forged"
+            elif field == "authority_history":
+                changed[field].append({"manifest": "forged"})
+            else:
+                changed[field][0]["artifact_id"] = "forged"
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(ValueError, "chat_link_peer_authority_conflict"),
+            ):
+                known_peer(document, authority, [changed], "second-link")
+        with self.assertRaisesRegex(ValueError, "chat_link_peer_authority_conflict"):
+            known_peer(document, authority, [known, known], "second-link")
+
     def test_drafts_need_real_peer_signature_and_form_active_relationship(self):
         plan = self.plan()
         remote = self.public[1]["document"]["authority"]["manifest"]["being_ref"]
@@ -278,8 +303,18 @@ class ChatLinkTests(unittest.TestCase):
             additional_link=True, semantic_actors=(0, 1)
         )
 
+    def test_known_peer_signed_enrollment_preserves_its_ledger_on_retry(self):
+        self._complete_signed_install_and_retry_without_network(
+            additional_link=True, existing_peer_successor=True
+        )
+
     def _complete_signed_install_and_retry_without_network(
-        self, *, additional_link=False, other_body_card=False, semantic_actors=()
+        self,
+        *,
+        additional_link=False,
+        other_body_card=False,
+        semantic_actors=(),
+        existing_peer_successor=False,
     ):
         import hashlib
         import secrets
@@ -313,6 +348,65 @@ class ChatLinkTests(unittest.TestCase):
                         clock=now,
                         egress=closed_visibility(clock=now, catalog_mode="migrate"),
                     )
+                )
+            if existing_peer_successor:
+                old_card = next(
+                    event
+                    for event in make_plan(
+                        runtimes[1],
+                        public[1],
+                        public[0],
+                        ["http://127.0.0.1:28686", "http://127.0.0.1:28687"],
+                        dict(
+                            bot_id=123,
+                            chat_id=-100123,
+                            topic_id=None,
+                            representation="plain-json/v2",
+                        ),
+                    )["events"]
+                    if event["kind"] == "matrix/relationship-card"
+                    and event["being_ref"]
+                    == public[1]["document"]["authority"]["manifest"]["being_ref"]
+                )
+                runtimes[1].service.ledger.ingest(
+                    [old_card], source="existing-peer-card"
+                )
+                from tools.chat_link import public_identity
+
+                public[1] = public_identity(
+                    runtimes[1], read_public(root / "1/package/runtime/runtime.json")
+                )
+                bundle_path = root / "0/package/runtime/runtime.json"
+                bundle = read_public(bundle_path)
+                known = known_peer(
+                    public[1]["document"], verify_identity(public[1]), [], "existing"
+                )
+                bundle["sources"] = {
+                    "cas_filename": "sources.sqlite3",
+                    "known_beings": [known],
+                }
+                bundle["relationships"] = {
+                    "store_filename": "relationships.sqlite3",
+                    "known_being_refs": [known["manifest"]["being_ref"]],
+                }
+                from daimon_matrix.canonical import canonical_bytes
+
+                bundle_path.write_bytes(canonical_bytes(bundle))
+                runtimes[0] = load_runtime(
+                    root / "0/package/runtime",
+                    "runtime.json",
+                    lambda: bytearray(passwords[0]),
+                    clock=now,
+                    egress=closed_visibility(clock=now, catalog_mode="migrate"),
+                )
+                runtimes[0].service.relationships.store.ingest(old_card)
+                old_ledger = runtimes[0].service.sources.registry.known_ledgers[
+                    known["manifest"]["being_ref"]
+                ]
+                old_ledger.ingest([old_card], source="existing-peer-card")
+                preserved_events = old_ledger.events(include_incomplete=True)
+                runtimes[1], public[1], _ = card_from_other_body(
+                    root / "1", public[0], issue_card=False
                 )
             if other_body_card:
                 runtimes[0], public[0], prior_card = card_from_other_body(
@@ -436,6 +530,29 @@ class ChatLinkTests(unittest.TestCase):
                         additional_link=additional_link,
                     )
                 payload = read_public(outputs[0] / "completed-private.json")
+                if existing_peer_successor:
+                    saved = read_public(root / "0/package/runtime/runtime.json")[
+                        "sources"
+                    ]["known_beings"]
+                    self.assertEqual(len(saved), 1)
+                    self.assertNotEqual(
+                        saved[0]["ledger_filename"], known["ledger_filename"]
+                    )
+                    self.assertEqual(
+                        old_ledger.events(include_incomplete=True), preserved_events
+                    )
+                    self.assertIn(old_card, payload["plan"]["prior_cards"])
+                    self.assertFalse(
+                        any(
+                            event["kind"] == "matrix/relationship-card"
+                            and event["being_ref"] == old_card["being_ref"]
+                            for event in payload["plan"]["events"]
+                        )
+                    )
+                    self.assertEqual(
+                        saved[0]["manifest"],
+                        public[1]["document"]["authority"]["manifest"],
+                    )
                 for i in range(2):
                     output = root / f"link-{i}"
                     result = install_link(
