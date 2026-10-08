@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Discover, export, verify and stage private Hermes/Codex contextual continuity.
 
-Python 3.11+ stdlib only. No harness execution, account access or live import.
+Python 3.11+ stdlib for ordinary archives. Recipient-protected archives use the
+Matrix-qualified cryptography==50.0.0. No harness execution or live import.
 Selected source homes must belong to the same being. Review the private plan.
 The being label does not filter profiles or database rows. Multi-profile homes
 require --selection with explicit owned context and approved omissions.
@@ -560,11 +561,29 @@ def sqlite_details(path: Path) -> dict[str, Any]:
         }
 
 
-def copy_source(source: Path, target: Path) -> dict[str, Any] | None:
+def copy_source(
+    source: Path, target: Path, *, isolated_snapshot: bool = False
+) -> dict[str, Any] | None:
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with source.open("rb") as stream:
         is_sqlite = stream.read(16) == b"SQLite format 3\x00"
     if is_sqlite:
+        if isolated_snapshot:
+            # SQLite readers can update the source SHM read marks. A protected
+            # faithful export opens only a private physical copy, including WAL,
+            # so even those source bytes remain untouched. The outer inventory
+            # checks still enforce the declared writer quiescence.
+            with tempfile.TemporaryDirectory(
+                prefix=".sqlite-copy-", dir=target.parent
+            ) as temporary:
+                copied = Path(temporary) / source.name
+                for suffix in ("", "-wal", "-shm", "-journal"):
+                    original = safe_path(Path(str(source) + suffix))
+                    if original.exists():
+                        outgoing = Path(str(copied) + suffix)
+                        shutil.copyfile(original, outgoing, follow_symlinks=False)
+                        outgoing.chmod(0o600)
+                return copy_source(copied, target)
         incoming = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)
         outgoing = sqlite3.connect(target)
         try:
@@ -613,14 +632,36 @@ def nonsecret_environment(source: Path) -> tuple[bytes, list[str]]:
 
 
 def export(
-    plan: dict[str, Any], output: Path, *, writers_stopped: bool
+    plan: dict[str, Any],
+    output: Path,
+    *,
+    writers_stopped: bool,
+    recipient: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if plan.get("schema") != PLAN_SCHEMA or not writers_stopped:
         raise ExportError("supported_plan_and_writer_quiescence_required")
     output = safe_path(output)
     if output.exists():
         raise ExportError("existing_output_refused")
-    if not (output.name.endswith((".tgz", ".tar.gz", ".zip"))):
+    protection = None
+    if recipient is not None:
+        try:
+            from tools import protected_being as protection
+        except ModuleNotFoundError:
+            import protected_being as protection
+        try:
+            protection.validate_recipient(recipient)
+            protection.crypto()
+            if not output.name.endswith(".dm-protected"):
+                raise ExportError("use_recipient_protected_output")
+            if (
+                output.parent.stat().st_uid != os.geteuid()
+                or output.parent.stat().st_mode & 0o077
+            ):
+                raise ExportError("private_protected_output_directory_required")
+        except protection.ProtectionError as error:
+            raise ExportError(str(error)) from None
+    elif not (output.name.endswith((".tgz", ".tar.gz", ".zip"))):
         raise ExportError("use_tgz_or_zip")
     sources = plan["sources"]
     ids = [s["id"] for s in sources]
@@ -642,7 +683,52 @@ def export(
         prefix="dm-being-export-", dir=output.parent
     ) as temporary:
         stage = Path(temporary)
-        entries, provenance = [], []
+        entries, provenance, credential_members = [], [], []
+
+        def scan_member(target: Path) -> None:
+            try:
+                scan_credentials(target)
+            except ExportError as error:
+                if (
+                    protection is None
+                    or str(error) != "embedded_credential_requires_separate_handoff"
+                ):
+                    raise
+                credential_members.append(target.relative_to(stage).as_posix())
+
+        def preserve_physical(source: dict, relative: str, original: Path) -> None:
+            # The logical snapshot remains the usable database. Preserve the
+            # exact physical original and WAL/SHM separately as attributed
+            # evidence, never as a replacement database or live configuration.
+            suffix = safe_name(relative + ".source-original")
+            name = f"payload/{source['id']}/{suffix}"
+            target = stage / name
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            before = digest(original)
+            shutil.copyfile(original, target, follow_symlinks=False)
+            target.chmod(0o600)
+            if digest(original) != before or digest(target) != before:
+                raise ExportError("source_changed_during_export")
+            scan_member(target)
+            entries.append(
+                dict(
+                    path=name,
+                    source_id=source["id"],
+                    relative_path=suffix,
+                    kind=source["kind"],
+                    bytes=target.stat().st_size,
+                    sha256=before,
+                    source_sha256=before,
+                    baseline_sha256=None,
+                    delta="unknown",
+                    physical_file_delta="unknown",
+                    executable=False,
+                    sqlite=None,
+                    derivation="exact_sqlite_physical_original",
+                    original_relative_path=relative,
+                )
+            )
+
         for source in sources:
             root = Path(source["root"])
             baseline = (
@@ -676,8 +762,29 @@ def export(
                 )
                 archive_name = f"payload/{source['id']}/{relative}"
                 target = stage / archive_name
-                database = copy_source(original, target)
-                scan_credentials(target)
+                if protection is not None:
+                    with original.open("rb") as stream:
+                        original_sqlite = stream.read(16) == b"SQLite format 3\x00"
+                    if original_sqlite:
+                        preserve_physical(source, relative, original)
+                        for sidecar in source["omissions"]:
+                            if (
+                                sidecar["reason"]
+                                == "sqlite_sidecar_requires_verified_database_snapshot"
+                                and sidecar["path"]
+                                in {relative + "-wal", relative + "-shm"}
+                            ):
+                                preserve_physical(
+                                    source,
+                                    sidecar["path"],
+                                    safe_path(root / sidecar["path"]),
+                                )
+                database = (
+                    copy_source(original, target, isolated_snapshot=True)
+                    if protection is not None
+                    else copy_source(original, target)
+                )
+                scan_member(target)
                 if digest(original) != source_hash:
                     raise ExportError("source_changed_during_export")
                 entries.append(
@@ -774,6 +881,17 @@ def export(
             "secret_scan": "known patterns only; opaque content needs owner review",
             "completeness": "selected roots preserved; reconcile omitted context",
         }
+        if protection is not None:
+            manifest["protected_history"] = dict(
+                schema=protection.SCHEMA,
+                recipient_digest=protection.fingerprint(recipient),
+                credential_members=sorted(credential_members),
+                physical_sqlite_originals="retained beside verified logical snapshots",
+                meaning=(
+                    "complete selected historical content; transport protection "
+                    "grants no identity or credential configuration"
+                ),
+            )
         (stage / "manifest.json").write_bytes(json_bytes(manifest))
         scan_credentials(stage / "manifest.json")
         names = ["manifest.json", *[f["path"] for f in entries]]
@@ -792,8 +910,16 @@ def export(
         candidate.chmod(0o600)
         with candidate.open("rb") as incoming:
             os.fsync(incoming.fileno())
-        # Atomic publication from same-filesystem staging, without replacement.
-        os.link(candidate, output)
+        # A protected export never publishes a plaintext archive. The only
+        # final artifact is recipient-bound authenticated ciphertext.
+        protected_result = None
+        if protection is not None:
+            try:
+                protected_result = protection.seal(candidate, output, recipient)
+            except protection.ProtectionError as error:
+                raise ExportError(str(error)) from None
+        else:
+            os.link(candidate, output)
         return {
             "schema": ARCHIVE_SCHEMA,
             "files": len(entries),
@@ -801,6 +927,9 @@ def export(
             "sha256": digest(output),
             "verified": True,
             "target_adoption": "not_performed",
+            **(
+                {"protection": protected_result} if protected_result is not None else {}
+            ),
         }
 
 
@@ -958,6 +1087,18 @@ def main(argv: list[str] | None = None) -> int:
         packing.add_argument(f"--{kind}-root", action="append", type=Path, default=[])
     packing.add_argument("--output", type=Path, required=True)
     packing.add_argument("--writers-stopped", action="store_true")
+    packing.add_argument(
+        "--recipient",
+        type=Path,
+        help=(
+            "Owner-scoped public transfer recipient downloaded from "
+            "the authenticated receiving portal"
+        ),
+    )
+    packing.add_argument(
+        "--recipient-sha256",
+        help="Exact recipient packet fingerprint supplied by that portal",
+    )
     for command in ("verify", "unpack"):
         check = commands.add_parser(
             command, help="Verify or stage; never adopt live context"
@@ -1028,7 +1169,32 @@ def main(argv: list[str] | None = None) -> int:
                     for root in getattr(args, f"{kind}_root")
                 )
                 plan = discover(args.being, roots)
-            report = export(plan, args.output, writers_stopped=args.writers_stopped)
+            recipient = None
+            if args.recipient is not None:
+                try:
+                    from tools import protected_being as protection
+                except ModuleNotFoundError:
+                    import protected_being as protection
+                raw_recipient = safe_path(args.recipient).read_bytes()
+                if len(raw_recipient) > protection.MAX_HEADER:
+                    raise ExportError("recipient_packet_resource_limit")
+                recipient = json.loads(raw_recipient)
+                try:
+                    if (
+                        not isinstance(args.recipient_sha256, str)
+                        or protection.fingerprint(recipient) != args.recipient_sha256
+                    ):
+                        raise ExportError("expected_transfer_recipient_required")
+                except protection.ProtectionError as error:
+                    raise ExportError(str(error)) from None
+            elif args.recipient_sha256 is not None:
+                raise ExportError("transfer_recipient_required")
+            report = export(
+                plan,
+                args.output,
+                writers_stopped=args.writers_stopped,
+                recipient=recipient,
+            )
         else:
             report = verify(
                 args.archive,

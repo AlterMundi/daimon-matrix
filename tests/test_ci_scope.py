@@ -8,6 +8,21 @@ from tools.ci_scope import profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_protected_archive_qualifies_crypto_without_unchanged_runtime_jobs(self):
+        changes = [
+            "tools/export_being.py",
+            "tools/protected_being.py",
+            "tools/receive_being.py",
+            "tests/test_being_receive.py",
+            "tests/test_being_protection.py",
+            "tests/test_ci_scope.py",
+            "tools/ci_scope.py",
+            ".github/workflows/tests.yml",
+        ]
+        self.assertEqual(profile(changes), "protected-archive")
+        self.assertEqual(profile([*changes, "pyproject.toml"]), "full")
+        self.assertEqual(profile([*changes, "src/daimon_matrix/keystore.py"]), "full")
+
     def test_archive_scanner_keeps_own_export_receive_boundary(self):
         changes = [
             "tools/export_being.py",
@@ -17,9 +32,11 @@ class CIScopeTests(unittest.TestCase):
             ".github/workflows/tests.yml",
         ]
         self.assertEqual(profile(changes), "archive")
+        self.assertEqual(
+            profile([*changes, "tools/receive_being.py"]), "protected-archive"
+        )
         for path in (
             "src/daimon_matrix/runtime.py",
-            "tools/receive_being.py",
             "pyproject.toml",
         ):
             self.assertEqual(profile([*changes, path]), "full")

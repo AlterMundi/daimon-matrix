@@ -36,10 +36,28 @@ ARCHIVE_FILES = frozenset(
         ".github/workflows/tests.yml",
     }
 )
+PROTECTED_FILES = ARCHIVE_FILES | frozenset(
+    {
+        "tools/protected_being.py",
+        "tools/receive_being.py",
+        "tests/test_being_receive.py",
+        "tests/test_being_protection.py",
+    }
+)
 
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed
+        & {
+            "tools/protected_being.py",
+            "tests/test_being_protection.py",
+            "tools/receive_being.py",
+        }
+        and changed <= PROTECTED_FILES
+    ):
+        return "protected-archive"
     if "tools/export_being.py" in changed and changed <= ARCHIVE_FILES:
         return "archive"
     if changed and changed <= PEER_FILES:

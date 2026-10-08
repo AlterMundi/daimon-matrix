@@ -9,6 +9,7 @@ prepared for the ordinary Codex installer. Native HMK runs only when requested.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import shutil
 import sqlite3
 import stat
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -67,7 +69,85 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ReceivingError("source_provenance_required")
 
 
-def discover(archive: Path, expected_sha256: str) -> dict[str, Any]:
+@contextlib.contextmanager
+def opened_transport(
+    archive: Path,
+    expected_sha256: str,
+    recipient: dict | None,
+    recipient_key: Path | None,
+):
+    """Only real decryption establishes a protected-history receiving boundary."""
+    archive = archive_path(archive)
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ReceivingError("expected_archive_sha256_required")
+    if (recipient is None) != (recipient_key is None):
+        raise ReceivingError("transfer_recipient_and_private_key_required_together")
+    if recipient is None:
+        yield archive, expected_sha256, None
+        return
+    try:
+        from tools import protected_being as protection
+    except ModuleNotFoundError:
+        import protected_being as protection
+    if archive_tool.digest(archive) != expected_sha256:
+        raise ReceivingError("protected_transport_digest_mismatch")
+    # Temporary plaintext is private and removed after discovery/preparation;
+    # prepare separately preserves authenticated originals and the cipher bytes.
+    with tempfile.TemporaryDirectory(prefix=".receiving-", dir=archive.parent) as name:
+        plain = Path(name) / "plaintext.archive"
+        proof = protection.open_archive(archive, plain, recipient, recipient_key)
+        if archive_tool.digest(archive) != expected_sha256:
+            raise ReceivingError("protected_transport_changed_during_receiving")
+        proof = {**proof, "transport_sha256": expected_sha256}
+        yield plain, proof["plaintext_sha256"], proof
+
+
+def validate_protected_manifest(manifest: dict, proof: dict | None) -> set[str]:
+    if proof is None:
+        return set()
+    marker = manifest.get("protected_history")
+    if (
+        not isinstance(marker, dict)
+        or set(marker)
+        != {
+            "schema",
+            "recipient_digest",
+            "credential_members",
+            "physical_sqlite_originals",
+            "meaning",
+        }
+        or marker["schema"] != proof["schema"]
+        or marker["recipient_digest"] != proof["recipient_digest"]
+        or not isinstance(marker["credential_members"], list)
+        or any(not isinstance(name, str) for name in marker["credential_members"])
+        or marker["credential_members"] != sorted(set(marker["credential_members"]))
+        or not set(marker["credential_members"])
+        <= {entry["path"] for entry in manifest["files"]}
+    ):
+        raise ReceivingError("protected_history_manifest_mismatch")
+    return set(marker["credential_members"])
+
+
+def discover(
+    archive: Path,
+    expected_sha256: str,
+    *,
+    recipient: dict | None = None,
+    recipient_key: Path | None = None,
+) -> dict[str, Any]:
+    with opened_transport(archive, expected_sha256, recipient, recipient_key) as opened:
+        plain, digest, proof = opened
+        result = _discover(plain, digest)
+        manifest = manifest_from_archive(plain)
+        validate_protected_manifest(manifest, proof)
+        if proof is not None:
+            result["discovery"].update(
+                archive_sha256=expected_sha256, protected_transport=proof
+            )
+        return result
+
+
+def _discover(archive: Path, expected_sha256: str) -> dict[str, Any]:
     archive = archive_path(archive)
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise ReceivingError("expected_archive_sha256_required")
@@ -222,6 +302,37 @@ def prepare(
     hmk_scripts: Path | None = None,
     receiving_soul: Path | None = None,
     foundation: Path | None = None,
+    recipient: dict | None = None,
+    recipient_key: Path | None = None,
+) -> dict[str, Any]:
+    with opened_transport(archive, expected_sha256, recipient, recipient_key) as opened:
+        plain, digest, proof = opened
+        return _prepare(
+            plain,
+            digest,
+            selection,
+            output,
+            hmk_python=hmk_python,
+            hmk_scripts=hmk_scripts,
+            receiving_soul=receiving_soul,
+            foundation=foundation,
+            transport_archive=archive if proof else None,
+            transport_proof=proof,
+        )
+
+
+def _prepare(
+    archive: Path,
+    expected_sha256: str,
+    selection: dict[str, Any],
+    output: Path,
+    *,
+    hmk_python: Path | None = None,
+    hmk_scripts: Path | None = None,
+    receiving_soul: Path | None = None,
+    foundation: Path | None = None,
+    transport_archive: Path | None = None,
+    transport_proof: dict | None = None,
 ) -> dict[str, Any]:
     output = archive_tool.safe_path(output)
     archive = archive_path(archive)
@@ -236,7 +347,24 @@ def prepare(
             raise ReceivingError("selected_native_hmk_not_installed")
     # Preserve incomplete private preparations on error; never reinitialize them.
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
-    preserved_archive = output / "source.archive"
+    received_sha256 = (
+        transport_proof["transport_sha256"] if transport_proof else expected_sha256
+    )
+    if transport_archive is not None:
+        preserved_transport = output / "source.archive"
+        with (
+            transport_archive.open("rb") as incoming,
+            preserved_transport.open("xb") as outgoing,
+        ):
+            preserved_transport.chmod(0o600)
+            shutil.copyfileobj(incoming, outgoing)
+            outgoing.flush()
+            os.fsync(outgoing.fileno())
+        if archive_tool.digest(preserved_transport) != received_sha256:
+            raise ReceivingError("protected_transport_changed_during_receiving")
+    preserved_archive = output / (
+        "plaintext.archive" if transport_proof else "source.archive"
+    )
     with archive.open("rb") as incoming, preserved_archive.open("xb") as outgoing:
         preserved_archive.chmod(0o600)
         shutil.copyfileobj(incoming, outgoing)
@@ -249,6 +377,8 @@ def prepare(
     manifest = json.loads((originals / "manifest.json").read_bytes())
     validate_manifest(manifest)
     entries = validate_selection(selection, manifest)
+    classified = validate_protected_manifest(manifest, transport_proof)
+    observed = set()
     for entry in manifest["files"]:
         if archive_tool.excluded(entry["relative_path"], entry["kind"]) == (
             "credential_or_custody_separate_handoff"
@@ -258,7 +388,18 @@ def prepare(
             == "nonsecret_dotenv; original remains at source"
         ):
             raise ReceivingError("credential_member_requires_separate_handoff")
-        archive_tool.scan_credentials(originals / entry["path"])
+        try:
+            archive_tool.scan_credentials(originals / entry["path"])
+        except archive_tool.ExportError as error:
+            if (
+                str(error) != "embedded_credential_requires_separate_handoff"
+                or entry["path"] not in classified
+                or Path(entry["relative_path"]).name == ".env.nonsecret"
+            ):
+                raise
+            observed.add(entry["path"])
+    if transport_proof is not None and observed != classified:
+        raise ReceivingError("protected_history_classification_mismatch")
     archive_tool.scan_credentials(originals / "manifest.json")
     context = output / "context"
     context.mkdir(mode=0o700)
@@ -331,7 +472,7 @@ def prepare(
     index = {
         "schema": "dm.being-continuity-index/v1",
         "being_label": label,
-        "archive_sha256": expected_sha256,
+        "archive_sha256": received_sha256,
         "files": manifest["files"],
         "sources": manifest["sources"],
         "external_references": manifest.get("external_references", []),
@@ -378,7 +519,7 @@ def prepare(
     archive_tool.new_file(context / "AGENTS.preview.md", candidate["AGENTS.md"])
     report = {
         "schema": PREPARATION_SCHEMA,
-        "archive_sha256": expected_sha256,
+        "archive_sha256": received_sha256,
         "being_label": label,
         "memory_coverage": selection["memory_coverage"],
         "selection": selection,
@@ -396,6 +537,16 @@ def prepare(
         "providers_called": False,
         "ready_for_context_install": True,
     }
+    if transport_proof is not None:
+        report["protected_transport"] = {
+            **transport_proof,
+            "sender_identity": (
+                "not_established_by_transport; Matrix enrollment required"
+            ),
+            "credential_history": (
+                "preserved privately; not installed as live credentials"
+            ),
+        }
     # Recursive mkdir's mode does not apply to intermediate directories.
     # Complete the private tree and durable directory entries before readiness.
     for directory in sorted(
@@ -408,7 +559,7 @@ def prepare(
     fsync_directory(output)
     return {
         "schema": PREPARATION_SCHEMA,
-        "archive_sha256": expected_sha256,
+        "archive_sha256": received_sha256,
         "prepared": True,
         "memory_stores": len(restored),
         "skills": len(selection["skills"]),
@@ -426,6 +577,9 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_argument("--archive", type=Path, required=True)
         sub.add_argument("--sha256", required=True)
         sub.add_argument("--output", type=Path, required=True)
+        sub.add_argument("--recipient", type=Path)
+        sub.add_argument("--recipient-key", type=Path)
+        sub.add_argument("--recipient-sha256")
         if command == "prepare":
             sub.add_argument("--selection", type=Path, required=True)
             sub.add_argument("--hmk-python", type=Path)
@@ -434,8 +588,26 @@ def main(argv: list[str] | None = None) -> int:
             sub.add_argument("--foundation", type=Path)
     args = parser.parse_args(argv)
     try:
+        recipient = None
+        if any((args.recipient, args.recipient_key, args.recipient_sha256)):
+            if not all((args.recipient, args.recipient_key, args.recipient_sha256)):
+                raise ReceivingError(
+                    "transfer_recipient_key_and_digest_required_together"
+                )
+            try:
+                from tools import protected_being as protection
+            except ModuleNotFoundError:
+                import protected_being as protection
+            recipient = json.loads(read_owned(args.recipient))
+            if protection.fingerprint(recipient) != args.recipient_sha256:
+                raise ReceivingError("transfer_recipient_digest_mismatch")
         if args.command == "discover":
-            selection = discover(args.archive, args.sha256)
+            selection = discover(
+                args.archive,
+                args.sha256,
+                recipient=recipient,
+                recipient_key=args.recipient_key,
+            )
             archive_tool.new_file(args.output, archive_tool.json_bytes(selection))
             result = {"schema": SELECTION_SCHEMA, "discovered": True}
         else:
@@ -448,6 +620,8 @@ def main(argv: list[str] | None = None) -> int:
                 hmk_scripts=args.hmk_scripts,
                 receiving_soul=args.receiving_soul,
                 foundation=args.foundation,
+                recipient=recipient,
+                recipient_key=args.recipient_key,
             )
         print(json.dumps(result))
         return 0
