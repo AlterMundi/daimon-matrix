@@ -36,6 +36,16 @@ from tools.prepare_chat_identity import prepare
 
 class ChatHostTests(unittest.TestCase):
     def test_three_identities_preserve_first_link_and_capability_isolation(self):
+        self._three_identities_preserve_first_link_and_capability_isolation()
+
+    def test_semantic_source_delivers_to_two_legacy_peers_with_original_links(self):
+        self._three_identities_preserve_first_link_and_capability_isolation(
+            semantic_source=True
+        )
+
+    def _three_identities_preserve_first_link_and_capability_isolation(
+        self, *, semantic_source=False
+    ):
         with tempfile.TemporaryDirectory(prefix="dm-host-") as directory:
             root = Path(directory).resolve()
             public, runtimes, passwords, configs = [], [], [], []
@@ -76,6 +86,8 @@ class ChatHostTests(unittest.TestCase):
                         "applications": [],
                     }
                 )
+            if semantic_source:
+                runtimes[0].service.communication.upgrade_receipts_v2()
             ports = []
             # Reserve distinct ports before closing sockets; no fixed CI ports.
             sockets = [socket.socket() for _ in range(4)]

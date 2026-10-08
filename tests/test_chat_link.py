@@ -268,8 +268,18 @@ class ChatLinkTests(unittest.TestCase):
             additional_link=True, other_body_card=True
         )
 
+    def test_semantic_source_keeps_other_body_card_and_legacy_receiving_peer(self):
+        self._complete_signed_install_and_retry_without_network(
+            additional_link=True, other_body_card=True, semantic_actors=(0,)
+        )
+
+    def test_two_semantic_bodies_complete_and_retry_additional_link(self):
+        self._complete_signed_install_and_retry_without_network(
+            additional_link=True, semantic_actors=(0, 1)
+        )
+
     def _complete_signed_install_and_retry_without_network(
-        self, *, additional_link=False, other_body_card=False
+        self, *, additional_link=False, other_body_card=False, semantic_actors=()
     ):
         import hashlib
         import secrets
@@ -308,6 +318,8 @@ class ChatLinkTests(unittest.TestCase):
                 runtimes[0], public[0], prior_card = card_from_other_body(
                     root / "0", public[1]
                 )
+            for actor in semantic_actors:
+                runtimes[actor].service.communication.upgrade_receipts_v2()
             if additional_link:
                 from daimon_matrix.native_egress import VISIBILITY_SCHEMA_VERSION
 
@@ -460,6 +472,18 @@ class ChatLinkTests(unittest.TestCase):
                             egress=closed_visibility(clock=now),
                         )
                         base.egress.validate_registered_catalogs()
+                        self.assertEqual(
+                            base.service.communication.receipts_v2,
+                            i in semantic_actors,
+                        )
+                        self.assertEqual(
+                            read_public(outputs[i] / "application/application.json")[
+                                "schema"
+                            ],
+                            "dm.messaging.application/v2"
+                            if i in semantic_actors
+                            else "dm.messaging.application/v1",
+                        )
                         view = application_view(
                             base,
                             outputs[i] / "application",
