@@ -490,7 +490,7 @@ def scan_credentials(path: Path) -> None:
             for match in ASSIGNMENT.finditer(data):
                 if any(
                     start <= offset + match.start()
-                    and value <= offset + match.start(1)
+                    and value == offset + match.start(1)
                     and offset + match.end(1) <= end
                     for start, value, end in references
                 ):
