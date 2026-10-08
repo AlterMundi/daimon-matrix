@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -19,6 +20,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools import export_being as tool
+
+BLANK_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwg"
+    "JC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIy"
+    "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QA"
+    "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh"
+    "MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVW"
+    "V1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+    "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
+    "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAV"
+    "YnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+    "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq"
+    "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=="
+)
 
 
 class BeingExportTests(unittest.TestCase):
@@ -85,6 +100,76 @@ class BeingExportTests(unittest.TestCase):
                 }
             ],
         }
+
+    def test_code_reference_and_blank_jpeg_round_trip_without_content_changes(
+        self,
+    ) -> None:
+        source = b"api_key = provider_configuration.resolve_active_provider_key\n"
+        self.put("provider.py", source)
+        self.put("blank.jpg", BLANK_JPEG)
+        self.assertTrue(tool.TOKEN.search(BLANK_JPEG))
+        self.pack()
+        target, _ = self.staged()
+        for name, raw in (("provider.py", source), ("blank.jpg", BLANK_JPEG)):
+            self.assertEqual((self.source / name).read_bytes(), raw)
+            self.assertEqual((target / "payload/hermes-001" / name).read_bytes(), raw)
+
+    def test_python_reference_classification_never_hides_literals_or_other_formats(
+        self,
+    ) -> None:
+        for name, raw in (
+            ("literal.py", b'api_key = "actualSyntheticCredential123456789"\n'),
+            (
+                "resolver.py",
+                b"api_key = provider_configuration.lookup("
+                b'"actualSyntheticCredential123456789")\n',
+            ),
+            ("broken.py", b"api_key = actualSyntheticCredential123456789\ninvalid(\n"),
+            ("settings.txt", b"api_key = actualSyntheticCredential123456789\n"),
+            (
+                "history.json",
+                b'{"text":"api_key = actualSyntheticCredential123456789"}',
+            ),
+            (
+                "code.py",
+                b"api_key = provider_configuration.current_key\n"
+                b'password = "actualSyntheticCredential123456789"\n',
+            ),
+        ):
+            with self.subTest(name=name):
+                path = self.put(name, raw)
+                with self.assertRaisesRegex(tool.ExportError, "embedded_credential"):
+                    tool.scan_credentials(path)
+
+    def test_jpeg_credentials_outside_exact_public_tables_remain_rejected(self) -> None:
+        secret = b"sk-" + b"a" * 40
+        comment = b"\xff\xfe" + (len(secret) + 2).to_bytes(2, "big") + secret
+        modified = bytearray(BLANK_JPEG)
+        # Keep the token-like symbol run, alter another symbol in its table.
+        table = modified.index(b"\xff\xc4\x00\xb5")
+        modified[table + 22] ^= 1
+        for raw in (
+            BLANK_JPEG + secret,
+            BLANK_JPEG[:2] + comment + BLANK_JPEG[2:],
+            bytes(modified),
+            BLANK_JPEG[2:],
+        ):
+            with self.subTest(bytes=len(raw)):
+                path = self.put("image.jpg", raw)
+                with self.assertRaisesRegex(tool.ExportError, "embedded_credential"):
+                    tool.scan_credentials(path)
+
+    def test_binary_sqlite_history_still_requires_credential_safe_handoff(self) -> None:
+        path = self.source / "history.db"
+        with closing(sqlite3.connect(path)) as connection:
+            connection.execute("CREATE TABLE messages(text)")
+            connection.execute("INSERT INTO messages VALUES (?)", ("sk-" + "a" * 40,))
+            connection.commit()
+        original = path.read_bytes()
+        with self.assertRaisesRegex(tool.ExportError, "embedded_credential"):
+            self.pack()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertFalse(self.archive.exists())
 
     def test_unapproved_profiles_fail_before_foreign_traversal(self) -> None:
         self.put("SOUL.md", b"selected default body")

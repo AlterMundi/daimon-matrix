@@ -87,6 +87,24 @@ jobs:
           tests.test_runtime_relationship_authority tests.test_cross_being_semantic_receipts
           tests.test_dm051_sealed tests.test_dm052_communication tests.test_dm053_routes -v
 
+  archive:
+    name: portable archive tools (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'archive'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+      - run: python -m pip install ruff==0.16.1
+      - run: python tools/check_frozen_invariants.py --skip-generated
+      - run: python -m ruff format --check tools/export_being.py tests/test_being_export.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/export_being.py tests/test_being_export.py tools/ci_scope.py tests/test_ci_scope.py
+      - name: Original bytes, SQLite integrity, hostile archives and target preservation
+        run: python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_being_export tests.test_being_receive -v
+
   tests:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
