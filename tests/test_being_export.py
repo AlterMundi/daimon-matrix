@@ -125,6 +125,11 @@ class BeingExportTests(unittest.TestCase):
                 b'"actualSyntheticCredential123456789")\n',
             ),
             ("broken.py", b"api_key = actualSyntheticCredential123456789\ninvalid(\n"),
+            (
+                "comment.py",
+                b"api_key = provider_configuration.resolve(\n"
+                b" # password = actualSyntheticCredential123456789\n)\n",
+            ),
             ("settings.txt", b"api_key = actualSyntheticCredential123456789\n"),
             (
                 "history.json",
