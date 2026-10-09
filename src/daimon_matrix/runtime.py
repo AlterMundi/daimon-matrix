@@ -107,6 +107,42 @@ class VisibilityFactoryContext:
     signer_public_key: bytes
     bundle_sha256: str
     authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
+    labels: LabelIndex | None = None
+
+    def display_identity(self, identity: str) -> str:
+        """Owner-approved display name; no routing or authority decision."""
+        if self.labels is None:
+            return identity
+        try:
+            # Native /we speech names its author as being/body, and its
+            # recipient by signed credential. Resolve those exact verified
+            # coordinates without borrowing a different being's body label.
+            if "/" in identity:
+                being_ref, embodiment_id = identity.split("/", 1)
+                target = self.labels.targets.get(embodiment_id)
+                return (
+                    target.label
+                    if target is not None and target.being_ref == being_ref
+                    else identity
+                )
+            target = self.labels.targets.get(identity)
+            if target is not None:
+                return target.label
+            matched = []
+            for being_ref, authority in self.authorities.items():
+                credential = authority.credentials.get(identity)
+                if credential is None:
+                    continue
+                target = self.labels.targets.get(credential["body"]["embodiment_id"])
+                if target is not None and target.being_ref == being_ref:
+                    matched.append(target.label)
+                else:
+                    return identity
+            if matched:
+                return matched[0] if len(matched) == 1 else identity
+            return self.labels.being_name_of_ref(identity) or identity
+        except LabelError:
+            return identity
 
 
 VisibilityFactory = Callable[[VisibilityFactoryContext], MandatoryEgressController]
@@ -1244,6 +1280,7 @@ def load_runtime(
                 signer_public_key=signer.public_key,
                 bundle_sha256=hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
                 authorities=MappingProxyType(verified_authorities),
+                labels=load_label_index(root, active),
             )
         )
         if not isinstance(visibility, MandatoryEgressController):

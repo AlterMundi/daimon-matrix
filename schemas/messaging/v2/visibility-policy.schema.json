@@ -52,7 +52,11 @@
       ]
     },
     "representation": {
-      "const": "plain-json/v2"
+      "enum": [
+        "plain-json/v2",
+        "compact-html/v1",
+        "compact-text/v1"
+      ]
     },
     "acceptance_digest": {
       "type": "string",

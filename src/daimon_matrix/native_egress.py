@@ -218,6 +218,7 @@ def load_owner_visibility(
     verify_participant_binding: ParticipantBindingVerifier,
     clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
     catalog_mode: Literal["validate", "migrate"] = "validate",
+    presentation_resolver: Callable[[str], str] | None = None,
 ) -> MandatoryEgressController:
     """Verify one closed signed installation and construct an offline controller."""
 
@@ -419,6 +420,11 @@ def load_owner_visibility(
             bot_id=policy["bot_id"],
             chat_id=policy["chat_id"],
             topic_id=policy["topic_id"],
+            reference_directory=(
+                Path(os.environ["DM_TRIBU_REFERENCE_DIRECTORY"])
+                if os.environ.get("DM_TRIBU_REFERENCE_DIRECTORY")
+                else None
+            ),
         )
         return MandatoryEgressController(
             policy=policy,
@@ -429,6 +435,7 @@ def load_owner_visibility(
             installation_digest=installation_sha256,
             owner_actor=owner_actor,
             verify_owner_binding=verify_owner_binding,
+            presentation_resolver=presentation_resolver,
             mirror_sibling_conversations=(
                 scope["mode"] == "all-inter-daimon-and-sibling-conversations"
             ),
@@ -447,6 +454,7 @@ def load_owner_visibility_file(
     verify_participant_binding: ParticipantBindingVerifier | None = None,
     clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
     catalog_mode: Literal["validate", "migrate"] = "validate",
+    presentation_resolver: Callable[[str], str] | None = None,
 ) -> MandatoryEgressController:
     """Load a canonical owner-signed installation; missing verifiers fail closed."""
 
@@ -468,6 +476,7 @@ def load_owner_visibility_file(
         verify_participant_binding=verify_participant_binding,
         clock=clock,
         catalog_mode=catalog_mode,
+        presentation_resolver=presentation_resolver,
     )
 
 
@@ -706,6 +715,11 @@ def _valid_text(value: str, *, maximum: int = 256) -> bool:
 class MandatoryEgressController:
     """One shared mandatory-visibility controller and one process-wide fence."""
 
+    @property
+    def representation(self) -> str:
+        """Configured presentation; retained operations keep their own binding."""
+        return str(self._policy["representation"])
+
     def __init__(
         self,
         *,
@@ -718,9 +732,11 @@ class MandatoryEgressController:
         owner_actor: str | None = None,
         verify_owner_binding: OwnerBindingVerifier | None = None,
         mirror_sibling_conversations: bool = False,
+        presentation_resolver: Callable[[str], str] | None = None,
     ) -> None:
         if not isinstance(proof_key, bytes) or len(proof_key) != 32:
             raise NativeEgressError("egress_proof_key_invalid")
+        self._presentation_resolver = presentation_resolver
         self._policy = json.loads(json.dumps(dict(policy)))
         self._proof_key = bytes(proof_key)
         self._transport = transport
@@ -1525,8 +1541,32 @@ class MandatoryEgressController:
             authentication_key=self._proof_key,
         )
         try:
+            reference = None
+            lookup = getattr(self._transport, "lookup_reference", None)
+            if (
+                self._policy["representation"] == "compact-text/v1"
+                and projection["reply_to"] is not None
+                and lookup is not None
+            ):
+                reference = lookup(projection["reply_to"])
+            presentation = None
+            if self._policy["representation"] == "compact-text/v1":
+                resolve = self._presentation_resolver or (lambda value: value)
+                presentation = {
+                    "sender": resolve(projection["sender"]),
+                    "recipients": [
+                        resolve(value) for value in projection["recipients"]
+                    ],
+                }
+                parent = projection["reply_to"]
+                if parent is not None and "sender" in parent:
+                    presentation["reply_sender"] = resolve(parent["sender"])
             echo_digest = journal.admit(
-                echo_operation_id, dict(projection), self._policy
+                echo_operation_id,
+                dict(projection),
+                self._policy,
+                telegram_reference=reference,
+                presentation=presentation,
             )
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None

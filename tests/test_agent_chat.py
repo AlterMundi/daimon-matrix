@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -18,7 +19,7 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3, ClientConfig, ClientError
 from daimon_matrix.local_api import create_capability
 from daimon_matrix.service import MESSAGING_METHODS
-from tools.install_agent_chat import install
+from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
@@ -83,6 +84,85 @@ class AgentChatTests(unittest.TestCase):
         )
         self.assertFalse((self.args.hermes_home / "config.yaml").exists())
         self.assertFalse((self.args.hermes_home / "SOUL.md").exists())
+
+    def test_offline_guidance_refresh_preserves_identity_commands_and_retry_bytes(self):
+        self.setup_binding()
+        connection_path = self.args.attachment / "connection.json"
+        connection = json.loads(connection_path.read_bytes())
+        original_command = connection["command"]
+        for tool in connection["tools"]:
+            tool["description"] = "old guidance"
+            for prop in tool["parameters"].get("properties", {}).values():
+                prop.pop("description", None)
+        connection_path.write_bytes(canonical_bytes(connection))
+        skill = self.args.skills_dir / "daimon-chat/SKILL.md"
+        skill.write_bytes(b"previous skill version")
+        retry = self.args.attachment / "requests/retained.json"
+        retry.write_bytes(b"retained exact retry bytes")
+        frozen = {
+            p: p.read_bytes()
+            for p in (
+                self.args.attachment / "binding.json",
+                self.args.client_config,
+                self.args.client_key,
+                retry,
+            )
+        }
+        previous = {p: p.read_bytes() for p in (connection_path, skill)}
+        self.args.refresh_guidance_plan = self.write(
+            "refresh-plan.json",
+            canonical_bytes(
+                {
+                    "schema": "dm.agent-chat.guidance-plan/v1",
+                    "files": [
+                        {"path": str(p), "sha256": hashlib.sha256(raw).hexdigest()}
+                        for p, raw in previous.items()
+                    ],
+                }
+            ),
+        )
+        with patch("socket.socket", side_effect=AssertionError("no network")):
+            result = refresh_guidance(self.args)
+        self.assertEqual(result["status"], "refreshed")
+        self.assertEqual(result["files"], 2)
+        self.assertEqual(
+            json.loads(connection_path.read_bytes())["command"], original_command
+        )
+        self.assertIn(b"human-readable", skill.read_bytes())
+        self.assertEqual(frozen, {p: p.read_bytes() for p in frozen})
+        history = Path(result["history"])
+        self.assertEqual((history / "0.before").read_bytes(), previous[connection_path])
+        self.assertEqual((history / "1.before").read_bytes(), previous[skill])
+        with self.assertRaisesRegex(ValueError, "guidance_conflict"):
+            refresh_guidance(self.args)  # Stale plans cannot overwrite newer bytes.
+
+    def test_guidance_refresh_refuses_changed_schema_before_any_write(self):
+        self.setup_binding()
+        connection_path = self.args.attachment / "connection.json"
+        connection = json.loads(connection_path.read_bytes())
+        connection["tools"][1]["parameters"]["properties"]["unauthorized"] = {
+            "type": "string"
+        }
+        connection_path.write_bytes(canonical_bytes(connection))
+        raw = connection_path.read_bytes()
+        self.args.refresh_guidance_plan = self.write(
+            "refresh-plan.json",
+            canonical_bytes(
+                {
+                    "schema": "dm.agent-chat.guidance-plan/v1",
+                    "files": [
+                        {
+                            "path": str(connection_path),
+                            "sha256": hashlib.sha256(raw).hexdigest(),
+                        },
+                    ],
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "capability_change_refused"):
+            refresh_guidance(self.args)
+        self.assertEqual(connection_path.read_bytes(), raw)
+        self.assertFalse((self.args.attachment / "guidance-history").exists())
 
     def test_plugin_registration_never_reads_inbox_or_registers_hooks(self):
         self.setup_binding()

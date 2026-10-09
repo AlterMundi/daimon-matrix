@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import hmac
 import html
 import http.client
 import json
@@ -222,7 +223,12 @@ def render_plain_parts(document: str) -> list[str]:
 
 PLAIN_REPRESENTATION = "plain-json/v2"
 COMPACT_REPRESENTATION = "compact-html/v1"
-REPRESENTATIONS = (PLAIN_REPRESENTATION, COMPACT_REPRESENTATION)
+READABLE_REPRESENTATION = "compact-text/v1"
+REPRESENTATIONS = (
+    PLAIN_REPRESENTATION,
+    COMPACT_REPRESENTATION,
+    READABLE_REPRESENTATION,
+)
 
 _BEING_REF = re.compile(r"^dm:being:v1:[A-Za-z0-9_-]{43}$")
 _SPEECH_KINDS = ("message", "reply")
@@ -344,10 +350,112 @@ def render_echo_parts(projection: Mapping[str, Any], representation: str) -> lis
         )
     if representation == COMPACT_REPRESENTATION:
         return render_compact_parts(projection)
+    if representation == READABLE_REPRESENTATION:
+        return render_readable_parts(projection)
     raise ValueError("echo_representation_unknown")
 
 
-def plain_request(text: str, *, chat_id: int, topic_id: int | None) -> dict[str, Any]:
+def _readable_identity(value: str) -> str:
+    """Format producer-resolved metadata, never text written by the speaker."""
+    display = _display_identity(value)
+    if display.startswith("being:"):
+        return "Daimon sin nombre · " + display.removeprefix("being:")
+    if re.fullmatch(r"[a-z0-9-]+\.[a-z0-9-]+@[a-z0-9.-]+", value):
+        name, body = value.split(".", 1)
+        name = "CompAII" if name == "compaii" else name.capitalize()
+        return f"{name} · {body}"
+    if value == "compaii":
+        return "CompAII"
+    return value.capitalize() if value in {"eko", "oliva"} else display
+
+
+def _readable_chunks(text: str, *, budget: int, paragraphs: bool = True) -> list[str]:
+    """Prefer paragraph/line boundaries, preserving every original character."""
+    if not text or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
+        raise ValueError("echo_projection_invalid")
+    chunks = []
+    while text:
+        units, end = 0, 0
+        for char in text:
+            size = len(char.encode("utf-16-le")) // 2
+            if units + size > budget:
+                break
+            units += size
+            end += 1
+        if paragraphs and end < len(text):
+            boundary = text.rfind("\n", 0, end)
+            if boundary >= end // 2:
+                end = boundary + 1
+        chunks.append(text[:end])
+        text = text[end:]
+    if len(chunks) > MAX_PARTS:
+        if paragraphs:
+            return _readable_chunks("".join(chunks), budget=budget, paragraphs=False)
+        raise ValueError("echo_projection_invalid")
+    return chunks
+
+
+def render_readable_parts(projection: Mapping[str, Any]) -> list[str]:
+    """Successor plaintext presentation; old representations stay byte-exact."""
+    kind = projection["kind"]
+    sender = _readable_identity(projection["sender"])
+    recipient = _readable_identity(projection["recipients"][0])
+    route = f"{sender} → {recipient}"
+    if kind in _SPEECH_KINDS:
+        context = ""
+        if kind == "reply":
+            parent = projection["reply_to"]
+            if "sender" in parent and "text" in parent:
+                excerpt = parent["text"][:160].replace("\n", " ")
+                if len(parent["text"]) > 160:
+                    excerpt += "…"
+                context = f"↩ {_readable_identity(parent['sender'])}: «{excerpt}»\n"
+            else:
+                context = "↩ Respuesta a un mensaje anterior\n"
+            if "receipt" in parent:
+                context += "✓ Entrega del mensaje anterior confirmada\n"
+        overhead = len((route + "\n" + context + "\n").encode("utf-16-le")) // 2
+        chunks = _readable_chunks(
+            projection["content"]["text"], budget=4096 - overhead - 24
+        )
+        return [
+            route
+            + (f" · {index}/{len(chunks)}" if len(chunks) > 1 else "")
+            + "\n"
+            + context
+            + "\n"
+            + chunk
+            for index, chunk in enumerate(chunks, 1)
+        ]
+    if kind == "semantic-receipt":
+        outcome = projection["content"]["outcome"]
+        descriptions = {
+            "delivered": "✓ Entrega confirmada",
+            "failed:transport": "⚠ Falló la entrega",
+            "refused:policy": "⚠ Entrega rechazada por la política vigente",
+            "expired": "⚠ El envío venció sin entrega confirmada",
+            "resolved:unroutable": "⚠ No hay una ruta disponible",
+        }
+        if outcome not in descriptions:
+            raise ValueError("echo_projection_invalid")
+        return [descriptions[outcome] + "\n" + route]
+    if kind == "transport-result":
+        if projection["content"]["outcome"] == "accepted":
+            return []
+        return ["⚠ El transporte rechazó el envío\n" + route]
+    if kind == "authorization-control":
+        return []
+    raise ValueError("echo_projection_invalid")
+
+
+def plain_request(
+    text: str,
+    *,
+    chat_id: int,
+    topic_id: int | None,
+    readable: bool = False,
+    reply_message_id: int | None = None,
+) -> dict[str, Any]:
     if (
         type(chat_id) is not int
         or not 0 < abs(chat_id) < 2**52
@@ -367,6 +475,25 @@ def plain_request(text: str, *, chat_id: int, topic_id: int | None) -> dict[str,
     }
     if topic_id is not None:
         value["message_thread_id"] = topic_id
+    if readable:
+        value["entities"] = [
+            {
+                "type": "bold",
+                "offset": 0,
+                "length": len(text.split("\n", 1)[0].encode("utf-16-le")) // 2,
+            }
+        ]
+    if reply_message_id is not None:
+        if (
+            not readable
+            or type(reply_message_id) is not int
+            or not 0 < reply_message_id < 2**52
+        ):
+            raise ValueError("echo_request_invalid")
+        value["reply_parameters"] = {
+            "message_id": reply_message_id,
+            "allow_sending_without_reply": True,
+        }
     return value
 
 
@@ -409,6 +536,8 @@ def validate_plain_response(
         entities = result.get("entities", [])
         if type(entities) is not list or len(entities) > 4096:
             raise ValueError
+        expected_entities = request.get("entities", [])
+        found_entities = []
         for entity in entities:
             if (
                 type(entity) is not dict
@@ -422,6 +551,7 @@ def validate_plain_response(
                     "url",
                     "email",
                     "phone_number",
+                    "bold",
                 }
                 or type(entity["offset"]) is not int
                 or entity["offset"] < 0
@@ -429,6 +559,28 @@ def validate_plain_response(
                 or entity["length"] <= 0
                 or entity["offset"] + entity["length"]
                 > len(request["text"].encode("utf-16-le")) // 2
+            ):
+                raise ValueError
+            if entity["type"] == "bold":
+                if entity not in expected_entities or entity in found_entities:
+                    raise ValueError
+                found_entities.append(entity)
+        if found_entities != expected_entities:
+            raise ValueError
+        parent = result.get("reply_to_message")
+        if parent is not None:
+            expected_reply = request.get("reply_parameters", {}).get("message_id")
+            if (
+                type(parent) is not dict
+                or type(parent.get("message_id")) is not int
+                or parent["message_id"] != expected_reply
+                or type(parent.get("chat", {}).get("id")) is not int
+                or parent.get("chat", {}).get("id") != request["chat_id"]
+                or type(parent.get("from", {}).get("id")) is not int
+                or parent.get("from", {}).get("id") != bot_id
+                or parent.get("from", {}).get("is_bot") is not True
+                or parent.get("message_thread_id") != topic
+                or (topic is not None and parent.get("is_topic_message") is not True)
             ):
                 raise ValueError
         if (
@@ -678,7 +830,13 @@ class PlainTelegramTransport:
     """
 
     def __init__(
-        self, *, token: str, bot_id: int, chat_id: int, topic_id: int | None
+        self,
+        *,
+        token: str,
+        bot_id: int,
+        chat_id: int,
+        topic_id: int | None,
+        reference_directory: Path | None = None,
     ) -> None:
         if (
             type(token) is not str
@@ -691,6 +849,131 @@ class PlainTelegramTransport:
         plain_request("validate", chat_id=chat_id, topic_id=topic_id)
         self._token, self._bot_id = token, bot_id
         self._chat_id, self._topic_id = chat_id, topic_id
+        self._reference_directory = reference_directory
+
+    def _reference_name(self, event: Mapping[str, Any]) -> str:
+        identity = [
+            self._bot_id,
+            self._chat_id,
+            self._topic_id,
+            event["event_id"],
+            event["event_digest"],
+        ]
+        return hashlib.sha256(json.dumps(identity).encode()).hexdigest() + ".json"
+
+    def _reference_mac(self, body: Mapping[str, Any]) -> str:
+        raw = json.dumps(
+            dict(body), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        return hmac.new(
+            self._token.encode(), b"dm.telegram.reference/v1\0" + raw, hashlib.sha256
+        ).hexdigest()
+
+    def lookup_reference(self, event: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Optional fixed-audience correlation cache, never delivery authority.
+
+        Writers are the approved custodians of the same Telegram bot. The MAC
+        protects this shared presentation cache; it does not authenticate Matrix
+        events or replace their individual native proofs. A miss is harmless.
+        """
+        if self._reference_directory is None:
+            return None
+        fd = None
+        try:
+            fd = os.open(
+                self._reference_directory / self._reference_name(event),
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            )
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_size > 4096
+            ):
+                return None
+            value = json.loads(os.read(fd, 4097), object_pairs_hook=_unique_object)
+            body = value["body"]
+            if (
+                set(value) != {"body", "mac"}
+                or set(body)
+                != {
+                    "bot_id",
+                    "chat_id",
+                    "topic_id",
+                    "event_id",
+                    "event_digest",
+                    "message_id",
+                }
+                or not hmac.compare_digest(value["mac"], self._reference_mac(body))
+                or type(body["bot_id"]) is not int
+                or type(body["chat_id"]) is not int
+                or (body["topic_id"] is not None and type(body["topic_id"]) is not int)
+                or body["bot_id"] != self._bot_id
+                or body["chat_id"] != self._chat_id
+                or body["topic_id"] != self._topic_id
+                or body["event_id"] != event["event_id"]
+                or body["event_digest"] != event["event_digest"]
+                or type(body["message_id"]) is not int
+                or not 0 < body["message_id"] < 2**52
+            ):
+                return None
+            return {
+                key: body[key] for key in ("event_id", "event_digest", "message_id")
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def publish_reference(self, record: Mapping[str, Any]) -> None:
+        """Called only after authenticated journal confirmation of ALL parts."""
+        if self._reference_directory is None:
+            return
+        projection = record["binding"]["projection"]
+        if projection["kind"] not in _SPEECH_KINDS:
+            return
+        if self.lookup_reference(projection) is not None:
+            return  # Preserve the first confirmed post under an exact logical ID.
+        response = json.loads(record["parts"][0]["attempts"][-1]["response"])
+        body = {
+            "bot_id": self._bot_id,
+            "chat_id": self._chat_id,
+            "topic_id": self._topic_id,
+            "event_id": projection["event_id"],
+            "event_digest": projection["event_digest"],
+            "message_id": response["result"]["message_id"],
+        }
+        raw = json.dumps(
+            {"body": body, "mac": self._reference_mac(body)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        fd = None
+        try:
+            fd = os.open(
+                self._reference_directory / self._reference_name(projection),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o644,
+            )
+            # Correlation metadata is explicitly shared; service umasks must
+            # still keep private native proofs and credentials owner-only.
+            os.fchmod(fd, 0o644)
+            while raw:
+                raw = raw[os.write(fd, raw) :]
+            os.fsync(fd)
+            directory_fd = os.open(
+                self._reference_directory, os.O_RDONLY | os.O_DIRECTORY
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass  # Optional correlation cannot discharge or block native proof.
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     def send(self, request: dict[str, Any]) -> bytes:
         try:
@@ -698,7 +981,11 @@ class PlainTelegramTransport:
             serialized = json.dumps(request, sort_keys=True, allow_nan=False)
             request = json.loads(serialized)
             expected = plain_request(
-                request["text"], chat_id=self._chat_id, topic_id=self._topic_id
+                request["text"],
+                chat_id=self._chat_id,
+                topic_id=self._topic_id,
+                readable="entities" in request,
+                reply_message_id=request.get("reply_parameters", {}).get("message_id"),
             )
             if serialized != json.dumps(expected, sort_keys=True, allow_nan=False):
                 raise ValueError

@@ -75,7 +75,11 @@ def _display_identity(being_ref: str, labels: LabelIndex | None) -> str:
 
 
 def _sender_display(
-    labels: LabelIndex | None, local_origin: Mapping[str, Any], being_ref: str
+    labels: LabelIndex | None,
+    local_origin: Mapping[str, Any],
+    being_ref: str,
+    *,
+    body_fallback: bool = False,
 ) -> str:
     """Name the sending body by its owner-local label when one exists.
 
@@ -89,10 +93,18 @@ def _sender_display(
         embodiment_id = local_origin.get("embodiment_id")
         if isinstance(embodiment_id, str):
             try:
-                return labels.label_of(embodiment_id)
+                target = labels.targets.get(embodiment_id)
+                if target is not None and target.being_ref == being_ref:
+                    return target.label
             except LabelError:
                 pass
-    return _display_identity(being_ref, labels)
+    name = _display_identity(being_ref, labels)
+    embodiment_id = local_origin.get("embodiment_id")
+    if body_fallback and isinstance(embodiment_id, str):
+        if name == being_ref:
+            name = "Daimon sin nombre · " + being_ref.removeprefix("dm:being:v1:")
+        return name + " · cuerpo " + embodiment_id.removeprefix("embodiment:")
+    return name
 
 
 @dataclass(frozen=True)
@@ -687,6 +699,7 @@ class MessagingDelivery:
         )
         owner = self.sender.context.policy.peer_being_ref
         labels = getattr(self.sender.context, "labels", None)
+        readable = self.sender.egress.representation == "compact-text/v1"
         carrier_send_id = self.sender.outbox._carrier_for_envelopes(
             owner, send_id, envelopes
         )
@@ -733,7 +746,10 @@ class MessagingDelivery:
                 "event_id": metadata["event_id"],
                 "event_digest": event["content_hash"],
                 "sender": _sender_display(
-                    labels, self.sender.ledger.local_origin, owner
+                    labels,
+                    self.sender.ledger.local_origin,
+                    owner,
+                    body_fallback=readable,
                 ),
                 "recipients": [
                     _display_identity(self.sender.context.local_being_ref, labels)
@@ -745,6 +761,70 @@ class MessagingDelivery:
                 if phase == "message"
                 else {"stage": "evidence-before-message"},
             }
+            if readable:
+                target = self.sender.context._local()
+                credential = target.authority.credentials[
+                    self.sender.context.local_credential_id
+                ]["body"]
+                projections[phase]["recipients"] = [
+                    _sender_display(
+                        labels,
+                        {"embodiment_id": credential["embodiment_id"]},
+                        self.sender.context.local_being_ref,
+                        body_fallback=True,
+                    )
+                ]
+                reference = (
+                    event["payload"]["body"].get("response_context")
+                    if phase == "message"
+                    else None
+                )
+                if reference is not None:
+                    parent: dict[str, Any] = {
+                        "event_id": reference["message_id"],
+                        "event_digest": reference["message_hash"],
+                    }
+                    receipt = event["payload"]["body"].get("semantic_receipt")
+                    if receipt is not None:
+                        verified_receipt = verify_event(
+                            receipt, self.sender.ledger.authority
+                        )
+                        receipt_payload = _foreign_receipt_payload(verified_receipt)
+                        retained = self.sender.ledger.event(
+                            verified_receipt["event_id"]
+                        )
+                        if (
+                            retained is None
+                            or canonical_bytes(retained)
+                            != canonical_bytes(verified_receipt)
+                            or verified_receipt["origin"] != event["origin"]
+                            or receipt_payload["message_ref"]
+                            != {
+                                "event_id": parent["event_id"],
+                                "event_hash": parent["event_digest"],
+                            }
+                            or receipt_payload["outcome"] != "delivered"
+                        ):
+                            raise ValueError("messaging_semantic_receipt_mismatch")
+                        # This receipt confirms the PARENT's native intake, never
+                        # the current reply, a human read or subsequent work.
+                        parent["receipt"] = {
+                            "event_id": verified_receipt["event_id"],
+                            "event_digest": verified_receipt["content_hash"],
+                            "outcome": receipt_payload["outcome"],
+                        }
+                    if response_to is not None:
+                        received = response_to[0].message(reference["message_id"])
+                        parent.update(
+                            sender=_sender_display(
+                                labels,
+                                received["origin"],
+                                received["being_ref"],
+                                body_fallback=True,
+                            ),
+                            text=received["payload"]["body"]["text"][:160],
+                        )
+                    projections[phase].update(kind="reply", reply_to=parent)
         providers = dict(zip(phases, self.providers, strict=True))
         stages = self.sender.outbox._transport_stages(
             owner,
@@ -886,6 +966,7 @@ class MessagingChannel:
     ) -> None:
         self.communication: CommunicationStore | None = None
         self.policy = policy
+        self.labels: LabelIndex | None = None
         self.local_being_ref = local_being_ref
         self.local_credential_id = local_credential_id
         self.authority_resolver = authority_resolver

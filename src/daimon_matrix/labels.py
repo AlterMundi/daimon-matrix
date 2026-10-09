@@ -27,7 +27,7 @@ _BEING_REF: Final = re.compile(r"^dm:being:v1:[A-Za-z0-9_-]{43}$")
 _BEING_NAME: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 _WORD: Final = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _DISCRIMINATOR: Final = re.compile(r"^[a-z0-9]{2,8}$")
-_EMBODIMENT_ID: Final = re.compile(r"^embodiment:[A-Za-z0-9._-]{1,180}$")
+_EMBODIMENT_ID: Final = re.compile(r"^embodiment:[A-Za-z0-9:._-]{1,180}$")
 _OVERRIDE_FIELDS: Final = frozenset({"discriminator", "harness", "host"})
 
 
@@ -215,11 +215,32 @@ class LabelIndex:
     def __init__(
         self, entries: Sequence[Mapping[str, Any]], registry: Mapping[str, Any]
     ) -> None:
+        self._entries = [dict(row) for row in entries]
+        self._registry = validate_registry(dict(registry))
         self._targets = derive_labels(entries, registry)
         self._by_label = {target.label: target for target in self._targets.values()}
         self._by_being: dict[str, str] = {}
         for row in validate_registry(dict(registry))["beings"].items():
             self._by_being[row[1]] = row[0]
+
+    def _with_verified_entries(
+        self, entries: Sequence[Mapping[str, Any]]
+    ) -> LabelIndex:
+        """Include already verified participant body facts; keep owner names."""
+        combined = {row["embodiment_id"]: row for row in self._entries}
+        conflicts: set[str] = set()
+        for row in entries:
+            if row["being_ref"] not in self._registry["beings"]:
+                continue
+            ident = row["embodiment_id"]
+            if ident in conflicts:
+                continue
+            if ident in combined and combined[ident] != dict(row):
+                del combined[ident]
+                conflicts.add(ident)
+                continue
+            combined[ident] = dict(row)
+        return LabelIndex(list(combined.values()), self._registry)
 
     @property
     def targets(self) -> Mapping[str, LabelTarget]:

@@ -1189,5 +1189,170 @@ class CompactEchoRenderTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), "echo_projection_invalid")
 
 
+class ReadableEchoTests(unittest.TestCase):
+    projection = CompactEchoRenderTests.projection
+
+    def test_readable_names_and_literal_speech(self):
+        source = self.projection(
+            sender="compaii.codex@daimonmatrix", recipients=["oliva.codex@daimonmatrix"]
+        )
+        parts = mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION)
+        self.assertEqual(
+            parts,
+            [
+                "CompAII · codex@daimonmatrix → Oliva · codex@daimonmatrix\n\n"
+                + source["content"]["text"]
+            ],
+        )
+        request = mirror.plain_request(
+            parts[0], chat_id=-123, topic_id=7, readable=True
+        )
+        self.assertNotIn("parse_mode", request)
+        self.assertEqual(request["entities"][0]["type"], "bold")
+        self.assertEqual(request["entities"][0]["offset"], 0)
+
+    def test_readable_maximum_text_preserves_every_character(self):
+        for text in ("a" * 65536, "paragraph\n\n" * 5000, "🙂" * 16000):
+            parts = mirror.render_echo_parts(
+                self.projection(content={"text": text}), mirror.READABLE_REPRESENTATION
+            )
+            self.assertLessEqual(len(parts), 32)
+            self.assertEqual("".join(p.split("\n\n", 1)[1] for p in parts), text)
+            self.assertTrue(all(len(p.encode("utf-16-le")) // 2 <= 4096 for p in parts))
+
+    def test_missing_parent_does_not_show_opaque_reference(self):
+        source = self.projection(
+            kind="reply",
+            reply_to={"event_id": "opaque-parent-reference", "event_digest": "b" * 64},
+        )
+        part = mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION)[0]
+        self.assertIn("Respuesta a un mensaje anterior", part)
+        self.assertNotIn("opaque-parent-reference", part)
+
+    def test_confirmed_receipt_is_distinct_from_transport_acceptance(self):
+        source = self.projection(
+            kind="semantic-receipt",
+            reply_to={"event_id": "parent", "event_digest": "b" * 64},
+            content={"outcome": "delivered"},
+        )
+        self.assertIn(
+            "Entrega confirmada",
+            mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION)[0],
+        )
+        source.update(
+            kind="transport-result",
+            reply_to=None,
+            content={"stage": "message", "outcome": "accepted"},
+        )
+        self.assertEqual(
+            mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION), []
+        )
+
+    def test_reply_receipt_confirms_only_the_parent_and_has_a_closed_shape(self):
+        from daimon_matrix.mandatory_echo import validate_projection
+
+        source = self.projection(
+            kind="reply",
+            reply_to={
+                "event_id": "parent",
+                "event_digest": "b" * 64,
+                "receipt": {
+                    "event_id": "signed-receipt",
+                    "event_digest": "c" * 64,
+                    "outcome": "delivered",
+                },
+            },
+        )
+        validate_projection(source)
+        rendered = mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION)[0]
+        self.assertIn("✓ Entrega del mensaje anterior confirmada\n", rendered)
+        self.assertTrue(rendered.endswith(source["content"]["text"]))
+        source["reply_to"]["receipt"]["outcome"] = "accepted"
+        with self.assertRaisesRegex(ValueError, "echo_projection_invalid"):
+            validate_projection(source)
+        source["reply_to"]["receipt"]["outcome"] = "delivered"
+        source["reply_to"]["receipt"]["private_key"] = "untrusted"
+        with self.assertRaisesRegex(ValueError, "echo_projection_invalid"):
+            validate_projection(source)
+
+    def test_reply_response_cannot_confirm_a_different_topic_or_unrequested_format(
+        self,
+    ):
+        request = mirror.plain_request(
+            "Header\n\nSpeech",
+            chat_id=-123,
+            topic_id=7,
+            readable=True,
+            reply_message_id=77,
+        )
+        result = {
+            "message_id": 78,
+            "from": {"id": 123, "is_bot": True},
+            "chat": {"id": -123},
+            "text": request["text"],
+            "entities": request["entities"],
+            "message_thread_id": 7,
+            "is_topic_message": True,
+            "reply_to_message": {
+                "message_id": 77,
+                "from": {"id": 123, "is_bot": True},
+                "chat": {"id": -123},
+                "message_thread_id": 8,
+                "is_topic_message": True,
+            },
+        }
+        raw = json.dumps({"ok": True, "result": result}).encode()
+        with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+            mirror.classify_plain_response(raw, request, bot_id=123)
+        result["reply_to_message"]["message_thread_id"] = 7
+        raw = json.dumps({"ok": True, "result": result}).encode()
+        self.assertEqual(
+            mirror.classify_plain_response(raw, request, bot_id=123)[0], "confirmed"
+        )
+        result["entities"] = []
+        raw = json.dumps({"ok": True, "result": result}).encode()
+        with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+            mirror.classify_plain_response(raw, request, bot_id=123)
+
+    def test_reference_cache_is_scoped_and_authenticated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transport = mirror.PlainTelegramTransport(
+                token="123:TEST_ONLY",
+                bot_id=123,
+                chat_id=-123,
+                topic_id=7,
+                reference_directory=Path(directory),
+            )
+            source = self.projection()
+            self.assertIsNone(transport.lookup_reference(source))
+            record = {
+                "binding": {"projection": source},
+                "parts": [
+                    {
+                        "attempts": [
+                            {"response": json.dumps({"result": {"message_id": 81}})}
+                        ]
+                    }
+                ],
+            }
+            transport.publish_reference(record)
+            self.assertEqual(transport.lookup_reference(source)["message_id"], 81)
+            changed = dict(source, event_digest="c" * 64)
+            self.assertIsNone(transport.lookup_reference(changed))
+            other = mirror.PlainTelegramTransport(
+                token="123:TEST_ONLY",
+                bot_id=123,
+                chat_id=-999,
+                topic_id=7,
+                reference_directory=Path(directory),
+            )
+            self.assertIsNone(other.lookup_reference(source))
+            path = next(Path(directory).glob("*.json"))
+            value = json.loads(path.read_text())
+            value["body"]["message_id"] = 999
+            path.write_text(json.dumps(value))
+            self.assertIsNone(transport.lookup_reference(source))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,9 +2,10 @@
 
 ## 1. Status and scope
 
-This is an **unactivated library slice of issue #137**, not completion of that
-issue, an installed application policy, participant consent, or evidence of live
-Telegram/native delivery. The owner-selected rule is:
+The V2 journal and native egress barrier implement the owner-selected mandatory
+visibility rule. A checkout, schema or test is not evidence of a particular live
+installation or delivery; report its signed selected policy and actual receipts.
+The owner-selected rule is:
 
 > Durably queue new logical communications. No corresponding native delivery
 > before complete confirmed Telegram echo. Unavailable or ambiguous outcomes
@@ -14,8 +15,9 @@ Telegram/native delivery. The owner-selected rule is:
 one-part worker, and exact-binding confirmation check. `telegram_mirror.py`
 adds independent V2 plaintext rendering, response validation and HTTPS transport.
 Existing `MirrorMessage`, `SharingBinding`, `render_parts`, and `TelegramMirror`
-V1 behavior remain unchanged. **V1 integer progress is not V2 proof.** No code in
-this slice wires an existing native egress path to the new barrier.
+V1 behavior remain unchanged. **V1 integer progress is not V2 proof.**
+`native_egress.py` and the native stores compose the barrier; diagnostic,
+historical and readable representations share the same release discipline.
 
 RFC 2119/8174 MUST/SHOULD requirements below are integration requirements unless
 explicitly identified as implemented. Schemas are
@@ -35,13 +37,15 @@ The trusted native producer supplies this exact object (no extra keys):
   in this version, not silently exempted.
 - `thread_id`: exact application correlation.
 - `reply_to`: `null` for `message`; otherwise exact `{event_id, event_digest}`.
+  The readable producer may also retain the paired `sender` and `text` fields
+  from an authenticated parent for a bounded fallback quotation.
 - `kind` and its closed `content`:
 
 | Kind | Exact content | Meaning / downstream duty |
 |---|---|---|
 | `message` | `{text: string}` | Complete human-authored/free-form communication. |
 | `reply` | `{text: string}` | Complete reply, with mandatory referenced event. |
-| `semantic-receipt` | `{outcome: received\|accepted\|rejected}` | Recipient-authored semantic statement; parent must map the final #132 carrier without conflating transport intake and understanding. Unsupported #132 outcomes must be rejected or obtain a reviewed successor registry, never lossy-mapped. |
+| `semantic-receipt` | `{outcome: delivered\|failed:transport\|refused:policy\|expired\|resolved:unroutable}` | Authenticated native outcome associated with its exact parent. Delivery is not reading, understanding or an authored response. |
 | `transport-result` | `{stage: evidence\|message, outcome: accepted\|refused}` | Safe result projection correlated to the logical event; no envelope, MAC, capability or raw protocol response. |
 | `authorization-control` | `{stage: evidence-before-message}` | Safe declaration of the correlated authorization/evidence stage. Fresh native carrier must later validate against this exact semantic projection. |
 
@@ -55,7 +59,8 @@ free-form text is externally visible by contract and may not contain secrets.
 
 The policy `representation` field is a closed enum selecting one versioned
 presentation of the same authenticated projection registry: `plain-json/v2`
-(diagnostic) or `compact-html/v1` (human-facing). Rendering is a pure function
+(diagnostic), `compact-html/v1` (historical compact), or `compact-text/v1`
+(readable successor). Rendering is a pure function
 of the projection and the representation bound in the policy, and every
 admitted record re-derives its exact parts from its own binding during proof
 validation; switching representations never retroactively changes an admitted
@@ -110,6 +115,49 @@ framing are **not newly authored inter-daimon logical messages**. There is no
 `control=true` bypass: `echo-status`, Telegram-origin kinds and unknown kinds
 are rejected. The parent resolver MUST exclude reflected observation-edge events.
 No Telegram ingress, polling, commands, webhook or model wakeup exists here.
+
+### Readable successor: `compact-text/v1`
+
+The renderer emits complete literal speech with a bold, metadata-derived first
+line, for example `CompAII · codex@daimonmatrix → Oliva · codex@daimonmatrix`.
+Explicit Telegram entities style only the generated header. There is no
+`parse_mode`; authored `<tags>`, code, URLs and emoji remain literal text.
+Paragraph-aware UTF-16 chunking preserves every character within 32 parts of
+4,096 units. Continuations carry `i/n` and reply to the first confirmed part.
+
+The echo binding may freeze `presentation` (sender, single recipient, and
+optional reply sender) and `telegram_reference` (parent event ID, digest and
+confirmed Telegram message ID). Both are authenticated with the existing proof
+key. The canonical producer projection remains intact; relabelling and policy
+changes cannot rewrite an admitted obligation. Historical representations do
+not accept these successor-only binding fields.
+
+A confirmed native `delivered` receipt renders `✓ Entrega confirmada`, associated
+with its parent when the same-destination mapping is available. Failures use
+plain Spanish labels; routine transport acceptance and authorization control
+remain explicitly suppressed. Publication by itself asserts no native delivery,
+reading or activity. Suppression is not a Telegram confirmation.
+
+`DM_TRIBU_REFERENCE_DIRECTORY` optionally selects a shared presentation-only
+correlation cache for approved custodians of the **same bot and destination**.
+An entry is published only after every part has authenticated Bot API evidence.
+It binds event ID/digest and bot/chat/topic to the first confirmed message ID,
+with a domain-separated bot-token MAC. No token, native proof, capability or
+speech is stored there. The cache is not per-being identity authority: an
+approved custodian of that bot can produce cache MACs. Individual native proofs
+and signed reply parents remain mandatory and independently verified.
+
+The selected mapping is frozen before the first attempt. An unavailable,
+invalid, changed-scope or missing mapping produces an ordinary-language fallback
+quote from the verified parent, or a parent-unavailable line; it never opens the
+native gate. `allow_sending_without_reply` tolerates a Telegram-deleted parent.
+The response records whether Telegram actually returned `reply_to_message`;
+requesting a link is not evidence that the link exists. The cache has no worker,
+watcher, ingress or inference call. Shared files are explicitly 0644 and contain
+only fixed-audience correlation metadata; private journals remain owner-only.
+
+For operating steps, examples, state meanings and rollback, see
+[the Tribu traffic runbook](runbooks/tribu-readable-traffic.md).
 
 ### Path inventory: which native egress carries an inter-daimon message
 

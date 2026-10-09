@@ -147,8 +147,103 @@ class TestDerivation(unittest.TestCase):
 
 
 class TestResolution(unittest.TestCase):
+    def test_native_we_projection_resolves_signed_body_and_credential(self):
+        from daimon_matrix.runtime import VisibilityFactoryContext
+        from daimon_matrix.weave import RootAuthority
+        from tests.test_dm022_ledger import RootLedgerFixture
+
+        fixture = RootLedgerFixture()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        authority = RootAuthority(
+            fixture.manifest, fixture.state, fixture.credentials, fixture.incarnations
+        )
+        being_ref = authority.manifest.being_ref
+        rows = [
+            dict(
+                being_ref=being_ref,
+                embodiment_id=row["embodiment_id"],
+                body_ref=row["body_ref"],
+            )
+            for row in authority.manifest.value["embodiments"]
+            if row["status"] == "active"
+        ]
+        index = LabelIndex(
+            rows, dict(schema=LABEL_SCHEMA, beings={being_ref: "compaii"}, overrides={})
+        )
+        context = VisibilityFactoryContext(
+            authority=authority,
+            origin=fixture.origins["legion"],
+            runtime_id="synthetic-resolver",
+            runtime_label="synthetic-resolver",
+            signer_public_key=b"x" * 32,
+            bundle_sha256="a" * 64,
+            authorities={being_ref: authority},
+            labels=index,
+        )
+        # Coordinates emitted by the actual /we projection producer, after
+        # its existing carrier/credential verification. Two bodies, one being.
+        origin = fixture.origins["legion"]
+        recipient = fixture.origins["daimonmatrix"]
+        sender = being_ref + "/" + origin["embodiment_id"]
+        credential_id = next(
+            key
+            for key, value in authority.credentials.items()
+            if value["body"]["embodiment_id"] == recipient["embodiment_id"]
+        )
+        self.assertEqual(context.display_identity(sender), "compaii.cluster@legion")
+        self.assertEqual(
+            context.display_identity(credential_id), "compaii.cluster@daimonmatrix"
+        )
+        self.assertNotEqual(
+            context.display_identity(sender), context.display_identity(credential_id)
+        )
+        false_sender = OTHER + "/" + origin["embodiment_id"]
+        self.assertEqual(context.display_identity(false_sender), false_sender)
+        self.assertEqual(
+            context.display_identity("dm:identity:v1:unknown"), "dm:identity:v1:unknown"
+        )
+        self.assertEqual(context.display_identity(being_ref), "compaii")
+
     def setUp(self) -> None:
         self.index = LabelIndex(entries(), registry())
+
+    def test_verified_peer_facts_resolve_body_without_inventing_an_unknown_name(
+        self,
+    ) -> None:
+        peer = {
+            "being_ref": OTHER,
+            "embodiment_id": "embodiment:synthetic:oliva",
+            "body_ref": "codex:daimonmatrix:oliva",
+        }
+        extended = self.index._with_verified_entries([peer])
+        self.assertEqual(
+            extended.label_of(peer["embodiment_id"]), "oliva.codex@daimonmatrix"
+        )
+        unknown = {
+            **peer,
+            "being_ref": "dm:being:v1:" + "C" * 43,
+            "embodiment_id": SIBLING_BODY,
+        }
+        self.assertNotIn(
+            SIBLING_BODY, extended._with_verified_entries([unknown]).targets
+        )
+
+    def test_conflicting_cross_being_body_id_has_no_false_label(self) -> None:
+        from daimon_matrix.messaging import _sender_display
+
+        conflicting = {
+            "being_ref": OTHER,
+            "embodiment_id": CODEX_BODY,
+            "body_ref": "codex:daimonmatrix:oliva",
+        }
+        # Even before registry extension, the other being cannot borrow our label.
+        self.assertEqual(_sender_display(self.index, conflicting, OTHER), "oliva")
+        extended = self.index._with_verified_entries([conflicting])
+        self.assertNotIn(CODEX_BODY, extended.targets)
+        display = _sender_display(extended, conflicting, OTHER, body_fallback=True)
+        self.assertIn("oliva · cuerpo", display)
+        self.assertIn(CODEX_BODY.removeprefix("embodiment:"), display)
 
     def test_one_label_resolves_one_body(self) -> None:
         (target,) = self.index.resolve("compaii.codex@legion")
