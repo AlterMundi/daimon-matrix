@@ -137,6 +137,30 @@ class CIScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(profile([*changes, path]), "full")
 
+    def test_native_store_and_inspection_regressions_use_installed_messaging_gate(self):
+        changed = [
+            "src/daimon_matrix/messaging_store.py",
+            "tests/test_native_messaging.py",
+            "tests/test_messaging_runtime.py",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            ".github/workflows/tests.yml",
+        ]
+        self.assertEqual(profile(changed), "messaging")
+        self.assertEqual(
+            profile([*changed, "src/daimon_matrix/messaging.py"]), "messaging"
+        )
+        for path in (
+            "src/daimon_matrix/keystore.py",
+            "src/daimon_matrix/relationship_store.py",
+            "src/daimon_matrix/runtime.py",
+            "requirements-dev.txt",
+            "specs/DM-051.md",
+            "unknown.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(profile([*changed, path]), "full")
+
     def test_readable_egress_profile_covers_native_boundaries_but_not_unrelated_changes(
         self,
     ):

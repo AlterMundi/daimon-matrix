@@ -121,7 +121,7 @@ class MessagingOutboxStore:
         if self._egress is None or self._egress_catalog is None:
             raise ValueError("messaging_egress_unbound")
         with self._database() as database:
-            database.execute("BEGIN IMMEDIATE")
+            database.execute("BEGIN IMMEDIATE" if create else "BEGIN")
             if (
                 database.execute(
                     "SELECT 1 FROM messaging_outbox WHERE owner=? AND send_id=? "
@@ -174,6 +174,8 @@ class MessagingOutboxStore:
                     "response": None if row is None else row["response"],
                     "result_sha256": None if row is None else row["result_sha256"],
                 }
+                if not create:
+                    continue
                 self._egress.admit_in_transaction(
                     database,
                     catalog_id=self._egress_catalog,
@@ -339,6 +341,67 @@ class MessagingOutboxStore:
                 (owner, carrier_send_id, canonical_bytes(carrier_plan)),
             )
             return carrier_send_id, carrier_plan
+
+    def _inspection_pair(
+        self,
+        owner: str,
+        logical_send_id: str,
+        *,
+        expected: Mapping[str, Any],
+        now: int,
+    ) -> tuple[bytes, bytes]:
+        """Latest fully retained transport pair; never reserve or renew a carrier."""
+
+        with self._database() as database:
+            database.execute("BEGIN")
+            rows = database.execute(
+                "SELECT send_id, plan, evidence, message FROM messaging_outbox "
+                "WHERE owner=?",
+                (owner,),
+            ).fetchall()
+            carriers = []
+            for row in rows:
+                plan = json.loads(row["plan"])
+                if plan.get("logical_send_id", row["send_id"]) != logical_send_id:
+                    continue
+                generation = plan.get("carrier_generation", 1)
+                carrier_id = (
+                    logical_send_id
+                    if generation == 1
+                    else str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"dm.messaging.carrier/v1:{logical_send_id}:{generation}",
+                        )
+                    )
+                )
+                if (
+                    type(generation) is not int
+                    or generation < 1
+                    or row["send_id"] != carrier_id
+                    or any(plan.get(key) != value for key, value in expected.items())
+                    or type(plan.get("issued_at_ms")) is not int
+                    or type(plan.get("expires_at_ms")) is not int
+                    or not 0 <= plan["issued_at_ms"] < plan["expires_at_ms"]
+                    or now < plan["issued_at_ms"]
+                ):
+                    raise ValueError("messaging_carrier_conflict")
+                phases = database.execute(
+                    "SELECT phase FROM messaging_transport_stages "
+                    "WHERE owner=? AND send_id=?",
+                    (owner, row["send_id"]),
+                ).fetchall()
+                if phases and {item[0] for item in phases} != {"evidence", "message"}:
+                    raise ValueError("messaging_transport_conflict")
+                complete = row["evidence"] is not None and bool(phases)
+                carriers.append((generation, row, complete))
+            carriers.sort(key=lambda item: item[0])
+            if [item[0] for item in carriers] != list(range(1, len(carriers) + 1)):
+                raise ValueError("messaging_carrier_conflict")
+            for _, row, complete in reversed(carriers):
+                if complete:
+                    return bytes(row["evidence"]), bytes(row["message"])
+        raise ValueError("messaging_transport_missing")
 
     def _carrier_for_envelopes(
         self,
