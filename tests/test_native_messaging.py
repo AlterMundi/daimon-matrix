@@ -2056,6 +2056,121 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertFalse(self.invoke(hosted, request)["ok"])
         self.assertEqual(len(calls), 2)
 
+    def test_expired_pending_inspection_preserves_pair_and_exact_rpc_retry(
+        self,
+    ) -> None:
+        pair, hosted, delivery, calls = self.setup_sender()
+        policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = policy
+        provider = delivery.providers[1]
+        exchange = provider._round_trip
+
+        def lose_response(raw: bytes) -> bytes:
+            exchange(raw)  # Genuine intake with an unconfirmed return path.
+            raise ConnectionError("synthetic lost response")
+
+        provider._round_trip = lose_response
+        request = self.request(pair)
+        pending = self.invoke(hosted, request)
+        self.assertTrue(pending["ok"], pending)
+        self.assertEqual(pending["result"]["transport_status"], "pending")
+        self.assertEqual(len(calls), 2)
+        pair.now += 1_001
+        # Reproduce the partially renewed pair left by the old inspection bug.
+        delivery.sender.prepare(
+            client_id=self.capability.client_id,
+            send_id=self.send_id,
+            thread_id=request["params"]["thread_id"],
+            text=TEXT,
+        )
+        before = delivery.sender.outbox.path.read_bytes()
+        events = delivery.sender.ledger.events()
+        inspected = delivery.inspect(
+            client_id=self.capability.client_id, send_id=self.send_id
+        )
+        self.assertEqual(inspected["transport_status"], "pending")
+        self.assertEqual(delivery.sender.outbox.path.read_bytes(), before)
+        self.assertEqual(delivery.sender.ledger.events(), events)
+        self.assertEqual(len(calls), 2)
+        with self.assertRaisesRegex(ValueError, "messaging_send_conflict"):
+            delivery.inspect(client_id="another-client", send_id=self.send_id)
+        provider._round_trip = exchange
+        resumed = self.invoke(hosted, request)
+        self.assertTrue(resumed["ok"], resumed)
+        self.assertEqual(resumed["result"]["transport_status"], "recipient-intake")
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+        self.assertEqual(delivery.sender.ledger.events(), events)
+        pair.now += 1_001
+        before = delivery.sender.outbox.path.read_bytes()
+        self.assertEqual(
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)[
+                "transport_status"
+            ],
+            "recipient-intake",
+        )
+        self.assertEqual(delivery.sender.outbox.path.read_bytes(), before)
+        self.assertEqual(len(calls), 4)
+        pair.sender_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        with self.assertRaises(ValueError):
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
+        self.assertEqual(len(calls), 4)
+
+    def test_expired_inspection_rejects_tampered_proof_without_io(self) -> None:
+        pair, hosted, delivery, calls = self.setup_sender()
+        policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = policy
+        self.assertTrue(self.invoke(hosted, self.request(pair))["ok"])
+        pair.now += pair.policy.max_ttl_ms + 1
+        before = delivery.sender.outbox.path.read_bytes()
+        with closing(sqlite3.connect(delivery.sender.outbox.path)) as database:
+            database.execute(
+                "UPDATE messaging_transport_stages SET request_sha256=?",
+                ("f" * 64,),
+            )
+            database.commit()
+        with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
+        self.assertEqual(len(calls), 2)
+        delivery.sender.outbox.path.write_bytes(before)
+        with closing(sqlite3.connect(delivery.sender.outbox.path)) as database:
+            database.execute(
+                "UPDATE messaging_transport_stages SET result_sha256=?",
+                ("f" * 64,),
+            )
+            database.commit()
+        with self.assertRaisesRegex(
+            ValueError, "messaging_transport_response_conflict"
+        ):
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
+        self.assertEqual(len(calls), 2)
+
+        delivery.sender.outbox.path.write_bytes(before)
+        provider = delivery.providers[1]
+        validate = provider.validate_prepared_response
+
+        def revoke_during_proof(request: bytes, response: bytes) -> Any:
+            result = validate(request, response)
+            pair.sender_relationships.ingest(
+                next(
+                    event
+                    for event in pair.history
+                    if event["kind"] == "matrix/relationship-grant-revocation"
+                )
+            )
+            return result
+
+        provider.validate_prepared_response = revoke_during_proof
+        with self.assertRaises(ValueError):
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
+        self.assertEqual(len(calls), 2)
+
     def test_cached_send_cannot_rebind_outbox_or_reauthor(self) -> None:
         from daimon_matrix.messaging_store import MessagingOutboxStore
 

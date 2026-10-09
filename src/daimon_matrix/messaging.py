@@ -633,7 +633,33 @@ class MessagingDelivery:
         event = self.sender.ledger.event(_parse(envelopes[1])["event_id"])
         if event is None:
             raise ValueError("messaging_outbox_missing")
-        payload = _message_payload(event)
+        payload = _message_payload(verify_event(event, self.sender.ledger.authority))
+        request_payload = {**payload, "body": dict(payload["body"])}
+        semantic_reply = request_payload["body"].pop("semantic_receipt", None)
+        request_document = (
+            {
+                "payload": request_payload,
+                "receipt_schema": "dm.communication.receipt/v2",
+            }
+            if semantic_reply is not None
+            else request_payload
+        )
+        policy_hash = self.sender.context._policy_hash(self.sender.clock())
+        envelopes = self.sender.outbox._inspection_pair(
+            owner,
+            send_id,
+            expected={
+                "client_id": client_id,
+                "request_hash": hashlib.sha256(
+                    canonical_bytes(request_document)
+                ).hexdigest(),
+                "policy_hash": policy_hash,
+                "origin": dict(self.sender.ledger.local_origin),
+            },
+            now=self.sender.clock(),
+        )
+        if _parse(envelopes[1])["event_id"] != event["event_id"]:
+            raise ValueError("messaging_carrier_conflict")
         response_to = None
         if "response_context" in payload["body"]:
             reference = payload["body"]["response_context"]
@@ -647,6 +673,13 @@ class MessagingDelivery:
                     break
             if response_to is None:
                 raise ValueError("messaging_response_context_missing")
+
+        def authorize() -> None:
+            now = self.sender.clock()
+            self.sender._bind(now)
+            if self.sender.context._policy_hash(now) != policy_hash:
+                raise ValueError("messaging_send_conflict")
+
         return self._run(
             client_id=client_id,
             send_id=send_id,
@@ -654,6 +687,8 @@ class MessagingDelivery:
             text=payload["body"]["text"],
             transmit=False,
             response_to=response_to,
+            retained_envelopes=envelopes,
+            authorize=authorize,
         )
 
     def send(
@@ -686,17 +721,24 @@ class MessagingDelivery:
         transmit: bool,
         response_to: tuple[MessagingChannel, str] | None = None,
         authorize: Callable[[], None] | None = None,
+        retained_envelopes: tuple[bytes, bytes] | None = None,
     ) -> dict[str, Any]:
         if authorize is not None:
             authorize()
         # Always authorize the original request before consulting private progress.
-        envelopes = self.sender.prepare(
-            client_id=client_id,
-            send_id=send_id,
-            thread_id=thread_id,
-            text=text,
-            response_to=response_to,
+        envelopes = (
+            self.sender.prepare(
+                client_id=client_id,
+                send_id=send_id,
+                thread_id=thread_id,
+                text=text,
+                response_to=response_to,
+            )
+            if transmit
+            else retained_envelopes
         )
+        if envelopes is None:
+            raise ValueError("messaging_transport_missing")
         owner = self.sender.context.policy.peer_being_ref
         labels = getattr(self.sender.context, "labels", None)
         readable = self.sender.egress.representation == "compact-text/v1"
@@ -841,7 +883,7 @@ class MessagingDelivery:
         # regenerating timestamps or retaining those keys in the outbox.
         for phase in phases:
             prepared, _, _ = providers[phase]._prepared_submission(
-                stages[phase]["request"]
+                stages[phase]["request"], check_time=transmit
             )
             if canonical_bytes(prepared) != canonical_bytes(submissions[phase]):
                 raise ValueError("messaging_transport_conflict")
@@ -869,13 +911,16 @@ class MessagingDelivery:
                 authorize()
             # Evidence I/O may take us beyond expiry or a newly observed revocation.
             # Recheck before releasing the next stage, without renewing the pair.
-            self.sender.prepare(
-                client_id=client_id,
-                send_id=send_id,
-                thread_id=thread_id,
-                text=text,
-                response_to=response_to,
-            )
+            if transmit:
+                self.sender.prepare(
+                    client_id=client_id,
+                    send_id=send_id,
+                    thread_id=thread_id,
+                    text=text,
+                    response_to=response_to,
+                )
+            else:
+                self.sender._bind(self.sender.clock())
             stage = stages[phase]
             status = stage["transport_status"]
             if transmit and status in {"prepared", "pending"}:
