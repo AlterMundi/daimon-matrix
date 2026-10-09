@@ -30,6 +30,18 @@ MESSAGING_FILES = PEER_FILES | frozenset(
         "vectors/hermes/v1/valid/profile-manifest.json",
     }
 )
+MIRROR_FILES = frozenset(
+    {
+        "src/daimon_matrix/telegram_mirror.py",
+        "tests/test_telegram_mirror.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
 VISIBILITY_FILES = MESSAGING_FILES | frozenset(
     {
         "docs/mandatory-telegram-visibility.md",
@@ -97,6 +109,8 @@ def profile(paths: list[str]) -> str:
         and changed <= ARCHIVE_FILES
     ):
         return "archive"
+    if "src/daimon_matrix/telegram_mirror.py" in changed and changed <= MIRROR_FILES:
+        return "visibility"
     if (
         {
             "src/daimon_matrix/telegram_mirror.py",

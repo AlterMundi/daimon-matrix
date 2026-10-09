@@ -509,7 +509,12 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def validate_plain_response(
     raw: bytes, request: dict[str, Any], *, bot_id: int
 ) -> dict[str, Any]:
-    """Validate retained Bot API evidence; exact text, numeric bot/chat/topic pins."""
+    """Validate literal text and bot/chat/topic pins in retained Bot API evidence.
+
+    Telegram can remove terminal LF characters from a successful text response.
+    Preserve the frozen request and actual response; accept only that observed
+    boundary normalization, never interior changes or other truncation.
+    """
     try:
         if type(raw) is not bytes or len(raw) > 65536:
             raise ValueError
@@ -592,7 +597,7 @@ def validate_plain_response(
             or type(result["from"]["id"]) is not int
             or result["from"]["id"] != bot_id
             or result["from"].get("is_bot") is not True
-            or result.get("text") != request["text"]
+            or result.get("text") not in (request["text"], request["text"].rstrip("\n"))
             or result.get("message_thread_id") != request.get("message_thread_id")
         ):
             raise ValueError

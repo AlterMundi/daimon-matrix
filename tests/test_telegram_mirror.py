@@ -1192,6 +1192,53 @@ class CompactEchoRenderTests(unittest.TestCase):
 class ReadableEchoTests(unittest.TestCase):
     projection = CompactEchoRenderTests.projection
 
+    def test_terminal_lf_response_keeps_frozen_request_and_actual_platform_bytes(self):
+        for ending in ("", "\n", "\n\n"):
+            with self.subTest(ending=ending):
+                request = mirror.plain_request(
+                    "Header\n\nLiteral <b>text</b>, ñ 😀; interior\nline" + ending,
+                    chat_id=-123,
+                    topic_id=None,
+                    readable=True,
+                )
+                frozen = json.dumps(request, sort_keys=True)
+                result = {
+                    "message_id": 533,
+                    "from": {"id": 123, "is_bot": True},
+                    "chat": {"id": -123},
+                    "text": request["text"].rstrip("\n"),
+                    "entities": request["entities"],
+                }
+                raw = json.dumps({"ok": True, "result": result}).encode()
+                transport = mirror.PlainTelegramTransport(
+                    token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+                )
+                with patch.object(
+                    mirror, "_plain_http_exchange", return_value=(200, raw)
+                ):
+                    self.assertEqual(transport.send(request), raw)
+                self.assertEqual(json.dumps(request, sort_keys=True), frozen)
+                self.assertEqual(
+                    mirror.validate_plain_response(raw, request, bot_id=123)["result"],
+                    result,
+                )
+                for changed in (
+                    {"text": result["text"][:-1]},
+                    {"text": result["text"].replace("interior\nline", "interiorline")},
+                    {"text": result["text"].replace("<b>text</b>", "text")},
+                    {"chat": {"id": -999}},
+                    {"from": {"id": 999, "is_bot": True}},
+                    {"entities": []},
+                ):
+                    with self.subTest(changed=changed):
+                        bad = json.dumps(
+                            {"ok": True, "result": {**result, **changed}}
+                        ).encode()
+                        with self.assertRaisesRegex(
+                            ValueError, "echo_response_invalid"
+                        ):
+                            mirror.classify_plain_response(bad, request, bot_id=123)
+
     def test_readable_names_and_literal_speech(self):
         source = self.projection(
             sender="compaii.codex@daimonmatrix", recipients=["oliva.codex@daimonmatrix"]
