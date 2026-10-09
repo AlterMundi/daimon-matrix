@@ -24,7 +24,8 @@ jobs:
       - id: scope
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci_scope.py --base "$CI_BASE"
+          CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+        run: python3 tools/ci_scope.py --base "$CI_BASE" --pull-request-head "$CI_PR_HEAD"
 
   peer:
     name: native peer tools (3.13.5)
@@ -165,13 +166,43 @@ jobs:
         if: needs.scope.outputs.profile == 'protected-archive'
         run: python -m pip install cryptography==50.0.0
       - run: python tools/check_frozen_invariants.py --skip-generated
-      - run: python -m ruff format --check tools/export_being.py tools/receive_being.py tests/test_being_receive.py tools/protected_being.py tests/test_being_protection.py tests/test_being_export.py tools/ci_scope.py tests/test_ci_scope.py
-      - run: python -m ruff check tools/export_being.py tools/receive_being.py tests/test_being_receive.py tools/protected_being.py tests/test_being_protection.py tests/test_being_export.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff format --check tools/export_being.py tools/receive_being.py tests/test_being_receive.py tools/protected_being.py tests/test_being_protection.py tests/test_being_export.py tools/preserve_memory.py tests/test_memory_preservation.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/export_being.py tools/receive_being.py tests/test_being_receive.py tools/protected_being.py tests/test_being_protection.py tests/test_being_export.py tools/preserve_memory.py tests/test_memory_preservation.py tools/ci_scope.py tests/test_ci_scope.py
       - name: Original bytes, SQLite integrity, hostile archives and target preservation
-        run: python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_being_export tests.test_being_receive -v
+        run: python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_being_export tests.test_being_receive tests.test_memory_preservation -v
       - name: Full credential-bearing bytes, recipient isolation and tampered ciphertext
         if: needs.scope.outputs.profile == 'protected-archive'
         run: python -W error::ResourceWarning -m unittest tests.test_being_protection -v
+
+  memory-preservation:
+    name: memory preservation and HMK compatibility (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'archive' || needs.scope.outputs.profile == 'protected-archive' || needs.scope.outputs.profile == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+      - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: nicoechaniz/hermes-memory-kit
+          ref: f10fd5c3089c0962920314c97e14bc024feffa7a
+          path: .hmk-contract
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: nicoechaniz/hermes-memory-kit
+          ref: 0f9a3b22c7a765514d36c9aa64d4649d7318a863
+          path: .hmk-current
+      - run: python -m ruff check tests/test_dm034_memory_projection.py
+      - run: python -m ruff format --check tests/test_dm034_memory_projection.py
+      - name: Frozen contract and separately identified current implementation
+        run: PYTHONPATH=src python -W error::ResourceWarning -m unittest tests.test_dm034_memory_projection -v
+        env:
+          HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
+          HMK_CURRENT_ROOT: ${{ github.workspace }}/.hmk-current
 
   tests:
     needs: scope

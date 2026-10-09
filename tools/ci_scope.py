@@ -58,6 +58,10 @@ ARCHIVE_FILES = frozenset(
     {
         "tools/export_being.py",
         "tests/test_being_export.py",
+        "tools/preserve_memory.py",
+        "tests/test_memory_preservation.py",
+        "tests/test_dm034_memory_projection.py",
+        "docs/runbooks/memory-preservation.md",
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
         ".github/workflows/tests.yml",
@@ -85,7 +89,10 @@ def profile(paths: list[str]) -> str:
         and changed <= PROTECTED_FILES
     ):
         return "protected-archive"
-    if "tools/export_being.py" in changed and changed <= ARCHIVE_FILES:
+    if (
+        changed & {"tools/export_being.py", "tools/preserve_memory.py"}
+        and changed <= ARCHIVE_FILES
+    ):
         return "archive"
     if {
         "src/daimon_matrix/telegram_mirror.py",
@@ -99,9 +106,23 @@ def profile(paths: list[str]) -> str:
     return "full"
 
 
-def select(base: str) -> str:
+def select(base: str, *, pull_request_head: str = "") -> str:
     if not base or set(base) == {"0"}:
         return "full"
+    if pull_request_head:
+        # GitHub's event base SHA can precede newer main commits included in
+        # its synthetic merge. Bind to the explicit PR head before selecting
+        # the actual first parent; unexpected merge topology stays full.
+        parents = subprocess.run(
+            ["git", "show", "-s", "--format=%P", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        values = parents.stdout.split()
+        if parents.returncode or len(values) != 2 or values[1] != pull_request_head:
+            return "full"
+        base = values[0]
     result = subprocess.run(
         ["git", "diff", "--no-renames", "--name-only", base, "HEAD"],
         capture_output=True,
@@ -114,8 +135,9 @@ def select(base: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
+    parser.add_argument("--pull-request-head", default="")
     args = parser.parse_args()
-    value = "profile=" + select(args.base)
+    value = "profile=" + select(args.base, pull_request_head=args.pull_request_head)
     print(value)
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

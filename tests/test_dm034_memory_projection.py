@@ -152,6 +152,9 @@ class DM034ProjectionTests(RootLedgerFixture):
             if configured:
                 self.fail(f"configured HMK checkout is not exact pin {HMK_COMMIT}")
             self.skipTest(f"HMK checkout is not exact pin {HMK_COMMIT}")
+        self.initialize_projection()
+
+    def initialize_projection(self) -> None:
         self.hmk_base = self.root_path / "hmk"
         self.hmk_base.mkdir(mode=0o700)
         self.transport = HMKCLITransport(
@@ -1063,3 +1066,47 @@ class DM034ProjectionTests(RootLedgerFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+CURRENT_HMK_COMMIT = "0f9a3b22c7a765514d36c9aa64d4649d7318a863"
+
+
+class CurrentHMKCompatibilityTests(DM034ProjectionTests):
+    """Qualify a distinct implementation against the frozen v1 wire contract.
+
+    This does not change the v1 profile pin or register a new supported release.
+    Explicit configuration fails closed; absent configuration leaves this
+    separate opt-in qualification outside the frozen-contract test run.
+    """
+
+    def setUp(self) -> None:
+        RootLedgerFixture.setUp(self)
+        configured = os.environ.get("HMK_CURRENT_ROOT")
+        if not configured:
+            self.skipTest("current HMK implementation qualification not configured")
+        self.hmk_root = Path(configured)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.hmk_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(head, CURRENT_HMK_COMMIT)
+        dirty = subprocess.run(
+            ["git", "diff", "HEAD", "--", "scripts"],
+            cwd=self.hmk_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertEqual(dirty, "", "qualified implementation scripts have drifted")
+        self.initialize_projection()
+
+    def test_portable_history_content_and_clean_reconstruction(self) -> None:
+        # Offline archive tools are qualified by their owning tool tests; keep
+        # them outside the typed SDK dependency graph and frozen-contract setup.
+        from importlib import import_module
+
+        fixture = import_module("tests.test_memory_preservation")
+        fixture.qualify_current_hmk(self)
