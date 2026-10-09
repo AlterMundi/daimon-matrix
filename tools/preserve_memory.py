@@ -134,6 +134,14 @@ def build(plan: dict, selection: dict, output: Path, *, writers_stopped: bool) -
     sources = {s["id"]: s for s in plan["sources"]}
     if len(sources) != len(plan["sources"]):
         raise PreservationError("duplicate_source_identity")
+    if not sources:
+        raise PreservationError("unique_nonempty_sources_required")
+    # These identifiers also become Git bundle filenames. Validate the entire
+    # plan before any source I/O or staging, matching the base exporter boundary.
+    for s in sources.values():
+        archive.safe_name(s["id"])
+        if "/" in s["id"] or s["kind"] not in archive.KINDS:
+            raise archive.ExportError("invalid_source")
     for s in sources.values():
         root = archive.safe_path(Path(s["root"]))
         if root == output or root in output.parents:

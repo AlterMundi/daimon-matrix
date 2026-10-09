@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -253,6 +254,35 @@ class PreservationTests(unittest.TestCase):
             tool.build(
                 self.plan, self.selection, self.root / "other", writers_stopped=True
             )
+
+    def test_unsafe_source_identity_cannot_overwrite_unrelated_bundle(self) -> None:
+        marker = self.root / "outside-profile.bundle"
+        marker.write_bytes(b"unrelated existing work")
+        for source_id in ("../outside-profile", "nested/source", "/outside-profile"):
+            with self.subTest(source_id=source_id):
+                plan = copy.deepcopy(self.plan)
+                plan["sources"][1]["id"] = source_id
+                selection = copy.deepcopy(self.selection)
+                selection["git_sources"] = [source_id]
+                with self.assertRaises(archive.ExportError):
+                    tool.build(plan, selection, self.profile, writers_stopped=True)
+                self.assertEqual(marker.read_bytes(), b"unrelated existing work")
+                self.assertFalse(self.profile.exists())
+        plan = copy.deepcopy(self.plan)
+        plan["sources"][1]["kind"] = "unsupported"
+        with self.assertRaisesRegex(archive.ExportError, "invalid_source"):
+            tool.build(plan, self.selection, self.profile, writers_stopped=True)
+        with self.assertRaisesRegex(
+            tool.PreservationError, "unique_nonempty_sources_required"
+        ):
+            tool.build(
+                {**self.plan, "sources": []},
+                self.selection,
+                self.profile,
+                writers_stopped=True,
+            )
+        self.assertEqual(marker.read_bytes(), b"unrelated existing work")
+        self.assertFalse(self.profile.exists())
 
     def test_git_pack_hook_cannot_execute(self) -> None:
         marker = self.root / "executed"
