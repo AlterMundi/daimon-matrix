@@ -10,6 +10,29 @@ from tools.ci_scope import profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_mirror_boundary_correction_uses_installed_visibility_only(self):
+        changed = [
+            "src/daimon_matrix/telegram_mirror.py",
+            "tests/test_telegram_mirror.py",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changed), "visibility")
+        for path in (
+            "src/daimon_matrix/messaging.py",
+            "src/daimon_matrix/messaging_store.py",
+            "src/daimon_matrix/runtime.py",
+            "src/daimon_matrix/keystore.py",
+            "pyproject.toml",
+            "unknown.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(profile([*changed, path]), "full")
+
     def test_operator_presentation_correction_runs_installed_visibility_checks(self):
         changed = [
             "src/daimon_matrix/operator_messaging.py",
