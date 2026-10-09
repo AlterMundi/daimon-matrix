@@ -591,6 +591,8 @@ def validate_plain_response(
             ):
                 raise ValueError
         returned_thread = result.get("message_thread_id")
+        if topic is None and "message_thread_id" in result and returned_thread is None:
+            raise ValueError
         if topic is None and returned_thread is not None:
             # Ordinary supergroup replies also have a thread root. This is
             # platform evidence of the exact requested parent, not a forum topic.
