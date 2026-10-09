@@ -1,7 +1,9 @@
 """CI cannot classify runtime, custody, dependency or contract changes as tools."""
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools.ci_scope import profile, select
@@ -131,3 +133,89 @@ class CIScopeTests(unittest.TestCase):
             )
             self.assertEqual(select("base"), "full")
             self.assertIn("--no-renames", run.call_args.args[0])
+
+
+class ActualMergeScopeTests(unittest.TestCase):
+    def test_stale_event_base_does_not_hide_actual_pr_sdk_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(root), *args],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+            def commit(path, text):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text)
+                git("add", path)
+                git(
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "-qm",
+                    text,
+                )
+                return git("rev-parse", "HEAD")
+
+            git("init", "-q", "-b", "main")
+            stale_base = commit("README.md", "initial")
+            git("checkout", "-qb", "feature")
+            feature_head = commit("tools/preserve_memory.py", "selected tool change")
+            git("checkout", "main")
+            current_base = commit(
+                "src/daimon_matrix/runtime.py", "unrelated later main change"
+            )
+            git(
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "merge",
+                "--no-ff",
+                "feature",
+                "-m",
+                "synthetic PR merge",
+            )
+            runner = Path(__file__).resolve().parents[1] / "tools/ci_scope.py"
+
+            def selected(head):
+                return subprocess.run(
+                    [
+                        "python3",
+                        str(runner),
+                        "--base",
+                        stale_base,
+                        "--pull-request-head",
+                        head,
+                    ],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+            self.assertEqual(selected(feature_head), "profile=archive")
+            self.assertEqual(selected(current_base), "profile=full")
+            self.assertEqual(selected(""), "profile=full")
+            git("checkout", "feature")
+            actual_sdk_head = commit(
+                "src/daimon_matrix/runtime.py", "actual PR SDK change"
+            )
+            git("checkout", "main")
+            # Both sides change this file: resolve deliberately in the synthetic
+            # fixture, retaining the PR head as the merge's actual second parent.
+            merge = subprocess.run(
+                ["git", "-C", str(root), "merge", "--no-ff", "feature", "--no-commit"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(merge.returncode, 1)
+            commit("src/daimon_matrix/runtime.py", "resolved actual SDK change")
+            self.assertEqual(selected(actual_sdk_head), "profile=full")

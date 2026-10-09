@@ -24,7 +24,8 @@ jobs:
       - id: scope
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci_scope.py --base "$CI_BASE"
+          CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
+        run: python3 tools/ci_scope.py --base "$CI_BASE" --pull-request-head "$CI_PR_HEAD"
 
   peer:
     name: native peer tools (3.13.5)
