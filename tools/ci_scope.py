@@ -32,6 +32,7 @@ MESSAGING_FILES = PEER_FILES | frozenset(
 )
 MIRROR_FILES = frozenset(
     {
+        ".github/workflows/tests.yml",
         "src/daimon_matrix/telegram_mirror.py",
         "tests/test_telegram_mirror.py",
         "tools/ci_scope.py",
@@ -110,7 +111,7 @@ def profile(paths: list[str]) -> str:
     ):
         return "archive"
     if "src/daimon_matrix/telegram_mirror.py" in changed and changed <= MIRROR_FILES:
-        return "visibility"
+        return "mirror"
     if (
         {
             "src/daimon_matrix/telegram_mirror.py",

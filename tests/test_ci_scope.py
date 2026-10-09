@@ -20,8 +20,9 @@ class CIScopeTests(unittest.TestCase):
             "vectors/hermes/v1/index.json",
             "vectors/hermes/v1/valid/launch-receipt.json",
             "vectors/hermes/v1/valid/profile-manifest.json",
+            ".github/workflows/tests.yml",
         ]
-        self.assertEqual(profile(changed), "visibility")
+        self.assertEqual(profile(changed), "mirror")
         for path in (
             "src/daimon_matrix/messaging.py",
             "src/daimon_matrix/messaging_store.py",
