@@ -193,6 +193,85 @@ class ExclusivePublicationTests(unittest.TestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_native_owner_presentation_binds_bundle_without_an_application(self):
+        from daimon_matrix.daemon import acquire_lock
+        from daimon_matrix.operator_messaging import visibility_presentation
+        from tests.test_dm024_runtime import signed_runtime_visibility_installation
+        from tests.test_messaging_runtime import loaded
+
+        fixture, runtime, _ = loaded(self)
+        bundle_path = runtime.state_root / "runtime.json"
+        bundle = json.loads(bundle_path.read_bytes())
+        installation = signed_runtime_visibility_installation(
+            fixture, runtime.state_root, bundle, runtime.service.clock()
+        )
+        before = installation.read_bytes()
+        custody = (runtime.state_root / "custody.json").read_bytes()
+        descriptor = acquire_lock(runtime.state_root)
+        try:
+            proposal = visibility_presentation(
+                runtime,
+                None,
+                installation,
+                command="visibility-propose",
+                representation="compact-text/v1",
+            )
+            result = visibility_presentation(
+                runtime,
+                None,
+                installation,
+                command="visibility-apply",
+                proposal=proposal,
+            )
+            self.assertEqual(result["status"], "presentation-selected")
+            self.assertEqual(
+                (
+                    installation.parent / result["previous_installation_backup"]
+                ).read_bytes(),
+                before,
+            )
+            selected = json.loads(installation.read_bytes())["document"]
+            self.assertEqual(selected["application_sha256"], config_digest(bundle))
+            self.assertEqual(selected["policy"]["representation"], "compact-text/v1")
+            self.assertEqual(
+                (runtime.state_root / "custody.json").read_bytes(), custody
+            )
+            self.assertEqual(
+                visibility_presentation(
+                    runtime,
+                    None,
+                    installation,
+                    command="visibility-apply",
+                    proposal=proposal,
+                )["status"],
+                "unchanged",
+            )
+            # A different selected bundle cannot borrow this installation.
+            other = {**bundle, "runtime_label": "different"}
+            other_path = runtime.state_root / "other.json"
+            other_path.write_bytes(canonical_bytes(other))
+            other_path.chmod(0o600)
+            with self.assertRaises(ValueError):
+                visibility_presentation(
+                    runtime,
+                    None,
+                    installation,
+                    command="visibility-propose",
+                    representation="compact-text/v1",
+                    bundle_name="other.json",
+                )
+            with self.assertRaises(ValueError):
+                visibility_presentation(
+                    runtime,
+                    None,
+                    installation,
+                    command="visibility-propose",
+                    representation="compact-text/v1",
+                    bundle_name="../other.json",
+                )
+        finally:
+            os.close(descriptor)
+
     def test_same_audience_presentation_successor_preserves_keys_stores_and_rollback(
         self,
     ):

@@ -412,6 +412,8 @@ def render_readable_parts(projection: Mapping[str, Any]) -> list[str]:
                 context = f"↩ {_readable_identity(parent['sender'])}: «{excerpt}»\n"
             else:
                 context = "↩ Respuesta a un mensaje anterior\n"
+            if "receipt" in parent:
+                context += "✓ Entrega del mensaje anterior confirmada\n"
         overhead = len((route + "\n" + context + "\n").encode("utf-16-le")) // 2
         chunks = _readable_chunks(
             projection["content"]["text"], budget=4096 - overhead - 24

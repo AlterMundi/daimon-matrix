@@ -1390,12 +1390,13 @@ def republish(
 
 def visibility_presentation(
     runtime: HostedRuntime,
-    app_directory: Path,
+    app_directory: Path | None,
     installation: Path,
     *,
     command: str,
     representation: str | None = None,
     proposal: Mapping[str, Any] | None = None,
+    bundle_name: str = "runtime.json",
 ) -> dict[str, Any]:
     """Offline same-audience successor, signed by each existing participant.
 
@@ -1407,13 +1408,23 @@ def visibility_presentation(
     from .telegram_mirror import REPRESENTATIONS
 
     root = _directory(installation.parent)
-    application, _ = read_publication(runtime, _directory(app_directory))
-    authorities = _application_authorities(application)
+    if app_directory is None:
+        if Path(bundle_name).name != bundle_name:
+            raise MessagingConfigError("messaging_visibility_presentation_invalid")
+        application_sha256 = config_digest(
+            read_document(runtime.state_root / bundle_name)
+        )
+        authority = _runtime_epoch(runtime)
+        authorities = {authority.manifest.being_ref: authority}
+    else:
+        application, _ = read_publication(runtime, _directory(app_directory))
+        application_sha256 = config_digest(application)
+        authorities = _application_authorities(application)
     previous_envelope = read_document(installation)
     previous = previous_envelope["document"]
     controller = _owner_visibility_controller(
         authorities=authorities,
-        application_sha256=config_digest(application),
+        application_sha256=application_sha256,
         installation_path=installation,
         authority=_runtime_authority(runtime),
         origin=runtime.service.origin,
@@ -1556,7 +1567,7 @@ def visibility_presentation(
         # qualification and policy loader BEFORE changing the selected file.
         _owner_visibility_controller(
             authorities=authorities,
-            application_sha256=config_digest(application),
+            application_sha256=application_sha256,
             installation_path=temporary,
             authority=_runtime_authority(runtime),
             origin=runtime.service.origin,
@@ -1623,7 +1634,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--bundle", default="runtime.json")
-    parser.add_argument("--app-dir", type=Path, required=True)
+    parser.add_argument("--app-dir", type=Path)
     parser.add_argument("--password-fd", type=int, required=True)
     parser.add_argument("--visibility-installation", type=Path)
     parser.add_argument("--visibility-schema-version", type=int)
@@ -1650,6 +1661,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     previous_signals = {}
     try:
         presentation_command = args.command.startswith("visibility-")
+        if not presentation_command and args.app_dir is None:
+            raise ValueError()
         if presentation_command:
             if args.ready_fd is not None or args.visibility_installation is None:
                 raise ValueError()
@@ -1719,7 +1732,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         def clock() -> int:
             return time.time_ns() // 1000000
 
-        if args.command in {"prepare", "republish"}:
+        if presentation_command and args.app_dir is None:
+            visibility = None
+            visibility_factory = daemon._visibility_factory(
+                args.visibility_installation, clock=clock
+            )
+        elif args.command in {"prepare", "republish"}:
             # A re-publication repairs the very document the visibility factory
             # would otherwise reject, so it loads without one and validates the
             # installation it wrote as its last step instead.
@@ -1770,6 +1788,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 command=args.command,
                 representation=args.representation,
                 proposal=proposal,
+                bundle_name=args.bundle,
             )
             if args.command != "visibility-apply":
                 assert args.output is not None

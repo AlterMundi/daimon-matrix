@@ -572,6 +572,53 @@ class ComposeTests(unittest.TestCase):
     def test_readable_http_delivery_uses_both_authenticated_body_names(self):
         self.configured_http_delivery(readable=True)
 
+    def test_readable_native_reply_shows_its_actual_signed_parent_receipt(self):
+        import json
+        from unittest.mock import patch
+
+        from daimon_matrix.native_egress import MandatoryEgressController
+        from tests import test_native_messaging as native
+
+        original = native.synthetic_visibility
+        transports = []
+
+        def readable_visibility(*, clock):
+            previous = original(clock=clock)
+            transport = previous._transport
+            original_send = transport.send
+
+            def send(request):
+                response = json.loads(original_send(request))
+                response["result"]["entities"] = request.get("entities", [])
+                return json.dumps(response).encode()
+
+            transport.send = send
+            transports.append(transport)
+            return MandatoryEgressController(
+                policy={**previous._policy, "representation": "compact-text/v1"},
+                proof_key=b"\x89" * 32,
+                transport=transport,
+                clock=clock,
+                catalog_mode="synthetic",
+            )
+
+        # Reuse the existing real local-API/encrypted two-being exchange and
+        # receipt reduction; replace only its owner-selected echo presentation.
+        exchange = native.NativeSendRpcTests()
+        exchange.setUp()
+        self.addCleanup(exchange.doCleanups)
+        with patch.object(native, "synthetic_visibility", readable_visibility):
+            exchange.test_v2_reply_returns_sender_semantic_terminal_over_local_api()
+        replies = [
+            request["text"]
+            for transport in transports
+            for request in transport.requests
+            if "Untrusted reply text $(not-executed)" in request["text"]
+        ]
+        self.assertEqual(len(replies), 1)
+        self.assertIn("✓ Entrega del mensaje anterior confirmada\n", replies[0])
+        self.assertTrue(replies[0].endswith("Untrusted reply text $(not-executed)"))
+
     def configured_http_delivery(self, *, readable=False):
         import threading
 

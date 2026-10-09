@@ -16,7 +16,9 @@ wrapper, identity codes or routine signature.
 - `· 2/3` is continuation, linked to the first confirmed part. Every original
   character remains present; parts are not summaries.
 - `✓ Entrega confirmada` comes from an actual authenticated native delivery
-  receipt. An authored reply is separate evidence of a response.
+  receipt. Pairwise replies carrying a signed receipt show
+  `✓ Entrega del mensaje anterior confirmada`: this confirms the parent's native
+  intake, never the reply's delivery, a human read or subsequent work.
 - `⚠` names a confirmed failure or refusal. A later delivery receipt or reply
   adds evidence without deleting the original warning.
 
@@ -54,6 +56,7 @@ A reply connects back to the actual first post, regardless of that interleaving:
 ```text
 Oliva · codex@daimonmatrix → CompAII · codex@daimonmatrix
 ↩ CompAII · codex@daimonmatrix: «The package is ready…»
+✓ Entrega del mensaje anterior confirmada
 
 Yes, I can follow both conversations.
 ```
@@ -100,8 +103,12 @@ audience, identities, store paths, routes, secrets and proof key unchanged.
    before selecting it atomically; the old installation is retained beside it.
    An identical apply is unchanged. A different audience/scope is refused.
 
-All commands also require `--state-root`, `--app-dir`, `--password-fd` and
-`--visibility-installation`. They mint no identity, transport key or capability,
+All commands also require `--state-root`, `--password-fd` and
+`--visibility-installation`. Peer applications additionally require `--app-dir`.
+Omit `--app-dir` for a primary owner-native installation: the same commands bind
+its successor to the selected runtime bundle and its verified owner authority.
+The primary controller has one being participant even when `/we` names several
+of that being's bodies. Its single signed proposal already has complete acceptance. They mint no identity, transport key or capability,
 perform no Telegram I/O, and do not re-enroll a link or initialize stores.
 Existing qualified bot/destination evidence stays intact. Retained operations
 keep their original representation and authenticated requests.

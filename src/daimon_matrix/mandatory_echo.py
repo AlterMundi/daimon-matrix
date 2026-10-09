@@ -181,12 +181,21 @@ def validate_projection(projection: dict[str, Any]) -> None:
             keys = {"event_id", "event_digest"}
             if isinstance(reply, dict) and "sender" in reply:
                 keys |= {"sender", "text"}
+            if isinstance(reply, dict) and "receipt" in reply and kind == "reply":
+                keys.add("receipt")
             _fields(reply, keys)
             _text(reply["event_id"])
             _digest_field(reply["event_digest"])
             if "sender" in reply:
                 _text(reply["sender"])
                 _text(reply["text"], 1024)
+            if "receipt" in reply:
+                receipt = reply["receipt"]
+                _fields(receipt, {"event_id", "event_digest", "outcome"})
+                _text(receipt["event_id"])
+                _digest_field(receipt["event_digest"])
+                if receipt["outcome"] != "delivered":
+                    raise ValueError
         if kind in ("message", "reply"):
             _fields(content, {"text"})
             _text(content["text"], 65536)

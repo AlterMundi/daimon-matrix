@@ -780,10 +780,39 @@ class MessagingDelivery:
                     else None
                 )
                 if reference is not None:
-                    parent = {
+                    parent: dict[str, Any] = {
                         "event_id": reference["message_id"],
                         "event_digest": reference["message_hash"],
                     }
+                    receipt = event["payload"]["body"].get("semantic_receipt")
+                    if receipt is not None:
+                        verified_receipt = verify_event(
+                            receipt, self.sender.ledger.authority
+                        )
+                        receipt_payload = _foreign_receipt_payload(verified_receipt)
+                        retained = self.sender.ledger.event(
+                            verified_receipt["event_id"]
+                        )
+                        if (
+                            retained is None
+                            or canonical_bytes(retained)
+                            != canonical_bytes(verified_receipt)
+                            or verified_receipt["origin"] != event["origin"]
+                            or receipt_payload["message_ref"]
+                            != {
+                                "event_id": parent["event_id"],
+                                "event_hash": parent["event_digest"],
+                            }
+                            or receipt_payload["outcome"] != "delivered"
+                        ):
+                            raise ValueError("messaging_semantic_receipt_mismatch")
+                        # This receipt confirms the PARENT's native intake, never
+                        # the current reply, a human read or subsequent work.
+                        parent["receipt"] = {
+                            "event_id": verified_receipt["event_id"],
+                            "event_digest": verified_receipt["content_hash"],
+                            "outcome": receipt_payload["outcome"],
+                        }
                     if response_to is not None:
                         received = response_to[0].message(reference["message_id"])
                         parent.update(

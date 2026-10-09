@@ -1248,6 +1248,33 @@ class ReadableEchoTests(unittest.TestCase):
             mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION), []
         )
 
+    def test_reply_receipt_confirms_only_the_parent_and_has_a_closed_shape(self):
+        from daimon_matrix.mandatory_echo import validate_projection
+
+        source = self.projection(
+            kind="reply",
+            reply_to={
+                "event_id": "parent",
+                "event_digest": "b" * 64,
+                "receipt": {
+                    "event_id": "signed-receipt",
+                    "event_digest": "c" * 64,
+                    "outcome": "delivered",
+                },
+            },
+        )
+        validate_projection(source)
+        rendered = mirror.render_echo_parts(source, mirror.READABLE_REPRESENTATION)[0]
+        self.assertIn("✓ Entrega del mensaje anterior confirmada\n", rendered)
+        self.assertTrue(rendered.endswith(source["content"]["text"]))
+        source["reply_to"]["receipt"]["outcome"] = "accepted"
+        with self.assertRaisesRegex(ValueError, "echo_projection_invalid"):
+            validate_projection(source)
+        source["reply_to"]["receipt"]["outcome"] = "delivered"
+        source["reply_to"]["receipt"]["private_key"] = "untrusted"
+        with self.assertRaisesRegex(ValueError, "echo_projection_invalid"):
+            validate_projection(source)
+
     def test_reply_response_cannot_confirm_a_different_topic_or_unrequested_format(
         self,
     ):

@@ -386,6 +386,31 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 1024
+                },
+                "receipt": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "event_id",
+                    "event_digest",
+                    "outcome"
+                  ],
+                  "properties": {
+                    "event_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "event_digest": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64,
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "outcome": {
+                      "const": "delivered"
+                    }
+                  }
                 }
               },
               "dependentRequired": {
@@ -495,6 +520,31 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 1024
+                  },
+                  "receipt": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "event_id",
+                      "event_digest",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "event_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "event_digest": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64,
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      "outcome": {
+                        "const": "delivered"
+                      }
+                    }
                   }
                 },
                 "dependentRequired": {

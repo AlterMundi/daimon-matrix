@@ -114,6 +114,32 @@ class VisibilityFactoryContext:
         if self.labels is None:
             return identity
         try:
+            # Native /we speech names its author as being/body, and its
+            # recipient by signed credential. Resolve those exact verified
+            # coordinates without borrowing a different being's body label.
+            if "/" in identity:
+                being_ref, embodiment_id = identity.split("/", 1)
+                target = self.labels.targets.get(embodiment_id)
+                return (
+                    target.label
+                    if target is not None and target.being_ref == being_ref
+                    else identity
+                )
+            target = self.labels.targets.get(identity)
+            if target is not None:
+                return target.label
+            matched = []
+            for being_ref, authority in self.authorities.items():
+                credential = authority.credentials.get(identity)
+                if credential is None:
+                    continue
+                target = self.labels.targets.get(credential["body"]["embodiment_id"])
+                if target is not None and target.being_ref == being_ref:
+                    matched.append(target.label)
+                else:
+                    return identity
+            if matched:
+                return matched[0] if len(matched) == 1 else identity
             return self.labels.being_name_of_ref(identity) or identity
         except LabelError:
             return identity
