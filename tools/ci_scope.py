@@ -166,8 +166,16 @@ def main() -> None:
     parser.add_argument("--base", required=True)
     parser.add_argument("--pull-request-head", default="")
     args = parser.parse_args()
-    value = "profile=" + select(args.base, pull_request_head=args.pull_request_head)
-    print(value)
+    selected = select(args.base, pull_request_head=args.pull_request_head)
+    # Reuse the installed visibility job and its portability skip. Only the
+    # unchanged native suite is omitted for the closed mirror-only allowlist.
+    value = (
+        "profile="
+        + ("visibility" if selected == "mirror" else selected)
+        + "\nnative_checks="
+        + ("false" if selected == "mirror" else "true")
+    )
+    print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:
             stream.write(value + "\n")
