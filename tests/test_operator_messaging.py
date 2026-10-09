@@ -193,6 +193,106 @@ class ExclusivePublicationTests(unittest.TestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_peer_presentation_cli_keeps_primary_catalogs_with_distinct_proof_key(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import verify_binding
+        from daimon_matrix.telegram_mirror import PlainTelegramTransport
+        from tests.test_dm024_runtime import PASSWORD
+
+        runtime, spec, sources, _ = application_fixture(self)
+        app = self.root / "presentation-app"
+        prepare(runtime, app, spec, secret_sources=sources)
+        installation = signed_visibility_installation(
+            self.root, runtime, self.pair, app
+        )
+        # The base native catalogs retain their primary controller's key.
+        # A peer application has its own independently accepted proof key.
+        proof_key = b"\x88" * 32
+        (self.root / "echo-proof.key").write_bytes(proof_key)
+        envelope = json.loads(installation.read_bytes())
+        envelope["document"]["policy"]["proof_key_id"] = (
+            "sha256:" + hashlib.sha256(proof_key).hexdigest()
+        )
+        envelope["binding"] = create_binding(runtime, envelope["document"])
+        installation.write_bytes(canonical_bytes(envelope))
+        retained = {
+            path: path.read_bytes()
+            for path in (
+                runtime.state_root / "peer-exchange.sqlite",
+                runtime.state_root / "peer-outbox.sqlite",
+                runtime.state_root / "custody.json",
+                installation,
+            )
+        }
+
+        def invoke(output, *, command="visibility-propose", proposal=None):
+            reader, writer = os.pipe()
+            os.write(writer, PASSWORD)
+            os.close(writer)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            try:
+                with (
+                    patch("time.time_ns", return_value=self.pair.now * 1_000_000),
+                    patch.object(
+                        PlainTelegramTransport,
+                        "send",
+                        side_effect=AssertionError("offline presentation sent traffic"),
+                    ),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    arguments = [
+                        command,
+                        "--state-root",
+                        str(runtime.state_root),
+                        "--app-dir",
+                        str(app),
+                        "--password-fd",
+                        str(reader),
+                        "--visibility-installation",
+                        str(installation),
+                    ]
+                    if command == "visibility-propose":
+                        arguments += ["--representation", "compact-text/v1"]
+                    if output is not None:
+                        arguments += ["--output", str(output)]
+                    if proposal is not None:
+                        arguments += ["--proposal", str(proposal)]
+                    result = operator.main(arguments)
+                return result, stdout.getvalue(), stderr.getvalue()
+            finally:
+                # The CLI password reader owns and closes a consumed descriptor.
+                with contextlib.suppress(OSError):
+                    os.close(reader)
+
+        output = self.root / "presentation-proposal.json"
+        result, stdout, stderr = invoke(output)
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "presentation-proposal-signed")
+        proposal = json.loads(output.read_bytes())
+        self.assertEqual(
+            proposal["disclosure"]["destination"]["representation"], "compact-text/v1"
+        )
+        verify_binding(runtime, proposal["disclosure"], proposal["bindings"][0])
+        accepted = self.root / "accepted-proposal.json"
+        result, _, stderr = invoke(
+            accepted, command="visibility-accept", proposal=output
+        )
+        self.assertEqual(result, 0, stderr)
+        result, _, stderr = invoke(None, command="visibility-apply", proposal=accepted)
+        self.assertEqual(result, 1)
+        self.assertIn("acceptance_missing", stderr)
+        self.assertEqual({p: p.read_bytes() for p in retained}, retained)
+
+        # Signing-only bootstrap must still authenticate the selected installation.
+        envelope["document"]["generation"] += 1
+        installation.write_bytes(canonical_bytes(envelope))
+        refused_output = self.root / "refused-proposal.json"
+        result, _, stderr = invoke(refused_output)
+        self.assertEqual(result, 1)
+        self.assertTrue(stderr)
+        self.assertFalse(refused_output.exists())
+
     def test_native_owner_presentation_binds_bundle_without_an_application(self):
         from daimon_matrix.daemon import acquire_lock
         from daimon_matrix.operator_messaging import visibility_presentation

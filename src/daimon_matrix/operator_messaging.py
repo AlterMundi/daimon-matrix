@@ -1737,10 +1737,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             visibility_factory = daemon._visibility_factory(
                 args.visibility_installation, clock=clock
             )
-        elif args.command in {"prepare", "republish"}:
-            # A re-publication repairs the very document the visibility factory
-            # would otherwise reject, so it loads without one and validates the
-            # installation it wrote as its last step instead.
+        elif presentation_command or args.command in {"prepare", "republish"}:
+            # Signing an app presentation must not authenticate the base native
+            # catalogs with that app's different proof key. The closed bootstrap
+            # cannot send and leaves catalogs intact; visibility_presentation
+            # authenticates the selected installation and complete successor.
+            # Re-publication also repairs the document its factory would reject.
             visibility = closed_visibility(clock=clock, catalog_mode="migrate")
             visibility_factory = None
         else:
