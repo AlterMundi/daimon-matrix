@@ -641,6 +641,7 @@ def _visibility_factory(
             verify_owner_binding=verify_owner,
             verify_participant_binding=verify_participant,
             clock=clock,
+            presentation_resolver=context.display_identity,
         )
 
     return factory

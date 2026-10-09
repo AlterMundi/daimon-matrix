@@ -567,6 +567,12 @@ class ComposeTests(unittest.TestCase):
             self.assertTrue(list(Draft202012Validator(schema).iter_errors(document)))
 
     def test_configured_outgoing_delivery_reaches_real_http_recipient(self):
+        self.configured_http_delivery()
+
+    def test_readable_http_delivery_uses_both_authenticated_body_names(self):
+        self.configured_http_delivery(readable=True)
+
+    def configured_http_delivery(self, *, readable=False):
         import threading
 
         from daimon_matrix.daemon import create_messaging_http_server
@@ -578,6 +584,53 @@ class ComposeTests(unittest.TestCase):
 
         runtime, spec, sources, _ = application_fixture(self)
         peer = self.pair.recipient
+        if readable:
+            import json
+            from dataclasses import replace
+
+            from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
+            from daimon_matrix.native_egress import (
+                MandatoryEgressController,
+                SyntheticEchoTransport,
+            )
+
+            class ReadableTransport(SyntheticEchoTransport):
+                def send(self, request):
+                    response = json.loads(super().send(request))
+                    response["result"]["entities"] = request.get("entities", [])
+                    return json.dumps(response).encode()
+
+            transport = ReadableTransport()
+            controller = MandatoryEgressController(
+                policy={**runtime.egress._policy, "representation": "compact-text/v1"},
+                proof_key=b"\x89" * 32,
+                transport=transport,
+                clock=runtime.service.clock,
+                catalog_mode="synthetic",
+            )
+            sender = self.pair.sender
+            labels = LabelIndex(
+                [
+                    {
+                        "being_ref": sender.state.being_ref,
+                        "embodiment_id": sender.origin["embodiment_id"],
+                        "body_ref": sender.origin["body_ref"],
+                    }
+                ],
+                {
+                    "schema": LABEL_SCHEMA,
+                    "beings": {
+                        sender.state.being_ref: "compaii",
+                        peer.state.being_ref: "oliva",
+                    },
+                    "overrides": {},
+                },
+            )
+            runtime = replace(
+                runtime,
+                egress=controller,
+                service=replace(runtime.service, labels=labels),
+            )
         ingresses = {}
         receiver_egress = synthetic_visibility(clock=runtime.service.clock)
         for phase in ("evidence", "message"):
@@ -626,6 +679,18 @@ class ComposeTests(unittest.TestCase):
                 ]["text"],
                 "configured HTTP delivery",
             )
+            if readable:
+                speech = [
+                    request
+                    for request in transport.requests
+                    if "configured HTTP delivery" in request["text"]
+                ]
+                self.assertEqual(len(speech), 1)
+                header = speech[0]["text"].split("\n", 1)[0]
+                self.assertIn("CompAII · cluster@synthetic", header)
+                self.assertIn("Oliva · cluster@synthetic", header)
+                self.assertNotIn("dm:being:", header)
+                self.assertEqual(speech[0]["entities"][0]["type"], "bold")
             self.assertFalse(receipt["ambiguous"])
             self.assertEqual(receipt["transport_status"], "recipient-intake")
         finally:

@@ -17,10 +17,11 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .telegram_mirror import (
     COMPACT_REPRESENTATION,
+    READABLE_REPRESENTATION,
     REPRESENTATIONS,
     classify_plain_response,
     plain_request,
@@ -177,9 +178,15 @@ def validate_projection(projection: dict[str, Any]) -> None:
         if kind in ("reply", "semantic-receipt") and reply is None:
             raise ValueError
         if reply is not None:
-            _fields(reply, {"event_id", "event_digest"})
+            keys = {"event_id", "event_digest"}
+            if isinstance(reply, dict) and "sender" in reply:
+                keys |= {"sender", "text"}
+            _fields(reply, keys)
             _text(reply["event_id"])
             _digest_field(reply["event_digest"])
+            if "sender" in reply:
+                _text(reply["sender"])
+                _text(reply["text"], 1024)
         if kind in ("message", "reply"):
             _fields(content, {"text"})
             _text(content["text"], 65536)
@@ -226,7 +233,9 @@ def _millis(value: Any) -> None:
         raise ValueError
 
 
-def _part_result(part: dict[str, Any], policy: dict[str, Any]) -> tuple[str, int]:
+def _part_result(
+    part: dict[str, Any], policy: dict[str, Any], *, reply_message_id: int | None = None
+) -> tuple[str, int]:
     if not part["attempts"]:
         return "queued", 0
     attempt = part["attempts"][-1]
@@ -235,11 +244,63 @@ def _part_result(part: dict[str, Any], policy: dict[str, Any]) -> tuple[str, int
     result, delay = classify_plain_response(
         attempt["response"].encode(),
         plain_request(
-            part["text"], chat_id=policy["chat_id"], topic_id=policy["topic_id"]
+            part["text"],
+            chat_id=policy["chat_id"],
+            topic_id=policy["topic_id"],
+            readable=policy["representation"] == READABLE_REPRESENTATION,
+            reply_message_id=reply_message_id,
         ),
         bot_id=policy["bot_id"],
     )
     return result, attempt["response_at_ms"] + delay * 1000
+
+
+def _record_reply(record: dict[str, Any], index: int) -> int | None:
+    binding = record["binding"]
+    if binding["policy"]["representation"] != READABLE_REPRESENTATION:
+        return None
+    parent = binding.get("telegram_reference", {}).get("message_id")
+    if index == 0:
+        return cast(int | None, parent)
+    first = record["parts"][0]
+    if (
+        _part_result(first, binding["policy"], reply_message_id=parent)[0]
+        != "confirmed"
+    ):
+        return None
+    return cast(
+        int, json.loads(first["attempts"][-1]["response"])["result"]["message_id"]
+    )
+
+
+def _record_request(record: dict[str, Any], index: int) -> dict[str, Any]:
+    policy = record["binding"]["policy"]
+    return plain_request(
+        record["parts"][index]["text"],
+        chat_id=policy["chat_id"],
+        topic_id=policy["topic_id"],
+        readable=policy["representation"] == READABLE_REPRESENTATION,
+        reply_message_id=_record_reply(record, index),
+    )
+
+
+def _record_part_result(record: dict[str, Any], index: int) -> tuple[str, int]:
+    return _part_result(
+        record["parts"][index],
+        record["binding"]["policy"],
+        reply_message_id=_record_reply(record, index),
+    )
+
+
+def _render_binding(binding: dict[str, Any]) -> list[str]:
+    projection = _copy(binding["projection"])
+    display = binding.get("presentation")
+    if display is not None:
+        projection["sender"] = display["sender"]
+        projection["recipients"] = display["recipients"]
+        if "reply_sender" in display:
+            projection["reply_to"]["sender"] = display["reply_sender"]
+    return render_echo_parts(projection, binding["policy"]["representation"])
 
 
 def _validate_retry(
@@ -292,22 +353,57 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
         _digest_field(record["authentication"])
         _digest_field(record["binding_digest"])
         binding = record["binding"]
-        _fields(binding, {"operation_id", "projection", "policy"})
+        binding_keys = {"operation_id", "projection", "policy"}
+        if "telegram_reference" in binding:
+            binding_keys.add("telegram_reference")
+        if "presentation" in binding:
+            binding_keys.add("presentation")
+        _fields(binding, binding_keys)
         _text(binding["operation_id"], 128)
         validate_projection(binding["projection"])
         validate_policy(binding["policy"])
+        if "presentation" in binding:
+            display = binding["presentation"]
+            keys = {"sender", "recipients"}
+            if "reply_sender" in display:
+                keys.add("reply_sender")
+            _fields(display, keys)
+            _text(display["sender"])
+            if (
+                type(display["recipients"]) is not list
+                or len(display["recipients"]) != 1
+            ):
+                raise ValueError
+            _text(display["recipients"][0])
+            if binding["policy"]["representation"] != READABLE_REPRESENTATION:
+                raise ValueError
+            if "reply_sender" in display:
+                if binding["projection"]["reply_to"] is None:
+                    raise ValueError
+                _text(display["reply_sender"])
+        if "telegram_reference" in binding:
+            reference = binding["telegram_reference"]
+            _fields(reference, {"event_id", "event_digest", "message_id"})
+            parent = binding["projection"]["reply_to"]
+            if (
+                binding["policy"]["representation"] != READABLE_REPRESENTATION
+                or parent is None
+                or reference["event_id"] != parent["event_id"]
+                or reference["event_digest"] != parent["event_digest"]
+                or type(reference["message_id"]) is not int
+                or not 0 < reference["message_id"] < 2**52
+            ):
+                raise ValueError
         if _hash(binding) != record["binding_digest"]:
             raise ValueError
-        texts = render_echo_parts(
-            binding["projection"], binding["policy"]["representation"]
-        )
+        texts = _render_binding(binding)
         parts = record["parts"]
         if type(parts) is not list or len(parts) != len(texts):
             raise ValueError
         revision, attempt_ids = 0, set()
         decision_ids: set[str] = set()
         unfinished = False
-        for part, text in zip(parts, texts, strict=True):
+        for index, (part, text) in enumerate(zip(parts, texts, strict=True)):
             _fields(part, {"text", "attempts"})
             if part["text"] != text:
                 raise ValueError
@@ -316,11 +412,7 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                 raise ValueError
             if unfinished and attempts:
                 raise ValueError
-            request = plain_request(
-                text,
-                chat_id=binding["policy"]["chat_id"],
-                topic_id=binding["policy"]["topic_id"],
-            )
+            request = _record_request(record, index)
             previous = None
             for attempt in attempts:
                 _fields(
@@ -337,7 +429,9 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                 _millis(attempt["at_ms"])
                 if previous is not None:
                     result, earliest = _part_result(
-                        {"text": text, "attempts": [previous]}, binding["policy"]
+                        {"text": text, "attempts": [previous]},
+                        binding["policy"],
+                        reply_message_id=_record_reply(record, index),
                     )
                     if result == "ambiguous":
                         _validate_retry(
@@ -381,7 +475,7 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                 elif attempt["response_at_ms"] is not None:
                     raise ValueError
                 previous = attempt
-            unfinished = _part_result(part, binding["policy"])[0] != "confirmed"
+            unfinished = _record_part_result(record, index)[0] != "confirmed"
         if type(record["revision"]) is not int or record["revision"] != revision:
             raise ValueError
     except Exception:
@@ -527,18 +621,36 @@ class EchoJournal:
         ).hexdigest()
 
     def admit(
-        self, operation_id: str, projection: dict[str, Any], policy: dict[str, Any]
+        self,
+        operation_id: str,
+        projection: dict[str, Any],
+        policy: dict[str, Any],
+        *,
+        telegram_reference: dict[str, Any] | None = None,
+        presentation: dict[str, Any] | None = None,
     ) -> str:
         """Trusted producer; SAME parent transaction as logical admission."""
         try:
-            return self._admit(operation_id, projection, policy)
+            return self._admit(
+                operation_id,
+                projection,
+                policy,
+                telegram_reference=telegram_reference,
+                presentation=presentation,
+            )
         except EchoError:
             raise
         except Exception:
             raise EchoError("echo_storage_unavailable") from None
 
     def _admit(
-        self, operation_id: str, projection: dict[str, Any], policy: dict[str, Any]
+        self,
+        operation_id: str,
+        projection: dict[str, Any],
+        policy: dict[str, Any],
+        *,
+        telegram_reference: dict[str, Any] | None = None,
+        presentation: dict[str, Any] | None = None,
     ) -> str:
         self._check_catalog()
         if not self.db.in_transaction:
@@ -554,8 +666,12 @@ class EchoJournal:
             "policy": _copy(policy),
             "projection": _copy(projection),
         }
+        if telegram_reference is not None:
+            binding["telegram_reference"] = _copy(telegram_reference)
+        if presentation is not None:
+            binding["presentation"] = _copy(presentation)
         digest = _hash(binding)
-        texts = render_echo_parts(projection, policy["representation"])
+        texts = _render_binding(binding)
         if self.db.execute(
             "SELECT 1 FROM echo_v2_obligations WHERE operation_id=?", (operation_id,)
         ).fetchone():
@@ -656,9 +772,7 @@ class EchoJournal:
 
 
 def _status(record: dict[str, Any]) -> dict[str, Any]:
-    outcomes = [
-        _part_result(p, record["binding"]["policy"])[0] for p in record["parts"]
-    ]
+    outcomes = [_record_part_result(record, i)[0] for i in range(len(record["parts"]))]
     completed = outcomes.count("confirmed")
     state = (
         "suppressed"
@@ -729,11 +843,10 @@ class MandatoryEcho:
         self._current(record)
         if _status(record)["state"] != "ambiguous":
             raise EchoError("echo_retry_not_ambiguous")
-        policy = record["binding"]["policy"]
         part = next(
             item
-            for item in record["parts"]
-            if _part_result(item, policy)[0] != "confirmed"
+            for i, item in enumerate(record["parts"])
+            if _record_part_result(record, i)[0] != "confirmed"
         )
         attempt = part["attempts"][-1]
         return {
@@ -764,15 +877,23 @@ class MandatoryEcho:
         status = _status(record)
         if status["state"] == "confirmed":
             return record
-        if (
-            status["state"] == "suppressed"
-            and record["binding"]["policy"]["representation"] == COMPACT_REPRESENTATION
-        ):
+        if status["state"] == "suppressed" and record["binding"]["policy"][
+            "representation"
+        ] in (COMPACT_REPRESENTATION, READABLE_REPRESENTATION):
             return record
         raise EchoError("echo_not_discharged")
 
     def _checkpoint(self, point: str) -> None:
         """Private fault-injection seam; no runtime configuration or model API."""
+
+    def _publish_reference(self, record: dict[str, Any]) -> None:
+        if (
+            record["binding"]["policy"]["representation"] == READABLE_REPRESENTATION
+            and _status(record)["state"] == "confirmed"
+        ):
+            publish = getattr(self._transport, "publish_reference", None)
+            if publish is not None:
+                publish(_copy(record))
 
     def advance(
         self, operation_id: str, expected_binding_digest: str
@@ -832,6 +953,7 @@ class MandatoryEcho:
             ):
                 return state  # Lost-return retry of an already admitted decision.
             if state["state"] in {"confirmed", "suppressed"} or self._transport is None:
+                self._publish_reference(record)
                 return state
             if state["state"] == "ambiguous" and authorization is None:
                 return state
@@ -841,14 +963,14 @@ class MandatoryEcho:
             index = next(
                 i
                 for i, p in enumerate(record["parts"])
-                if _part_result(p, policy)[0] != "confirmed"
+                if _record_part_result(record, i)[0] != "confirmed"
             )
             part = record["parts"][index]
             now = self._clock()
             _millis(now)
             if len(part["attempts"]) >= MAX_ATTEMPTS:
                 raise EchoError("echo_attempt_limit")
-            if now < _part_result(part, policy)[1]:
+            if now < _record_part_result(record, index)[1]:
                 return state
             approval = None
             if authorization is not None:
@@ -870,9 +992,7 @@ class MandatoryEcho:
                     _validate_retry(approval, record["binding"], previous_id, now)
                 except Exception:
                     raise EchoError("echo_retry_unauthorized") from None
-            request = plain_request(
-                part["text"], chat_id=policy["chat_id"], topic_id=policy["topic_id"]
-            )
+            request = _record_request(record, index)
             attempt: dict[str, Any] = {
                 "attempt_id": str(uuid.uuid4()),
                 "request_digest": _hash(request),
@@ -906,4 +1026,5 @@ class MandatoryEcho:
             latest["revision"] += 1
             journal._write(latest)
         self._checkpoint("response_committed")
+        self._publish_reference(latest)
         return self.inspect(operation_id, expected_binding_digest)

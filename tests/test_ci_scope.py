@@ -99,6 +99,24 @@ class CIScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(profile([*changes, path]), "full")
 
+    def test_readable_egress_profile_covers_native_boundaries_but_not_unrelated_changes(
+        self,
+    ):
+        from tools.ci_scope import VISIBILITY_FILES
+
+        changed = sorted(VISIBILITY_FILES)
+        self.assertEqual(profile(changed), "visibility")
+        for path in (
+            "src/daimon_matrix/keystore.py",
+            "src/daimon_matrix/identity.py",
+            "pyproject.toml",
+            "specs/DM-051.md",
+            "tools/generate_dm041_vectors.py",
+        ):
+            self.assertEqual(profile([*changed, path]), "full")
+        # An isolated runtime change cannot hide behind the presentation profile.
+        self.assertEqual(profile(["src/daimon_matrix/runtime.py"]), "full")
+
     def test_missing_base_and_failed_observation_keep_full_qualification(self):
         with patch("tools.ci_scope.subprocess.run") as run:
             self.assertEqual(select(""), "full")

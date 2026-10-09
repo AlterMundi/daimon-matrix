@@ -107,6 +107,16 @@ class VisibilityFactoryContext:
     signer_public_key: bytes
     bundle_sha256: str
     authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
+    labels: LabelIndex | None = None
+
+    def display_identity(self, identity: str) -> str:
+        """Owner-approved display name; no routing or authority decision."""
+        if self.labels is None:
+            return identity
+        try:
+            return self.labels.being_name_of_ref(identity) or identity
+        except LabelError:
+            return identity
 
 
 VisibilityFactory = Callable[[VisibilityFactoryContext], MandatoryEgressController]
@@ -1244,6 +1254,7 @@ def load_runtime(
                 signer_public_key=signer.public_key,
                 bundle_sha256=hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
                 authorities=MappingProxyType(verified_authorities),
+                labels=load_label_index(root, active),
             )
         )
         if not isinstance(visibility, MandatoryEgressController):

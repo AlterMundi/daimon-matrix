@@ -181,7 +181,19 @@ class MessagingOutboxStore:
                     operation_id=f"{send_id}:{phase}",
                     locator="\0".join((owner, send_id, phase)),
                     native_bytes=raw,
-                    projection=projections[phase],
+                    projection=(
+                        json.loads(existing_projection[0])
+                        if (
+                            existing_projection := database.execute(
+                                "SELECT projection_json "
+                                "FROM mandatory_egress_operations "
+                                "WHERE operation_id=?",
+                                (f"{send_id}:{phase}",),
+                            ).fetchone()
+                        )
+                        is not None
+                        else projections[phase]
+                    ),
                     deadline_ms=deadline_ms,
                     authority_head=authority_head,
                 )

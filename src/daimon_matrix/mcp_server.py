@@ -807,7 +807,14 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
                 "channel_id": _CHANNEL_ID,
                 "send_id": _UUID,
                 "thread_id": _UUID,
-                "text": _MESSAGE_TEXT,
+                "text": {
+                    **_MESSAGE_TEXT,
+                    "description": (
+                        "Intended speech only. Matrix supplies sender, embodiment and "
+                        "recipients; the configured Tribu view resolves their names. "
+                        "Do not repeat identity codes or routine signatures in text."
+                    ),
+                },
             },
             ("channel_id", "send_id", "thread_id", "text"),
         ),
@@ -821,7 +828,14 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
                 "send_id": _UUID,
                 "received_channel_id": _CHANNEL_ID,
                 "message_id": _UUID,
-                "text": _MESSAGE_TEXT,
+                "text": {
+                    **_MESSAGE_TEXT,
+                    "description": (
+                        "Intended speech only. Matrix supplies sender, embodiment and "
+                        "recipients; the configured Tribu view resolves their names. "
+                        "Do not repeat identity codes or routine signatures in text."
+                    ),
+                },
             },
             ("channel_id", "send_id", "received_channel_id", "message_id", "text"),
         ),

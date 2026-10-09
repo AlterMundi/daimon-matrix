@@ -119,6 +119,28 @@ def _runtime_epoch(runtime: HostedRuntime) -> RootAuthority:
     return _current_epoch(_runtime_authority(runtime))
 
 
+def _verify_visibility_participant(
+    authorities: Mapping[str, RootAuthority],
+    participant: str,
+    document: Any,
+    binding: Any,
+    *,
+    at_ms: int,
+) -> None:
+    authority = authorities[participant]
+    body = binding["body"]
+    identity = _public_identity(
+        authority,
+        body["origin"],
+        body["runtime_id"],
+        body["runtime_label"],
+        at_ms,
+    )
+    credential = authority.credentials[identity["credential_id"]]
+    public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+    verify_public_binding(identity, public_key, document, binding)
+
+
 def _owner_visibility_controller(
     *,
     authorities: Mapping[str, RootAuthority],
@@ -131,6 +153,7 @@ def _owner_visibility_controller(
     signer_public_key: bytes,
     clock: Callable[[], int],
     catalog_mode: str,
+    presentation_resolver: Callable[[str], str] | None = None,
 ) -> MandatoryEgressController:
     """Bind one owner installation to a selected app and the present epoch.
 
@@ -161,18 +184,13 @@ def _owner_visibility_controller(
         )
 
     def verify_participant(participant: str, document: Any, binding: Any) -> None:
-        participant_authority = authorities[participant]
-        body = binding["body"]
-        identity = _public_identity(
-            participant_authority,
-            body["origin"],
-            body["runtime_id"],
-            body["runtime_label"],
-            clock(),
+        _verify_visibility_participant(
+            authorities,
+            participant,
+            document,
+            binding,
+            at_ms=clock(),
         )
-        credential = participant_authority.credentials[identity["credential_id"]]
-        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
-        verify_public_binding(identity, public_key, document, binding)
 
     return load_owner_visibility_file(
         installation_path,
@@ -181,6 +199,7 @@ def _owner_visibility_controller(
         verify_participant_binding=verify_participant,
         clock=clock,
         catalog_mode=cast(Any, catalog_mode),
+        presentation_resolver=presentation_resolver,
     )
 
 
@@ -208,6 +227,7 @@ def _visibility_factory(
             runtime_label=context.runtime_label,
             signer_public_key=context.signer_public_key,
             clock=clock,
+            presentation_resolver=context.display_identity,
             catalog_mode=catalog_mode,
         )
 
@@ -1368,6 +1388,161 @@ def republish(
         os.close(descriptor)
 
 
+def visibility_presentation(
+    runtime: HostedRuntime,
+    app_directory: Path,
+    installation: Path,
+    *,
+    command: str,
+    representation: str | None = None,
+    proposal: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Offline same-audience successor, signed by each existing participant.
+
+    Propose/accept/apply require the existing runtime lock. The old installation
+    is authenticated first. Only issued time and versioned representation may
+    change in the shared disclosure; credentials, audience, channels, stores,
+    keys, qualification and retained proof bytes remain in their existing homes.
+    """
+    from .telegram_mirror import REPRESENTATIONS
+
+    root = _directory(installation.parent)
+    application, _ = read_publication(runtime, _directory(app_directory))
+    authorities = _application_authorities(application)
+    previous_envelope = read_document(installation)
+    previous = previous_envelope["document"]
+    controller = _owner_visibility_controller(
+        authorities=authorities,
+        application_sha256=config_digest(application),
+        installation_path=installation,
+        authority=_runtime_authority(runtime),
+        origin=runtime.service.origin,
+        runtime_id=runtime.service.runtime_id,
+        runtime_label=runtime.service.runtime_label,
+        signer_public_key=runtime.service.signer.public_key,
+        clock=runtime.service.clock,
+        catalog_mode="validate",
+    )
+    if controller.installation_digest != config_digest(previous):
+        raise MessagingConfigError("messaging_visibility_presentation_conflict")
+    owner = _runtime_epoch(runtime).manifest.being_ref
+    if command == "visibility-propose":
+        if proposal is not None or representation not in REPRESENTATIONS:
+            raise MessagingConfigError("messaging_visibility_presentation_invalid")
+        disclosure = copy.deepcopy(previous["disclosure"])
+        disclosure["issued_at_ms"] = runtime.service.clock()
+        disclosure["destination"]["representation"] = representation
+        return {
+            "schema": "dm.messaging.presentation-proposal/v1",
+            "disclosure": disclosure,
+            "bindings": [create_binding(runtime, disclosure)],
+        }
+    if (
+        command not in {"visibility-accept", "visibility-apply"}
+        or proposal is None
+        or representation is not None
+        or set(proposal) != {"schema", "disclosure", "bindings"}
+        or proposal["schema"] != "dm.messaging.presentation-proposal/v1"
+    ):
+        raise MessagingConfigError("messaging_visibility_presentation_invalid")
+    disclosure = proposal["disclosure"]
+    expected = copy.deepcopy(previous["disclosure"])
+    expected["destination"]["representation"] = disclosure["destination"][
+        "representation"
+    ]
+    expected["issued_at_ms"] = disclosure["issued_at_ms"]
+    if (
+        expected != disclosure
+        or expected["destination"]["representation"] not in REPRESENTATIONS
+        or type(disclosure["issued_at_ms"]) is not int
+        or not previous["disclosure"]["issued_at_ms"]
+        <= disclosure["issued_at_ms"]
+        <= runtime.service.clock()
+        or not isinstance(proposal["bindings"], list)
+        or not 1 <= len(proposal["bindings"]) <= len(disclosure["participants"])
+    ):
+        raise MessagingConfigError("messaging_visibility_presentation_scope_change")
+    bindings = {}
+    for binding in proposal["bindings"]:
+        actor = binding["body"]["being_ref"]
+        if actor not in disclosure["participants"] or actor in bindings:
+            raise MessagingConfigError("messaging_visibility_presentation_invalid")
+        _verify_visibility_participant(
+            authorities, actor, disclosure, binding, at_ms=runtime.service.clock()
+        )
+        bindings[actor] = binding
+    if command == "visibility-accept":
+        bindings[owner] = create_binding(runtime, disclosure)
+        return {**proposal, "bindings": [bindings[actor] for actor in sorted(bindings)]}
+    if set(bindings) != set(disclosure["participants"]):
+        raise MessagingConfigError(
+            "messaging_visibility_presentation_acceptance_missing"
+        )
+    acceptance = {
+        "schema": "dm.messaging.visibility-acceptance-set/v1",
+        "disclosure_sha256": config_digest(disclosure),
+        "bindings": [bindings[actor] for actor in disclosure["participants"]],
+    }
+    if disclosure == previous["disclosure"]:
+        if acceptance != previous["acceptance_set"]:
+            raise MessagingConfigError("messaging_visibility_presentation_conflict")
+        return {"status": "unchanged", "installation_sha256": config_digest(previous)}
+    generation = previous["generation"] + 1
+    document = {
+        **previous,
+        "generation": generation,
+        "disclosure": disclosure,
+        "acceptance_set": acceptance,
+        "policy": {
+            **previous["policy"],
+            "generation": generation,
+            "representation": disclosure["destination"]["representation"],
+            "acceptance_digest": config_digest(acceptance),
+        },
+    }
+    successor = {"document": document, "binding": create_binding(runtime, document)}
+    temporary = root / (".presentation-" + secrets.token_hex(16) + ".json")
+    try:
+        _write(root, temporary.name, canonical_bytes(successor))
+        # Validate the complete candidate through the production signature,
+        # qualification and policy loader BEFORE changing the selected file.
+        _owner_visibility_controller(
+            authorities=authorities,
+            application_sha256=config_digest(application),
+            installation_path=temporary,
+            authority=_runtime_authority(runtime),
+            origin=runtime.service.origin,
+            runtime_id=runtime.service.runtime_id,
+            runtime_label=runtime.service.runtime_label,
+            signer_public_key=runtime.service.signer.public_key,
+            clock=runtime.service.clock,
+            catalog_mode="validate",
+        )
+        if read_document(installation) != previous_envelope:
+            raise MessagingConfigError("messaging_visibility_presentation_conflict")
+        backup = installation.name + ".pre-presentation-" + secrets.token_hex(8)
+        _write(root, backup, canonical_bytes(previous_envelope))
+        _sync(root)
+        os.replace(temporary, installation)
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {
+        "status": "presentation-selected",
+        "representation": document["policy"]["representation"],
+        "installation_sha256": config_digest(document),
+        "generation": generation,
+        "previous_installation_backup": backup,
+        "audience_unchanged": True,
+        "proof_key_preserved": True,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Trusted prepare/renew/revoke/recover and read-only operator entrypoints."""
     import argparse
@@ -1386,6 +1561,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "command",
         choices=(
             "prepare",
+            "visibility-propose",
+            "visibility-accept",
+            "visibility-apply",
             "migrate-visibility",
             "renew",
             "republish",
@@ -1412,11 +1590,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Owner-only named transport key sources (prepare only)",
     )
     parser.add_argument("--expected-application-sha256")
+    parser.add_argument("--proposal", type=Path)
+    parser.add_argument(
+        "--representation",
+        choices=("plain-json/v2", "compact-html/v1", "compact-text/v1"),
+    )
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--ready-fd", type=int)
     args = parser.parse_args(argv)
     lock = None
     previous_signals = {}
     try:
+        presentation_command = args.command.startswith("visibility-")
+        if presentation_command:
+            if args.ready_fd is not None or args.visibility_installation is None:
+                raise ValueError()
+            if args.command == "visibility-propose":
+                if (
+                    args.representation is None
+                    or args.proposal is not None
+                    or args.output is None
+                ):
+                    raise ValueError()
+            elif (
+                args.proposal is None
+                or args.representation is not None
+                or (args.command == "visibility-accept" and args.output is None)
+            ):
+                raise ValueError()
+        elif (
+            args.proposal is not None
+            or args.representation is not None
+            or args.output is not None
+        ):
+            raise ValueError()
         if args.command == "republish":
             # A re-publication is derived from what is already published, so it
             # takes no expected digest, and it never serves traffic.
@@ -1503,6 +1710,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for r in spec[d]["routes"].values()
             }
             result = prepare(runtime, args.app_dir, spec, secret_sources=sources)
+        elif presentation_command:
+            assert args.visibility_installation is not None
+            proposal = (
+                read_document(args.proposal) if args.proposal is not None else None
+            )
+            result = visibility_presentation(
+                runtime,
+                args.app_dir,
+                args.visibility_installation,
+                command=args.command,
+                representation=args.representation,
+                proposal=proposal,
+            )
+            if args.command != "visibility-apply":
+                assert args.output is not None
+                _write(
+                    _directory(args.output.parent),
+                    args.output.name,
+                    canonical_bytes(result),
+                )
+                result = {
+                    "status": "presentation-proposal-signed",
+                    "proposal_sha256": config_digest(result),
+                }
         elif args.command == "migrate-visibility":
             application, _metadata = read_publication(runtime, _directory(args.app_dir))
             runtime = load_application(runtime, args.app_dir)

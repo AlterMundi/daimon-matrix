@@ -193,6 +193,105 @@ class ExclusivePublicationTests(unittest.TestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_same_audience_presentation_successor_preserves_keys_stores_and_rollback(
+        self,
+    ):
+        from daimon_matrix.operator_messaging import visibility_presentation
+
+        runtime, spec, sources, _ = application_fixture(self)
+        app = self.root / "presentation-app"
+        prepare(runtime, app, spec, secret_sources=sources)
+        installation = signed_visibility_installation(
+            self.root, runtime, self.pair, app
+        )
+        previous = installation.read_bytes()
+        retained = {p: p.read_bytes() for p in app.iterdir() if p.is_file()}
+        secrets = {
+            p: p.read_bytes()
+            for p in (self.root / "telegram.token", self.root / "echo-proof.key")
+        }
+        proposal = visibility_presentation(
+            runtime,
+            app,
+            installation,
+            command="visibility-propose",
+            representation="compact-text/v1",
+        )
+        self.assertEqual(installation.read_bytes(), previous)
+        with self.assertRaisesRegex(ValueError, "acceptance_missing"):
+            visibility_presentation(
+                runtime,
+                app,
+                installation,
+                command="visibility-apply",
+                proposal=proposal,
+            )
+        widened = copy.deepcopy(proposal)
+        widened["disclosure"]["destination"]["chat_id"] -= 1
+        with self.assertRaisesRegex(ValueError, "scope_change"):
+            visibility_presentation(
+                runtime,
+                app,
+                installation,
+                command="visibility-accept",
+                proposal=widened,
+            )
+        # The independently held receiving identity signs the exact same proposal.
+        peer = self.pair.recipient
+        old_peer_binding = next(
+            b
+            for b in json.loads(previous)["document"]["acceptance_set"]["bindings"]
+            if b["body"]["being_ref"] == peer.state.being_ref
+        )
+        body = {
+            **old_peer_binding["body"],
+            "application_sha256": config_digest(proposal["disclosure"]),
+        }
+        proposal["bindings"].append(
+            {
+                "schema": old_peer_binding["schema"],
+                "body": body,
+                "signature": b64url(
+                    Ed25519PrivateKey.from_private_bytes(peer.signer.seed).sign(
+                        BINDING_DOMAIN + canonical_bytes(body)
+                    )
+                ),
+            }
+        )
+        tampered = copy.deepcopy(proposal)
+        tampered["bindings"][-1]["signature"] = "A" * 86
+        with self.assertRaises(ValueError):
+            visibility_presentation(
+                runtime,
+                app,
+                installation,
+                command="visibility-apply",
+                proposal=tampered,
+            )
+        self.assertEqual(installation.read_bytes(), previous)
+        result = visibility_presentation(
+            runtime, app, installation, command="visibility-apply", proposal=proposal
+        )
+        self.assertEqual(result["status"], "presentation-selected")
+        self.assertEqual(result["generation"], 2)
+        self.assertEqual(
+            (self.root / result["previous_installation_backup"]).read_bytes(), previous
+        )
+        self.assertEqual(retained, {p: p.read_bytes() for p in retained})
+        self.assertEqual(secrets, {p: p.read_bytes() for p in secrets})
+        selected = json.loads(installation.read_bytes())["document"]
+        self.assertEqual(selected["policy"]["representation"], "compact-text/v1")
+        self.assertEqual(
+            selected["telegram_qualification"],
+            json.loads(previous)["document"]["telegram_qualification"],
+        )
+        after = installation.read_bytes()
+        repeated = visibility_presentation(
+            runtime, app, installation, command="visibility-apply", proposal=proposal
+        )
+        self.assertEqual(repeated["status"], "unchanged")
+        self.assertEqual(installation.read_bytes(), after)
+
     def test_host_visibility_accepts_current_authority_with_history_wrapper(self):
         from daimon_matrix.authority_epochs import RootHistoryAuthority
         from daimon_matrix.operator_messaging import host_visibility_factory

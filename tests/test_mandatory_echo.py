@@ -54,6 +54,14 @@ class Transport:
             "chat": {"id": request["chat_id"]},
             "text": request["text"],
         }
+        if "entities" in request:
+            result["entities"] = request["entities"]
+        if "reply_parameters" in request:
+            result["reply_to_message"] = {
+                "message_id": request["reply_parameters"]["message_id"],
+                "chat": {"id": request["chat_id"]},
+                "from": {"id": 123, "is_bot": True},
+            }
         if "message_thread_id" in request:
             result.update(
                 message_thread_id=request["message_thread_id"], is_topic_message=True
@@ -127,6 +135,70 @@ class EchoTests(unittest.TestCase):
         self.assertEqual(len(self.transport.calls), 1)
         with self.assertRaises(echo.EchoError):
             self.reopen(self.db)
+
+    def test_readable_reply_and_continuations_keep_exact_reference_after_restart(self):
+        self.source = projection("line\n" * 2000)
+        self.source.update(
+            kind="reply",
+            reply_to={
+                "event_id": "parent",
+                "event_digest": "d" * 64,
+                "sender": "oliva.codex@daimonmatrix",
+                "text": "Can you share the result?",
+            },
+        )
+        selected_policy = policy()
+        selected_policy["representation"] = "compact-text/v1"
+        self.db.execute("BEGIN IMMEDIATE")
+        digest = self.journal.admit(
+            "readable-op",
+            self.source,
+            selected_policy,
+            telegram_reference={
+                "event_id": "parent",
+                "event_digest": "d" * 64,
+                "message_id": 77,
+            },
+        )
+        self.db.commit()
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+
+        schemas = Path(__file__).resolve().parents[1] / "schemas/messaging/v2"
+        policy_schema = json.loads(
+            (schemas / "visibility-policy.schema.json").read_bytes()
+        )
+        registry = Registry().with_resource(
+            policy_schema["$id"], Resource.from_contents(policy_schema)
+        )
+        validator = Draft202012Validator(
+            json.loads((schemas / "echo-proof.schema.json").read_bytes()),
+            registry=registry,
+        )
+        validator.validate(self.journal._load("readable-op", digest))
+        self.worker.advance("readable-op", digest)
+        self.assertEqual(self.transport.calls[0]["reply_parameters"]["message_id"], 77)
+        worker = self.worker_for(self.reopen(self.db))
+        for _ in range(10):
+            if worker.advance("readable-op", digest)["state"] == "confirmed":
+                break
+        self.assertEqual(worker.inspect("readable-op", digest)["state"], "confirmed")
+        self.assertTrue(
+            all(
+                call["reply_parameters"]["message_id"] == 1
+                for call in self.transport.calls[1:]
+            )
+        )
+        validator.validate(worker.require_confirmed("readable-op", digest))
+        count = len(self.transport.calls)
+        worker.advance("readable-op", digest)
+        self.assertEqual(len(self.transport.calls), count)
+        self.assertEqual(
+            worker.require_confirmed("readable-op", digest)["binding"][
+                "telegram_reference"
+            ]["message_id"],
+            77,
+        )
 
     def test_authentication_transition_validates_before_write_and_rolls_back(self):
         from unittest.mock import patch

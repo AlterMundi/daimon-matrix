@@ -150,6 +150,43 @@ class TestResolution(unittest.TestCase):
     def setUp(self) -> None:
         self.index = LabelIndex(entries(), registry())
 
+    def test_verified_peer_facts_resolve_body_without_inventing_an_unknown_name(
+        self,
+    ) -> None:
+        peer = {
+            "being_ref": OTHER,
+            "embodiment_id": "embodiment:synthetic:oliva",
+            "body_ref": "codex:daimonmatrix:oliva",
+        }
+        extended = self.index._with_verified_entries([peer])
+        self.assertEqual(
+            extended.label_of(peer["embodiment_id"]), "oliva.codex@daimonmatrix"
+        )
+        unknown = {
+            **peer,
+            "being_ref": "dm:being:v1:" + "C" * 43,
+            "embodiment_id": SIBLING_BODY,
+        }
+        self.assertNotIn(
+            SIBLING_BODY, extended._with_verified_entries([unknown]).targets
+        )
+
+    def test_conflicting_cross_being_body_id_has_no_false_label(self) -> None:
+        from daimon_matrix.messaging import _sender_display
+
+        conflicting = {
+            "being_ref": OTHER,
+            "embodiment_id": CODEX_BODY,
+            "body_ref": "codex:daimonmatrix:oliva",
+        }
+        # Even before registry extension, the other being cannot borrow our label.
+        self.assertEqual(_sender_display(self.index, conflicting, OTHER), "oliva")
+        extended = self.index._with_verified_entries([conflicting])
+        self.assertNotIn(CODEX_BODY, extended.targets)
+        display = _sender_display(extended, conflicting, OTHER, body_fallback=True)
+        self.assertIn("oliva · cuerpo", display)
+        self.assertIn(CODEX_BODY.removeprefix("embodiment:"), display)
+
     def test_one_label_resolves_one_body(self) -> None:
         (target,) = self.index.resolve("compaii.codex@legion")
         self.assertEqual(target.embodiment_id, CODEX_BODY)

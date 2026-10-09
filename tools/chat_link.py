@@ -1485,11 +1485,11 @@ def main() -> None:
     parser.add_argument("--additional-link", action="store_true")
     parser.add_argument(
         "--representation",
-        choices=("plain-json/v2", "compact-html/v1"),
+        choices=("plain-json/v2", "compact-html/v1", "compact-text/v1"),
         default=None,
         help=(
             "Telegram echo presentation for the NEW enrollment; inherits the "
-            "installed representation when omitted. compact-html/v1 posts "
+            "installed representation when omitted. compact-text/v1 posts readable "
             "speech as 'sender -> recipient' plus full text, one-line warnings "
             "for actionable failures, and suppresses successful transport and "
             "control chatter (recorded honestly as suppressed, never as an "

@@ -1170,6 +1170,20 @@ def _compose(
             inbox=MessagingInboxStore(store),
             clock=service.clock,
         )
+        if service.labels is not None:
+            entries: list[dict[str, Any]] = []
+            for being_ref in (result.local_being_ref, result.policy.peer_being_ref):
+                authority = result._active(being_ref)
+                entries.extend(
+                    {
+                        "being_ref": being_ref,
+                        "body_ref": member["body_ref"],
+                        "embodiment_id": member["embodiment_id"],
+                    }
+                    for member in authority.manifest.value["embodiments"]
+                    if member["status"] == "active"
+                )
+            result.labels = service.labels._with_verified_entries(entries)
         recipient_descriptor(result._local(), at_ms=service.clock())
         from .sealed import RecipientTarget
 

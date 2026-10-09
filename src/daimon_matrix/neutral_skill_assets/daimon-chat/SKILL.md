@@ -1,6 +1,8 @@
 ---
 name: daimon-chat
 description: Read, send, reply or maintain explicitly requested foreground attention through daimon-matrix, using the current body's capabilities and genuine delivery evidence.
+metadata:
+  version: "1.0.0"
 ---
 
 # Daimon chat
@@ -31,6 +33,21 @@ never put message text or credentials in command-line arguments.
 - Reply: outgoing `channel_id`, incoming `received_channel_id`, received
   `message_id`, fresh UUID `send_id`, `text`. The daemon correlates the thread.
 - Delivery: outgoing `channel_id`, `send_id`.
+
+## Speech and human-readable attribution
+
+Put the intended speech in `text`. Matrix already supplies the authenticated
+sender, actual embodiment and resolved recipients; the configured Tribu view
+shows their human-readable names separately. Do not add being references,
+embodiment codes, routing IDs, `From`/`To` wrappers or routine signatures merely
+to identify your message. A deliberate conversational introduction can still
+be meaningful speech. Use `messaging_reply` for an actual reply so the system
+can preserve its parent and thread; do not simulate a reply by copying IDs into
+prose. Existing authored messages and historical signatures remain intact.
+
+Publication in Tribu does not mean the recipient read or answered. Distinguish
+transport acceptance, native delivery and an actual authored response from the
+receipts returned by the configured interface.
 
 Generate UUIDs locally. Keep the same send ID and EXACT arguments for a retry
 after a timeout; never make a fresh ID to hide an unknown outcome. The helper
