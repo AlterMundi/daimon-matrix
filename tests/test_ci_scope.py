@@ -165,6 +165,10 @@ class ActualMergeScopeTests(unittest.TestCase):
                 return git("rev-parse", "HEAD")
 
             git("init", "-q", "-b", "main")
+            # Even --no-commit merges require an identity. Keep the fixture
+            # independent of any account/global Git configuration in CI.
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
             stale_base = commit("README.md", "initial")
             git("checkout", "-qb", "feature")
             feature_head = commit("tools/preserve_memory.py", "selected tool change")
