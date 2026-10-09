@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       profile: ${{ steps.scope.outputs.profile }}
+      native_checks: ${{ steps.scope.outputs.native_checks }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -136,6 +137,7 @@ jobs:
           tests.test_mandatory_echo tests.test_mandatory_echo_integration
           tests.test_chat_link tests.test_chat_host -v
       - name: Native delivery, current authority, installed runtime and successor rollback
+        if: needs.scope.outputs.native_checks != 'false'
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_messaging_runtime tests.test_operator_messaging

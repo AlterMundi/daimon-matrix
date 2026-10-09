@@ -1192,6 +1192,82 @@ class CompactEchoRenderTests(unittest.TestCase):
 class ReadableEchoTests(unittest.TestCase):
     projection = CompactEchoRenderTests.projection
 
+    def test_ordinary_supergroup_reply_proves_its_derived_thread(self):
+        request = mirror.plain_request(
+            "Header\n\nLiteral <b>text</b>, ñ 😀",
+            chat_id=-123,
+            topic_id=None,
+            readable=True,
+            reply_message_id=77,
+        )
+        frozen = json.dumps(request, sort_keys=True)
+        result = {
+            "message_id": 78,
+            "from": {"id": 123, "is_bot": True},
+            "chat": {"id": -123, "type": "supergroup"},
+            "text": request["text"],
+            "entities": request["entities"],
+            "message_thread_id": 77,
+            "reply_to_message": {
+                "message_id": 77,
+                "from": {"id": 123, "is_bot": True},
+                "chat": {"id": -123, "type": "supergroup"},
+            },
+        }
+        transport = mirror.PlainTelegramTransport(
+            token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+        )
+        for root in (None, 55):
+            with self.subTest(root=root):
+                current = json.loads(json.dumps(result))
+                if root is not None:
+                    current["reply_to_message"]["message_thread_id"] = root
+                    current["message_thread_id"] = root
+                raw = json.dumps({"ok": True, "result": current}).encode()
+                with patch.object(
+                    mirror, "_plain_http_exchange", return_value=(200, raw)
+                ):
+                    self.assertEqual(transport.send(request), raw)
+                self.assertEqual(json.dumps(request, sort_keys=True), frozen)
+        changes = [
+            {"message_thread_id": 99},
+            {"message_thread_id": True},
+            {"message_thread_id": "77"},
+            {"is_topic_message": True},
+            {"reply_to_message": None},
+            {"chat": {"id": -123, "type": "channel"}},
+            {"chat": {"id": -999, "type": "supergroup"}},
+            {"from": {"id": 999, "is_bot": True}},
+            {"text": request["text"][:-1]},
+            {"entities": []},
+        ]
+        for change in (
+            {"message_id": 99},
+            {"from": {"id": 999, "is_bot": True}},
+            {"chat": {"id": -999, "type": "supergroup"}},
+            {"chat": {"id": -123, "type": "channel"}},
+            {"is_topic_message": True},
+            {"message_thread_id": True},
+            {"message_thread_id": 99},
+        ):
+            changes.append(
+                {"reply_to_message": {**result["reply_to_message"], **change}}
+            )
+        for change in changes:
+            with self.subTest(change=change):
+                raw = json.dumps({"ok": True, "result": {**result, **change}}).encode()
+                with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+                    mirror.classify_plain_response(raw, request, bot_id=123)
+        raw = json.dumps({"ok": True, "result": result}).encode()
+        for unrequested in ({}, {"message_id": 99}):
+            with (
+                self.subTest(unrequested=unrequested),
+                self.assertRaisesRegex(ValueError, "echo_response_invalid"),
+            ):
+                mirror.validate_plain_response(
+                    raw, {**request, "reply_parameters": unrequested}, bot_id=123
+                )
+
     def test_terminal_lf_response_keeps_frozen_request_and_actual_platform_bytes(self):
         for ending in ("", "\n", "\n\n"):
             with self.subTest(ending=ending):

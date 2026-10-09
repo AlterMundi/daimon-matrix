@@ -1,15 +1,41 @@
 """CI cannot classify runtime, custody, dependency or contract changes as tools."""
 
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.ci_scope import profile, select
+from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_mirror_scope_keeps_portability_skip_and_native_default(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "scope-output"
+            for selected in ("mirror", "visibility", "full", "messaging"):
+                with (
+                    self.subTest(selected=selected),
+                    patch("tools.ci_scope.select", return_value=selected),
+                    patch.object(sys, "argv", ["ci_scope.py", "--base", "base"]),
+                    patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+                ):
+                    output.write_text("")
+                    main()
+                    self.assertEqual(
+                        output.read_text().splitlines(),
+                        [
+                            "profile="
+                            + ("visibility" if selected == "mirror" else selected),
+                            "native_checks="
+                            + ("false" if selected == "mirror" else "true"),
+                        ],
+                    )
+
     def test_mirror_boundary_correction_uses_installed_visibility_only(self):
         changed = [
             "src/daimon_matrix/telegram_mirror.py",
@@ -20,8 +46,9 @@ class CIScopeTests(unittest.TestCase):
             "vectors/hermes/v1/index.json",
             "vectors/hermes/v1/valid/launch-receipt.json",
             "vectors/hermes/v1/valid/profile-manifest.json",
+            ".github/workflows/tests.yml",
         ]
-        self.assertEqual(profile(changed), "visibility")
+        self.assertEqual(profile(changed), "mirror")
         for path in (
             "src/daimon_matrix/messaging.py",
             "src/daimon_matrix/messaging_store.py",

@@ -514,6 +514,8 @@ def validate_plain_response(
     Telegram can remove terminal LF characters from a successful text response.
     Preserve the frozen request and actual response; accept only that observed
     boundary normalization, never interior changes or other truncation.
+    An ordinary supergroup reply's derived thread must be proven by its exact
+    returned requested parent; an explicitly selected forum topic remains pinned.
     """
     try:
         if type(raw) is not bytes or len(raw) > 65536:
@@ -528,10 +530,7 @@ def validate_plain_response(
         if type(bot_id) is not int or not 0 < bot_id < 2**52:
             raise ValueError
         if topic is None:
-            if (
-                "message_thread_id" in result
-                or result.get("is_topic_message", False) is not False
-            ):
+            if result.get("is_topic_message", False) is not False:
                 raise ValueError
         elif (
             type(result.get("message_thread_id")) is not int
@@ -584,8 +583,38 @@ def validate_plain_response(
                 or type(parent.get("from", {}).get("id")) is not int
                 or parent.get("from", {}).get("id") != bot_id
                 or parent.get("from", {}).get("is_bot") is not True
-                or parent.get("message_thread_id") != topic
+                or (topic is not None and parent.get("message_thread_id") != topic)
                 or (topic is not None and parent.get("is_topic_message") is not True)
+                or (
+                    topic is None and parent.get("is_topic_message", False) is not False
+                )
+            ):
+                raise ValueError
+        returned_thread = result.get("message_thread_id")
+        if topic is None and "message_thread_id" in result and returned_thread is None:
+            raise ValueError
+        if topic is None and returned_thread is not None:
+            # Ordinary supergroup replies also have a thread root. This is
+            # platform evidence of the exact requested parent, not a forum topic.
+            if (
+                type(returned_thread) is not int
+                or not 0 < returned_thread < 2**52
+                or result["chat"].get("type") != "supergroup"
+                or parent is None
+                or parent["chat"].get("type") != "supergroup"
+            ):
+                raise ValueError
+            root = parent.get("message_thread_id", parent["message_id"])
+            if type(root) is not int or not 0 < root < 2**52 or returned_thread != root:
+                raise ValueError
+        elif returned_thread != topic:
+            raise ValueError
+        if topic is None and parent is not None:
+            parent_thread = parent.get("message_thread_id")
+            if parent_thread is not None and (
+                type(parent_thread) is not int
+                or not 0 < parent_thread < 2**52
+                or returned_thread != parent_thread
             ):
                 raise ValueError
         if (
@@ -598,7 +627,6 @@ def validate_plain_response(
             or result["from"]["id"] != bot_id
             or result["from"].get("is_bot") is not True
             or result.get("text") not in (request["text"], request["text"].rstrip("\n"))
-            or result.get("message_thread_id") != request.get("message_thread_id")
         ):
             raise ValueError
         return dict(value)
