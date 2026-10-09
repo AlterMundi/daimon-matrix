@@ -94,10 +94,14 @@ def profile(paths: list[str]) -> str:
         and changed <= ARCHIVE_FILES
     ):
         return "archive"
-    if {
-        "src/daimon_matrix/telegram_mirror.py",
-        "src/daimon_matrix/mandatory_echo.py",
-    } <= changed and changed <= VISIBILITY_FILES:
+    if (
+        {
+            "src/daimon_matrix/telegram_mirror.py",
+            "src/daimon_matrix/mandatory_echo.py",
+        }
+        <= changed
+        or "src/daimon_matrix/operator_messaging.py" in changed
+    ) and changed <= VISIBILITY_FILES:
         return "visibility"
     if changed and changed <= PEER_FILES:
         return "peer"

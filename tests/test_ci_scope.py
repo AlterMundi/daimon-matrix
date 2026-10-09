@@ -10,6 +10,27 @@ from tools.ci_scope import profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_operator_presentation_correction_runs_installed_visibility_checks(self):
+        changed = [
+            "src/daimon_matrix/operator_messaging.py",
+            "tests/test_operator_messaging.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changed), "visibility")
+        for path in (
+            "src/daimon_matrix/keystore.py",
+            "src/daimon_matrix/identity.py",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "specs/DM-051.md",
+            "unknown.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(profile([*changed, path]), "full")
+
     def test_memory_preservation_runs_archive_qualification(self):
         changes = [
             "tools/preserve_memory.py",
