@@ -110,6 +110,8 @@ jobs:
       - run: python -m ruff format --check src tools/chat_link.py tools/install_agent_chat.py tools/ci_scope.py tests/test_ci_scope.py tests/test_agent_chat.py tests/test_labels.py tests/test_mandatory_echo.py tests/test_messaging_runtime.py tests/test_operator_messaging.py tests/test_telegram_mirror.py
       - run: python -m ruff check src tools/chat_link.py tools/install_agent_chat.py tools/ci_scope.py tests/test_ci_scope.py tests/test_agent_chat.py tests/test_labels.py tests/test_mandatory_echo.py tests/test_messaging_runtime.py tests/test_operator_messaging.py tests/test_telegram_mirror.py
       - run: MYPYPATH=src python -m mypy src tools/install_agent_chat.py
+      - name: Source inventory and hostile artifact boundary
+        run: python -W error::ResourceWarning -m unittest tests.test_package_scaffold -v
       - name: Reproducible qualified wheel and secret scan
         run: |
           python tools/reproducible_build.py --output dist
@@ -124,7 +126,7 @@ jobs:
           from pathlib import Path
           assert Path.cwd() not in Path(daimon_matrix.__file__).resolve().parents
           PYCODE
-          python -W error::ResourceWarning -m unittest tests.test_package_scaffold tests.test_dm041_hermes_body.PublicContractTests -v
+          python -W error::ResourceWarning -m unittest tests.test_dm041_hermes_body.PublicContractTests -v
       - name: Presentation, response validation, retained proof and real HTTP lifecycle
         run: >-
           python -W error::ResourceWarning -m unittest
