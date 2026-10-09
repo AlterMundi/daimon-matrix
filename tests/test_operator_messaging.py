@@ -269,6 +269,79 @@ class ProvisioningTests(unittest.TestCase):
                 proposal=tampered,
             )
         self.assertEqual(installation.read_bytes(), previous)
+        foreign_old = copy.deepcopy(json.loads(previous)["document"]["disclosure"])
+        for channel in foreign_old["scope"]["channels"]:
+            channel["local_being_ref"], channel["peer_being_ref"] = (
+                channel["peer_being_ref"],
+                channel["local_being_ref"],
+            )
+        foreign_old["scope_sha256"] = config_digest(foreign_old["scope"])
+
+        def peer_signature(document):
+            signed_body = {
+                **old_peer_binding["body"],
+                "application_sha256": config_digest(document),
+            }
+            return {
+                "schema": old_peer_binding["schema"],
+                "body": signed_body,
+                "signature": b64url(
+                    Ed25519PrivateKey.from_private_bytes(peer.signer.seed).sign(
+                        BINDING_DOMAIN + canonical_bytes(signed_body)
+                    )
+                ),
+            }
+
+        old_bindings = {
+            runtime.service.ledger.authority.manifest.being_ref: create_binding(
+                runtime, foreign_old
+            ),
+            peer.state.being_ref: peer_signature(foreign_old),
+        }
+        foreign_new = copy.deepcopy(foreign_old)
+        foreign_new["destination"]["representation"] = "compact-text/v1"
+        foreign = {
+            "schema": proposal["schema"],
+            "disclosure": foreign_new,
+            "bindings": [peer_signature(foreign_new)],
+            "predecessor": {
+                "disclosure": foreign_old,
+                "acceptance_set": {
+                    "schema": "dm.messaging.visibility-acceptance-set/v1",
+                    "disclosure_sha256": config_digest(foreign_old),
+                    "bindings": [
+                        old_bindings[actor] for actor in foreign_old["participants"]
+                    ],
+                },
+            },
+        }
+        # A different directional declaration is accepted only with its actual
+        # previous signatures, and cannot replace this endpoint's own policy.
+        accepted_foreign = visibility_presentation(
+            runtime, app, installation, command="visibility-accept", proposal=foreign
+        )
+        self.assertEqual(len(accepted_foreign["bindings"]), 2)
+        with self.assertRaisesRegex(ValueError, "presentation_conflict"):
+            visibility_presentation(
+                runtime,
+                app,
+                installation,
+                command="visibility-apply",
+                proposal=accepted_foreign,
+            )
+        self.assertEqual(installation.read_bytes(), previous)
+        forged_previous = copy.deepcopy(foreign)
+        forged_previous["predecessor"]["acceptance_set"]["bindings"][0]["signature"] = (
+            "A" * 86
+        )
+        with self.assertRaises(ValueError):
+            visibility_presentation(
+                runtime,
+                app,
+                installation,
+                command="visibility-accept",
+                proposal=forged_previous,
+            )
         result = visibility_presentation(
             runtime, app, installation, command="visibility-apply", proposal=proposal
         )

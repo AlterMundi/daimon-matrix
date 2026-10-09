@@ -1436,17 +1436,60 @@ def visibility_presentation(
             "schema": "dm.messaging.presentation-proposal/v1",
             "disclosure": disclosure,
             "bindings": [create_binding(runtime, disclosure)],
+            "predecessor": {
+                "disclosure": previous["disclosure"],
+                "acceptance_set": previous["acceptance_set"],
+            },
         }
     if (
         command not in {"visibility-accept", "visibility-apply"}
         or proposal is None
         or representation is not None
-        or set(proposal) != {"schema", "disclosure", "bindings"}
+        or set(proposal) != {"schema", "disclosure", "bindings", "predecessor"}
         or proposal["schema"] != "dm.messaging.presentation-proposal/v1"
     ):
         raise MessagingConfigError("messaging_visibility_presentation_invalid")
+    predecessor = proposal["predecessor"]
+    if not isinstance(predecessor, dict) or set(predecessor) != {
+        "disclosure",
+        "acceptance_set",
+    }:
+        raise MessagingConfigError("messaging_visibility_presentation_invalid")
+    old_disclosure = predecessor["disclosure"]
+    old_acceptance = predecessor["acceptance_set"]
+    current = previous["disclosure"]
+    pins = ("bot_id", "chat_id", "topic_id")
+    if (
+        set(old_disclosure) != set(current)
+        or set(old_disclosure["destination"]) != set(current["destination"])
+        or canonical_bytes({key: old_disclosure["destination"][key] for key in pins})
+        != canonical_bytes({key: current["destination"][key] for key in pins})
+        or old_disclosure["participants"] != current["participants"]
+        or old_disclosure["schema"] != current["schema"]
+        or old_disclosure["risk"] != current["risk"]
+        or old_disclosure["scope"]["mode"] != current["scope"]["mode"]
+        or old_disclosure["scope"]["projected_content"]
+        != current["scope"]["projected_content"]
+        or old_disclosure["scope_sha256"] != config_digest(old_disclosure["scope"])
+        or set(old_acceptance) != {"schema", "disclosure_sha256", "bindings"}
+        or old_acceptance["schema"] != "dm.messaging.visibility-acceptance-set/v1"
+        or old_acceptance["disclosure_sha256"] != config_digest(old_disclosure)
+        or len(old_acceptance["bindings"]) != len(current["participants"])
+    ):
+        raise MessagingConfigError("messaging_visibility_presentation_scope_change")
+    # Each endpoint has a different directional disclosure. Existing acceptance
+    # by ALL participants authenticates that exact predecessor; the peer's local
+    # directional configuration is never replaced by the foreign one.
+    for actor, binding in zip(
+        current["participants"], old_acceptance["bindings"], strict=True
+    ):
+        if binding["body"]["being_ref"] != actor:
+            raise MessagingConfigError("messaging_visibility_presentation_invalid")
+        _verify_visibility_participant(
+            authorities, actor, old_disclosure, binding, at_ms=runtime.service.clock()
+        )
     disclosure = proposal["disclosure"]
-    expected = copy.deepcopy(previous["disclosure"])
+    expected = copy.deepcopy(old_disclosure)
     expected["destination"]["representation"] = disclosure["destination"][
         "representation"
     ]
@@ -1455,7 +1498,7 @@ def visibility_presentation(
         expected != disclosure
         or expected["destination"]["representation"] not in REPRESENTATIONS
         or type(disclosure["issued_at_ms"]) is not int
-        or not previous["disclosure"]["issued_at_ms"]
+        or not old_disclosure["issued_at_ms"]
         <= disclosure["issued_at_ms"]
         <= runtime.service.clock()
         or not isinstance(proposal["bindings"], list)
@@ -1487,6 +1530,11 @@ def visibility_presentation(
         if acceptance != previous["acceptance_set"]:
             raise MessagingConfigError("messaging_visibility_presentation_conflict")
         return {"status": "unchanged", "installation_sha256": config_digest(previous)}
+    if (
+        old_disclosure != previous["disclosure"]
+        or old_acceptance != previous["acceptance_set"]
+    ):
+        raise MessagingConfigError("messaging_visibility_presentation_conflict")
     generation = previous["generation"] + 1
     document = {
         **previous,

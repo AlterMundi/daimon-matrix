@@ -86,12 +86,16 @@ commands take the runtime lock, so pause the corresponding serving process
 through its existing supervisor during these finite operations. Keep the bot,
 audience, identities, store paths, routes, secrets and proof key unchanged.
 
-1. `visibility-propose --representation compact-text/v1 --output proposal.json`
-   authenticates the current installation and signs a same-audience disclosure.
-2. Each other participant runs `visibility-accept --proposal proposal.json
-   --output accepted.json` against its own existing installation and custody.
-   Transfer only the protected proposal through existing operator access.
-3. Each participant runs `visibility-apply --proposal accepted.json`. The command
+1. Each endpoint runs `visibility-propose --representation compact-text/v1
+   --output proposal.json` against its own current installation. Each proposal
+   carries that endpoint's directional predecessor and all its existing signed
+   acceptances; the endpoints' declarations need not be byte-identical.
+2. The other participant runs `visibility-accept --proposal proposal.json
+   --output accepted.json` using its own custody. It verifies the exact previously
+   accepted declaration and unchanged shared audience before signing the new
+   representation. Exchange only protected proposals over existing operator access.
+3. Each endpoint runs `visibility-apply --proposal accepted.json` for its OWN
+   proposal. A peer's different directional declaration cannot replace it. The command
    validates all individual signatures and the complete production candidate
    before selecting it atomically; the old installation is retained beside it.
    An identical apply is unchanged. A different audience/scope is refused.
