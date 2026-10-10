@@ -507,7 +507,11 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def validate_plain_response(
-    raw: bytes, request: dict[str, Any], *, bot_id: int
+    raw: bytes,
+    request: dict[str, Any],
+    *,
+    bot_id: int,
+    reply_author_id: int | None = None,
 ) -> dict[str, Any]:
     """Validate literal text and bot/chat/topic pins in retained Bot API evidence.
 
@@ -516,6 +520,8 @@ def validate_plain_response(
     boundary normalization, never interior changes or other truncation.
     An ordinary supergroup reply's derived thread must be proven by its exact
     returned requested parent; an explicitly selected forum topic remains pinned.
+    A human-ingress application may explicitly pin its authenticated human's ID
+    as the parent author. Native egress retains the default bot-authored parent.
     """
     try:
         if type(raw) is not bytes or len(raw) > 65536:
@@ -528,6 +534,10 @@ def validate_plain_response(
         result = value["result"]
         topic = request.get("message_thread_id")
         if type(bot_id) is not int or not 0 < bot_id < 2**52:
+            raise ValueError
+        if reply_author_id is not None and (
+            type(reply_author_id) is not int or not 0 < reply_author_id < 2**52
+        ):
             raise ValueError
         if topic is None:
             if result.get("is_topic_message", False) is not False:
@@ -572,6 +582,8 @@ def validate_plain_response(
         if found_entities != expected_entities:
             raise ValueError
         parent = result.get("reply_to_message")
+        if reply_author_id is not None and parent is None:
+            raise ValueError
         if parent is not None:
             expected_reply = request.get("reply_parameters", {}).get("message_id")
             if (
@@ -581,8 +593,9 @@ def validate_plain_response(
                 or type(parent.get("chat", {}).get("id")) is not int
                 or parent.get("chat", {}).get("id") != request["chat_id"]
                 or type(parent.get("from", {}).get("id")) is not int
-                or parent.get("from", {}).get("id") != bot_id
-                or parent.get("from", {}).get("is_bot") is not True
+                or parent.get("from", {}).get("id")
+                != (bot_id if reply_author_id is None else reply_author_id)
+                or parent.get("from", {}).get("is_bot") is not (reply_author_id is None)
                 or (topic is not None and parent.get("message_thread_id") != topic)
                 or (topic is not None and parent.get("is_topic_message") is not True)
                 or (

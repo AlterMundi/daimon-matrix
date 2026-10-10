@@ -159,7 +159,7 @@ class ArtifactBoundaryTests(unittest.TestCase):
             path.relative_to(ROOT).as_posix()
             for path in (ROOT / "src/daimon_matrix").rglob("*.py")
         }
-        self.assertEqual(len(modules), 87)
+        self.assertEqual(len(modules), 89)
         self.assertIn("src/daimon_matrix/operator_runtime_upgrade.py", modules)
         self.assertTrue(
             {
@@ -169,6 +169,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/hermes_review.py",
                 "src/daimon_matrix/hermes_review_worker.py",
                 "src/daimon_matrix/human_execution_frontend.py",
+                "src/daimon_matrix/human_tribu.py",
+                "src/daimon_matrix/human_tribu_process.py",
                 "src/daimon_matrix/mandatory_echo.py",
                 "src/daimon_matrix/native_egress.py",
                 "src/daimon_matrix/neutral_binding.py",
@@ -332,6 +334,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "src/daimon_matrix/hermes_review.py",
                 "src/daimon_matrix/hermes_review_worker.py",
                 "src/daimon_matrix/human_execution_frontend.py",
+                "src/daimon_matrix/human_tribu.py",
+                "src/daimon_matrix/human_tribu_process.py",
                 "src/daimon_matrix/identity.py",
                 "src/daimon_matrix/human_review.py",
                 "src/daimon_matrix/hermes_body.py",
@@ -429,6 +433,8 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 "daimon_matrix/hermes_review.py",
                 "daimon_matrix/hermes_review_worker.py",
                 "daimon_matrix/human_execution_frontend.py",
+                "daimon_matrix/human_tribu.py",
+                "daimon_matrix/human_tribu_process.py",
                 "daimon_matrix/identity.py",
                 "daimon_matrix/human_review.py",
                 "daimon_matrix/hermes_body.py",

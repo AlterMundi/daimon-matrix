@@ -59,6 +59,8 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/hermes_review.py"),
     Path("src/daimon_matrix/hermes_review_worker.py"),
     Path("src/daimon_matrix/human_execution_frontend.py"),
+    Path("src/daimon_matrix/human_tribu.py"),
+    Path("src/daimon_matrix/human_tribu_process.py"),
     Path("src/daimon_matrix/identity.py"),
     Path("src/daimon_matrix/human_review.py"),
     Path("src/daimon_matrix/hermes_body.py"),
