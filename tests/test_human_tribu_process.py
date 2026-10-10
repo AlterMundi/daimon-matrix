@@ -28,7 +28,7 @@ from daimon_matrix.human_tribu_process import (
 )
 from tests.test_dm022_ledger import NOW
 from tests.test_dm025_client import ClientFixture
-from tests.test_human_tribu import message, person, response
+from tests.test_human_tribu import message, native_proof, person, response
 
 
 class HumanProcessTests(ClientFixture):
@@ -144,6 +144,7 @@ class HumanProcessTests(ClientFixture):
             },
             "request_dir": str(requests),
             "native_ledger": str(self.ledger_a.path),
+            "native_echo_stores": [],
         }
         self.owner_config = self.root_path / "owner.json"
         self.owner_config.write_bytes(canonical_bytes(settings))
@@ -190,6 +191,28 @@ class HumanProcessTests(ClientFixture):
         self.assertEqual(len(self.runtime.service.ledger.events()), events_before + 1)
         self.assertEqual(result["event"]["origin"], self.person.origin)
         self.assertFalse(self.owner.call("status", {})["automatic_inference"])
+
+    def test_manual_read_resolves_only_selected_native_public_parent(self) -> None:
+        event, _proof = native_proof(self)
+        catalog = self.root_path / "echo.sqlite"
+        catalog.chmod(0o600)
+        self.owner.settings["native_echo_stores"] = [str(catalog)]
+        candidate = message(ident=20, text="Please look at this public answer")
+        candidate["message"]["entities"] = []
+        candidate["message"]["reply_to_message"] = {"message_id": 1}
+        self.store.ingest(candidate)
+        self.assertEqual(
+            self.owner.call("query", {"after": 0, "limit": 20})["items"], []
+        )
+        before = len(self.runtime.service.ledger.events())
+        result = self.owner.read()
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["context"]["event_id"], event["event_id"])
+        self.assertEqual(
+            self.owner.call("parents", {"after": 0, "limit": 100})["items"], []
+        )
+        self.assertEqual(len(self.runtime.service.ledger.events()), before)
+        self.assertEqual(self.sent, [])
 
     def test_tls_and_scoped_identity_are_required(self) -> None:
         settings = json.loads(self.owner_config.read_bytes())

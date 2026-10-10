@@ -46,7 +46,8 @@ must refresh this current authority and policy before claiming continued access.
 
 The owner config has schema `dm.tribu-human-client/v1`, being pin, HTTPS endpoint,
 pinned CA, private scoped credential, existing authenticated native-client
-binding, private prepared-request directory and own native ledger path.
+binding, private prepared-request directory, own native ledger path and a list
+of owner-selected public echo-store paths.
 Credentials are conventional bearer authentication over verified TLS, unique
 per being; this is not a new signing protocol or a native identity grant.
 
@@ -69,12 +70,21 @@ The adapter verifies that event, its current body/credential, source revision
 and paired-human policy before claiming each publication part.
 
 Native speech parent registration requires the signed authored communication
-and its full authenticated, confirmed echo proof, including all pages. Set
-`DM_TRIBU_HUMAN_CLIENT` to the protected owner config in the native service to
-register newly confirmed posts. The hook reads only that selected already
-authored outbound event from its own ledger; no inbox/native-history prefetch
-occurs. A failed registration preserves the native proof and emits a bounded
-pending diagnostic. Repair it by explicitly registering the retained proof:
+and its full authenticated, confirmed echo proof, including all pages. A reply
+whose target is not yet verified stays in a separate private pending journal;
+it is not exposed as an accepted mention. Its update/cursor and revisions are
+retained, so a race between publication and intake cannot silently lose it.
+
+During an explicit manual `read`, the owner client obtains only its currently
+paired human's unresolved parent IDs, looks up matching public proof records in
+its own selected native catalogs, reads the exact authored event from its own
+ledger, registers the verified proof and re-queries mentions. It never scans or
+imports an inbox/native conversation. `parent_resolution` reports unresolved
+IDs and pagination; `--parents-after` continues that bounded lookup. Native
+continuations retain their established first-page anchoring. Registration adds
+no callback, network wait or new dependency to native delivery.
+
+An operator may also explicitly register a selected retained native proof:
 
 ```sh
 python -m daimon_matrix.human_tribu_process --config "$OWNER_CONFIG" register-post \
@@ -85,7 +95,11 @@ python -m daimon_matrix.human_tribu_process --config "$OWNER_CONFIG" register-po
 
 Updates, retained revisions and the polling offset commit together. Startup
 accepts pending updates; it does not claim older Telegram history or discard
-the pending backlog. Unaddressed/unauthorized content is not retained as text.
+the pending backlog. Unaddressed non-reply and unauthorized content is not
+retained as text.
+Unresolved public replies from paired humans stay private until their target
+is verified; they are not accepted requests. Pair changes revoke old-source
+query/reply access while preserving historical records.
 Duplicate update IDs with changed contents fail closed. Query exposure is not
 a read receipt. Queries are scoped to the authenticated being.
 
@@ -107,8 +121,8 @@ reproducible installed wheel and runs these affected contracts on Python 3.13.5;
 unknown/runtime/custody/dependency edits keep full CI. Real human Telegram
 acceptance is separate evidence: never manufacture a live human update.
 
-For rollback, stop the passive consumer and unset the registration hook/select
-the retained compatible SDK. Preserve SQLite, offsets, prepared owner requests,
+For rollback, stop the passive consumer and select the retained compatible
+SDK. Preserve SQLite, offsets, prepared owner requests,
 native ledger, proof catalogs and private Telecodex history. Forward restart
 continues the same cursor and publication states. Never restore an older
 publication database over observed effects. No private topic/history migration

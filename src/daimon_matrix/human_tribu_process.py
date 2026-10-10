@@ -223,6 +223,10 @@ def api_server(
     store: HumanTribu, telegram: TelegramIngress, host: str, port: int
 ) -> http.server.ThreadingHTTPServer:
     class Handler(http.server.BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(15)
+
         def log_message(self, *_args: Any) -> None:
             pass  # No client content, credentials or paths in the access log.
 
@@ -241,6 +245,11 @@ def api_server(
                 if self.path == "/query":
                     closed(value, {"after", "limit"})
                     result = store.page(
+                        person, after=value["after"], limit=value["limit"]
+                    )
+                elif self.path == "/parents":
+                    closed(value, {"after", "limit"})
+                    result = store.parents(
                         person, after=value["after"], limit=value["limit"]
                     )
                 elif self.path == "/reply":
@@ -366,6 +375,7 @@ class OwnerClient:
                 "native_binding",
                 "request_dir",
                 "native_ledger",
+                "native_echo_stores",
             },
         )
         if self.settings["schema"] != CLIENT_SCHEMA or not isinstance(
@@ -385,6 +395,13 @@ class OwnerClient:
             raise HumanTribuError("client_endpoint_invalid")
         for field in ("service_ca", "token_file", "request_dir", "native_ledger"):
             _path(self.settings[field])
+        if (
+            not isinstance(self.settings["native_echo_stores"], list)
+            or len(self.settings["native_echo_stores"]) > 16
+        ):
+            raise HumanTribuError("client_public_catalogs_invalid")
+        for echo in self.settings["native_echo_stores"]:
+            _path(echo)
         self.token = protected_read(_path(self.settings["token_file"])).decode().strip()
         if not re.fullmatch(r"[a-f0-9]{64}", self.token):
             raise HumanTribuError("client_token_invalid")
@@ -469,6 +486,57 @@ class OwnerClient:
             operation_id=operation_id,
         )
 
+    def read(
+        self, *, after: int = 0, limit: int = 20, parents_after: int = 0
+    ) -> dict[str, Any]:
+        pending = self.call("parents", {"after": parents_after, "limit": 100})
+        ids = list({item["parent_id"] for item in pending["items"]})
+        registered: list[int] = []
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            query = (
+                "SELECT DISTINCT o.record FROM echo_v2_obligations o "
+                "JOIN json_each(o.record,'$.parts') p "
+                "JOIN json_each(p.value,'$.attempts') a "
+                "WHERE json_extract(o.record,'$.binding.projection.kind') "
+                "IN ('message','reply') "
+                "AND json_extract(json_extract(a.value,'$.response'),"
+                "'$.result.message_id') IN (" + placeholders + ") LIMIT 100"
+            )
+            for selected in self.settings["native_echo_stores"]:
+                path = _path(selected)
+                _directory(path.parent)
+                info = path.lstat()
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                ):
+                    raise HumanTribuError("native_public_catalog_untrusted")
+                with closing(
+                    sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
+                ) as db:
+                    rows = db.execute(query, ids).fetchall()
+                for row in rows:
+                    proof = document(row[0].encode())
+                    try:
+                        registered.extend(self.publish_post(proof)["registered"])
+                    except HumanTribuError:
+                        continue  # Unqualified proof cannot establish a target.
+        result = self.call("query", {"after": after, "limit": limit})
+        result["parent_resolution"] = {
+            "registered": registered,
+            "unresolved": [
+                item
+                for item in pending["items"]
+                if item["parent_id"] not in set(registered)
+            ],
+            "state": "only verified parents establish accepted mentions",
+            "next": pending["next"],
+            "has_more": pending["has_more"],
+        }
+        return result
+
     def publish_post(self, record: dict[str, Any]) -> dict[str, Any]:
         """Read only this already-authored event; never load runtime/custody."""
         projection = record["binding"]["projection"]
@@ -492,15 +560,6 @@ class OwnerClient:
         return self.call("post", {"event": event, "proof": record})
 
 
-def publish_native_post(record: dict[str, Any]) -> None:
-    path = os.environ.get("DM_TRIBU_HUMAN_CLIENT")
-    if path is None:
-        return
-    if record["binding"]["projection"]["kind"] not in ("message", "reply"):
-        return
-    OwnerClient(_path(path)).publish_post(record)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -510,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     read = commands.add_parser("read")
     read.add_argument("--after", type=int, default=0)
     read.add_argument("--limit", type=int, default=20)
+    read.add_argument("--parents-after", type=int, default=0)
     reply = commands.add_parser("reply")
     reply.add_argument("--source", required=True)
     reply.add_argument("--revision", required=True)
@@ -528,7 +588,9 @@ def main(argv: list[str] | None = None) -> int:
             return serve(args.config, check=args.check)
         client = OwnerClient(args.config)
         if args.verb == "read":
-            result = client.call("query", {"after": args.after, "limit": args.limit})
+            result = client.read(
+                after=args.after, limit=args.limit, parents_after=args.parents_after
+            )
         elif args.verb == "reply":
             result = client.reply(
                 source_id=args.source,

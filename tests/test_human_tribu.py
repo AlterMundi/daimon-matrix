@@ -88,18 +88,99 @@ def response(sent: list[dict[str, Any]], request: dict[str, Any]) -> bytes:
 
 
 class NativeTestTransport:
+    def __init__(self) -> None:
+        self.roots: dict[int, int] = {}
+
     def send(self, request: dict[str, Any]) -> bytes:
-        return canonical_bytes(
-            {
-                "ok": True,
-                "result": {
-                    "message_id": 1,
+        ident = len(self.roots) + 1
+        result: dict[str, Any] = {
+            "message_id": ident,
+            "from": {"id": 123, "is_bot": True},
+            "chat": {"id": -123, "type": "supergroup"},
+            "text": request["text"],
+        }
+        root = ident
+        if "entities" in request:
+            result["entities"] = request["entities"]
+        if "reply_parameters" in request:
+            parent = request["reply_parameters"]["message_id"]
+            root = self.roots.get(parent, parent)
+            result.update(
+                message_thread_id=root,
+                reply_to_message={
+                    "message_id": parent,
                     "from": {"id": 123, "is_bot": True},
-                    "chat": {"id": -123},
-                    "text": request["text"],
+                    "chat": {"id": -123, "type": "supergroup"},
                 },
-            }
+            )
+            if parent != root:
+                result["reply_to_message"]["message_thread_id"] = root
+        self.roots[ident] = root
+        return canonical_bytes({"ok": True, "result": result})
+
+
+def native_proof(
+    fixture: RootLedgerFixture,
+    *,
+    text: str = "hello",
+    representation: str = "plain-json/v2",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    event = fixture.ledger_a.append_local(
+        kind="experience.observed",
+        subject="communication",
+        payload={
+            "schema": "dm.communication.message/v1",
+            "body": {"text": text},
+        },
+        signer=fixture.signers["legion"],
+        occurred_at_ms=NOW,
+    )
+    projection = {
+        "event_id": event["event_id"],
+        "event_digest": event["content_hash"],
+        "sender": person(fixture).label,
+        "recipients": ["eko"],
+        "thread_id": "thread",
+        "reply_to": None,
+        "kind": "message",
+        "content": {"text": text},
+    }
+    with closing(
+        sqlite3.connect(fixture.root_path / "echo.sqlite", isolation_level=None)
+    ) as db:
+        db.execute("PRAGMA synchronous=FULL")
+        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("BEGIN IMMEDIATE")
+        echo.EchoJournal.initialize(db, catalog_id="test", authentication_key=b"k" * 32)
+        db.commit()
+        journal = echo.EchoJournal(db, catalog_id="test", authentication_key=b"k" * 32)
+        db.execute("BEGIN IMMEDIATE")
+        binding = journal.admit(
+            "native",
+            projection,
+            {
+                "schema": "daimon-visibility-policy/v2",
+                "generation": 1,
+                "origin": "synthetic-runtime",
+                "bot_id": 123,
+                "chat_id": -123,
+                "topic_id": None,
+                "representation": representation,
+                "acceptance_digest": "a" * 64,
+                "proof_key_id": "synthetic-proof-key",
+            },
         )
+        db.commit()
+        worker = echo.MandatoryEcho(
+            journal,
+            transport=NativeTestTransport(),
+            resolve=lambda _: projection,
+            authorize=lambda _: True,
+        )
+        for _part in journal._load("native", binding)["parts"]:
+            worker.advance("native", binding)
+        proof = worker.require_confirmed("native", binding)
+    return event, proof
 
 
 class HumanTribuTests(RootLedgerFixture):
@@ -270,6 +351,61 @@ class HumanTribuTests(RootLedgerFixture):
             self.store.reply(self.person, event, self.exchange)
         self.assertEqual(self.sent, [])
 
+    def test_changed_human_refused_before_publication_and_history_not_exposed(
+        self,
+    ) -> None:
+        self.store.ingest(message())
+        event = self.intent()
+        self.people = [replace(self.person, human_id=222, human_name="New human")]
+        with self.assertRaisesRegex(HumanTribuError, "human_changed"):
+            self.store.reply(self.person, event, self.exchange)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.store.page(self.person)["items"], [])
+
+    def test_missing_continuation_parent_is_uncertain_and_never_republished(
+        self,
+    ) -> None:
+        self.store.ingest(message())
+        event = self.intent(text="a long reply\n" * 900)
+
+        def missing_parent(request: dict[str, Any]) -> bytes:
+            raw = self.exchange(request)
+            if len(self.sent) > 1:
+                value = json.loads(raw)
+                value["result"].pop("reply_to_message")
+                value["result"].pop("message_thread_id")
+                return canonical_bytes(value)
+            return raw
+
+        result = self.store.reply(self.person, event, missing_parent)
+        self.assertEqual(result["state"], "uncertain")
+        self.assertEqual(result["parts"][0]["state"], "confirmed")
+        self.reopen().reply(self.person, event, self.exchange)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_native_pagination_first_page_anchoring_and_pending_revisions(self) -> None:
+        event, proof = native_proof(
+            self, text="long native text\n" * 900, representation="compact-text/v1"
+        )
+        self.assertGreater(len(proof["parts"]), 3)
+        candidate = message(ident=20, text="plain human reply")
+        candidate["message"]["entities"] = []
+        candidate["message"]["reply_to_message"] = {"message_id": 3}
+        self.store.ingest(candidate)
+        edited = copy.deepcopy(candidate)
+        edited["update_id"] = 2
+        edited["edited_message"] = edited.pop("message")
+        edited["edited_message"].update(text="corrected human reply", edit_date=101)
+        self.store.ingest(edited)
+        self.assertEqual(self.store.page(self.person)["items"], [])
+        self.assertEqual(len(self.store.parents(self.person)["items"]), 2)
+        self.store.register_post(self.person, event, proof)
+        items = self.store.page(self.person)["items"]
+        self.assertEqual(len(items), 2)
+        self.assertTrue(items[0]["superseded"])
+        self.assertEqual(items[1]["text"], "corrected human reply")
+        self.assertEqual(self.store.parents(self.person)["items"], [])
+
     def test_each_being_accepts_only_its_paired_human_and_queries_are_isolated(
         self,
     ) -> None:
@@ -323,64 +459,7 @@ class HumanTribuTests(RootLedgerFixture):
     def test_full_native_proof_registration_is_idempotent_and_routes_replies(
         self,
     ) -> None:
-        event = self.ledger_a.append_local(
-            kind="experience.observed",
-            subject="communication",
-            payload={
-                "schema": "dm.communication.message/v1",
-                "body": {"text": "hello"},
-            },
-            signer=self.signers["legion"],
-            occurred_at_ms=NOW,
-        )
-        projection = {
-            "event_id": event["event_id"],
-            "event_digest": event["content_hash"],
-            "sender": self.person.label,
-            "recipients": ["eko"],
-            "thread_id": "thread",
-            "reply_to": None,
-            "kind": "message",
-            "content": {"text": "hello"},
-        }
-        with closing(
-            sqlite3.connect(self.root_path / "echo.sqlite", isolation_level=None)
-        ) as db:
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute("PRAGMA journal_mode=DELETE")
-            db.execute("BEGIN IMMEDIATE")
-            echo.EchoJournal.initialize(
-                db, catalog_id="test", authentication_key=b"k" * 32
-            )
-            db.commit()
-            journal = echo.EchoJournal(
-                db, catalog_id="test", authentication_key=b"k" * 32
-            )
-            db.execute("BEGIN IMMEDIATE")
-            binding = journal.admit(
-                "native",
-                projection,
-                {
-                    "schema": "daimon-visibility-policy/v2",
-                    "generation": 1,
-                    "origin": "synthetic-runtime",
-                    "bot_id": 123,
-                    "chat_id": -123,
-                    "topic_id": None,
-                    "representation": "plain-json/v2",
-                    "acceptance_digest": "a" * 64,
-                    "proof_key_id": "synthetic-proof-key",
-                },
-            )
-            db.commit()
-            worker = echo.MandatoryEcho(
-                journal,
-                transport=NativeTestTransport(),
-                resolve=lambda _: projection,
-                authorize=lambda _: True,
-            )
-            worker.advance("native", binding)
-            proof = worker.require_confirmed("native", binding)
+        event, proof = native_proof(self)
         self.assertEqual(
             self.store.register_post(self.person, event, proof)["registered"], [1]
         )

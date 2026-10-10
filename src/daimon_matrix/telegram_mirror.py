@@ -974,15 +974,6 @@ class PlainTelegramTransport:
 
     def publish_reference(self, record: Mapping[str, Any]) -> None:
         """Called only after authenticated journal confirmation of ALL parts."""
-        if os.environ.get("DM_TRIBU_HUMAN_CLIENT"):
-            from .human_tribu_process import publish_native_post
-
-            try:
-                publish_native_post(dict(record))
-            except Exception:
-                # Registration cannot replace or invalidate the retained native
-                # proof. Until repaired, human replies to this post stay unrouted.
-                print("tribu_human_post_registration_pending", file=sys.stderr)
         if self._reference_directory is None:
             return
         projection = record["binding"]["projection"]

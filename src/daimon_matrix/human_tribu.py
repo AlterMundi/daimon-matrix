@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from .identity import verify_embodiment_credential
-from .mandatory_echo import validate_proof_shape
+from .mandatory_echo import _record_request, validate_proof_shape
 from .operator_rebirth import authority_from_document
 from .telegram_mirror import (
     plain_request,
@@ -161,6 +161,9 @@ class HumanTribu:
                 " TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY "
                 "KEY,hash TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS pending (id INTEGER PRIMARY KEY,"
+                "human INTEGER NOT NULL,parent INTEGER NOT NULL,record TEXT NOT NULL,"
+                "received_at_ms INTEGER NOT NULL,resolved INTEGER NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY "
                 "KEY,being TEXT NOT NULL,"
                 "platform_id INTEGER NOT NULL,latest TEXT NOT NULL,stamp "
@@ -301,10 +304,22 @@ class HumanTribu:
         with self.lock, closing(self._db()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT hash FROM updates WHERE id=?", (ident,)).fetchone()
+            pending = db.execute(
+                "SELECT parent,received_at_ms,resolved FROM pending WHERE id=?",
+                (ident,),
+            ).fetchone()
             if old is not None:
                 if old[0] != raw_hash:
                     raise HumanTribuError("update_conflict")
-                return {"duplicate": True, "retained": 0}
+                if (
+                    pending is None
+                    or pending[2]
+                    or db.execute(
+                        "SELECT 1 FROM posts WHERE id=?", (pending[0],)
+                    ).fetchone()
+                    is None
+                ):
+                    return {"duplicate": True, "retained": 0}
             message = update.get("edited_message", update.get("message"))
             retained = 0
             if (
@@ -332,6 +347,26 @@ class HumanTribu:
                     and "sender_chat" not in message
                 ):
                     targets = self._targets(db, message, people)
+                    parent_id = message.get("reply_to_message", {}).get("message_id")
+                    if (
+                        type(parent_id) is int
+                        and parent_id > 0
+                        and any(p.human_id == actor["id"] and p.enabled for p in people)
+                        and db.execute(
+                            "SELECT 1 FROM posts WHERE id=?", (parent_id,)
+                        ).fetchone()
+                        is None
+                    ):
+                        db.execute(
+                            "INSERT OR IGNORE INTO pending VALUES(?,?,?,?,?,0)",
+                            (
+                                ident,
+                                actor["id"],
+                                parent_id,
+                                json_bytes(update).decode(),
+                                self.clock(),
+                            ),
+                        )
                     platform_id = integer(message.get("message_id"), minimum=1)
                     stamp = integer(message.get("edit_date", message.get("date")))
                     for person in people:
@@ -349,26 +384,7 @@ class HumanTribu:
                             continue
                         revision = digest(message)
                         parent = message.get("reply_to_message", {})
-                        context = None
-                        if isinstance(parent, dict):
-                            post = db.execute(
-                                "SELECT being,event_id,event_hash,text "
-                                "FROM posts WHERE id=?",
-                                (parent.get("message_id"),),
-                            ).fetchone()
-                            if post is not None:
-                                context = {
-                                    "kind": "verified-native-publication",
-                                    "sender": next(
-                                        p.label
-                                        for p in people
-                                        if p.being_ref == post[0]
-                                    ),
-                                    "event_id": post[1],
-                                    "event_digest": post[2],
-                                    "text": post[3],
-                                    "message_id": parent["message_id"],
-                                }
+                        context = self._context(db, parent.get("message_id"), people)
                         record = {
                             "schema": REQUEST_SCHEMA,
                             "id": source_id,
@@ -402,7 +418,9 @@ class HumanTribu:
                             ),
                             "attestation": {
                                 "kind": "authenticated-telegram-ingress",
-                                "received_at_ms": self.clock(),
+                                "received_at_ms": self.clock()
+                                if pending is None
+                                else pending[1],
                             },
                             "eligible": eligible,
                             "context": context,
@@ -432,7 +450,9 @@ class HumanTribu:
                                     ident,
                                 ),
                             )
-            db.execute("INSERT INTO updates VALUES(?,?)", (ident, raw_hash))
+            db.execute("INSERT OR IGNORE INTO updates VALUES(?,?)", (ident, raw_hash))
+            if pending is not None:
+                db.execute("UPDATE pending SET resolved=1 WHERE id=?", (ident,))
             offset = db.execute("SELECT value FROM meta WHERE key='offset'").fetchone()
             if offset is None or ident > int(offset[0]):
                 db.execute(
@@ -442,6 +462,28 @@ class HumanTribu:
                 )
             return {"duplicate": False, "retained": retained}
 
+    @staticmethod
+    def _context(
+        db: sqlite3.Connection, parent_id: Any, people: list[Participant]
+    ) -> dict[str, Any] | None:
+        if type(parent_id) is not int:
+            return None
+        post = db.execute(
+            "SELECT being,event_id,event_hash,text FROM posts WHERE id=?", (parent_id,)
+        ).fetchone()
+        if post is None:
+            return None
+        return {
+            "kind": "verified-native-publication",
+            "sender": next(
+                (p.label for p in people if p.being_ref == post[0]), post[0]
+            ),
+            "event_id": post[1],
+            "event_digest": post[2],
+            "text": post[3],
+            "message_id": parent_id,
+        }
+
     def page(
         self, person: Participant, *, after: int = 0, limit: int = 20
     ) -> dict[str, Any]:
@@ -449,16 +491,23 @@ class HumanTribu:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise HumanTribuError("invalid_limit")
         person = self.authenticate(person.token)
+        people = self._people()
         with self.lock, closing(self._db()) as db, db:
             rows = db.execute(
                 "SELECT r.sequence,r.record,r.revision,r.message,m.latest "
                 "FROM revisions r JOIN messages m ON m.id=r.message WHERE "
-                "m.being=? AND r.sequence>? ORDER BY r.sequence LIMIT ?",
-                (person.being_ref, after, limit),
+                "m.being=? AND r.sequence>? AND "
+                "json_extract(r.record,'$.human.telegram_id')=? "
+                "ORDER BY r.sequence LIMIT ?",
+                (person.being_ref, after, person.human_id, limit),
             ).fetchall()
             items = []
             for sequence, raw, revision, source_id, latest in rows:
                 record = json.loads(raw)
+                if record["context"] is None:
+                    record["context"] = self._context(
+                        db, record["source"]["reply_message_id"], people
+                    )
                 record.update(
                     sequence=sequence,
                     current_revision=latest,
@@ -470,12 +519,20 @@ class HumanTribu:
                     (source_id, revision, self.clock()),
                 )
                 record["reply_operations"] = [
-                    json.loads(row[0])
+                    {
+                        "id": reply["id"],
+                        "state": reply["state"],
+                        "confirmed_parts": sum(
+                            p["state"] == "confirmed" for p in reply["parts"]
+                        ),
+                        "part_count": len(reply["parts"]),
+                    }
                     for row in db.execute(
                         "SELECT record FROM replies WHERE being=? AND "
                         "source=? AND revision=?",
                         (person.being_ref, source_id, revision),
                     )
+                    for reply in [json.loads(row[0])]
                 ]
                 items.append(record)
             return {
@@ -485,6 +542,27 @@ class HumanTribu:
                 "next": after if not rows else rows[-1][0],
                 "state_meaning": "query exposure, not human read or comprehension",
             }
+
+    def parents(
+        self, person: Participant, *, after: int = 0, limit: int = 100
+    ) -> dict[str, Any]:
+        person = self.authenticate(person.token)
+        integer(after)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise HumanTribuError("invalid_limit")
+        with closing(self._db()) as db:
+            rows = db.execute(
+                "SELECT id,parent FROM pending WHERE human=? AND resolved=0 "
+                "AND id>? ORDER BY id LIMIT ?",
+                (person.human_id, after, limit + 1),
+            ).fetchall()
+        return {
+            "items": [
+                {"update_id": row[0], "parent_id": row[1]} for row in rows[:limit]
+            ],
+            "next": after if not rows else rows[:limit][-1][0],
+            "has_more": len(rows) > limit,
+        }
 
     def _source(
         self, db: sqlite3.Connection, person: Participant, source_id: str, revision: str
@@ -497,6 +575,8 @@ class HumanTribu:
         if row is None or row[1] != revision:
             raise HumanTribuError("source_unavailable_or_changed")
         record: dict[str, Any] = json.loads(row[0])
+        if record["human"]["telegram_id"] != person.human_id:
+            raise HumanTribuError("source_human_changed")
         if record["eligible"] is not True:
             raise HumanTribuError("source_withdrawn")
         return record
@@ -645,6 +725,11 @@ class HumanTribu:
                     bot_id=self.bot_id,
                     reply_author_id=person.human_id if index == 0 else None,
                 )
+                if (
+                    result["result"].get("reply_to_message", {}).get("message_id")
+                    != parent
+                ):
+                    raise HumanTribuError("reply_parent_unconfirmed")
                 message_id = result["result"]["message_id"]
                 part.update(
                     state="confirmed", message_id=message_id, response=raw.decode()
@@ -741,16 +826,7 @@ class HumanTribu:
         with self.lock, closing(self._db()) as db, db:
             ids: list[int] = []
             for index, part in enumerate(proof["parts"]):
-                parent = None if index == 0 else ids[-1]
-                if index == 0 and proof["binding"].get("telegram_reference"):
-                    parent = proof["binding"]["telegram_reference"]["message_id"]
-                request = plain_request(
-                    part["text"],
-                    chat_id=self.chat_id,
-                    topic_id=policy["topic_id"],
-                    readable=policy["representation"] == "compact-text/v1",
-                    reply_message_id=parent,
-                )
+                request = _record_request(proof, index)
                 attempt = part["attempts"][-1]
                 if attempt["response"] is None:
                     raise HumanTribuError("post_unconfirmed")
@@ -774,4 +850,19 @@ class HumanTribu:
                     raise HumanTribuError("post_conflict")
                 db.execute("INSERT OR IGNORE INTO posts VALUES(?,?,?,?,?,?)", value)
                 ids.append(message_id)
-            return {"registered": ids, "event_id": event["event_id"]}
+            unresolved = (
+                [
+                    document(row[0].encode())
+                    for row in db.execute(
+                        "SELECT record FROM pending WHERE resolved=0 AND parent IN ("
+                        + ",".join("?" for _ in ids)
+                        + ") ORDER BY id",
+                        ids,
+                    )
+                ]
+                if ids
+                else []
+            )
+        for update in unresolved:
+            self.ingest(update)
+        return {"registered": ids, "event_id": event["event_id"]}
