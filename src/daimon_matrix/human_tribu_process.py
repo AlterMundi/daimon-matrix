@@ -34,6 +34,7 @@ from .client import (
     store_prepared_request,
 )
 from .human_tribu import (
+    DEFAULT_SCHEMA,
     MAX_DOCUMENT,
     REPLY_SCHEMA,
     HumanTribu,
@@ -44,6 +45,7 @@ from .human_tribu import (
     integer,
     json_bytes,
 )
+from .labels import parse_selector
 from .messaging_config import _directory, protected_read
 from .telegram_mirror import _NoRedirect
 
@@ -280,6 +282,12 @@ def api_server(
                 elif self.path == "/status":
                     closed(value, set())
                     result = store.status()
+                elif self.path == "/defaults":
+                    closed(value, set())
+                    result = store.defaults(person)
+                elif self.path == "/select-default":
+                    closed(value, {"event"})
+                    result = store.select_default(person, value["event"])
                 else:
                     raise HumanTribuError("unknown_operation")
                 response = {"ok": True, "being_ref": person.being_ref, "result": result}
@@ -448,21 +456,32 @@ class OwnerClient:
     def reply(
         self, *, source_id: str, revision: str, text: str, operation_id: str
     ) -> dict[str, Any]:
-        if str(uuid.UUID(operation_id)) != operation_id:
-            raise HumanTribuError("operation_id_invalid")
-        native = self._native()
-        directory = _directory(_path(self.settings["request_dir"]))
-        path = directory / (operation_id + ".json")
-        params: dict[str, Any] = {
-            "subject": "tribu-human-reply",
-            "payload": {
+        event = self._intent(
+            "tribu-human-reply",
+            {
                 "schema": REPLY_SCHEMA,
                 "request_id": operation_id,
                 "source_id": source_id,
                 "revision": revision,
                 "text": text,
             },
-            "sensitivity": "shareable",
+            "shareable",
+            operation_id,
+        )
+        return self.call("reply", {"event": event})
+
+    def _intent(
+        self, subject: str, payload: dict[str, Any], sensitivity: str, operation_id: str
+    ) -> dict[str, Any]:
+        if str(uuid.UUID(operation_id)) != operation_id:
+            raise HumanTribuError("operation_id_invalid")
+        native = self._native()
+        directory = _directory(_path(self.settings["request_dir"]))
+        path = directory / (operation_id + ".json")
+        params: dict[str, Any] = {
+            "subject": subject,
+            "payload": payload,
+            "sensitivity": sensitivity,
             "causal_parents": [],
             "occurred_at_ms": None,
             "event_id": operation_id,
@@ -483,7 +502,41 @@ class OwnerClient:
         event = response["result"]["event"]
         if event.get("origin") != dict(native.config.expected_server):
             raise HumanTribuError("native_reply_author_mismatch")
-        return self.call("reply", {"event": event})
+        return cast(dict[str, Any], event)
+
+    def select_default(
+        self,
+        *,
+        target: str | None,
+        scope: str,
+        expected_revision: int,
+        human_request: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        current = self.call("defaults", {})
+        host = parse_selector(current["receivers"][0]["label"]).host
+        scopes = {
+            "tribu": ["tribu"],
+            "host": ["host:" + str(host)],
+            "both": ["tribu", "host:" + str(host)],
+        }
+        if scope not in scopes:
+            raise HumanTribuError("default_scope_invalid")
+        event = self._intent(
+            "tribu-human-default",
+            {
+                "schema": DEFAULT_SCHEMA,
+                "request_id": operation_id,
+                "expected_revision": expected_revision,
+                "human_request": human_request,
+                "paired_human_id": current["paired_human_id"],
+                "selections": dict.fromkeys(scopes[scope], target),
+            },
+            "private",
+            operation_id,
+        )
+        receipt = self.call("select-default", {"event": event})
+        return {"receipt": receipt, "effective": self.call("defaults", {})}
 
     def retry(self, operation_id: str) -> dict[str, Any]:
         if str(uuid.UUID(operation_id)) != operation_id:
@@ -592,6 +645,15 @@ def main(argv: list[str] | None = None) -> int:
     publication = commands.add_parser("publication")
     publication.add_argument("id")
     commands.add_parser("status")
+    commands.add_parser("defaults")
+    selection = commands.add_parser("select-default")
+    choice = selection.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--target")
+    choice.add_argument("--clear", action="store_true")
+    selection.add_argument("--scope", choices=("tribu", "host", "both"), required=True)
+    selection.add_argument("--expected-revision", type=int, required=True)
+    selection.add_argument("--human-request", required=True)
+    selection.add_argument("--id", required=True)
     post = commands.add_parser("register-post")
     post.add_argument("--proof", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -616,6 +678,16 @@ def main(argv: list[str] | None = None) -> int:
             result = client.call("publication", {"id": args.id})
         elif args.verb == "register-post":
             result = client.publish_post(document(protected_read(args.proof)))
+        elif args.verb == "defaults":
+            result = client.call("defaults", {})
+        elif args.verb == "select-default":
+            result = client.select_default(
+                target=args.target,
+                scope=args.scope,
+                expected_revision=args.expected_revision,
+                human_request=args.human_request,
+                operation_id=args.id,
+            )
         else:
             result = client.call("status", {})
         print(json.dumps(result, ensure_ascii=False))
