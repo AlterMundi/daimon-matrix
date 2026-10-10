@@ -192,6 +192,7 @@ class CIScopeTests(unittest.TestCase):
             "src/daimon_matrix/messaging_store.py",
             "tests/test_native_messaging.py",
             "tests/test_messaging_runtime.py",
+            "docs/runbooks/tribu-readable-traffic.md",
             "tools/ci_scope.py",
             "tests/test_ci_scope.py",
             ".github/workflows/tests.yml",

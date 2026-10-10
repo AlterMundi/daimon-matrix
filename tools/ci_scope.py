@@ -24,6 +24,7 @@ MESSAGING_FILES = PEER_FILES | frozenset(
         "src/daimon_matrix/messaging_store.py",
         "tests/test_native_messaging.py",
         "tests/test_messaging_runtime.py",
+        "docs/runbooks/tribu-readable-traffic.md",
         "provenance/hermes-agent-0.19.0.json",
         "vectors/hermes/v1/index.json",
         "vectors/hermes/v1/valid/launch-receipt.json",
