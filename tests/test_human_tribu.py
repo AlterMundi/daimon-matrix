@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 import uuid
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import replace
 from typing import Any
@@ -235,7 +236,7 @@ class HumanTribuTests(RootLedgerFixture):
         return response(self.sent, request)
 
     def default_intent(
-        self, *, expected: int = 0, selections: dict[str, str | None] | None = None
+        self, *, expected: int = 0, selections: Mapping[str, str | None] | None = None
     ) -> dict[str, Any]:
         operation = str(uuid.uuid4())
         return self.ledger_a.append_local(
@@ -249,7 +250,7 @@ class HumanTribuTests(RootLedgerFixture):
                 "paired_human_id": self.person.human_id,
                 "selections": {"tribu": self.person.label}
                 if selections is None
-                else selections,
+                else dict(selections),
             },
             sensitivity="private",
             event_id=operation,

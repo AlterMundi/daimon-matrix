@@ -196,18 +196,21 @@ class HumanProcessTests(ClientFixture):
         self.assertEqual(self.owner.call("defaults", {})["defaults"], {})
         operation = str(uuid.uuid4())
         before = len(self.runtime.service.ledger.events())
-        args = {
-            "target": self.person.label,
-            "scope": "both",
-            "expected_revision": 0,
-            "human_request": "private-session-decision-1",
-            "operation_id": operation,
-        }
+
+        def select(op: str) -> dict[str, Any]:
+            return self.owner.select_default(
+                target=self.person.label,
+                scope="both",
+                expected_revision=0,
+                human_request="private-session-decision-1",
+                operation_id=op,
+            )
+
         with patch.object(self.owner, "_native", return_value=self.client()):
-            result = self.owner.select_default(**args)
-            repeated = self.owner.select_default(**args)
+            result = select(operation)
+            repeated = select(operation)
             with self.assertRaisesRegex(HumanTribuError, "revision_conflict"):
-                self.owner.select_default(**{**args, "operation_id": str(uuid.uuid4())})
+                select(str(uuid.uuid4()))
         self.assertEqual(result, repeated)
         self.assertEqual(result["effective"]["revision"], 1)
         self.assertEqual(
