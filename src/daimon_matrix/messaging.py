@@ -748,7 +748,10 @@ class MessagingDelivery:
         # An exact completed retry inspects the original authenticated pair.
         # Expiry forbids another transmission, not verification of past intake.
         # The local status is only a hint: BOTH response proofs are checked below.
-        if transmit and self.sender.outbox._intake_recorded(owner, carrier_send_id):
+        completed_retry = transmit and self.sender.outbox._intake_recorded(
+            owner, carrier_send_id
+        )
+        if completed_retry:
             transmit = False
         phases = ("evidence", "message")
         submissions = {}
@@ -916,7 +919,7 @@ class MessagingDelivery:
                 authorize()
             # Evidence I/O may take us beyond expiry or a newly observed revocation.
             # Recheck before releasing the next stage, without renewing the pair.
-            if transmit:
+            if transmit or completed_retry:
                 self.sender.prepare(
                     client_id=client_id,
                     send_id=send_id,

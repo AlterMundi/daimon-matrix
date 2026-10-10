@@ -2098,6 +2098,44 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertEqual(delivery.sender.ledger.events(), events)
         self.assertEqual(pair.receiver.page(after=0, limit=10), intake)
 
+    def test_completed_fresh_rpc_retry_rechecks_revocation_during_proof_validation(
+        self,
+    ) -> None:
+        from daimon_matrix.local_api import create_request
+
+        pair, hosted, delivery, calls = self.setup_sender()
+        policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = policy
+        request = self.request(pair)
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        pair.now += 1_001
+        provider = delivery.providers[1]
+        verify = provider.validate_prepared_response
+
+        def revoke_after_verification(*args: Any, **kwargs: Any) -> Any:
+            result = verify(*args, **kwargs)
+            pair.sender_relationships.ingest(
+                next(
+                    event
+                    for event in pair.history
+                    if event["kind"] == "matrix/relationship-grant-revocation"
+                )
+            )
+            return result
+
+        provider.validate_prepared_response = revoke_after_verification
+        fresh = create_request(
+            self.capability,
+            request_id=_uuid("fresh-retry-revocation"),
+            issued_at_ms=pair.now,
+            method="messaging.send",
+            params=request["params"],
+        )
+        result = self.invoke(hosted, fresh)
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["error"]["code"], "messaging_rejected")
+        self.assertEqual(len(calls), 2)
+
     def test_expired_pending_inspection_preserves_pair_and_exact_rpc_retry(
         self,
     ) -> None:
