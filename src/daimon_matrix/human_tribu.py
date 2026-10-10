@@ -504,6 +504,8 @@ class HumanTribu:
             items = []
             for sequence, raw, revision, source_id, latest in rows:
                 record = json.loads(raw)
+                record["intake_eligible"] = record["eligible"]
+                record["eligible"] = self._eligible(db, person, record)
                 if record["context"] is None:
                     record["context"] = self._context(
                         db, record["source"]["reply_message_id"], people
@@ -564,6 +566,24 @@ class HumanTribu:
             "has_more": len(rows) > limit,
         }
 
+    @staticmethod
+    def _eligible(
+        db: sqlite3.Connection, person: Participant, record: dict[str, Any]
+    ) -> bool:
+        # Retained revision bytes are immutable. Parent verification is derived
+        # evidence that may arrive later through an explicit manual query.
+        if record["eligible"] is True:
+            return True
+        parent = record["source"]["reply_message_id"]
+        return (
+            type(parent) is int
+            and db.execute(
+                "SELECT 1 FROM posts WHERE id=? AND being=?",
+                (parent, person.being_ref),
+            ).fetchone()
+            is not None
+        )
+
     def _source(
         self, db: sqlite3.Connection, person: Participant, source_id: str, revision: str
     ) -> dict[str, Any]:
@@ -577,7 +597,7 @@ class HumanTribu:
         record: dict[str, Any] = json.loads(row[0])
         if record["human"]["telegram_id"] != person.human_id:
             raise HumanTribuError("source_human_changed")
-        if record["eligible"] is not True:
+        if not self._eligible(db, person, record):
             raise HumanTribuError("source_withdrawn")
         return record
 

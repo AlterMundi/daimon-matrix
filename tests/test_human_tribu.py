@@ -406,6 +406,51 @@ class HumanTribuTests(RootLedgerFixture):
         self.assertEqual(items[1]["text"], "corrected human reply")
         self.assertEqual(self.store.parents(self.person)["items"], [])
 
+    def test_late_parent_requalifies_edited_reply_without_mutating_history(
+        self,
+    ) -> None:
+        event, proof = native_proof(self)
+        candidate = message()
+        candidate["message"]["reply_to_message"] = {"message_id": 1}
+        self.store.ingest(candidate)
+        edited = copy.deepcopy(candidate)
+        edited["update_id"] = 2
+        edited["edited_message"] = edited.pop("message")
+        edited["edited_message"].update(
+            text="reply remains directed by its parent", entities=[], edit_date=101
+        )
+        self.store.ingest(edited)
+        with closing(sqlite3.connect(self.store.path)) as db:
+            before = db.execute(
+                "SELECT record FROM revisions ORDER BY sequence"
+            ).fetchall()
+        self.assertFalse(self.store.page(self.person)["items"][-1]["eligible"])
+        self.store.register_post(self.person, event, proof)
+        items = self.store.page(self.person)["items"]
+        self.assertFalse(items[-1]["intake_eligible"])
+        self.assertTrue(items[-1]["eligible"])
+        self.assertEqual(
+            self.store.reply(self.person, self.intent(source=items[-1]), self.exchange)[
+                "state"
+            ],
+            "confirmed",
+        )
+        with closing(sqlite3.connect(self.store.path)) as db:
+            self.assertEqual(
+                db.execute("SELECT record FROM revisions ORDER BY sequence").fetchall(),
+                before,
+            )
+        withdrawn = copy.deepcopy(edited)
+        withdrawn["update_id"] = 3
+        withdrawn["edited_message"].pop("reply_to_message")
+        withdrawn["edited_message"]["edit_date"] = 102
+        self.store.ingest(withdrawn)
+        last = self.store.page(self.person)["items"][-1]
+        self.assertFalse(last["eligible"])
+        with self.assertRaisesRegex(HumanTribuError, "source_withdrawn"):
+            self.store.reply(self.person, self.intent(source=last), self.exchange)
+        self.assertEqual(len(self.sent), 1)
+
     def test_each_being_accepts_only_its_paired_human_and_queries_are_isolated(
         self,
     ) -> None:
