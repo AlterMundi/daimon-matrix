@@ -192,6 +192,34 @@ class HumanProcessTests(ClientFixture):
         self.assertEqual(result["event"]["origin"], self.person.origin)
         self.assertFalse(self.owner.call("status", {})["automatic_inference"])
 
+    def test_real_tls_native_private_default_selection_and_exact_retry(self) -> None:
+        self.assertEqual(self.owner.call("defaults", {})["defaults"], {})
+        operation = str(uuid.uuid4())
+        before = len(self.runtime.service.ledger.events())
+        args = {
+            "target": self.person.label,
+            "scope": "both",
+            "expected_revision": 0,
+            "human_request": "private-session-decision-1",
+            "operation_id": operation,
+        }
+        with patch.object(self.owner, "_native", return_value=self.client()):
+            result = self.owner.select_default(**args)
+            repeated = self.owner.select_default(**args)
+            with self.assertRaisesRegex(HumanTribuError, "revision_conflict"):
+                self.owner.select_default(**{**args, "operation_id": str(uuid.uuid4())})
+        self.assertEqual(result, repeated)
+        self.assertEqual(result["effective"]["revision"], 1)
+        self.assertEqual(
+            set(result["effective"]["defaults"]), {"tribu", "host:daimonmatrix"}
+        )
+        self.assertEqual(result["receipt"]["event"]["sensitivity"], "private")
+        self.assertEqual(len(self.runtime.service.ledger.events()), before + 2)
+        self.assertEqual(self.sent, [])
+        self.assertIsNone(self.store.status()["last_update_id"])
+        self.store.ingest(message(text="Hello @compaii"))
+        self.assertEqual(len(self.owner.read()["items"]), 1)
+
     def test_manual_read_resolves_only_selected_native_public_parent(self) -> None:
         event, _proof = native_proof(self)
         catalog = self.root_path / "echo.sqlite"

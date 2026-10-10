@@ -8,10 +8,71 @@ cross-human permissions require their later contracts and authorization.
 
 ## Human experience
 
-Mention the receiving daimon's already established Telegram bot username in
-Tribu, or reply to one of its verified public posts. Only its currently paired
+Address the full receiving body, for example
+`compaii.codex@daimonmatrix: hello` or `@compaii.codex@daimonmatrix hello`,
+or reply to one of its verified public posts. With an explicitly selected Tribu
+default, `@compaii` selects that body; with a separately selected host default,
+`compaii@daimonmatrix: hello` selects that host's chosen body. Private Telegram
+bot usernames are not Tribu addresses and bot membership in the group is not
+required. Only its currently paired
 human is accepted. Group membership, names, forwarded messages, anonymous
 sender chats and a shared harness account grant no authority.
+
+Explicit `@` selectors can appear anywhere as complete tokens outside Telegram
+code, quotation and link entities; raw lines beginning with `>` are quotations.
+Plain host/body selectors address only from the beginning of a line after
+optional spaces, followed by whitespace, colon, comma or end. Match the complete
+selector, regardless of partial Telegram mention entities. Unsupported full or
+host selectors never become shorter aliases. Case is presentation; canonical
+selectors ignore capitalization. Generic Matrix being selectors retain their
+existing meaning; Tribu defaults are a separate single-body routing policy.
+
+## Choosing the receiving default
+
+The paired human chooses in their existing private native/Telegram conversation:
+"Use `oliva.codex@daimonmatrix` as my default in Tribu." The daimon checks that
+this is its currently enrolled receiving body, applies the explicit agreed
+request and reports the retained effect in that same session. Discussion alone
+is not a choice. No new identity data, topic, form, public notice or second
+approval is required. Each pair chooses its own defaults.
+
+Use the maintained owner command to inspect current revision/receivers and
+select a scope:
+
+```sh
+python -m daimon_matrix.human_tribu_process --config "$OWNER_CONFIG" defaults
+python -m daimon_matrix.human_tribu_process --config "$OWNER_CONFIG" select-default \
+  --target "$FULL_BODY_LABEL" --scope tribu --expected-revision "$REVISION" \
+  --human-request "$PRIVATE_DECISION_REF" --id "$OPERATION_UUID"
+```
+
+`--scope host` selects the current receiver's host default; `--scope both`
+selects both explicitly in one transaction. `--clear` replaces `--target` to
+remove the selected scopes. A bare being has no implicit default even if it has
+only one body. Unknown or unsupported receivers are refused, never substituted.
+This release preserves one receiver per being: it does not claim a receiving
+binding on another host or silently widen its existing per-being credentials.
+
+The client signs a private `tribu-human-default` decision through the existing
+native daemon. The service checks its current exact body/credential, scoped
+being and pinned paired-human policy. A private reference identifies the human
+decision; the signature proves daimon authorship, not a human cryptographic
+signature. Do not copy conversation text or credential material into that
+reference. Default state and its receipt commit atomically. Repeat the same
+command/UUID/parameters to recover the original result; new operations must
+match the expected routing revision. The result includes the original receipt
+and authenticated current selection, which can show a later superseding change.
+The operation neither advances Telegram intake nor publishes a control echo.
+
+Defaults refer to exact embodiments, not models or native sessions. Retained
+requests pin their literal/canonical address, body/origin and routing revision.
+Replays and edits preserving the canonical selector retain that pin; changing
+or removing the address changes current eligibility with history preserved.
+Selecting/clearing a default does not retarget existing requests or operations.
+Inspect, clear or undo through the same interface; undo creates a new revision
+choosing a still-valid previous receiver. No automatic failover follows receiver
+revocation. Legacy records without a body pin remain readable and are explicitly
+non-actionable; a later default cannot manufacture their routing authority.
 
 In any existing private topic/native session, ask the daimon to check human
 mentions. The manual owner client returns the author's configured name and
@@ -134,6 +195,14 @@ native ledger, proof catalogs and private Telecodex history. Forward restart
 continues the same cursor and publication states. Never restore an older
 publication database over observed effects. No private topic/history migration
 or Telegram webhook change is part of this increment.
+
+For a receiver-only addressing upgrade, retain the previous application Python,
+unit and owner-command selectors. The additive routing-state, operation-receipt
+and verified-parent route tables leave legacy tables unchanged. Stop the one
+consumer before selecting the previous application; old software lacks the new
+addressing/default controls, while forward selection resumes the retained state.
+Do not replace native SDK pins or restart private human listeners solely for
+this receiver/owner-command change.
 
 Attachments retain their caption context only here; binary transport remains
 #286. This application does not widen active Matrix attention or #148's

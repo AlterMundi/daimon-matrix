@@ -15,6 +15,7 @@ from unittest.mock import patch
 from daimon_matrix import mandatory_echo as echo
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.human_tribu import (
+    DEFAULT_SCHEMA,
     REPLY_SCHEMA,
     HumanTribu,
     HumanTribuError,
@@ -52,7 +53,7 @@ def message(
     ident: int = 10,
     update: int = 1,
     human: int = 111,
-    text: str = "@compaii_bot check this",
+    text: str = "@compaii.codex@daimonmatrix check this",
     edit: bool = False,
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
@@ -61,7 +62,7 @@ def message(
         "from": {"id": human, "is_bot": False},
         "chat": {"id": -123, "type": "supergroup"},
         "text": text,
-        "entities": [{"type": "mention", "offset": 0, "length": 12}],
+        "entities": [{"type": "mention", "offset": 0, "length": 8}],
     }
     if edit:
         value["edit_date"] = 101
@@ -233,6 +234,214 @@ class HumanTribuTests(RootLedgerFixture):
     def exchange(self, request: dict[str, Any]) -> bytes:
         return response(self.sent, request)
 
+    def default_intent(
+        self, *, expected: int = 0, selections: dict[str, str | None] | None = None
+    ) -> dict[str, Any]:
+        operation = str(uuid.uuid4())
+        return self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="tribu-human-default",
+            payload={
+                "schema": DEFAULT_SCHEMA,
+                "request_id": operation,
+                "expected_revision": expected,
+                "human_request": "private-decision-1",
+                "paired_human_id": self.person.human_id,
+                "selections": {"tribu": self.person.label}
+                if selections is None
+                else selections,
+            },
+            sensitivity="private",
+            event_id=operation,
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+
+    def test_explicit_defaults_cas_retry_restart_and_separate_scopes(self) -> None:
+        self.assertEqual(self.store.defaults(self.person)["defaults"], {})
+        self.assertEqual(
+            self.store.ingest(message(text="@compaii hello"))["retained"], 0
+        )
+        first = self.default_intent()
+        competing = self.default_intent()
+        receipt = self.store.select_default(self.person, first)
+        self.assertEqual(receipt["revision"], 1)
+        self.assertEqual(self.reopen().select_default(self.person, first), receipt)
+        with self.assertRaisesRegex(HumanTribuError, "revision_conflict"):
+            self.reopen().select_default(self.person, competing)
+        self.assertEqual(
+            self.store.ingest(message(update=2, ident=11, text="Hi @compaii!"))[
+                "retained"
+            ],
+            1,
+        )
+        host = message(update=3, ident=12, text="compaii@daimonmatrix: hello")
+        self.assertEqual(self.store.ingest(host)["retained"], 0)
+        self.store.select_default(
+            self.person,
+            self.default_intent(
+                expected=1, selections={"host:daimonmatrix": self.person.label}
+            ),
+        )
+        host["update_id"] = 4
+        self.assertEqual(self.store.ingest(host)["retained"], 1)
+        self.assertEqual(self.store.defaults(self.person)["revision"], 2)
+        self.assertEqual(self.store.status()["last_update_id"], 4)
+
+    def test_complete_body_addresses_and_platform_partial_entities(self) -> None:
+        self.store.select_default(self.person, self.default_intent())
+        accepted = [
+            "@compaii.codex@daimonmatrix hello",
+            "  compaii.codex@daimonmatrix, hello",
+            "hello 😀 @COMPAII!",
+            "compaii.codex@daimonmatrix:",
+        ]
+        rejected = [
+            "@compaii@legion hello",
+            "@compaii.codex@dsimonmatrix hello",
+            "@compaii.codex@daimonmatrix-extra hello",
+            "@compaii_bot hello",
+            "person@compaii hello",
+            "https://x/@compaii",
+            "> @compaii example",
+            "this body compaii.codex@daimonmatrix is a reference",
+            "compaii@daimonmatrix.invalid: email",
+            "@compaii..codex@daimonmatrix",
+        ]
+        for i, text in enumerate(accepted + rejected, 1):
+            value = message(update=i, ident=i, text=text)
+            value["message"]["entities"] = []
+            self.assertEqual(
+                self.store.ingest(value)["retained"], int(text in accepted), text
+            )
+        code = message(
+            update=50, ident=50, text="😀 @compaii @compaii.codex@daimonmatrix"
+        )
+        code["message"]["entities"] = [{"type": "code", "offset": 3, "length": 8}]
+        self.assertEqual(self.store.ingest(code)["retained"], 1)
+        only_quote = message(update=51, ident=51, text="@compaii")
+        only_quote["message"]["entities"] = [
+            {"type": "blockquote", "offset": 0, "length": 8}
+        ]
+        self.assertEqual(self.store.ingest(only_quote)["retained"], 0)
+
+    def test_default_clear_does_not_retarget_same_selector_edits_or_replies(
+        self,
+    ) -> None:
+        self.store.select_default(self.person, self.default_intent())
+        self.store.ingest(message(text="@compaii hello"))
+        first = self.store.page(self.person)["items"][-1]
+        self.store.select_default(
+            self.person, self.default_intent(expected=1, selections={"tribu": None})
+        )
+        edited = message(update=2, edit=True, text="@COMPAII, revised hello")
+        self.store.ingest(edited)
+        current = self.store.page(self.person)["items"][-1]
+        self.assertEqual(current["routing"][0]["routing_revision"], 1)
+        self.assertEqual(current["routing"][0]["origin"], first["routing"][0]["origin"])
+        self.assertTrue(current["eligible"])
+        self.assertEqual(
+            self.store.reply(self.person, self.intent(), self.exchange)["state"],
+            "confirmed",
+        )
+        self.assertEqual(
+            self.store.ingest(message(update=3, ident=11, text="@compaii new"))[
+                "retained"
+            ],
+            0,
+        )
+        self.store.ingest(message(update=4, edit=True, text="withdrawn"))
+        self.assertFalse(self.store.page(self.person)["items"][-1]["eligible"])
+        with self.assertRaisesRegex(HumanTribuError, "withdrawn"):
+            self.store.reply(self.person, self.intent(), self.exchange)
+
+    def test_default_receiver_and_snapshot_authority_are_not_labels(self) -> None:
+        for selections in (
+            {"tribu": "eko.codex@daimonmatrix"},
+            {"host:legion": self.person.label},
+        ):
+            with self.assertRaisesRegex(HumanTribuError, "unsupported|scope_invalid"):
+                self.store.select_default(
+                    self.person, self.default_intent(selections=selections)
+                )
+        self.store.ingest(message())
+        current = self.store.page(self.person)["items"][-1]
+        with closing(self.store._db()) as db, db:
+            legacy = dict(current)
+            legacy.pop("routing")
+            db.execute(
+                "UPDATE revisions SET record=? WHERE message=?",
+                (json.dumps(legacy), current["id"]),
+            )
+        self.store.select_default(self.person, self.default_intent())
+        exposed = self.store.page(self.person)["items"][-1]
+        self.assertTrue(exposed["legacy_routing_unbound"])
+        self.assertFalse(exposed["eligible"])
+
+    def test_default_native_author_and_concurrent_cas_are_required(self) -> None:
+        event = self.default_intent()
+        tampered = copy.deepcopy(event)
+        tampered["payload"]["selections"] = {"tribu": None}
+        with self.assertRaises(ValueError):
+            self.store.select_default(self.person, tampered)
+        self.assertEqual(self.store.defaults(self.person)["revision"], 0)
+        contenders = [event, self.default_intent()]
+        outcomes: list[str] = []
+
+        def apply(selected: dict[str, Any]) -> None:
+            try:
+                self.reopen().select_default(self.person, selected)
+                outcomes.append("applied")
+            except HumanTribuError as error:
+                outcomes.append(str(error))
+
+        threads = [threading.Thread(target=apply, args=(e,)) for e in contenders]
+        for worker in threads:
+            worker.start()
+        for worker in threads:
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+        self.assertCountEqual(outcomes, ["applied", "default_revision_conflict"])
+        with closing(self.store._db()) as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM routing_operations").fetchone()[0], 1
+            )
+
+    def test_prepared_default_choice_cannot_survive_a_changed_human_binding(
+        self,
+    ) -> None:
+        prepared = self.default_intent()
+        self.people[0] = replace(self.person, human_id=222)
+        with self.assertRaisesRegex(HumanTribuError, "default_human_changed"):
+            self.store.select_default(self.person, prepared)
+        self.assertEqual(self.store.defaults(self.person)["revision"], 0)
+
+    def test_same_being_different_receiving_body_cannot_take_old_request(self) -> None:
+        self.store.ingest(message())
+        source = self.store.page(self.person)["items"][-1]
+        new_person = replace(self.person, origin=self.origins["daimonmatrix"])
+        self.people[0] = new_person
+        self.assertFalse(self.store.page(new_person)["items"][-1]["eligible"])
+        operation = str(uuid.uuid4())
+        event = self.ledger_b.append_local(
+            kind="experience.observed",
+            subject="tribu-human-reply",
+            payload={
+                "schema": REPLY_SCHEMA,
+                "request_id": operation,
+                "source_id": source["id"],
+                "revision": source["revision"],
+                "text": "Wrong receiving body",
+            },
+            sensitivity="shareable",
+            event_id=operation,
+            signer=self.signers["daimonmatrix"],
+            occurred_at_ms=NOW,
+        )
+        with self.assertRaisesRegex(HumanTribuError, "withdrawn"):
+            self.store.reply(new_person, event, self.exchange)
+        self.assertEqual(self.sent, [])
+
     def test_transactional_cursor_pair_gate_duplicate_and_restart(self) -> None:
         for human in (222, True):
             self.store.ingest(message(human=human, update=int(human) + 100))
@@ -253,10 +462,12 @@ class HumanTribuTests(RootLedgerFixture):
         self.assertEqual(len(self.store.page(self.person)["items"]), 1)
 
     def test_unicode_mention_entities_and_no_text_based_authority(self) -> None:
-        value = message(text="😀 @compaii_bot hello")
+        value = message(text="😀 @compaii.codex@daimonmatrix hello")
         value["message"]["entities"][0]["offset"] = 3
         self.assertEqual(self.store.ingest(value)["retained"], 1)
-        decomposed = message(update=3, ident=12, text="@compaii_bot cafe\u0301")
+        decomposed = message(
+            update=3, ident=12, text="@compaii.codex@daimonmatrix cafe\u0301"
+        )
         self.store.ingest(decomposed)
         self.assertEqual(
             self.store.page(self.person)["items"][-1]["text"],
@@ -265,7 +476,11 @@ class HumanTribuTests(RootLedgerFixture):
         coordinates = message(update=4, human=222, ident=13)
         coordinates["message"]["location"] = {"latitude": 12.5, "longitude": -1.5}
         self.assertEqual(self.store.ingest(coordinates)["retained"], 0)
-        value = message(update=2, ident=11)
+        value = message(
+            update=2,
+            ident=11,
+            text="an incidental body reference compaii.codex@daimonmatrix",
+        )
         value["message"]["entities"] = []
         self.assertEqual(self.store.ingest(value)["retained"], 0)
         with self.assertRaisesRegex(HumanTribuError, "unauthorized"):
@@ -521,10 +736,10 @@ class HumanTribuTests(RootLedgerFixture):
             token="b" * 64,
         )
         self.people.append(second)
-        wrong = message(text="@eko_human_bot cross-human request")
+        wrong = message(text="@eko.codex@daimonmatrix cross-human request")
         wrong["message"]["entities"][0]["length"] = 14
         self.assertEqual(self.store.ingest(wrong)["retained"], 0)
-        own = message(update=2, text="@eko_human_bot own request", human=222)
+        own = message(update=2, text="@eko.codex@daimonmatrix own request", human=222)
         own["message"]["entities"][0]["length"] = 14
         self.assertEqual(self.store.ingest(own)["retained"], 1)
         self.assertEqual(self.store.page(self.person)["items"], [])

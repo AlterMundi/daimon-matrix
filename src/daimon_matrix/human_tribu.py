@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from .identity import verify_embodiment_credential
+from .labels import LabelError, parse_selector
 from .mandatory_echo import EchoError, _record_request, validate_proof_shape
 from .operator_rebirth import authority_from_document
 from .telegram_mirror import (
@@ -36,6 +37,48 @@ from .weave import verify_event
 MAX_DOCUMENT = 2 * 1024 * 1024
 REQUEST_SCHEMA = "dm.tribu-human-request/v1"
 REPLY_SCHEMA = "dm.tribu-human-reply/v1"
+DEFAULT_SCHEMA = "dm.tribu-human-default/v1"
+
+# Telegram may recognize only the first @word of a full body address. Match the
+# complete application selector before considering any platform entity.
+_ADDRESS = re.compile(
+    r"(?<![\w.@/])@(?P<at>[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)?"
+    r"(?:@[a-z0-9][a-z0-9-]*)?)(?![\w@/\-]|\.[\w.])"
+    r"|(?m:^[ \t]*(?P<plain>[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)?"
+    r"@[a-z0-9][a-z0-9-]*)(?=[:,\s]|$))",
+    re.IGNORECASE,
+)
+
+
+def addresses(text: str, entities: list[Any]) -> dict[str, str]:
+    """Explicit complete selectors, excluding quoted/code/link occurrences."""
+    excluded = []
+    for entity in entities:
+        if not isinstance(entity, dict):
+            raise HumanTribuError("invalid_entity")
+        _entity_text(text, entity)
+        if entity.get("type") in {
+            "code",
+            "pre",
+            "blockquote",
+            "expandable_blockquote",
+            "url",
+            "text_link",
+        }:
+            excluded.append((entity["offset"], entity["offset"] + entity["length"]))
+    result = {}
+    for match in _ADDRESS.finditer(text):
+        selected = match.group("at") or match.group("plain")
+        field = "at" if match.group("at") else "plain"
+        start = match.start(field) - (1 if field == "at" else 0)
+        end = match.end(field)
+        before = text[:start].encode("utf-16-le")
+        first, last = len(before) // 2, len(text[:end].encode("utf-16-le")) // 2
+        line = text[text.rfind("\n", 0, start) + 1 : start].lstrip()
+        if line.startswith(">") or any(first < b and last > a for a, b in excluded):
+            continue
+        result[selected.lower()] = text[start:end]
+    return result
 
 
 class HumanTribuError(ValueError):
@@ -137,6 +180,11 @@ class Participant:
         if authority.manifest.being_ref != self.being_ref:
             raise HumanTribuError("participant_authority_mismatch")
         authority.validate_origin(self.origin, require_active=True)
+        try:
+            if parse_selector(self.label).harness is None:
+                raise HumanTribuError("participant_label_invalid")
+        except LabelError:
+            raise HumanTribuError("participant_label_invalid") from None
 
 
 class HumanTribu:
@@ -186,6 +234,12 @@ class HumanTribu:
                 "KEY,being TEXT NOT NULL,"
                 "event_id TEXT NOT NULL,event_hash TEXT NOT NULL,text TEXT NOT NULL,"
                 "proof TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS routing_state (being TEXT PRIMARY KEY,"
+                "revision INTEGER NOT NULL,record TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS routing_operations (id TEXT PRIMARY KEY,"
+                "being TEXT NOT NULL,hash TEXT NOT NULL,record TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS post_routes (id INTEGER PRIMARY KEY,"
+                "record TEXT NOT NULL);"
             )
             identity = {
                 "schema": "dm.tribu-human-store/v1",
@@ -241,7 +295,152 @@ class HumanTribu:
             raise HumanTribuError("participant_conflict")
         if len({row.username.lower() for row in rows}) != len(rows):
             raise HumanTribuError("target_conflict")
+        if len({row.label.lower() for row in rows}) != len(rows):
+            raise HumanTribuError("target_conflict")
+        if len({parse_selector(row.label).being_name for row in rows}) != len(rows):
+            raise HumanTribuError("target_conflict")
         return rows
+
+    @staticmethod
+    def _routing(db: sqlite3.Connection, being: str) -> dict[str, Any]:
+        row = db.execute(
+            "SELECT revision,record FROM routing_state WHERE being=?", (being,)
+        ).fetchone()
+        return (
+            {"revision": 0, "defaults": {}}
+            if row is None
+            else {"revision": row[0], "defaults": json.loads(row[1])}
+        )
+
+    def defaults(self, person: Participant) -> dict[str, Any]:
+        person = self.authenticate(person.token)
+        with self.lock, closing(self._db()) as db:
+            result = self._routing(db, person.being_ref)
+        return {
+            "schema": "dm.tribu-human-defaults/v1",
+            **result,
+            "defaults": {
+                scope: {**route, "available": self._route_current(person, route)}
+                for scope, route in result["defaults"].items()
+            },
+            "receivers": [self._route(person, 0)],
+            "automatic_inference": False,
+            "paired_human_id": person.human_id,
+        }
+
+    @staticmethod
+    def _route(person: Participant, revision: int) -> dict[str, Any]:
+        return {
+            "being_ref": person.being_ref,
+            "label": person.label,
+            "embodiment_id": person.origin["embodiment_id"],
+            "origin": dict(person.origin),
+            "routing_revision": revision,
+        }
+
+    @staticmethod
+    def _route_current(person: Participant, route: dict[str, Any]) -> bool:
+        return (
+            route.get("being_ref") == person.being_ref
+            and route.get("origin") == dict(person.origin)
+            and route.get("embodiment_id") == person.origin["embodiment_id"]
+        )
+
+    def select_default(
+        self, person: Participant, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        person = self.authenticate(person.token)
+        self._authored_event(
+            person, event, subject="tribu-human-default", sensitivity="private"
+        )
+        payload = closed(
+            event["payload"],
+            {
+                "schema",
+                "request_id",
+                "expected_revision",
+                "human_request",
+                "paired_human_id",
+                "selections",
+            },
+        )
+        if (
+            payload["schema"] != DEFAULT_SCHEMA
+            or str(uuid.UUID(payload["request_id"])) != payload["request_id"]
+            or event["event_id"] != payload["request_id"]
+            or not isinstance(payload["human_request"], str)
+            or not 0 < len(payload["human_request"]) <= 256
+        ):
+            raise HumanTribuError("default_request_invalid")
+        integer(payload["expected_revision"])
+        if (
+            type(payload["paired_human_id"]) is not int
+            or payload["paired_human_id"] != person.human_id
+        ):
+            raise HumanTribuError("default_human_changed")
+        selections = payload["selections"]
+        host = parse_selector(person.label).host
+        if (
+            not isinstance(selections, dict)
+            or not selections
+            or not set(selections) <= {"tribu", "host:" + str(host)}
+        ):
+            raise HumanTribuError("default_scope_invalid")
+        if any(
+            label is not None and label != person.label for label in selections.values()
+        ):
+            raise HumanTribuError("default_receiver_unsupported")
+        operation, request_hash = payload["request_id"], digest(event)
+        with self.lock, closing(self._db()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            old = db.execute(
+                "SELECT being,hash,record FROM routing_operations WHERE id=?",
+                (operation,),
+            ).fetchone()
+            if old is not None:
+                if old[0] != person.being_ref or old[1] != request_hash:
+                    raise HumanTribuError("default_operation_conflict")
+                return document(old[2].encode())
+            current = self._routing(db, person.being_ref)
+            if payload["expected_revision"] != current["revision"]:
+                raise HumanTribuError("default_revision_conflict")
+            revision = current["revision"] + 1
+            defaults = dict(current["defaults"])
+            for scope, label in selections.items():
+                if label is None:
+                    defaults.pop(scope, None)
+                else:
+                    defaults[scope] = self._route(person, revision)
+            receipt = {
+                "schema": "dm.tribu-human-default-receipt/v1",
+                "id": operation,
+                "being_ref": person.being_ref,
+                "state": "applied",
+                "revision": revision,
+                "previous": current,
+                "defaults": defaults,
+                "event": event,
+                "meaning": (
+                    "daimon-signed local human-requested decision; "
+                    "not a human signature"
+                ),
+            }
+            db.execute(
+                "INSERT INTO routing_state VALUES(?,?,?) "
+                "ON CONFLICT(being) DO UPDATE SET "
+                "revision=excluded.revision,record=excluded.record",
+                (person.being_ref, revision, json_bytes(defaults).decode()),
+            )
+            db.execute(
+                "INSERT INTO routing_operations VALUES(?,?,?,?)",
+                (
+                    operation,
+                    person.being_ref,
+                    request_hash,
+                    json_bytes(receipt).decode(),
+                ),
+            )
+            return receipt
 
     def authenticate(self, token: str) -> Participant:
         for row in self._people():
@@ -264,38 +463,53 @@ class HumanTribu:
 
     def _targets(
         self, db: sqlite3.Connection, message: dict[str, Any], people: list[Participant]
-    ) -> set[str]:
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
         text = message.get("text", message.get("caption", ""))
         if not isinstance(text, str):
             raise HumanTribuError("invalid_text")
-        targets: set[str] = set()
+        targets: dict[str, list[dict[str, Any]]] = {}
         entities = message.get("entities", message.get("caption_entities", []))
         if not isinstance(entities, list) or len(entities) > 256:
             raise HumanTribuError("invalid_entities")
-        for entity in entities:
-            if not isinstance(entity, dict):
-                raise HumanTribuError("invalid_entity")
-            selected = _entity_text(text, entity)
-            if entity.get("type") == "mention":
-                matches = [
-                    p for p in people if selected.lower() == "@" + p.username.lower()
-                ]
-                targets.update(p.being_ref for p in matches)
-            elif entity.get("type") == "text_mention":
-                user = entity.get("user", {})
-                targets.update(
-                    p.being_ref
-                    for p in people
-                    if user.get("id") == p.bot_id and user.get("is_bot") is True
-                )
+        selected = addresses(text, entities)
+        for person in people:
+            state = self._routing(db, person.being_ref)
+            label = parse_selector(person.label)
+            routes = []
+            for selector, literal in selected.items():
+                route = None
+                if selector == person.label.lower():
+                    route = self._route(person, state["revision"])
+                elif selector == label.being_name:
+                    route = state["defaults"].get("tribu")
+                elif selector == f"{label.being_name}@{label.host}":
+                    route = state["defaults"].get("host:" + str(label.host))
+                if route is not None:
+                    routes.append(
+                        {
+                            **route,
+                            "routing_revision": state["revision"],
+                            "selector": selector,
+                            "literal": literal,
+                        }
+                    )
+            if routes:
+                targets[person.being_ref] = routes
         parent = message.get("reply_to_message")
         if isinstance(parent, dict) and type(parent.get("message_id")) is int:
             row = db.execute(
-                "SELECT being FROM posts WHERE id=?", (parent["message_id"],)
+                "SELECT record FROM post_routes WHERE id=?", (parent["message_id"],)
             ).fetchone()
             if row is not None:
-                targets.add(row[0])
-        return targets
+                route = json.loads(row[0])
+                targets.setdefault(route["being_ref"], []).append(
+                    {
+                        **route,
+                        "selector": "reply:" + str(parent["message_id"]),
+                        "literal": None,
+                    }
+                )
+        return targets, selected
 
     def ingest(self, update: dict[str, Any]) -> dict[str, Any]:
         ident = integer(update.get("update_id"))
@@ -346,14 +560,14 @@ class HumanTribu:
                     and not forwarded
                     and "sender_chat" not in message
                 ):
-                    targets = self._targets(db, message, people)
+                    targets, selected = self._targets(db, message, people)
                     parent_id = message.get("reply_to_message", {}).get("message_id")
                     if (
                         type(parent_id) is int
                         and parent_id > 0
                         and any(p.human_id == actor["id"] and p.enabled for p in people)
                         and db.execute(
-                            "SELECT 1 FROM posts WHERE id=?", (parent_id,)
+                            "SELECT 1 FROM post_routes WHERE id=?", (parent_id,)
                         ).fetchone()
                         is None
                     ):
@@ -379,7 +593,25 @@ class HumanTribu:
                             "SELECT latest,stamp,update_id FROM messages WHERE id=?",
                             (source_id,),
                         ).fetchone()
-                        eligible = person.being_ref in targets
+                        routes = targets.get(person.being_ref, [])
+                        if previous is not None:
+                            old_row = db.execute(
+                                "SELECT record FROM revisions "
+                                "WHERE message=? AND revision=?",
+                                (source_id, previous[0]),
+                            ).fetchone()
+                            old_routes = json.loads(old_row[0]).get("routing", [])
+                            pinned = {
+                                r["selector"]: r
+                                for r in old_routes
+                                if r["selector"] in selected
+                            }
+                            routes = [
+                                r for r in routes if r["selector"] not in pinned
+                            ] + [
+                                {**r, "literal": selected[k]} for k, r in pinned.items()
+                            ]
+                        eligible = any(self._route_current(person, r) for r in routes)
                         if not eligible and previous is None:
                             continue
                         revision = digest(message)
@@ -423,6 +655,7 @@ class HumanTribu:
                                 else pending[1],
                             },
                             "eligible": eligible,
+                            "routing": routes,
                             "context": context,
                         }
                         raw = json_bytes(record).decode()
@@ -473,11 +706,12 @@ class HumanTribu:
         ).fetchone()
         if post is None:
             return None
+        route = db.execute(
+            "SELECT record FROM post_routes WHERE id=?", (parent_id,)
+        ).fetchone()
         return {
             "kind": "verified-native-publication",
-            "sender": next(
-                (p.label for p in people if p.being_ref == post[0]), post[0]
-            ),
+            "sender": post[0] if route is None else json.loads(route[0])["label"],
             "event_id": post[1],
             "event_digest": post[2],
             "text": post[3],
@@ -505,6 +739,7 @@ class HumanTribu:
             for sequence, raw, revision, source_id, latest in rows:
                 record = json.loads(raw)
                 record["intake_eligible"] = record["eligible"]
+                record["legacy_routing_unbound"] = "routing" not in record
                 record["eligible"] = self._eligible(db, person, record)
                 if record["context"] is None:
                     record["context"] = self._context(
@@ -572,17 +807,15 @@ class HumanTribu:
     ) -> bool:
         # Retained revision bytes are immutable. Parent verification is derived
         # evidence that may arrive later through an explicit manual query.
-        if record["eligible"] is True:
-            return True
+        if "routing" not in record:
+            return False  # Historical intake does not invent a body binding.
+        if record["routing"]:
+            return any(HumanTribu._route_current(person, r) for r in record["routing"])
         parent = record["source"]["reply_message_id"]
-        return (
-            type(parent) is int
-            and db.execute(
-                "SELECT 1 FROM posts WHERE id=? AND being=?",
-                (parent, person.being_ref),
-            ).fetchone()
-            is not None
-        )
+        row = db.execute(
+            "SELECT record FROM post_routes WHERE id=?", (parent,)
+        ).fetchone()
+        return row is not None and HumanTribu._route_current(person, json.loads(row[0]))
 
     def _source(
         self, db: sqlite3.Connection, person: Participant, source_id: str, revision: str
@@ -601,9 +834,14 @@ class HumanTribu:
             raise HumanTribuError("source_withdrawn")
         return record
 
-    def _reply_event(
-        self, person: Participant, event: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _authored_event(
+        self,
+        person: Participant,
+        event: dict[str, Any],
+        *,
+        subject: str,
+        sensitivity: str,
+    ) -> None:
         authority = authority_from_document(person.authority)
         verify_event(event, authority)
         member = authority.validate_origin(event["origin"], require_active=True)
@@ -616,11 +854,18 @@ class HumanTribu:
             event["origin"] != dict(person.origin)
             or event["being_ref"] != person.being_ref
             or event["kind"] != "experience.observed"
-            or event["subject"] != "tribu-human-reply"
-            or event["sensitivity"] != "shareable"
+            or event["subject"] != subject
+            or event["sensitivity"] != sensitivity
             or event["causal_parents"]
         ):
             raise HumanTribuError("reply_author_rejected")
+
+    def _reply_event(
+        self, person: Participant, event: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._authored_event(
+            person, event, subject="tribu-human-reply", sensitivity="shareable"
+        )
         payload = closed(
             event["payload"], {"schema", "request_id", "source_id", "revision", "text"}
         )
@@ -783,6 +1028,18 @@ class HumanTribu:
                             json_bytes(record).decode(),
                         ),
                     )
+                    db.execute(
+                        "INSERT INTO post_routes VALUES(?,?)",
+                        (
+                            message_id,
+                            json_bytes(
+                                self._route(
+                                    person,
+                                    self._routing(db, person.being_ref)["revision"],
+                                )
+                            ).decode(),
+                        ),
+                    )
             if record["state"] != "prepared":
                 return record
 
@@ -873,6 +1130,17 @@ class HumanTribu:
                 if old is not None and tuple(old) != value[1:5]:
                     raise HumanTribuError("post_conflict")
                 db.execute("INSERT OR IGNORE INTO posts VALUES(?,?,?,?,?,?)", value)
+                db.execute(
+                    "INSERT OR IGNORE INTO post_routes VALUES(?,?)",
+                    (
+                        message_id,
+                        json_bytes(
+                            self._route(
+                                person, self._routing(db, person.being_ref)["revision"]
+                            )
+                        ).decode(),
+                    ),
+                )
                 ids.append(message_id)
             unresolved = (
                 [
