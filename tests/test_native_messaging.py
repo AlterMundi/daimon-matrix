@@ -2056,6 +2056,48 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertFalse(self.invoke(hosted, request)["ok"])
         self.assertEqual(len(calls), 2)
 
+    def test_completed_exact_rpc_retry_after_expiry_and_restart_is_read_only(
+        self,
+    ) -> None:
+        from daimon_matrix.local_api import MAX_CLOCK_SKEW_MS, create_request
+        from daimon_matrix.service import HostedWeave
+
+        pair, hosted, delivery, calls = self.setup_sender()
+        policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = policy
+        request = self.request(pair)
+        accepted = self.invoke(hosted, request)
+        self.assertTrue(accepted["ok"], accepted)
+        self.assertEqual(accepted["result"]["transport_status"], "recipient-intake")
+        before = delivery.sender.outbox.path.read_bytes()
+        events = delivery.sender.ledger.events()
+        intake = pair.receiver.page(after=0, limit=10)
+        pair.now += max(pair.policy.max_ttl_ms, MAX_CLOCK_SKEW_MS) + 1
+        hosted = HostedWeave(
+            ledger=delivery.sender.ledger,
+            signer=pair.sender.signer,
+            capabilities={self.capability.capability_id: self.capability},
+            clock=lambda: pair.now,
+            runtime_id="dm:runtime:v1:" + "s" * 43,
+            runtime_label="native-send-test",
+            messaging=self.context,
+        )
+        frozen = self.invoke(hosted, request)
+        self.assertTrue(frozen["ok"], frozen)
+        self.assertEqual(frozen["result"], accepted["result"])
+        fresh = create_request(
+            self.capability,
+            request_id=_uuid("fresh-completed-retry"),
+            issued_at_ms=pair.now,
+            method="messaging.send",
+            params=request["params"],
+        )
+        self.assertEqual(self.invoke(hosted, fresh)["result"], accepted["result"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(delivery.sender.outbox.path.read_bytes(), before)
+        self.assertEqual(delivery.sender.ledger.events(), events)
+        self.assertEqual(pair.receiver.page(after=0, limit=10), intake)
+
     def test_expired_pending_inspection_preserves_pair_and_exact_rpc_retry(
         self,
     ) -> None:
@@ -2846,6 +2888,82 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertTrue(pending["ambiguous"])
         self.assertEqual([phase for phase, _ in calls], ["evidence"])
         self.assertEqual(pair.receiver.page(after=0, limit=10), page)
+
+    def test_completed_expired_retry_keeps_exact_pair_and_validates_proof(self) -> None:
+        import sqlite3
+        from dataclasses import replace
+
+        from daimon_matrix.messaging import MessagingDelivery
+
+        self.semantic_http = True
+        pair = Pair(self.root)
+        pair.policy = replace(pair.policy, max_ttl_ms=1_000)
+        pair.sender_context.policy = pair.receiver.policy = pair.policy
+        sender = self.make_sender(pair)
+        request: _SendRequest = dict(
+            client_id="owner-ui",
+            send_id=_uuid("completed-expired"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        accepted = delivery.send(**request)
+        self.assertEqual(accepted["transport_status"], "recipient-intake")
+        original = sender.prepare(**request)
+        original_events = sender.ledger.events()
+        intake = pair.receiver.page(after=0, limit=10)
+        before = sender.outbox.path.read_bytes()
+        pair.now += 1_001
+        restarted = self.make_sender(pair)
+        evidence, message, retried = self.delivery_transports(
+            pair, restarted, request["send_id"]
+        )
+        delivery = MessagingDelivery(
+            sender=restarted,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        self.assertEqual(delivery.send(**request), accepted)
+        self.assertEqual(restarted.prepare(**request), original)
+        for changed in (
+            {"client_id": "other-client"},
+            {"text": "different"},
+            {"thread_id": _uuid("other-thread")},
+        ):
+            with self.assertRaisesRegex(ValueError, "messaging_send_conflict"):
+                delivery.send(**cast(_SendRequest, {**request, **changed}))
+        self.assertEqual(restarted.outbox.path.read_bytes(), before)
+        self.assertEqual(restarted.ledger.events(), original_events)
+        self.assertEqual(pair.receiver.page(after=0, limit=10), intake)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(retried, [])
+        with closing(sqlite3.connect(restarted.outbox.path)) as database, database:
+            database.execute(
+                "UPDATE messaging_transport_stages SET response=NULL "
+                "WHERE phase='message'"
+            )
+        with self.assertRaisesRegex(ValueError, "messaging_transport_response_missing"):
+            delivery.send(**request)
+        self.assertEqual(retried, [])
+        pair.sender_relationships.ingest(
+            next(
+                event
+                for event in pair.history
+                if event["kind"] == "matrix/relationship-grant-revocation"
+            )
+        )
+        with self.assertRaises(ValueError):
+            delivery.send(**request)
+        self.assertEqual(retried, [])
 
     def test_long_echo_outage_restarts_with_fresh_immutable_carrier(self) -> None:
         from dataclasses import replace

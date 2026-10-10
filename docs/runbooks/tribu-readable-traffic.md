@@ -29,6 +29,15 @@ semantic receipt separately from echo state and retained Bot API responses.
 Reuse the exact saved request and supported retry decision. A missing semantic
 receipt remains missing; do not turn it into a success badge.
 
+An exact send/reply retry whose two retained authenticated transport responses
+confirm native intake is read-only, including after authorization expiry or a
+restart. It retains the carrier, confirmed Telegram parts and native event;
+it does not publish the speech again. Current client, relationship, policy,
+route and proof checks still apply. A pending or ambiguous expired carrier
+instead requires the existing immutable successor and may publish again;
+unknown external outcomes cannot safely promise zero copies. Preserve those
+historical posts and retry decisions rather than rewriting the journal.
+
 ## Synthetic phone reading examples
 
 These are layout examples, not received messages or delivery evidence.
@@ -158,9 +167,13 @@ and guidance/update transaction before cutting over. Preserve unrelated work and
 all native databases with their journal companions. Do not reconstruct pending
 requests or change their IDs.
 
-On rollback, stop the corresponding native server, restore the exact previous
-qualified SDK/start configuration and the recorded signed installation backup
-as one coherent selection. Retain the newer installation/proofs for forward
+On rollback, stop the corresponding native server and select only an SDK
+qualified to read ALL retained proofs, together with the recorded signed
+installation backup. For the ordinary-supergroup reply rollout, SDK `71dddc9`
+cannot validate the newer positive HTTP reply proofs: retain SDK `7f7c772` or a
+qualified successor and roll back the signed presentation instead. Historical
+executable snapshots alone do not establish a compatible downgrade. Retain the
+newer installation/proofs for forward
 recovery. For guidance, restore original planned files only if their current
 hash matches the recorded after hash; preserve conflicts. The commons updater
 has its own transaction-bound rollback. A rollback must not discard receiving

@@ -311,6 +311,11 @@ class MessagingOutboxStore:
             generation, carrier_send_id, carrier_plan = carriers[-1]
             if now < int(carrier_plan["issued_at_ms"]):
                 raise ValueError("messaging_authorization_not_yet_valid")
+            # This is only a selection hint, not delivery evidence. The delivery
+            # facade must authenticate both retained responses before returning
+            # success. Completed operations need no fresh disclosure authority.
+            if self._recorded_intake(database, owner, carrier_send_id):
+                return carrier_send_id, carrier_plan
             if now < int(carrier_plan["expires_at_ms"]):
                 return carrier_send_id, carrier_plan
 
@@ -341,6 +346,25 @@ class MessagingOutboxStore:
                 (owner, carrier_send_id, canonical_bytes(carrier_plan)),
             )
             return carrier_send_id, carrier_plan
+
+    @staticmethod
+    def _recorded_intake(
+        database: sqlite3.Connection, owner: str, send_id: str
+    ) -> bool:
+        rows = database.execute(
+            "SELECT phase, transport_status FROM messaging_transport_stages "
+            "WHERE owner=? AND send_id=?",
+            (owner, send_id),
+        ).fetchall()
+        return {(row[0], row[1]) for row in rows} == {
+            ("evidence", "recipient-intake"),
+            ("message", "recipient-intake"),
+        }
+
+    def _intake_recorded(self, owner: str, send_id: str) -> bool:
+        """Selection hint only; retained authenticated responses remain required."""
+        with self._database() as database:
+            return self._recorded_intake(database, owner, send_id)
 
     def _inspection_pair(
         self,

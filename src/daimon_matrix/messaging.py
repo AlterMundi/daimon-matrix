@@ -422,7 +422,7 @@ class MessagingSender:
             max_ttl_ms=policy.max_ttl_ms,
         )
         issued, expires = plan["issued_at_ms"], plan["expires_at_ms"]
-        if now >= expires:
+        if now >= expires and not self.outbox._intake_recorded(owner, carrier_send_id):
             raise ValueError("messaging_authorization_expired")
         if now < issued:
             raise ValueError("messaging_authorization_not_yet_valid")
@@ -745,6 +745,11 @@ class MessagingDelivery:
         carrier_send_id = self.sender.outbox._carrier_for_envelopes(
             owner, send_id, envelopes
         )
+        # An exact completed retry inspects the original authenticated pair.
+        # Expiry forbids another transmission, not verification of past intake.
+        # The local status is only a hint: BOTH response proofs are checked below.
+        if transmit and self.sender.outbox._intake_recorded(owner, carrier_send_id):
+            transmit = False
         phases = ("evidence", "message")
         submissions = {}
         bindings = {}
