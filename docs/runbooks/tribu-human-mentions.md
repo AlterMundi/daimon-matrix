@@ -48,6 +48,13 @@ The owner config has schema `dm.tribu-human-client/v1`, being pin, HTTPS endpoin
 pinned CA, private scoped credential, existing authenticated native-client
 binding, private prepared-request directory, own native ledger path and a list
 of owner-selected public echo-store paths.
+Native verification keys are selected by the exact enrolled `(catalog_id,
+proof_key_id)` pair. In host configuration, `proof_keys` maps each catalog ID
+to a map of its existing proof-key IDs and protected key-file paths. Different
+relations may legitimately reuse a catalog name with distinct keys; unknown
+pairs are refused without fallback. Historical sender labels remain authenticated
+presentation; the signed native event identifies the author.
+
 Credentials are conventional bearer authentication over verified TLS, unique
 per being; this is not a new signing protocol or a native identity grant.
 

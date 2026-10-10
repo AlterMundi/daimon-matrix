@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from .identity import verify_embodiment_credential
-from .mandatory_echo import _record_request, validate_proof_shape
+from .mandatory_echo import EchoError, _record_request, validate_proof_shape
 from .operator_rebirth import authority_from_document
 from .telegram_mirror import (
     plain_request,
@@ -119,7 +119,7 @@ class Participant:
     origin: Mapping[str, str]
     authority: dict[str, Any]
     token: str
-    proof_keys: Mapping[str, bytes]
+    proof_keys: Mapping[tuple[str, str], bytes]
     enabled: bool = True
 
     def validate(self) -> None:
@@ -808,7 +808,13 @@ class HumanTribu:
             authority.state,
             at_ms=self.clock(),
         )
-        key = person.proof_keys.get(proof.get("catalog_id", ""))
+        try:
+            validate_proof_shape(proof)
+        except EchoError:
+            raise HumanTribuError("post_proof_rejected") from None
+        key = person.proof_keys.get(
+            (proof["catalog_id"], proof["binding"]["policy"]["proof_key_id"])
+        )
         if key is None:
             raise HumanTribuError("post_catalog_rejected")
         native_json = json.dumps(
@@ -822,7 +828,6 @@ class HumanTribu:
         ).hexdigest()
         if not hmac.compare_digest(proof.get("authentication", ""), expected):
             raise HumanTribuError("post_proof_rejected")
-        validate_proof_shape(proof)
         if proof["binding_digest"] != digest(proof["binding"]):
             raise HumanTribuError("post_binding_digest_rejected")
         projection, policy = proof["binding"]["projection"], proof["binding"]["policy"]
@@ -830,7 +835,6 @@ class HumanTribu:
             projection["event_id"] != event["event_id"]
             or projection["event_digest"] != event["content_hash"]
             or projection["kind"] not in ("message", "reply")
-            or projection["sender"] != person.label
             or policy["bot_id"] != self.bot_id
             or policy["chat_id"] != self.chat_id
         ):

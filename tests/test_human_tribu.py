@@ -19,6 +19,7 @@ from daimon_matrix.human_tribu import (
     HumanTribu,
     HumanTribuError,
     Participant,
+    digest,
 )
 from daimon_matrix.operator_rebirth import AUTHORITY_SCHEMA
 from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
@@ -42,7 +43,7 @@ def person(fixture: RootLedgerFixture) -> Participant:
             "incarnations": list(fixture.incarnations.values()),
         },
         token="a" * 64,
-        proof_keys={"test": b"k" * 32},
+        proof_keys={("test", "synthetic-proof-key"): b"k" * 32},
     )
 
 
@@ -88,11 +89,13 @@ def response(sent: list[dict[str, Any]], request: dict[str, Any]) -> bytes:
 
 
 class NativeTestTransport:
-    def __init__(self) -> None:
+    def __init__(self, start_id: int = 1) -> None:
         self.roots: dict[int, int] = {}
+        self.next_id = start_id
 
     def send(self, request: dict[str, Any]) -> bytes:
-        ident = len(self.roots) + 1
+        ident = self.next_id
+        self.next_id += 1
         result: dict[str, Any] = {
             "message_id": ident,
             "from": {"id": 123, "is_bot": True},
@@ -124,6 +127,11 @@ def native_proof(
     *,
     text: str = "hello",
     representation: str = "plain-json/v2",
+    sender: str | None = None,
+    key: bytes = b"k" * 32,
+    key_id: str = "synthetic-proof-key",
+    filename: str = "echo.sqlite",
+    start_id: int = 1,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     event = fixture.ledger_a.append_local(
         kind="experience.observed",
@@ -138,7 +146,7 @@ def native_proof(
     projection = {
         "event_id": event["event_id"],
         "event_digest": event["content_hash"],
-        "sender": person(fixture).label,
+        "sender": person(fixture).label if sender is None else sender,
         "recipients": ["eko"],
         "thread_id": "thread",
         "reply_to": None,
@@ -146,14 +154,14 @@ def native_proof(
         "content": {"text": text},
     }
     with closing(
-        sqlite3.connect(fixture.root_path / "echo.sqlite", isolation_level=None)
+        sqlite3.connect(fixture.root_path / filename, isolation_level=None)
     ) as db:
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA journal_mode=DELETE")
         db.execute("BEGIN IMMEDIATE")
-        echo.EchoJournal.initialize(db, catalog_id="test", authentication_key=b"k" * 32)
+        echo.EchoJournal.initialize(db, catalog_id="test", authentication_key=key)
         db.commit()
-        journal = echo.EchoJournal(db, catalog_id="test", authentication_key=b"k" * 32)
+        journal = echo.EchoJournal(db, catalog_id="test", authentication_key=key)
         db.execute("BEGIN IMMEDIATE")
         binding = journal.admit(
             "native",
@@ -167,13 +175,13 @@ def native_proof(
                 "topic_id": None,
                 "representation": representation,
                 "acceptance_digest": "a" * 64,
-                "proof_key_id": "synthetic-proof-key",
+                "proof_key_id": key_id,
             },
         )
         db.commit()
         worker = echo.MandatoryEcho(
             journal,
-            transport=NativeTestTransport(),
+            transport=NativeTestTransport(start_id),
             resolve=lambda _: projection,
             authorize=lambda _: True,
         )
@@ -450,6 +458,48 @@ class HumanTribuTests(RootLedgerFixture):
         with self.assertRaisesRegex(HumanTribuError, "source_withdrawn"):
             self.store.reply(self.person, self.intent(source=last), self.exchange)
         self.assertEqual(len(self.sent), 1)
+
+    def test_historical_labels_and_distinct_keys_of_same_catalog(self) -> None:
+        event, proof = native_proof(self, sender=self.person.being_ref)
+        self.people = [
+            replace(
+                self.person,
+                proof_keys={
+                    **self.person.proof_keys,
+                    ("test", "second-native-key"): b"m" * 32,
+                },
+            )
+        ]
+        self.assertEqual(
+            self.store.register_post(self.person, event, proof)["registered"], [1]
+        )
+        second, other_proof = native_proof(
+            self,
+            key=b"m" * 32,
+            key_id="second-native-key",
+            filename="other.sqlite",
+            start_id=50,
+        )
+        self.assertEqual(
+            self.store.register_post(self.person, second, other_proof)["registered"],
+            [50],
+        )
+        tampered = copy.deepcopy(other_proof)
+        tampered["binding"]["policy"]["proof_key_id"] = "synthetic-proof-key"
+        tampered["binding_digest"] = digest(tampered["binding"])
+        with self.assertRaisesRegex(HumanTribuError, "post_proof_rejected"):
+            self.store.register_post(self.person, second, tampered)
+        self.people = [self.person]
+        with self.assertRaisesRegex(HumanTribuError, "post_catalog_rejected"):
+            self.store.register_post(self.person, second, other_proof)
+        reply = message(text="reply to the retained historical publication")
+        reply["message"]["entities"] = []
+        reply["message"]["reply_to_message"] = {"message_id": 1}
+        self.store.ingest(reply)
+        self.assertEqual(
+            self.store.reply(self.person, self.intent(), self.exchange)["state"],
+            "confirmed",
+        )
 
     def test_each_being_accepts_only_its_paired_human_and_queries_are_isolated(
         self,

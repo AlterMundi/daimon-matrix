@@ -117,6 +117,21 @@ def participants(path: Path) -> list[Participant]:
         )
         if type(row["enabled"]) is not bool or not isinstance(row["proof_keys"], dict):
             raise HumanTribuError("participant_invalid")
+        proof_keys = {}
+        for catalog, keys in row["proof_keys"].items():
+            if (
+                not isinstance(catalog, str)
+                or not 0 < len(catalog) <= 128
+                or not isinstance(keys, dict)
+                or not 1 <= len(keys) <= 16
+            ):
+                raise HumanTribuError("participant_catalog_invalid")
+            for key_id, filename in keys.items():
+                if not isinstance(key_id, str) or not 0 < len(key_id) <= 256:
+                    raise HumanTribuError("participant_catalog_key_invalid")
+                proof_keys[(catalog, key_id)] = protected_read(_path(filename), size=32)
+        if not 1 <= len(proof_keys) <= 64:
+            raise HumanTribuError("participant_catalogs_invalid")
         result.append(
             Participant(
                 being_ref=row["being_ref"],
@@ -128,10 +143,7 @@ def participants(path: Path) -> list[Participant]:
                 origin=row["origin"],
                 authority=document(protected_read(_path(row["authority_file"]))),
                 token=protected_read(_path(row["token_file"])).decode().strip(),
-                proof_keys={
-                    name: protected_read(_path(filename), size=32)
-                    for name, filename in row["proof_keys"].items()
-                },
+                proof_keys=proof_keys,
                 enabled=row["enabled"],
             )
         )
