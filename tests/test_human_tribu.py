@@ -1,0 +1,396 @@
+"""Passive Telegram provenance, paired humans and durable public effects."""
+
+from __future__ import annotations
+
+import copy
+import json
+import sqlite3
+import threading
+import uuid
+from contextlib import closing
+from dataclasses import replace
+from typing import Any
+from unittest.mock import patch
+
+from daimon_matrix import mandatory_echo as echo
+from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.human_tribu import (
+    REPLY_SCHEMA,
+    HumanTribu,
+    HumanTribuError,
+    Participant,
+)
+from daimon_matrix.operator_rebirth import AUTHORITY_SCHEMA
+from tests.test_dm022_ledger import NOW, RootLedgerFixture, seed
+
+
+def person(fixture: RootLedgerFixture) -> Participant:
+    return Participant(
+        being_ref=fixture.state.being_ref,
+        label="compaii.codex@daimonmatrix",
+        human_id=111,
+        human_name="Nico",
+        username="compaii_bot",
+        bot_id=234,
+        origin=fixture.origins["legion"],
+        authority={
+            "schema": AUTHORITY_SCHEMA,
+            "control_artifacts": [fixture.genesis],
+            "control_head": fixture.state.head,
+            "manifest": fixture.manifest.value,
+            "credentials": list(fixture.credentials.values()),
+            "incarnations": list(fixture.incarnations.values()),
+        },
+        token="a" * 64,
+        proof_keys={"test": b"k" * 32},
+    )
+
+
+def message(
+    *,
+    ident: int = 10,
+    update: int = 1,
+    human: int = 111,
+    text: str = "@compaii_bot check this",
+    edit: bool = False,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "message_id": ident,
+        "date": 100,
+        "from": {"id": human, "is_bot": False},
+        "chat": {"id": -123, "type": "supergroup"},
+        "text": text,
+        "entities": [{"type": "mention", "offset": 0, "length": 12}],
+    }
+    if edit:
+        value["edit_date"] = 101
+    return {"update_id": update, "edited_message" if edit else "message": value}
+
+
+def response(sent: list[dict[str, Any]], request: dict[str, Any]) -> bytes:
+    sent.append(request)
+    parent = request["reply_parameters"]["message_id"]
+    result = {
+        "message_id": 1000 + len(sent),
+        "from": {"id": 123, "is_bot": True},
+        "chat": {"id": -123, "type": "supergroup"},
+        "text": request["text"],
+        "entities": request.get("entities", []),
+        "reply_to_message": {
+            "message_id": parent,
+            "from": {"id": 111 if parent == 10 else 123, "is_bot": parent != 10},
+            "chat": {"id": -123, "type": "supergroup"},
+            "message_thread_id": 10,
+        },
+        "message_thread_id": 10,
+    }
+    return json.dumps({"ok": True, "result": result}).encode()
+
+
+class NativeTestTransport:
+    def send(self, request: dict[str, Any]) -> bytes:
+        return canonical_bytes(
+            {
+                "ok": True,
+                "result": {
+                    "message_id": 1,
+                    "from": {"id": 123, "is_bot": True},
+                    "chat": {"id": -123},
+                    "text": request["text"],
+                },
+            }
+        )
+
+
+class HumanTribuTests(RootLedgerFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.person = person(self)
+        self.people = [self.person]
+        self.store = self.reopen()
+        self.sent: list[dict[str, Any]] = []
+
+    def reopen(self) -> HumanTribu:
+        return HumanTribu(
+            self.root_path / "human.sqlite",
+            bot_id=123,
+            chat_id=-123,
+            participants=lambda: self.people,
+            clock=lambda: NOW,
+        )
+
+    def intent(
+        self, *, text: str = "Here is the answer.", source: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if source is None:
+            source = self.store.page(self.person)["items"][-1]
+        operation = str(uuid.uuid4())
+        return self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="tribu-human-reply",
+            payload={
+                "schema": REPLY_SCHEMA,
+                "request_id": operation,
+                "source_id": source["id"],
+                "revision": source["revision"],
+                "text": text,
+            },
+            sensitivity="shareable",
+            event_id=operation,
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+
+    def exchange(self, request: dict[str, Any]) -> bytes:
+        return response(self.sent, request)
+
+    def test_transactional_cursor_pair_gate_duplicate_and_restart(self) -> None:
+        for human in (222, True):
+            self.store.ingest(message(human=human, update=int(human) + 100))
+        forwarded = message(update=500)
+        forwarded["message"]["forward_origin"] = {"type": "user"}
+        self.store.ingest(forwarded)
+        self.assertEqual(self.store.page(self.person)["items"], [])
+        selected = message(update=501)
+        self.assertEqual(self.store.ingest(selected)["retained"], 1)
+        self.assertTrue(self.reopen().ingest(selected)["duplicate"])
+        self.assertEqual(self.store.status()["last_update_id"], 501)
+        self.assertFalse(self.store.status()["automatic_inference"])
+        tampered = copy.deepcopy(selected)
+        tampered["message"]["text"] += "!"
+        with self.assertRaisesRegex(HumanTribuError, "update_conflict"):
+            self.store.ingest(tampered)
+        self.assertEqual(self.store.status()["last_update_id"], 501)
+        self.assertEqual(len(self.store.page(self.person)["items"]), 1)
+
+    def test_unicode_mention_entities_and_no_text_based_authority(self) -> None:
+        value = message(text="😀 @compaii_bot hello")
+        value["message"]["entities"][0]["offset"] = 3
+        self.assertEqual(self.store.ingest(value)["retained"], 1)
+        decomposed = message(update=3, ident=12, text="@compaii_bot cafe\u0301")
+        self.store.ingest(decomposed)
+        self.assertEqual(
+            self.store.page(self.person)["items"][-1]["text"],
+            decomposed["message"]["text"],
+        )
+        coordinates = message(update=4, human=222, ident=13)
+        coordinates["message"]["location"] = {"latitude": 12.5, "longitude": -1.5}
+        self.assertEqual(self.store.ingest(coordinates)["retained"], 0)
+        value = message(update=2, ident=11)
+        value["message"]["entities"] = []
+        self.assertEqual(self.store.ingest(value)["retained"], 0)
+        with self.assertRaisesRegex(HumanTribuError, "unauthorized"):
+            self.store.authenticate("b" * 64)
+
+    def test_revisions_and_withdrawal_preserve_history_and_refuse_old_reply(
+        self,
+    ) -> None:
+        self.store.ingest(message())
+        event = self.intent()
+        edited = message(update=2, edit=True, text="I withdraw this mention.")
+        edited["edited_message"]["entities"] = []
+        self.store.ingest(edited)
+        items = self.store.page(self.person)["items"]
+        self.assertEqual(len(items), 2)
+        self.assertTrue(items[0]["superseded"])
+        self.assertFalse(items[1]["eligible"])
+        with self.assertRaisesRegex(HumanTribuError, "changed"):
+            self.store.reply(self.person, event, self.exchange)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(
+            self.store.page(self.person, after=items[-1]["sequence"])["items"], []
+        )
+
+    def test_literal_paginated_reply_real_receipts_and_retry_no_duplicate(self) -> None:
+        self.store.ingest(message())
+        event = self.intent(text="hello 😀 <literal>\n" * 500)
+        result = self.store.reply(self.person, event, self.exchange)
+        self.assertEqual(result["state"], "confirmed")
+        self.assertGreater(len(self.sent), 1)
+        self.assertEqual(self.sent[0]["reply_parameters"]["message_id"], 10)
+        self.assertEqual(self.sent[1]["reply_parameters"]["message_id"], 1001)
+        count = len(self.sent)
+        self.assertEqual(self.reopen().reply(self.person, event, self.exchange), result)
+        self.assertEqual(len(self.sent), count)
+        followup = message(ident=20, update=2, text="Reply without mention")
+        followup["message"]["entities"] = []
+        followup["message"]["reply_to_message"] = {"message_id": 1001}
+        self.assertEqual(self.store.ingest(followup)["retained"], 1)
+
+    def test_uncertain_response_retained_and_never_resent(self) -> None:
+        self.store.ingest(message())
+        event = self.intent()
+
+        def uncertain(request: dict[str, Any]) -> bytes:
+            self.exchange(request)
+            raise TimeoutError("a private token must never enter the record")
+
+        result = self.store.reply(self.person, event, uncertain)
+        self.assertEqual(result["state"], "uncertain")
+        self.assertEqual(self.reopen().reply(self.person, event, self.exchange), result)
+        self.assertEqual(len(self.sent), 1)
+        self.assertNotIn("private token", json.dumps(result))
+
+    def test_concurrent_retry_and_queries_do_not_block_or_duplicate(self) -> None:
+        self.store.ingest(message())
+        event = self.intent()
+        entered, release = threading.Event(), threading.Event()
+
+        def delayed(request: dict[str, Any]) -> bytes:
+            entered.set()
+            if not release.wait(10):
+                raise TimeoutError
+            return self.exchange(request)
+
+        worker = threading.Thread(
+            target=self.store.reply, args=(self.person, event, delayed)
+        )
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(10))
+            self.assertEqual(len(self.store.page(self.person)["items"]), 1)
+            self.assertEqual(
+                self.reopen().reply(self.person, event, self.exchange)["state"],
+                "sending",
+            )
+        finally:
+            release.set()
+            worker.join(10)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_disabled_policy_and_forged_signed_intent_refused(self) -> None:
+        self.store.ingest(message())
+        event = self.intent()
+        forged = copy.deepcopy(event)
+        forged["payload"]["text"] = "forged"
+        with self.assertRaises(ValueError):
+            self.store.reply(self.person, forged, self.exchange)
+        self.people = [replace(self.person, enabled=False)]
+        with self.assertRaisesRegex(HumanTribuError, "unauthorized"):
+            self.store.reply(self.person, event, self.exchange)
+        self.assertEqual(self.sent, [])
+
+    def test_each_being_accepts_only_its_paired_human_and_queries_are_isolated(
+        self,
+    ) -> None:
+        other = RootLedgerFixture()
+        with patch(
+            "tests.test_dm022_ledger.seed",
+            side_effect=lambda label: seed("other-" + label),
+        ):
+            other.setUp()
+        self.addCleanup(other.tearDown)
+        second = replace(
+            person(other),
+            label="eko.codex@daimonmatrix",
+            human_id=222,
+            human_name="Sai",
+            username="eko_human_bot",
+            bot_id=235,
+            token="b" * 64,
+        )
+        self.people.append(second)
+        wrong = message(text="@eko_human_bot cross-human request")
+        wrong["message"]["entities"][0]["length"] = 14
+        self.assertEqual(self.store.ingest(wrong)["retained"], 0)
+        own = message(update=2, text="@eko_human_bot own request", human=222)
+        own["message"]["entities"][0]["length"] = 14
+        self.assertEqual(self.store.ingest(own)["retained"], 1)
+        self.assertEqual(self.store.page(self.person)["items"], [])
+        self.assertEqual(len(self.store.page(second)["items"]), 1)
+        self.store.ingest(message(update=3, ident=11))
+        event = self.intent()
+        with self.assertRaises(ValueError):
+            self.store.reply(second, event, self.exchange)
+        self.assertEqual(self.sent, [])
+
+    def test_invalid_update_does_not_acknowledge_or_skip_and_fifo_is_refused(
+        self,
+    ) -> None:
+        value = message()
+        value["message"]["entities"][0]["offset"] = 99999
+        with self.assertRaisesRegex(HumanTribuError, "invalid_entity"):
+            self.store.ingest(value)
+        self.assertIsNone(self.store.status()["last_update_id"])
+        self.assertEqual(self.store.ingest(message())["retained"], 1)
+        import os
+
+        fifo = self.root_path / "forbidden.fifo"
+        os.mkfifo(fifo, 0o600)
+        with self.assertRaisesRegex(HumanTribuError, "file_untrusted"):
+            HumanTribu(fifo, bot_id=123, chat_id=-123, participants=lambda: self.people)
+
+    def test_full_native_proof_registration_is_idempotent_and_routes_replies(
+        self,
+    ) -> None:
+        event = self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="communication",
+            payload={
+                "schema": "dm.communication.message/v1",
+                "body": {"text": "hello"},
+            },
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+        projection = {
+            "event_id": event["event_id"],
+            "event_digest": event["content_hash"],
+            "sender": self.person.label,
+            "recipients": ["eko"],
+            "thread_id": "thread",
+            "reply_to": None,
+            "kind": "message",
+            "content": {"text": "hello"},
+        }
+        with closing(
+            sqlite3.connect(self.root_path / "echo.sqlite", isolation_level=None)
+        ) as db:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("BEGIN IMMEDIATE")
+            echo.EchoJournal.initialize(
+                db, catalog_id="test", authentication_key=b"k" * 32
+            )
+            db.commit()
+            journal = echo.EchoJournal(
+                db, catalog_id="test", authentication_key=b"k" * 32
+            )
+            db.execute("BEGIN IMMEDIATE")
+            binding = journal.admit(
+                "native",
+                projection,
+                {
+                    "schema": "daimon-visibility-policy/v2",
+                    "generation": 1,
+                    "origin": "synthetic-runtime",
+                    "bot_id": 123,
+                    "chat_id": -123,
+                    "topic_id": None,
+                    "representation": "plain-json/v2",
+                    "acceptance_digest": "a" * 64,
+                    "proof_key_id": "synthetic-proof-key",
+                },
+            )
+            db.commit()
+            worker = echo.MandatoryEcho(
+                journal,
+                transport=NativeTestTransport(),
+                resolve=lambda _: projection,
+                authorize=lambda _: True,
+            )
+            worker.advance("native", binding)
+            proof = worker.require_confirmed("native", binding)
+        self.assertEqual(
+            self.store.register_post(self.person, event, proof)["registered"], [1]
+        )
+        self.assertEqual(
+            self.store.register_post(self.person, event, proof)["registered"], [1]
+        )
+        reply = message(ident=20, text="about that")
+        reply["message"]["entities"] = []
+        reply["message"]["reply_to_message"] = {"message_id": 1}
+        self.assertEqual(self.store.ingest(reply)["retained"], 1)
+        proof["parts"][0]["text"] = "fake"
+        with self.assertRaisesRegex(HumanTribuError, "proof_rejected"):
+            self.store.register_post(self.person, event, proof)

@@ -70,7 +70,7 @@ jobs:
     needs: scope
     # The visibility job in tests.yml owns these exact installed HTTP/echo
     # regressions for the qualified presentation scope; do not run them twice.
-    if: needs.scope.outputs.profile != 'visibility'
+    if: needs.scope.outputs.profile != 'visibility' && needs.scope.outputs.profile != 'human-tribu'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

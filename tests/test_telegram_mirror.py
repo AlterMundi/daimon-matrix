@@ -336,6 +336,40 @@ class MirrorTests(unittest.TestCase):
 
 
 class MandatoryPlainTests(unittest.TestCase):
+    def test_human_parent_requires_explicit_authenticated_author_pin(self):
+        request = mirror.plain_request(
+            "Reply", chat_id=-123, topic_id=None, readable=True, reply_message_id=10
+        )
+        result = {
+            "message_id": 20,
+            "from": {"id": 123, "is_bot": True},
+            "chat": {"id": -123, "type": "supergroup"},
+            "text": "Reply",
+            "entities": request["entities"],
+            "message_thread_id": 10,
+            "reply_to_message": {
+                "message_id": 10,
+                "from": {"id": 111, "is_bot": False},
+                "chat": {"id": -123, "type": "supergroup"},
+            },
+        }
+        raw = json.dumps({"ok": True, "result": result}).encode()
+        with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+            mirror.validate_plain_response(raw, request, bot_id=123)
+        mirror.validate_plain_response(raw, request, bot_id=123, reply_author_id=111)
+        with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+            mirror.validate_plain_response(
+                raw, request, bot_id=123, reply_author_id=222
+            )
+        result.pop("reply_to_message")
+        with self.assertRaisesRegex(ValueError, "echo_response_invalid"):
+            mirror.validate_plain_response(
+                json.dumps({"ok": True, "result": result}).encode(),
+                request,
+                bot_id=123,
+                reply_author_id=111,
+            )
+
     def test_explicit_bot_api_rejection_is_not_ambiguous_acceptance(self):
         import json
 

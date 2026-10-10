@@ -12,6 +12,20 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_human_tribu_scope_is_closed_and_keeps_installed_contracts(self):
+        from tools.ci_scope import HUMAN_TRIBU_FILES
+
+        changes = list(HUMAN_TRIBU_FILES)
+        self.assertEqual(profile(changes), "human-tribu")
+        for other in (
+            "src/daimon_matrix/runtime.py",
+            "src/daimon_matrix/service.py",
+            "pyproject.toml",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*changes, other]), "full")
+        self.assertEqual(profile(["docs/runbooks/tribu-human-mentions.md"]), "full")
+
     def test_mirror_scope_keeps_portability_skip_and_native_default(
         self,
     ):

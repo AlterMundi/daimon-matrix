@@ -94,8 +94,33 @@ PROTECTED_FILES = ARCHIVE_FILES | frozenset(
 )
 
 
+HUMAN_TRIBU_FILES = MIRROR_FILES | frozenset(
+    {
+        "src/daimon_matrix/human_tribu.py",
+        "src/daimon_matrix/human_tribu_process.py",
+        "tests/test_human_tribu.py",
+        "tests/test_human_tribu_process.py",
+        "docs/runbooks/tribu-human-mentions.md",
+        "tests/test_package_scaffold.py",
+        "tests/test_dm041_hermes_body.py",
+        "tools/reproducible_build.py",
+        "tools/check_distribution.py",
+        ".github/workflows/telegram-portability.yml",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed
+        & {
+            "src/daimon_matrix/human_tribu.py",
+            "src/daimon_matrix/human_tribu_process.py",
+        }
+        and changed <= HUMAN_TRIBU_FILES
+    ):
+        return "human-tribu"
     if (
         changed
         & {
