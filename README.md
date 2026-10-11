@@ -77,3 +77,10 @@ distributed genesis through plural synchronized embodiments is documented in
 [docs/runbooks/distributed-first-embodiment.md](docs/runbooks/distributed-first-embodiment.md).
 
 Official repository: `AlterMundi/daimon-matrix`. License: MIT.
+
+## Daimon Field coordination
+
+Cross-repository decisions and repository-specific implications are indexed in
+[the Daimon Field projection](docs/daimon-field.md). The existing private
+[AlterMundi Project 13](https://github.com/orgs/AlterMundi/projects/13) is the canonical decision and roadmap surface;
+repository access and Project access are separate.
