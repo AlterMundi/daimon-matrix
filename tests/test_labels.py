@@ -147,7 +147,7 @@ class TestDerivation(unittest.TestCase):
 
 
 class TestResolution(unittest.TestCase):
-    def test_native_we_projection_resolves_signed_body_and_credential(self):
+    def test_native_we_projection_resolves_signed_body_and_credential(self) -> None:
         from daimon_matrix.runtime import VisibilityFactoryContext
         from daimon_matrix.weave import RootAuthority
         from tests.test_dm022_ledger import RootLedgerFixture
