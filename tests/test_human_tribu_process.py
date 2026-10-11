@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import ssl
 import threading
 import uuid
@@ -24,6 +25,7 @@ from daimon_matrix.human_tribu_process import (
     OwnerClient,
     TelegramIngress,
     _http,
+    admission_transport,
     api_server,
 )
 from tests.test_dm022_ledger import NOW
@@ -261,3 +263,67 @@ class HumanProcessTests(ClientFixture):
         with self.assertRaisesRegex(HumanTribuError, "telegram_consumer_conflict"):
             self.telegram.updates(99)
         self.assertIsNone(self.store.status()["last_update_id"])
+
+    def test_attention_tls_and_lost_transport_ack_retry_same_source_only(self) -> None:
+        policy = {"being_ref": self.person.being_ref, "activated_after": 1}
+        self.store.attention = lambda: policy
+        self.store.ingest(message(text="@compaii.codex@daimonmatrix hello"))
+        ids = self.store.attention_outbox()
+        self.assertEqual(len(ids), 1)
+        source = self.owner.call("attention", {"id": ids[0]})
+        self.assertTrue(source["actionable"])
+        self.assertEqual(
+            source["request"]["human"]["telegram_id"], self.person.human_id
+        )
+        self.assertFalse(self.owner.call("status", {})["automatic_inference"])
+        path = self.root_path / "admission.sock"
+        host = self.root_path / "attention-host.json"
+        received: list[dict[str, Any]] = []
+        stop = threading.Event()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(path))
+            listener.listen(2)
+            listener.settimeout(5)
+            host_policy = policy | {"socket_path": str(path)}
+            with patch(
+                "daimon_matrix.human_tribu_process.host_config",
+                return_value={"attention": host_policy},
+            ):
+                worker = threading.Thread(
+                    target=admission_transport, args=(self.store, host, stop)
+                )
+                worker.start()
+                try:
+                    # First admission commits, but its transport response is lost.
+                    for attempt in range(2):
+                        client, _ = listener.accept()
+                        with client:
+                            client.settimeout(5)
+                            raw = b""
+                            while not raw.endswith(b"\n"):
+                                raw += client.recv(1024)
+                            request = json.loads(raw)
+                            received.append(request)
+                            if attempt:
+                                client.sendall(
+                                    canonical_bytes(
+                                        {
+                                            "ok": True,
+                                            "result": {
+                                                "id": "tribu:" + ids[0],
+                                                "duplicate": True,
+                                            },
+                                        }
+                                    )
+                                    + b"\n"
+                                )
+                    for _ in range(100):
+                        if not self.store.attention_outbox():
+                            break
+                        stop.wait(0.01)
+                finally:
+                    stop.set()
+                    worker.join(5)
+        self.assertEqual(received, [{"op": "admit", "source_id": ids[0]}] * 2)
+        self.assertEqual(self.store.attention_outbox(), [])
+        self.assertEqual(self.sent, [])

@@ -198,10 +198,12 @@ class HumanTribu:
         chat_id: int,
         participants: Callable[[], list[Participant]],
         clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+        attention: Callable[[], dict[str, Any] | None] = lambda: None,
     ) -> None:
         self.path = path
         self.bot_id, self.chat_id = bot_id, chat_id
         self.participants, self.clock = participants, clock
+        self.attention = attention
         self.lock = threading.RLock()
         with closing(self._db()) as db, db:
             db.executescript(
@@ -240,6 +242,12 @@ class HumanTribu:
                 "being TEXT NOT NULL,hash TEXT NOT NULL,record TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS post_routes (id INTEGER PRIMARY KEY,"
                 "record TEXT NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS attention_candidates (source TEXT "
+                "PRIMARY KEY,"
+                "being TEXT NOT NULL,state TEXT NOT NULL,created_ms INTEGER NOT NULL);"
+                "CREATE TABLE IF NOT EXISTS human_pending (source TEXT PRIMARY KEY,"
+                "being TEXT NOT NULL,record TEXT NOT NULL,received_ms INTEGER NOT "
+                "NULL);"
             )
             identity = {
                 "schema": "dm.tribu-human-store/v1",
@@ -459,6 +467,7 @@ class HumanTribu:
                     "pending-updates-at-start; earlier history not claimed"
                 ),
                 "automatic_inference": False,
+                "human_request_admission": self.attention() is not None,
             }
 
     def _targets(
@@ -583,7 +592,64 @@ class HumanTribu:
                         )
                     platform_id = integer(message.get("message_id"), minimum=1)
                     stamp = integer(message.get("edit_date", message.get("date")))
+                    attention = self.attention()
                     for person in people:
+                        if (
+                            attention is not None
+                            and attention["being_ref"] == person.being_ref
+                            and actor.get("id") != person.human_id
+                            and person.enabled
+                        ):
+                            routes = targets.get(person.being_ref, [])
+                            if any(self._route_current(person, r) for r in routes):
+                                foreign_id = digest(
+                                    [
+                                        self.bot_id,
+                                        self.chat_id,
+                                        platform_id,
+                                        person.being_ref,
+                                    ]
+                                )
+                                # Separate attributable lane: never becomes an owner
+                                # No request, exposure, inference or cross-human grant.
+                                count = db.execute(
+                                    "SELECT COUNT(*) FROM human_pending WHERE being=?",
+                                    (person.being_ref,),
+                                ).fetchone()[0]
+                                exists = (
+                                    db.execute(
+                                        "SELECT 1 FROM human_pending WHERE source=?",
+                                        (foreign_id,),
+                                    ).fetchone()
+                                    is not None
+                                )
+                                if count < 200 or exists:
+                                    row = {
+                                        "id": foreign_id,
+                                        "actor": actor,
+                                        "message": message,
+                                        "routing": routes,
+                                        "state": "pending-explicit-owner-review",
+                                        "attestation": "authenticated-telegram-ingress",
+                                    }
+                                    db.execute(
+                                        "INSERT INTO human_pending VALUES(?,?,?,?) "
+                                        "ON CONFLICT(source) DO UPDATE SET "
+                                        "record=excluded.record",
+                                        (
+                                            foreign_id,
+                                            person.being_ref,
+                                            json_bytes(row).decode(),
+                                            self.clock(),
+                                        ),
+                                    )
+                                else:
+                                    db.execute(
+                                        "INSERT INTO meta "
+                                        "VALUES('human_pending_overflow','1') ON "
+                                        "CONFLICT(key) DO UPDATE SET "
+                                        "value=CAST(value AS INTEGER)+1"
+                                    )
                         if actor.get("id") != person.human_id or not person.enabled:
                             continue
                         source_id = digest(
@@ -683,6 +749,36 @@ class HumanTribu:
                                     ident,
                                 ),
                             )
+                        if (
+                            attention is not None
+                            and attention["being_ref"] == person.being_ref
+                            and previous is None
+                            and "message" in update
+                            and "edited_message" not in update
+                            and type(message.get("date")) is int
+                            and message["date"] >= attention["activated_after"]
+                            and eligible
+                            and any(
+                                self._route_current(person, r)
+                                and r["literal"].startswith("@")
+                                for r in routes
+                            )
+                        ):
+                            queued = db.execute(
+                                "SELECT COUNT(*) FROM attention_candidates WHERE "
+                                "state='pending' AND being=?",
+                                (person.being_ref,),
+                            ).fetchone()[0]
+                            db.execute(
+                                "INSERT OR IGNORE INTO attention_candidates "
+                                "VALUES(?,?,?,?)",
+                                (
+                                    source_id,
+                                    person.being_ref,
+                                    "pending" if queued < 20 else "retained-overflow",
+                                    self.clock(),
+                                ),
+                            )
             db.execute("INSERT OR IGNORE INTO updates VALUES(?,?)", (ident, raw_hash))
             if pending is not None:
                 db.execute("UPDATE pending SET resolved=1 WHERE id=?", (ident,))
@@ -717,6 +813,92 @@ class HumanTribu:
             "text": post[3],
             "message_id": parent_id,
         }
+
+    def attention_request(self, person: Participant, source_id: str) -> dict[str, Any]:
+        """Exact fresh source/revision read; no peer inbox or model invocation."""
+        person = self.authenticate(person.token)
+        policy = self.attention()
+        with self.lock, closing(self._db()) as db, db:
+            row = db.execute(
+                "SELECT r.record FROM messages m JOIN revisions r ON "
+                "r.message=m.id AND r.revision=m.latest JOIN attention_candidates "
+                "a ON a.source=m.id WHERE m.id=? AND m.being=?",
+                (source_id, person.being_ref),
+            ).fetchone()
+            if row is None:
+                raise HumanTribuError("attention_source_unavailable")
+            record = json.loads(row[0])
+            actionable = (
+                policy is not None
+                and policy["being_ref"] == person.being_ref
+                and record["human"]["telegram_id"] == person.human_id
+                and record["source"]["date"] >= policy["activated_after"]
+                and self._eligible(db, person, record)
+                and any(
+                    self._route_current(person, r) and r["literal"].startswith("@")
+                    for r in record.get("routing", [])
+                )
+            )
+            if actionable:
+                db.execute(
+                    "INSERT OR IGNORE INTO exposures VALUES(?,?,?)",
+                    (source_id, record["revision"], self.clock()),
+                )
+            return {"actionable": actionable, "request": record}
+
+    def attention_outbox(self) -> list[str]:
+        policy = self.attention()
+        if policy is None:
+            return []
+        with self.lock, closing(self._db()) as db:
+            return [
+                row[0]
+                for row in db.execute(
+                    "SELECT source FROM attention_candidates WHERE being=? AND "
+                    "state='pending' ORDER BY created_ms LIMIT 20",
+                    (policy["being_ref"],),
+                )
+            ]
+
+    def attention_ack(self, source_id: str) -> None:
+        with self.lock, closing(self._db()) as db, db:
+            db.execute(
+                "UPDATE attention_candidates SET state='transport-acknowledged' "
+                "WHERE source=? AND state='pending'",
+                (source_id,),
+            )
+
+    def attention_withdraw(self, source_id: str) -> None:
+        with self.lock, closing(self._db()) as db, db:
+            db.execute(
+                "UPDATE attention_candidates SET state='withdrawn' WHERE source=? "
+                "AND state='pending'",
+                (source_id,),
+            )
+
+    def pending_humans(self, person: Participant) -> dict[str, Any]:
+        person = self.authenticate(person.token)
+        policy = self.attention()
+        if policy is None or policy["being_ref"] != person.being_ref:
+            raise HumanTribuError("pending_review_not_configured")
+        with self.lock, closing(self._db()) as db:
+            items = [
+                json.loads(row[0])
+                for row in db.execute(
+                    "SELECT record FROM human_pending WHERE being=? ORDER BY "
+                    "received_ms DESC LIMIT 200",
+                    (person.being_ref,),
+                )
+            ]
+            overflow = db.execute(
+                "SELECT value FROM meta WHERE key='human_pending_overflow'"
+            ).fetchone()
+            return {
+                "items": items,
+                "overflow_count": 0 if overflow is None else int(overflow[0]),
+                "meaning": "Attributable public messages, no admission or reply "
+                "authority. Native daimon inboxes remain separate.",
+            }
 
     def page(
         self, person: Participant, *, after: int = 0, limit: int = 20

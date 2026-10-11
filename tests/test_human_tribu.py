@@ -194,6 +194,73 @@ def native_proof(
 
 
 class HumanTribuTests(RootLedgerFixture):
+    def test_attention_only_original_owner_at_and_activation_boundary(self) -> None:
+        self.store.attention = lambda: {
+            "being_ref": self.person.being_ref,
+            "activated_after": 100,
+        }
+        for update in [
+            message(ident=11, update=1, edit=True),
+            message(ident=12, update=2, human=222),
+            message(
+                ident=13, update=3, text="compaii.codex@daimonmatrix plain address"
+            ),
+        ]:
+            self.store.ingest(update)
+        old = message(ident=14, update=4)
+        old["message"]["date"] = 99
+        self.store.ingest(old)
+        self.assertEqual(self.store.attention_outbox(), [])
+        genuine = message(ident=15, update=5)
+        self.store.ingest(genuine)
+        self.store.ingest(genuine)
+        ids = self.store.attention_outbox()
+        self.assertEqual(len(ids), 1)
+        self.assertTrue(self.store.attention_request(self.person, ids[0])["actionable"])
+        pending = self.store.pending_humans(self.person)
+        self.assertEqual(pending["items"][0]["actor"]["id"], 222)
+        self.assertNotIn("human", pending["items"][0])
+
+    def test_attention_revision_revalidation_and_durable_transport_ack(self) -> None:
+        policy = {"being_ref": self.person.being_ref, "activated_after": 100}
+        self.store.attention = lambda: policy
+        self.store.ingest(message())
+        source_id = self.store.attention_outbox()[0]
+        first = self.store.attention_request(self.person, source_id)["request"]
+        self.store.ingest(
+            message(
+                edit=True, update=2, text="@compaii.codex@daimonmatrix edited request"
+            )
+        )
+        current = self.store.attention_request(self.person, source_id)
+        self.assertTrue(current["actionable"])
+        self.assertNotEqual(current["request"]["revision"], first["revision"])
+        self.assertEqual(self.store.attention_outbox(), [source_id])
+        self.store.attention_ack(source_id)
+        reopened = self.reopen()
+        reopened.attention = lambda: policy
+        self.assertEqual(reopened.attention_outbox(), [])
+        self.assertTrue(
+            reopened.attention_request(self.person, source_id)["actionable"]
+        )
+        self.store.ingest(message(edit=True, update=3, text="withdrawn"))
+        self.assertFalse(
+            self.store.attention_request(self.person, source_id)["actionable"]
+        )
+
+    def test_attention_queue_and_other_human_lane_are_bounded(self) -> None:
+        self.store.attention = lambda: {
+            "being_ref": self.person.being_ref,
+            "activated_after": 100,
+        }
+        for i in range(25):
+            self.store.ingest(message(ident=i + 1, update=i + 1))
+        self.assertEqual(len(self.store.attention_outbox()), 20)
+        self.store.attention = lambda: None
+        self.assertEqual(self.store.attention_outbox(), [])
+        with self.assertRaisesRegex(HumanTribuError, "pending_review_not_configured"):
+            self.store.pending_humans(self.person)
+
     def setUp(self) -> None:
         super().setUp()
         self.person = person(self)
