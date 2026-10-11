@@ -1,7 +1,8 @@
-"""One explicit passive Telegram consumer and scoped manual owner client.
+"""One Telegram consumer, scoped owner client and opt-in human admission.
 
 Run serve only during authorized deployment. All other verbs make one human-
-requested call then exit. Neither branch contains a harness/model dispatcher.
+requested call then exit. Optional admission notifies the existing Telecodex
+writer about fresh authenticated owner @ requests, never peers or model calls.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 import os
 import re
 import signal
+import socket
 import sqlite3
 import ssl
 import stat
@@ -74,7 +76,8 @@ def host_config(path: Path) -> dict[str, Any]:
             "tls_cert",
             "tls_key",
             "participants",
-        },
+        }
+        | ({"attention"} if "attention" in value else set()),
     )
     if value["schema"] != HOST_SCHEMA:
         raise HumanTribuError("host_configuration_invalid")
@@ -94,6 +97,17 @@ def host_config(path: Path) -> dict[str, Any]:
         or not 1 <= len(value["participants"]) <= 16
     ):
         raise HumanTribuError("host_configuration_invalid")
+    if "attention" in value:
+        policy = closed(
+            value["attention"], {"being_ref", "socket_path", "activated_after"}
+        )
+        _path(policy["socket_path"])
+        integer(policy["activated_after"], minimum=1)
+        if not isinstance(policy["being_ref"], str) or not any(
+            p.get("being_ref") == policy["being_ref"] and p.get("enabled") is True
+            for p in value["participants"]
+        ):
+            raise HumanTribuError("attention_binding_invalid")
     return value
 
 
@@ -261,6 +275,12 @@ def api_server(
                     result = store.page(
                         person, after=value["after"], limit=value["limit"]
                     )
+                elif self.path == "/attention":
+                    closed(value, {"id"})
+                    result = store.attention_request(person, value["id"])
+                elif self.path == "/pending-human":
+                    closed(value, set())
+                    result = store.pending_humans(person)
                 elif self.path == "/parents":
                     closed(value, {"after", "limit"})
                     result = store.parents(
@@ -330,6 +350,7 @@ def serve(path: Path, *, check: bool = False) -> int:
             bot_id=settings["bot_id"],
             chat_id=settings["chat_id"],
             participants=lambda: participants(path),
+            attention=lambda: host_config(path).get("attention"),
         )
         store._people()
         telegram = TelegramIngress(
@@ -355,6 +376,10 @@ def serve(path: Path, *, check: bool = False) -> int:
             signal.signal(signum, lambda _signum, _frame: stop.set())
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
+        attention_worker = threading.Thread(
+            target=admission_transport, args=(store, path, stop), daemon=True
+        )
+        attention_worker.start()
         try:
             while not stop.is_set():
                 offset = store.status()["last_update_id"]
@@ -376,9 +401,53 @@ def serve(path: Path, *, check: bool = False) -> int:
             server.shutdown()
             server.server_close()
             worker.join(timeout=5)
+            attention_worker.join(timeout=5)
         return 0
     finally:
         os.close(lock)
+
+
+def admission_transport(store: HumanTribu, path: Path, stop: threading.Event) -> None:
+    """Retry only transport of a stable ID. Receiver commits before queueing.
+
+    This never reads Matrix inboxes or starts a model: the existing single writer
+    independently revalidates the authenticated source and retains uncertainty.
+    """
+    while not stop.is_set():
+        policy = host_config(path).get("attention")
+        if policy is not None:
+            for source_id in store.attention_outbox():
+                if stop.is_set():
+                    break
+                try:
+                    person = next(
+                        p for p in store._people() if p.being_ref == policy["being_ref"]
+                    )
+                    if not store.attention_request(person, source_id)["actionable"]:
+                        store.attention_withdraw(source_id)
+                        continue
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                        client.settimeout(3)
+                        client.connect(policy["socket_path"])
+                        client.sendall(
+                            json_bytes({"op": "admit", "source_id": source_id}) + b"\n"
+                        )
+                        raw = b""
+                        while b"\n" not in raw and len(raw) <= 4096:
+                            part = client.recv(4096 - len(raw) + 1)
+                            if not part:
+                                break
+                            raw += part
+                        reply = document(raw)
+                        if (
+                            reply.get("ok") is True
+                            and reply.get("result", {}).get("id")
+                            == "tribu:" + source_id
+                        ):
+                            store.attention_ack(source_id)
+                except (OSError, HumanTribuError):
+                    pass  # Keep the same source ID; never resubmit turn/start.
+        stop.wait(1)
 
 
 class OwnerClient:
@@ -646,6 +715,7 @@ def main(argv: list[str] | None = None) -> int:
     publication.add_argument("id")
     commands.add_parser("status")
     commands.add_parser("defaults")
+    commands.add_parser("pending-human")
     selection = commands.add_parser("select-default")
     choice = selection.add_mutually_exclusive_group(required=True)
     choice.add_argument("--target")
@@ -680,6 +750,8 @@ def main(argv: list[str] | None = None) -> int:
             result = client.publish_post(document(protected_read(args.proof)))
         elif args.verb == "defaults":
             result = client.call("defaults", {})
+        elif args.verb == "pending-human":
+            result = client.call("pending-human", {})
         elif args.verb == "select-default":
             result = client.select_default(
                 target=args.target,

@@ -1,10 +1,10 @@
 # Passive human mentions in Tribu
 
 Phase 4 of #288 is a human-directed application, separate from sealed daimon
-messages. Receiving a Telegram update never creates a harness turn, imports
-memory, changes a native session or authorizes a response. Phase 5 attention,
-its dedicated logical Tribu topic, renewal after confirmed compactations and
-cross-human permissions require their later contracts and authorization.
+messages. The default passive configuration never creates a harness turn or imports
+memory. The explicitly configured Source human-triggered increment below admits
+only genuine new paired-human `@` requests. Autonomous peer attention, renewal
+after confirmed compactations and cross-human permissions remain later work.
 
 ## Human experience
 
@@ -163,8 +163,9 @@ python -m daimon_matrix.human_tribu_process --config "$OWNER_CONFIG" register-po
 
 Updates, retained revisions and the polling offset commit together. Startup
 accepts pending updates; it does not claim older Telegram history or discard
-the pending backlog. Unaddressed non-reply and unauthorized content is not
-retained as text.
+the pending backlog. Unaddressed non-reply content is not retained as text. The Source human-triggered
+increment keeps a separate bounded, attributable other-human pending lane;
+that lane grants no response or model admission authority.
 Unresolved public replies from paired humans stay private until their target
 is verified; they are not accepted requests. Pair changes revoke old-source
 query/reply access while preserving historical records.
@@ -207,3 +208,73 @@ this receiver/owner-command change.
 Attachments retain their caption context only here; binary transport remains
 #286. This application does not widen active Matrix attention or #148's
 economic gate.
+
+
+## Source human-triggered attention
+
+This optional increment in #310 and Telecodex #46 uses the same shared-bot
+consumer, authenticated owner API and existing private topic writer. It starts
+no second Telegram consumer and installs no peer inbox watcher. An omitted
+`attention` object keeps the previous passive behavior. The optional host policy
+selects one enrolled `being_ref`, an owner-private `socket_path` and an
+`activated_after` Unix timestamp. Its bounded transport retries only stable
+source IDs through the maintained Telecodex Unix socket.
+
+Only a genuine original, newly received paired-human message containing an
+explicit current `@` selector for the selected body is a candidate. Replies
+without an explicit selector, edits, replays, bot content, other humans and
+pre-activation history never start a model. The receiving writer independently
+reads the exact source over authenticated TLS, including its author, current
+revision, body pin and eligibility; it validates again immediately before native
+submission. A changed or unavailable source stays visible without submission.
+Transport acknowledgement proves durable admission, not execution or delivery.
+
+The selected private topic is named **Tribu** and begins with one fresh native
+conversation. Its saved preparation pin is checked on each admission. Subsequent
+public requests and ordinary paired-human messages in that private topic share
+one writer, queue and conversation; they do not automatically steer a running
+turn or create a replacement conversation. The original development transcript
+is not imported. Native goals and multi-agent continuation are disabled for this
+dedicated thread using supported start/resume configuration. Other topics keep
+their existing behavior.
+
+Both input surfaces have at most 20 outstanding admissions, including the
+running turn. Paused, overflowing and uncertain inputs retain honest states.
+Other-human directed text uses a separate manual `pending-human` view, limited
+to 200 records with an explicit overflow count; it never becomes a paired-human
+request. Native peer messages stay in their existing passive inboxes. Reviewing
+or answering those messages requires the paired human's explicit instruction.
+
+Each running turn receives its maximum of **300 seconds**, execution start and
+absolute UTC deadline as changing `turn/start.additionalContext`, including warm
+continuations. Queue wait is excluded. Deadline control requests interruption
+of that exact native turn independently of a stalled event callback. A short
+control grace period does not extend the model's authorized work. Interruption
+acknowledgement or an idle connection is not proof of completion. Lost native
+acknowledgements/streams retain `undetermined`, block dispatch and never cause
+automatic model replay. Known terminal native evidence survives a restart even
+if Telegram presentation has not finished.
+
+In the private topic, `/tribu pause` persistently closes admission, withdraws
+queued work and requests interruption of active work; `/stop` requests the same
+native stop without replacing the conversation. `/tribu resume` accepts new
+explicit inputs but does not replay withdrawn work or bypass uncertainty.
+`/tribu status` shows retained states. `/tribu reconcile` reads only the selected
+already-admitted native thread/turn to settle confirmed terminal evidence;
+it starts no model and absence of evidence never authorizes retransmission.
+Session replacement, goals and separate review commands are disabled here.
+
+Rollback disables the host `attention` object after persistently pausing the
+private writer, then restores the compatible passive receiver while preserving
+both databases, revisions, polling offset and native conversation. Keep the
+qualified dedicated writer and its pause/binding controls: an older Telecodex
+binary without those controls must not accept input in this topic. Never restore
+an old input database or replay a possibly submitted turn. Resume only with the
+qualified writer, explicit new input and settled previous execution. This is a
+behavior rollback, not a destructive history reset.
+
+Qualification covers real TLS owner access, stable-ID transport retry, paired
+source/revision exclusion, cold/warm native requests and deadline context,
+concurrent admission, persistent pause and crash/uncertainty handling. Live
+readiness and a genuine human `@` exchange are separate evidence. Do not
+manufacture live human updates to claim acceptance.
