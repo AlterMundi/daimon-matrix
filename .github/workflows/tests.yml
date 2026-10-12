@@ -28,6 +28,16 @@ jobs:
           CI_PR_HEAD: ${{ github.event.pull_request.head.sha || '' }}
         run: python3 tools/ci_scope.py --base "$CI_BASE" --pull-request-head "$CI_PR_HEAD"
 
+  resource-docs:
+    name: resource access documentation
+    needs: scope
+    if: needs.scope.outputs.profile == 'resource-docs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - run: python3 -W error::ResourceWarning -m unittest tests.test_ci_scope -v
+      - run: python3 tools/check_frozen_invariants.py --skip-generated
+
   peer:
     name: native peer tools (3.13.5)
     needs: scope

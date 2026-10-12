@@ -112,8 +112,20 @@ HUMAN_TRIBU_FILES = MIRROR_FILES | frozenset(
 )
 
 
+RESOURCE_DOC_FILES = frozenset(
+    {
+        "docs/resource-access.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if "docs/resource-access.md" in changed and changed <= RESOURCE_DOC_FILES:
+        return "resource-docs"
     if (
         changed
         & {
