@@ -17,8 +17,10 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
+from .relationship_store import _prepare_path
 from .telegram_mirror import (
     COMPACT_REPRESENTATION,
     READABLE_REPRESENTATION,
@@ -800,6 +802,113 @@ def _status(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_DIAGNOSTIC_CODES = frozenset(
+    {
+        "executor-failed",
+        "deadline-exceeded",
+        "http-exchange-failed",
+        "http-status-mismatch",
+        "response-validation-failed",
+        "outcome-unknown",
+        "route_echo_unconfirmed",
+        "route_authority_blocked",
+        "route_egress_blocked",
+        "transport_response_rejected",
+        "route_result_unknown",
+        "canonical_rejected",
+        "route_timeout",
+        "route_http_incomplete",
+        "route_connection_failed",
+        "route_http_response_invalid",
+    }
+)
+
+
+@contextmanager
+def _diagnostic_database(
+    native_path: Path | None, *, create: bool
+) -> Iterator[sqlite3.Connection | None]:
+    # Observability is separate from the fixed authoritative store catalog. Older
+    # SDKs can reopen the same native history without any migration or downgrade.
+    if native_path is None:
+        yield None
+        return
+    path = native_path.with_name(native_path.name + ".transport-diagnostics.sqlite")
+    if not create and not path.exists():
+        yield None
+        return
+    _prepare_path(path)
+    database = sqlite3.connect(
+        path.as_uri() + ("?mode=rw" if create else "?mode=ro"), uri=True, timeout=5
+    )
+    try:
+        database.row_factory = sqlite3.Row
+        database.execute("PRAGMA synchronous=FULL")
+        with database:
+            if create:
+                database.execute(
+                    "CREATE TABLE IF NOT EXISTS failures (scope TEXT NOT NULL, "
+                    "operation_id TEXT NOT NULL, code TEXT NOT NULL, "
+                    "observed_at_ms INTEGER NOT NULL, attempt_id TEXT, "
+                    "PRIMARY KEY(scope, operation_id))"
+                )
+            yield database
+    finally:
+        database.close()
+
+
+def write_diagnostic(
+    native_path: Path | None,
+    scope: str,
+    operation_id: str,
+    code: str,
+    at_ms: int,
+    attempt_id: str | None = None,
+) -> None:
+    if not isinstance(code, str) or code not in _DIAGNOSTIC_CODES:
+        code = "outcome-unknown"
+    with _diagnostic_database(native_path, create=True) as database:
+        if database is None:
+            return  # Anonymous synthetic journals have no durable filesystem.
+        database.execute("BEGIN IMMEDIATE")
+        exists = database.execute(
+            "SELECT 1 FROM failures WHERE scope=? AND operation_id=?",
+            (scope, operation_id),
+        ).fetchone()
+        if (
+            exists is None
+            and database.execute("SELECT count(*) FROM failures").fetchone()[0]
+            >= 2 * MAX_RECORDS
+        ):
+            raise EchoError("diagnostic_capacity")
+        database.execute(
+            "INSERT INTO failures VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(scope, operation_id) DO UPDATE SET code=excluded.code, "
+            "observed_at_ms=excluded.observed_at_ms, attempt_id=excluded.attempt_id",
+            (scope, operation_id, code, at_ms, attempt_id),
+        )
+
+
+def read_diagnostic(
+    native_path: Path | None, scope: str, operation_id: str
+) -> dict[str, Any] | None:
+    with _diagnostic_database(native_path, create=False) as database:
+        if database is None:
+            return None
+        row = database.execute(
+            "SELECT code, observed_at_ms, attempt_id FROM failures "
+            "WHERE scope=? AND operation_id=?",
+            (scope, operation_id),
+        ).fetchone()
+    if row is None or row["code"] not in _DIAGNOSTIC_CODES:
+        return None
+    _millis(row["observed_at_ms"])
+    attempt = row["attempt_id"]
+    if attempt is not None and str(uuid.UUID(attempt)) != attempt:
+        return None
+    return dict(row)
+
+
 class MandatoryEcho:
     """Bounded runtime worker + exact-binding gate. Never sends native traffic.
 
@@ -842,6 +951,24 @@ class MandatoryEcho:
         record = self._journal._load(operation_id, expected_binding_digest)
         self._current(record)
         return _status(record)
+
+    def _journal_path(self) -> Path | None:
+        path = self._journal.db.execute("PRAGMA database_list").fetchone()[2]
+        return Path(path) if path else None
+
+    def inspect_retained(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, Any]:
+        """Verify historical proof only; never authorize release or recovery.
+
+        The trusted composing caller must authorize disclosure independently.
+        Expiry must not destroy the ability to diagnose an unfinished operation.
+        """
+        state = _status(self._journal._load(operation_id, expected_binding_digest))
+        state["last_failure"] = read_diagnostic(
+            self._journal_path(), "echo", operation_id
+        )
+        return state
 
     def ambiguity(
         self, operation_id: str, expected_binding_digest: str
@@ -1018,7 +1145,24 @@ class MandatoryEcho:
         try:
             raw = self._transport.send(_copy(request))
             classify_plain_response(raw, request, bot_id=policy["bot_id"])
-        except Exception:
+        except Exception as exception:
+            reason = getattr(exception, "reason", None)
+            if not isinstance(reason, str) or reason not in {
+                "executor-failed",
+                "deadline-exceeded",
+                "http-exchange-failed",
+                "http-status-mismatch",
+                "response-validation-failed",
+            }:
+                reason = "outcome-unknown"
+            write_diagnostic(
+                self._journal_path(),
+                "echo",
+                operation_id,
+                reason,
+                self._clock(),
+                attempt["attempt_id"],
+            )
             return _status(record)
         self._checkpoint("response_verified")
         with journal._transaction():

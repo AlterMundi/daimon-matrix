@@ -1812,6 +1812,43 @@ class MandatoryEgressController:
             **echo,
         }
 
+    def inspect_retained(self, binding: OperationBinding) -> dict[str, Any]:
+        """Authenticated historical echo status, not continuing send authority.
+
+        Only trusted composition uses this API after current disclosure checks.
+        Completed releases count successful effects, not attempts: zero must
+        never be used to infer that a network call did not happen.
+        """
+        catalog = self._catalogs.get(binding.catalog_id)
+        if (
+            catalog is None
+            or self.binding(binding.catalog_id, binding.operation_id) != binding
+        ):
+            raise NativeEgressError("egress_operation_mismatch")
+        with self._database(catalog) as database:
+            database.execute("BEGIN")
+            try:
+                state = self._mandatory(binding, database).inspect_retained(
+                    binding.echo_operation_id, binding.echo_binding_digest
+                )
+            except EchoError as exception:
+                raise NativeEgressError(str(exception)) from None
+            row = database.execute(
+                "SELECT release_count FROM mandatory_egress_operations "
+                "WHERE operation_id=?",
+                (binding.operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NativeEgressError("egress_operation_missing")
+            return {
+                "echo_state": state["state"],
+                "confirmed_parts": state["confirmed_parts"],
+                "part_count": state["part_count"],
+                "completed_releases": int(row[0]),
+                "expires_at_ms": binding.deadline_ms,
+                "echo_last_failure": state["last_failure"],
+            }
+
     def retry_ambiguous(
         self, binding: OperationBinding, authorization: bytes
     ) -> dict[str, Any]:

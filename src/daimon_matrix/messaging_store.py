@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_bytes
+from .mandatory_echo import read_diagnostic, write_diagnostic
 from .native_egress import MandatoryEgressController, OperationBinding
 from .relationship_store import _prepare_path
 
@@ -56,6 +57,16 @@ class MessagingOutboxStore:
                     PRIMARY KEY(owner, send_id, phase)
                 )
             """)
+
+    def _record_failure(
+        self, owner: str, send_id: str, phase: str, code: str, at_ms: int
+    ) -> None:
+        write_diagnostic(
+            self.path, "route", "\0".join((owner, send_id, phase)), code, at_ms
+        )
+
+    def _failure(self, owner: str, send_id: str, phase: str) -> dict[str, Any] | None:
+        return read_diagnostic(self.path, "route", "\0".join((owner, send_id, phase)))
 
     def bind_egress(
         self,

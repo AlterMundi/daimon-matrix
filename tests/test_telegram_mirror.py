@@ -336,6 +336,25 @@ class MirrorTests(unittest.TestCase):
 
 
 class MandatoryPlainTests(unittest.TestCase):
+    def test_platform_diagnostics_preserve_ambiguity_without_exception_details(self):
+        transport = mirror.PlainTelegramTransport(
+            token="123:TEST_ONLY", bot_id=123, chat_id=-123, topic_id=None
+        )
+        request = mirror.plain_request("hello", chat_id=-123, topic_id=None)
+        for failure, reason in [
+            (TimeoutError("private endpoint and credential"), "http-exchange-failed"),
+            (mirror.EchoTransportFailure("deadline-exceeded"), "deadline-exceeded"),
+        ]:
+            with patch.object(mirror, "_plain_http_exchange", side_effect=failure):
+                with self.assertRaises(mirror.EchoTransportFailure) as caught:
+                    transport.send(request)
+                self.assertEqual(str(caught.exception), "echo_transport_ambiguous")
+                self.assertEqual(caught.exception.reason, reason)
+        with patch.object(mirror, "_plain_http_exchange", return_value=(200, b"{}")):
+            with self.assertRaises(mirror.EchoTransportFailure) as caught:
+                transport.send(request)
+            self.assertEqual(caught.exception.reason, "response-validation-failed")
+
     def test_human_parent_requires_explicit_authenticated_author_pin(self):
         request = mirror.plain_request(
             "Reply", chat_id=-123, topic_id=None, readable=True, reply_message_id=10
