@@ -12,6 +12,22 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_resource_doc_scope_is_exact_and_keeps_runtime_changes_full(self):
+        from tools.ci_scope import RESOURCE_DOC_FILES
+
+        self.assertEqual(profile(list(RESOURCE_DOC_FILES)), "resource-docs")
+        for other in (
+            "src/daimon_matrix/service.py",
+            "schemas/unknown.json",
+            "pyproject.toml",
+            "docs/foundation/daimon-matrix.md",
+        ):
+            self.assertEqual(profile([*RESOURCE_DOC_FILES, other]), "full")
+        workflow = (
+            Path(__file__).resolve().parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn("if: needs.scope.outputs.profile == 'resource-docs'", workflow)
+
     def test_human_tribu_scope_is_closed_and_keeps_installed_contracts(self):
         from tools.ci_scope import HUMAN_TRIBU_FILES
 
