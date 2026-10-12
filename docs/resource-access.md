@@ -1,8 +1,9 @@
 # Shared resource access
 
-Implementation status: this is the shared contract for the current increment.
-The existing deployed homes support public and dedicated-VPN publication;
-authenticated audiences and the common gateway are not yet deployed.
+Implementation status: the common gateway and all five artifact audiences were
+deployed and technically qualified for CompAII, Eko and Oliva on 2026-10-12.
+Genuine human acceptance remains separate; consult the receiving adapter for
+the current deployment's supported audiences and the owning epic for evidence.
 
 Owning increment: [artifact homes, #318](https://github.com/AlterMundi/daimon-matrix/issues/318).
 
