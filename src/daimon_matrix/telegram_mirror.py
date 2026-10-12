@@ -693,6 +693,14 @@ def classify_plain_response(
         raise ValueError("echo_response_invalid") from None
 
 
+class EchoTransportFailure(ValueError):
+    """An uncertain platform outcome with a bounded, nonsecret local reason."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("echo_transport_ambiguous")
+        self.reason = reason
+
+
 _PLAIN_HTTP_SECONDS = 10.0
 
 
@@ -755,8 +763,10 @@ def _plain_http_exchange(url: str, payload: bytes) -> tuple[int, bytes]:
             output, _ = child.communicate(
                 data, timeout=max(0, deadline - time.monotonic())
             )
-            if child.returncode != 0 or time.monotonic() >= deadline:
-                raise ValueError
+            if child.returncode != 0:
+                raise EchoTransportFailure("executor-failed")
+            if time.monotonic() >= deadline:
+                raise EchoTransportFailure("deadline-exceeded")
             status, raw = output.split(b"\n", 1)
             if len(status) != 3 or len(raw) > 65536:
                 raise ValueError
@@ -1042,15 +1052,24 @@ class PlainTelegramTransport:
                 f"https://api.telegram.org/bot{self._token}/sendMessage",
                 json.dumps(request, ensure_ascii=False, allow_nan=False).encode(),
             )
+        except EchoTransportFailure:
+            raise
+        except subprocess.TimeoutExpired:
+            raise EchoTransportFailure("deadline-exceeded") from None
+        except Exception:
+            raise EchoTransportFailure("http-exchange-failed") from None
+        try:
             verdict, _ = classify_plain_response(raw, request, bot_id=self._bot_id)
             expected_status = (
                 200 if verdict == "confirmed" else json.loads(raw)["error_code"]
             )
             if status != expected_status:
-                raise ValueError
+                raise EchoTransportFailure("http-status-mismatch")
             return bytes(raw)
+        except EchoTransportFailure:
+            raise
         except Exception:
-            raise ValueError("echo_transport_ambiguous") from None
+            raise EchoTransportFailure("response-validation-failed") from None
 
 
 def qualify_telegram_destination(

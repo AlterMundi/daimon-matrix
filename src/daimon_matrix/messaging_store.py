@@ -56,6 +56,51 @@ class MessagingOutboxStore:
                     PRIMARY KEY(owner, send_id, phase)
                 )
             """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS messaging_transport_diagnostics (
+                    owner TEXT NOT NULL,
+                    send_id TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN ('evidence', 'message')),
+                    code TEXT NOT NULL,
+                    observed_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(owner, send_id, phase)
+                )
+            """)
+
+    def _record_failure(
+        self, owner: str, send_id: str, phase: str, code: str, at_ms: int
+    ) -> None:
+        # Diagnostics are local observations, never delivery or release authority.
+        allowed = {
+            "route_echo_unconfirmed",
+            "route_authority_blocked",
+            "route_egress_blocked",
+            "transport_response_rejected",
+            "route_result_unknown",
+            "canonical_rejected",
+            "route_timeout",
+            "route_http_incomplete",
+            "route_connection_failed",
+            "route_http_response_invalid",
+        }
+        if code not in allowed:
+            code = "route_result_unknown"
+        with self._database() as database:
+            database.execute(
+                "INSERT INTO messaging_transport_diagnostics VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(owner, send_id, phase) DO UPDATE SET "
+                "code=excluded.code, observed_at_ms=excluded.observed_at_ms",
+                (owner, send_id, phase, code, at_ms),
+            )
+
+    def _failure(self, owner: str, send_id: str, phase: str) -> dict[str, Any] | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT code, observed_at_ms FROM messaging_transport_diagnostics "
+                "WHERE owner=? AND send_id=? AND phase=?",
+                (owner, send_id, phase),
+            ).fetchone()
+        return None if row is None else dict(row)
 
     def bind_egress(
         self,

@@ -950,10 +950,19 @@ class MessagingDelivery:
                         result = providers[phase].send_prepared(
                             stage["request"], response_sink=proofs.append
                         )
-                    except (RouteError, CanonicalError):
+                    except (RouteError, CanonicalError) as exception:
                         # No authenticated outcome: recipient may already have admitted
                         # the request. Keep the committed pending state across restart.
                         result = None
+                        self.sender.outbox._record_failure(
+                            owner,
+                            carrier_send_id,
+                            phase,
+                            exception.code
+                            if isinstance(exception, RouteError)
+                            else "canonical_rejected",
+                            self.sender.clock(),
+                        )
                     now = self.sender.clock()
                     self.sender.outbox._check_time(owner, carrier_send_id, now)
                     with self.sender.context.relationships.authorization_view(
@@ -980,6 +989,32 @@ class MessagingDelivery:
                 break
         if authorize is not None:
             authorize()
+        diagnostics = {}
+        for label in phases:
+            operation = self.sender.egress.binding_for_native(
+                stages[label]["request"],
+                allowed_paths=frozenset({f"messaging-{label}-request"}),
+            )
+            diagnostics[label] = {
+                **self.sender.egress.inspect_retained(operation),
+                "last_failure": self.sender.outbox._failure(
+                    owner, carrier_send_id, label
+                ),
+            }
+        # History is inspectable after expiry; an explicit exact retry renews
+        # only the immutable carrier, preserving the authored logical message.
+        current = diagnostics[phase]
+        expires = current["expires_at_ms"]
+        unfinished = status in {"pending", "prepared"}
+        action = (
+            "none"
+            if not unfinished
+            else "renew-carrier"
+            if self.sender.clock() >= expires
+            else "wait-until-expiry"
+            if current["echo_state"] == "ambiguous"
+            else "retry-exact"
+        )
         return {
             **(
                 {"semantic": self._semantic(_parse(envelopes[1])["event_id"])}
@@ -989,13 +1024,21 @@ class MessagingDelivery:
             "send_id": send_id,
             "phase": phase,
             "transport_status": status,
-            "retryable": status == "pending",
+            "retryable": unfinished and action != "wait-until-expiry",
             "ambiguous": status == "pending",
+            "carrier_send_id": carrier_send_id,
+            "recovery": {
+                "action": action,
+                "not_before_ms": expires if action == "wait-until-expiry" else None,
+                "may_duplicate_tribu_post": unfinished
+                and current["echo_state"] != "queued",
+            },
             "stages": [
                 {
                     "phase": label,
                     "attempt_id": bindings[label]["attempt_id"],
                     "transport_status": stages[label]["transport_status"],
+                    "diagnostic": diagnostics[label],
                 }
                 for label in phases
             ],

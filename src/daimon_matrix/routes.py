@@ -1462,14 +1462,18 @@ class AuthenticatedProvider:
             raise RouteAmbiguous(exception.code, fallback_allowed=False) from exception
         except NativeEgressError as exception:
             # A local visibility/authority failure is not route unavailability.
-            raise RouteAmbiguous(fallback_allowed=False) from exception
-        except (
-            ConnectionError,
-            OSError,
-            TimeoutError,
-            http.client.HTTPException,
-        ) as exception:
-            raise RouteAmbiguous() from exception
+            code = {
+                "egress_echo_not_confirmed": "route_echo_unconfirmed",
+                "egress_authority_blocked": "route_authority_blocked",
+                "echo_authorization_blocked": "route_authority_blocked",
+            }.get(str(exception), "route_egress_blocked")
+            raise RouteAmbiguous(code, fallback_allowed=False) from exception
+        except TimeoutError as exception:
+            raise RouteAmbiguous("route_timeout") from exception
+        except http.client.HTTPException as exception:
+            raise RouteAmbiguous("route_http_incomplete") from exception
+        except (ConnectionError, OSError) as exception:
+            raise RouteAmbiguous("route_connection_failed") from exception
 
     def validate_prepared_response(
         self, request: bytes, raw_response: bytes
@@ -1681,7 +1685,7 @@ def _http_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
             response = connection.getresponse()
             body = response.read(MAX_TRANSPORT_BYTES + 1)
             if response.status != 200 or len(body) > MAX_TRANSPORT_BYTES:
-                raise ConnectionError("transport unavailable")
+                raise RouteAmbiguous("route_http_response_invalid")
             return body
         finally:
             connection.close()

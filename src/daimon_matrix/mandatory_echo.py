@@ -843,6 +843,40 @@ class MandatoryEcho:
         self._current(record)
         return _status(record)
 
+    def inspect_retained(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, Any]:
+        """Verify historical proof only; never authorize release or recovery.
+
+        The trusted composing caller must authorize disclosure independently.
+        Expiry must not destroy the ability to diagnose an unfinished operation.
+        """
+        state = _status(self._journal._load(operation_id, expected_binding_digest))
+        database = self._journal.db
+        exists = database.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='transport_echo_diagnostics'"
+        ).fetchone()
+        row = (
+            None
+            if exists is None
+            else database.execute(
+                "SELECT code, observed_at_ms, attempt_id "
+                "FROM transport_echo_diagnostics WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        )
+        state["last_failure"] = (
+            None
+            if row is None
+            else {
+                "code": row[0],
+                "observed_at_ms": row[1],
+                "attempt_id": row[2],
+            }
+        )
+        return state
+
     def ambiguity(
         self, operation_id: str, expected_binding_digest: str
     ) -> dict[str, str]:
@@ -1018,7 +1052,29 @@ class MandatoryEcho:
         try:
             raw = self._transport.send(_copy(request))
             classify_plain_response(raw, request, bot_id=policy["bot_id"])
-        except Exception:
+        except Exception as exception:
+            reason = getattr(exception, "reason", None)
+            if reason not in {
+                "executor-failed",
+                "deadline-exceeded",
+                "http-exchange-failed",
+                "http-status-mismatch",
+                "response-validation-failed",
+            }:
+                reason = "outcome-unknown"
+            with journal._transaction():
+                journal.db.execute(
+                    "CREATE TABLE IF NOT EXISTS transport_echo_diagnostics ("
+                    "operation_id TEXT PRIMARY KEY, code TEXT NOT NULL, "
+                    "observed_at_ms INTEGER NOT NULL, attempt_id TEXT NOT NULL)"
+                )
+                journal.db.execute(
+                    "INSERT INTO transport_echo_diagnostics VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(operation_id) DO UPDATE SET code=excluded.code, "
+                    "observed_at_ms=excluded.observed_at_ms, "
+                    "attempt_id=excluded.attempt_id",
+                    (operation_id, reason, self._clock(), attempt["attempt_id"]),
+                )
             return _status(record)
         self._checkpoint("response_verified")
         with journal._transaction():

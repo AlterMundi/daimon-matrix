@@ -38,6 +38,22 @@ instead requires the existing immutable successor and may publish again;
 unknown external outcomes cannot safely promise zero copies. Preserve those
 historical posts and retry decisions rather than rewriting the journal.
 
+Each transport stage also exposes `diagnostic`: authenticated retained echo
+state, confirmed part count, expiry, and completed (not attempted) releases.
+Zero completed releases alone does **not** prove the network was never called.
+Bounded `last_failure` and `echo_last_failure` categories are diagnostic local
+observations, never delivery or renewed authority. Older unknown attempts remain
+unknown; the service does not invent an exception reason for them.
+
+`recovery.action` distinguishes `retry-exact`, `wait-until-expiry`,
+`renew-carrier`, and `none`. An ambiguous platform echo cannot be blindly retried
+in the current carrier; `not_before_ms` gives the carrier expiry. Explicit exact
+retry after expiry uses the existing immutable successor mechanism, preserving
+the logical send, authored message, parent and prior proof. It may duplicate an
+unconfirmed Tribu post, which `may_duplicate_tribu_post` reports explicitly.
+`messaging_delivery` stays read-only, including after expiry; there is no
+automatic retry, inbox attention or model activation.
+
 ## Synthetic phone reading examples
 
 These are layout examples, not received messages or delivery evidence.

@@ -58,6 +58,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "src/daimon_matrix/messaging_config.py",
         "src/daimon_matrix/messaging_store.py",
         "src/daimon_matrix/native_egress.py",
+        "src/daimon_matrix/routes.py",
         "src/daimon_matrix/neutral_skill_assets/daimon-chat/SKILL.md",
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/runtime.py",
@@ -144,7 +145,12 @@ def profile(paths: list[str]) -> str:
             "src/daimon_matrix/mandatory_echo.py",
         }
         <= changed
-        or "src/daimon_matrix/operator_messaging.py" in changed
+        or changed
+        & {
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/native_egress.py",
+            "src/daimon_matrix/routes.py",
+        }
     ) and changed <= VISIBILITY_FILES:
         return "visibility"
     if changed and changed <= PEER_FILES:

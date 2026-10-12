@@ -3076,6 +3076,98 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertEqual(len(obligations), 4)
         self.assertEqual(len({row[0] for row in obligations}), 4)
 
+    def test_evidence_intake_then_unknown_message_echo_survives_restart_and_expiry(
+        self,
+    ):
+        from dataclasses import replace
+
+        from daimon_matrix.messaging import MessagingDelivery
+        from daimon_matrix.telegram_mirror import EchoTransportFailure
+
+        pair = Pair(self.root)
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = replace(
+            pair.policy, max_ttl_ms=1_000
+        )
+        sender = self.make_sender(pair)
+        request: _SendRequest = dict(
+            client_id="owner-ui",
+            send_id=_uuid("echo-unknown-after-evidence"),
+            thread_id=_uuid("thread"),
+            text=TEXT,
+        )
+        transport = sender.egress._transport
+
+        class LoseMessageEcho:
+            def send(self, value):
+                raw = transport.send(value)
+                if len(transport.requests) == 2:
+                    raise EchoTransportFailure("response-validation-failed")
+                return raw
+
+        sender.egress._transport = LoseMessageEcho()
+        evidence, message, calls = self.delivery_transports(
+            pair, sender, request["send_id"]
+        )
+        delivery = MessagingDelivery(
+            sender=sender,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        pending = delivery.send(**request)
+        self.assertEqual([phase for phase, _ in calls], ["evidence"])
+        self.assertEqual(pair.receiver.page(after=0, limit=10), [])
+        self.assertFalse(pending["retryable"])
+        self.assertEqual(pending["recovery"]["action"], "wait-until-expiry")
+        diagnostic = pending["stages"][1]["diagnostic"]
+        self.assertEqual(diagnostic["echo_state"], "ambiguous")
+        self.assertEqual(diagnostic["last_failure"]["code"], "route_echo_unconfirmed")
+        self.assertEqual(
+            diagnostic["echo_last_failure"]["code"], "response-validation-failed"
+        )
+        self.assertEqual(delivery.send(**request), pending)
+        self.assertEqual(len(transport.requests), 2)  # No blind platform resend.
+        original = sender.prepare(**request)
+        events = sender.ledger.events()
+        restarted = self.make_sender(pair)
+        evidence, message, resumed_calls = self.delivery_transports(
+            pair, restarted, request["send_id"]
+        )
+        resumed = MessagingDelivery(
+            sender=restarted,
+            evidence_provider=evidence,
+            message_provider=message,
+            config_digest="a" * 64,
+        )
+        before = restarted.outbox.path.read_bytes()
+        self.assertEqual(
+            resumed.inspect(client_id="owner-ui", send_id=request["send_id"]), pending
+        )
+        self.assertEqual(restarted.outbox.path.read_bytes(), before)
+        self.assertEqual(resumed_calls, [])
+        pair.now += 1_001
+        expired = resumed.inspect(client_id="owner-ui", send_id=request["send_id"])
+        self.assertEqual(expired["recovery"]["action"], "renew-carrier")
+        self.assertTrue(expired["retryable"])
+        self.assertTrue(expired["recovery"]["may_duplicate_tribu_post"])
+        self.assertEqual(restarted.outbox.path.read_bytes(), before)
+        accepted = resumed.send(**request)
+        self.assertEqual(accepted["transport_status"], "recipient-intake")
+        self.assertEqual([phase for phase, _ in resumed_calls], ["evidence", "message"])
+        self.assertEqual(
+            restarted.outbox._prepared(pair.sender.state.being_ref, request["send_id"]),
+            original,
+        )
+        retained = restarted.ledger.events()
+        self.assertEqual(retained[: len(events)], events)
+        self.assertEqual(
+            [event for event in retained if event["subject"] == "communication"],
+            [event for event in events if event["subject"] == "communication"],
+        )
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
+        self.assertEqual(resumed.send(**request), accepted)
+        self.assertEqual(len(resumed_calls), 2)
+
     def test_delivery_rejects_unproven_cached_success_before_io(self) -> None:
         import sqlite3
         from unittest.mock import patch
