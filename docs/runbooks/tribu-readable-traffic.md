@@ -54,6 +54,11 @@ unconfirmed Tribu post, which `may_duplicate_tribu_post` reports explicitly.
 `messaging_delivery` stays read-only, including after expiry; there is no
 automatic retry, inbox attention or model activation.
 
+Failure categories live in a bounded owner-only diagnostic sidecar, separate
+from the fixed authoritative store catalogs and echo proof. A previous SDK can
+reopen the same native history during rollback without dropping any tables or
+rewriting envelopes. Diagnostic records are local observations, never permits.
+
 ## Synthetic phone reading examples
 
 These are layout examples, not received messages or delivery evidence.

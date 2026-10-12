@@ -3185,6 +3185,14 @@ class NativeMessagingTests(unittest.TestCase):
         self.assertEqual(
             diagnostic["echo_last_failure"]["code"], "response-validation-failed"
         )
+        from daimon_matrix.messaging_config import _validate_store_schema
+
+        _validate_store_schema("outbox", sender.outbox.path)
+        diagnostic_path = sender.outbox.path.with_name(
+            sender.outbox.path.name + ".transport-diagnostics.sqlite"
+        )
+        self.assertTrue(diagnostic_path.is_file())
+        self.assertEqual(diagnostic_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(delivery.send(**request), pending)
         self.assertEqual(len(transport.requests), 2)  # No blind platform resend.
         original = sender.prepare(**request)
