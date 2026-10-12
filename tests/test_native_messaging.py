@@ -2224,7 +2224,7 @@ class NativeSendRpcTests(unittest.TestCase):
                         if event["kind"] == "matrix/relationship-grant-revocation"
                     )
                 )
-            return state
+            return cast(dict[str, Any], state)
 
         with (
             patch.object(
@@ -3162,7 +3162,7 @@ class NativeMessagingTests(unittest.TestCase):
                 raw = transport.send(value)
                 if len(transport.requests) == 2:
                     raise EchoTransportFailure("response-validation-failed")
-                return raw
+                return cast(bytes, raw)
 
         sender.egress._transport = LoseMessageEcho()
         evidence, message, calls = self.delivery_transports(
