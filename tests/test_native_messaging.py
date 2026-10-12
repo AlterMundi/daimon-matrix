@@ -2179,6 +2179,7 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertTrue(resumed["ok"], resumed)
         self.assertEqual(resumed["result"]["transport_status"], "recipient-intake")
         self.assertEqual(len(calls), 4)
+
         self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
         self.assertEqual(delivery.sender.ledger.events(), events)
         pair.now += 1_001
@@ -2202,6 +2203,38 @@ class NativeSendRpcTests(unittest.TestCase):
             delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
         self.assertEqual(len(calls), 4)
 
+    def test_historical_diagnostics_recheck_revocation_before_return(self):
+        from unittest.mock import patch
+
+        pair, hosted, delivery, calls = self.setup_sender()
+        result = self.invoke(hosted, self.request(pair))
+        self.assertTrue(result["ok"])
+        inspect = delivery.sender.egress.inspect_retained
+        first = True
+
+        def revoke_after_proof(binding):
+            nonlocal first
+            state = inspect(binding)
+            if first:
+                first = False
+                pair.sender_relationships.ingest(
+                    next(
+                        event
+                        for event in pair.history
+                        if event["kind"] == "matrix/relationship-grant-revocation"
+                    )
+                )
+            return state
+
+        with (
+            patch.object(
+                delivery.sender.egress, "inspect_retained", revoke_after_proof
+            ),
+            self.assertRaises(ValueError),
+        ):
+            delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
+        self.assertEqual(len(calls), 2)
+
     def test_expired_inspection_rejects_tampered_proof_without_io(self) -> None:
         pair, hosted, delivery, calls = self.setup_sender()
         policy = replace(pair.policy, max_ttl_ms=1_000)
@@ -2218,6 +2251,7 @@ class NativeSendRpcTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
             delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
         self.assertEqual(len(calls), 2)
+
         delivery.sender.outbox.path.write_bytes(before)
         with closing(sqlite3.connect(delivery.sender.outbox.path)) as database:
             database.execute(
@@ -2250,6 +2284,32 @@ class NativeSendRpcTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
         self.assertEqual(len(calls), 2)
+
+    def test_renewal_duplicate_risk_includes_completed_evidence_echo(self):
+        pair, hosted, delivery, _calls = self.setup_sender()
+        pair.policy = pair.sender_context.policy = pair.receiver.policy = replace(
+            pair.policy, max_ttl_ms=1_000
+        )
+        delivery.providers[1]._available = False
+        request = self.request(pair)
+        pending = self.invoke(hosted, request)
+        self.assertTrue(pending["ok"])
+        transport = delivery.sender.egress._transport
+        prior_posts = len(transport.requests)
+        self.assertEqual(prior_posts, 1)
+        pair.now += 1_001
+        expired = delivery.inspect(
+            client_id=self.capability.client_id, send_id=self.send_id
+        )
+        self.assertEqual(expired["recovery"]["action"], "renew-carrier")
+        self.assertTrue(expired["recovery"]["may_duplicate_tribu_post"])
+        self.assertEqual(expired["stages"][1]["diagnostic"]["echo_state"], "queued")
+        delivery.providers[1]._available = True
+        resumed = self.invoke(hosted, request)
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed["result"]["transport_status"], "recipient-intake")
+        self.assertGreater(len(transport.requests), prior_posts)
+        self.assertEqual(len(pair.receiver.page(after=0, limit=10)), 1)
 
     def test_cached_send_cannot_rebind_outbox_or_reauthor(self) -> None:
         from daimon_matrix.messaging_store import MessagingOutboxStore

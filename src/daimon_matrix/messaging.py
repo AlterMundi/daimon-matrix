@@ -1015,6 +1015,8 @@ class MessagingDelivery:
             if current["echo_state"] == "ambiguous"
             else "retry-exact"
         )
+        if authorize is not None:
+            authorize()
         return {
             **(
                 {"semantic": self._semantic(_parse(envelopes[1])["event_id"])}
@@ -1031,7 +1033,12 @@ class MessagingDelivery:
                 "action": action,
                 "not_before_ms": expires if action == "wait-until-expiry" else None,
                 "may_duplicate_tribu_post": unfinished
-                and current["echo_state"] != "queued",
+                and action in {"renew-carrier", "wait-until-expiry"}
+                and any(
+                    item["confirmed_parts"] > 0
+                    or (item["part_count"] > 0 and item["echo_state"] == "ambiguous")
+                    for item in diagnostics.values()
+                ),
             },
             "stages": [
                 {

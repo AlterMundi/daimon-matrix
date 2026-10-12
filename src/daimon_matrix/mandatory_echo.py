@@ -1054,7 +1054,7 @@ class MandatoryEcho:
             classify_plain_response(raw, request, bot_id=policy["bot_id"])
         except Exception as exception:
             reason = getattr(exception, "reason", None)
-            if reason not in {
+            if not isinstance(reason, str) or reason not in {
                 "executor-failed",
                 "deadline-exceeded",
                 "http-exchange-failed",
