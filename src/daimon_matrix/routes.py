@@ -66,6 +66,28 @@ RoundTrip = Callable[[bytes], bytes]
 
 
 @dataclass(frozen=True)
+class _TransportExchange:
+    write: Callable[[bytes], None]
+    read: Callable[[], bytes]
+    close: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class _SplitRoundTrip:
+    """Maintained adapters release bytes under the fence, then wait outside it."""
+
+    open: Callable[[], _TransportExchange]
+
+    def __call__(self, raw: bytes) -> bytes:
+        exchange = self.open()
+        try:
+            exchange.write(raw)
+            return exchange.read()
+        finally:
+            exchange.close()
+
+
+@dataclass(frozen=True)
 class RouteEgressSpec:
     controller: MandatoryEgressController
     catalog_id: str
@@ -1441,17 +1463,28 @@ class AuthenticatedProvider:
         if not self._available:
             return self._result(value, "unavailable", "unavailable", None)
         try:
-            raw_response = self._egress.release_registered(
-                request,
-                allowed_paths=frozenset(
-                    {
-                        "route-provider-request",
-                        "messaging-evidence-request",
-                        "messaging-message-request",
-                    }
-                ),
-                effect=self._round_trip,
+            paths = frozenset(
+                {
+                    "route-provider-request",
+                    "messaging-evidence-request",
+                    "messaging-message-request",
+                }
             )
+            if type(self._round_trip) is _SplitRoundTrip:
+                exchange = self._round_trip.open()
+                try:
+                    self._egress.release_registered(
+                        request, allowed_paths=paths, effect=exchange.write
+                    )
+                    raw_response = exchange.read()
+                finally:
+                    exchange.close()
+            else:
+                # Opaque callbacks have no separate write boundary. Preserve
+                # their existing atomic authorization/execution semantics.
+                raw_response = self._egress.release_registered(
+                    request, allowed_paths=paths, effect=self._round_trip
+                )
             result = self.validate_prepared_response(request, raw_response)
             if response_sink is not None:
                 response_sink(raw_response)
@@ -1587,21 +1620,25 @@ class AuthenticatedProvider:
         }
 
 
-def _unix_round_trip(path: Path, *, timeout_seconds: float) -> RoundTrip:
+def _unix_round_trip(
+    path: Path, *, timeout_seconds: float, response_timeout_seconds: float
+) -> RoundTrip:
     private_path = Path(os.path.abspath(path))
 
-    def call(raw: bytes) -> bytes:
-        try:
-            info = private_path.lstat()
-        except FileNotFoundError as exception:
-            raise ConnectionError("transport unavailable") from exception
-        if (
-            not stat.S_ISSOCK(info.st_mode)
-            or info.st_uid != os.geteuid()
-            or stat.S_IMODE(info.st_mode) & 0o077
-        ):
-            raise RouteError("unsafe_transport_socket")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    def open_exchange() -> _TransportExchange:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+        def write(raw: bytes) -> None:
+            try:
+                info = private_path.lstat()
+            except FileNotFoundError as exception:
+                raise ConnectionError("transport unavailable") from exception
+            if (
+                not stat.S_ISSOCK(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+            ):
+                raise RouteError("unsafe_transport_socket")
             connection.settimeout(timeout_seconds)
             connection.connect(str(private_path))
             if hasattr(socket, "SO_PEERCRED"):
@@ -1610,13 +1647,18 @@ def _unix_round_trip(path: Path, *, timeout_seconds: float) -> RoundTrip:
                 if uid != os.geteuid():
                     raise RouteError("unsafe_transport_peer")
             connection.sendall(len(raw).to_bytes(4, "big") + raw)
+
+        def read() -> bytes:
+            connection.settimeout(response_timeout_seconds)
             header = _recv_exact(connection, 4)
             size = int.from_bytes(header, "big")
             if not 1 <= size <= MAX_TRANSPORT_BYTES:
                 raise ConnectionError("invalid transport frame")
             return _recv_exact(connection, size)
 
-    return call
+        return _TransportExchange(write, read, connection.close)
+
+    return _SplitRoundTrip(open_exchange)
 
 
 def _recv_exact(connection: socket.socket, size: int) -> bytes:
@@ -1648,7 +1690,9 @@ def serve_transport_connection(
     connection.sendall(len(response).to_bytes(4, "big") + response)
 
 
-def _http_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
+def _http_round_trip(
+    url: str, *, timeout_seconds: float, response_timeout_seconds: float
+) -> RoundTrip:
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -1665,14 +1709,15 @@ def _http_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
     port = parsed.port
     target = parsed.path or "/"
 
-    def call(raw: bytes) -> bytes:
+    def open_exchange() -> _TransportExchange:
         connection_class = (
             http.client.HTTPSConnection
             if parsed.scheme == "https"
             else http.client.HTTPConnection
         )
         connection = connection_class(hostname, port=port, timeout=timeout_seconds)
-        try:
+
+        def write(raw: bytes) -> None:
             connection.request(
                 "POST",
                 target,
@@ -1682,33 +1727,55 @@ def _http_round_trip(url: str, *, timeout_seconds: float) -> RoundTrip:
                     "Content-Length": str(len(raw)),
                 },
             )
+
+        def read() -> bytes:
+            assert connection.sock is not None
+            connection.sock.settimeout(response_timeout_seconds)
             response = connection.getresponse()
             body = response.read(MAX_TRANSPORT_BYTES + 1)
             if response.status != 200 or len(body) > MAX_TRANSPORT_BYTES:
                 raise RouteAmbiguous("route_http_response_invalid")
             return body
-        finally:
-            connection.close()
 
-    return call
+        return _TransportExchange(write, read, connection.close)
+
+    return _SplitRoundTrip(open_exchange)
 
 
 class LocalIPCProvider(AuthenticatedProvider):
     def __init__(
-        self, *, socket_path: Path, timeout_seconds: float = 5.0, **kwargs: Any
+        self,
+        *,
+        socket_path: Path,
+        timeout_seconds: float = 5.0,
+        response_timeout_seconds: float = 30.0,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
-            round_trip=_unix_round_trip(socket_path, timeout_seconds=timeout_seconds),
+            round_trip=_unix_round_trip(
+                socket_path,
+                timeout_seconds=timeout_seconds,
+                response_timeout_seconds=response_timeout_seconds,
+            ),
             **kwargs,
         )
 
 
 class DirectHTTPProvider(AuthenticatedProvider):
     def __init__(
-        self, *, endpoint: str, timeout_seconds: float = 5.0, **kwargs: Any
+        self,
+        *,
+        endpoint: str,
+        timeout_seconds: float = 5.0,
+        response_timeout_seconds: float = 30.0,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
-            round_trip=_http_round_trip(endpoint, timeout_seconds=timeout_seconds),
+            round_trip=_http_round_trip(
+                endpoint,
+                timeout_seconds=timeout_seconds,
+                response_timeout_seconds=response_timeout_seconds,
+            ),
             **kwargs,
         )
 

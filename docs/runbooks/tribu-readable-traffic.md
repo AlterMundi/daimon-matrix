@@ -59,6 +59,17 @@ from the fixed authoritative store catalogs and echo proof. A previous SDK can
 reopen the same native history during rollback without dropping any tables or
 rewriting envelopes. Diagnostic records are local observations, never permits.
 
+Maintained HTTP and local IPC providers hold the shared execution fence only
+while releasing the authorized request bytes. They wait for the authenticated
+response outside that fence, so incoming responses and unrelated authorized
+carriers can proceed. Opaque custom round-trip callbacks keep their existing
+atomic execution semantics. The default connection/write timeout remains five
+seconds; the separate response socket timeout is thirty seconds, configurable
+with `response_timeout_seconds`. This is a read inactivity timeout, not a total
+wall-clock deadline. Late or missing responses remain ambiguous; a completed
+request write alone never proves recipient intake. All exact-retry, expiry,
+current-authorization and authenticated-response checks remain in force.
+
 ## Synthetic phone reading examples
 
 These are layout examples, not received messages or delivery evidence.

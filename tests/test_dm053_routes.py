@@ -7,6 +7,7 @@ import json
 import socket
 import sqlite3
 import threading
+import time
 import unittest
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -1014,7 +1015,33 @@ class InboxAndProtocolTests(RouteFixture):
                 intake_validator=self.validator(authorization),
             )
 
+    def test_http_response_can_use_the_outgoing_execution_fence(self) -> None:
+        # One controller owns all outgoing carriers, including responses to
+        # incoming requests. Waiting for a remote response must not retain it.
+        self.receiver_egress = self.egress
+        self.test_direct_http_loopback_uses_authenticated_canonical_exchange()
+
     def test_direct_http_loopback_uses_authenticated_canonical_exchange(self) -> None:
+        dispatched = self._http_exchange()
+        self.assertEqual(dispatched["selected"]["outcome"], "recipient-intake")
+
+    def test_http_response_wait_allows_receipt_after_write_timeout(self) -> None:
+        dispatched = self._http_exchange(response_delay=5.1)
+        self.assertEqual(dispatched["selected"]["outcome"], "recipient-intake")
+
+    def test_http_response_wait_has_a_configurable_timeout(self) -> None:
+        dispatched = self._http_exchange(
+            response_delay=0.2, response_timeout_seconds=0.05
+        )
+        self.assertIsNone(dispatched["selected"])
+        self.assertEqual(dispatched["attempts"][0]["status"], "ambiguous")
+
+    def _http_exchange(
+        self,
+        *,
+        response_delay: float = 0.0,
+        response_timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         _, result, raw, authorization = self.message_and_delivery()
         leg_id = result["legs"][0]["leg_id"]
         _, ingress = self.ingress("http", authorization)
@@ -1023,11 +1050,14 @@ class InboxAndProtocolTests(RouteFixture):
             def do_POST(self) -> None:
                 size = int(self.headers["Content-Length"])
                 response = ingress.handle(self.rfile.read(size))
+                time.sleep(response_delay)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/daimon+jcs")
                 self.send_header("Content-Length", str(len(response)))
                 self.end_headers()
-                self.wfile.write(response)
+                # The configured timeout can end the client first.
+                with contextlib.suppress(BrokenPipeError):
+                    self.wfile.write(response)
 
             def log_message(self, _format: str, *args: object) -> None:
                 return
@@ -1048,6 +1078,11 @@ class InboxAndProtocolTests(RouteFixture):
                 endpoint=f"http://{host}:{port}/dm-route",
                 clock=lambda: self.now,
                 egress=self.egress,
+                **(
+                    {"response_timeout_seconds": response_timeout_seconds}
+                    if response_timeout_seconds is not None
+                    else {}
+                ),
             )
             coordinator = RouteCoordinator(
                 self.store,
@@ -1067,12 +1102,16 @@ class InboxAndProtocolTests(RouteFixture):
             dispatched = coordinator.dispatch(
                 leg_id=leg_id, envelope=raw, deadline_ms=NOW + 20_000
             )
-            self.assertEqual(dispatched["selected"]["outcome"], "recipient-intake")
             self.assertNotIn(str(port).encode(), canonical_bytes(dispatched))
+            return dispatched
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_ipc_response_can_use_the_outgoing_execution_fence(self) -> None:
+        self.receiver_egress = self.egress
+        self.test_local_unix_round_trip_is_authenticated_and_leak_free()
 
     def test_local_unix_round_trip_is_authenticated_and_leak_free(self) -> None:
         _, result, raw, authorization = self.message_and_delivery()
