@@ -2203,7 +2203,7 @@ class NativeSendRpcTests(unittest.TestCase):
             delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
         self.assertEqual(len(calls), 4)
 
-    def test_historical_diagnostics_recheck_revocation_before_return(self):
+    def test_historical_diagnostics_recheck_revocation_before_return(self) -> None:
         from unittest.mock import patch
 
         pair, hosted, delivery, calls = self.setup_sender()
@@ -2212,7 +2212,7 @@ class NativeSendRpcTests(unittest.TestCase):
         inspect = delivery.sender.egress.inspect_retained
         first = True
 
-        def revoke_after_proof(binding):
+        def revoke_after_proof(binding: OperationBinding) -> dict[str, Any]:
             nonlocal first
             state = inspect(binding)
             if first:
@@ -2285,7 +2285,7 @@ class NativeSendRpcTests(unittest.TestCase):
             delivery.inspect(client_id=self.capability.client_id, send_id=self.send_id)
         self.assertEqual(len(calls), 2)
 
-    def test_renewal_duplicate_risk_includes_completed_evidence_echo(self):
+    def test_renewal_duplicate_risk_includes_completed_evidence_echo(self) -> None:
         pair, hosted, delivery, _calls = self.setup_sender()
         pair.policy = pair.sender_context.policy = pair.receiver.policy = replace(
             pair.policy, max_ttl_ms=1_000
@@ -3138,7 +3138,7 @@ class NativeMessagingTests(unittest.TestCase):
 
     def test_evidence_intake_then_unknown_message_echo_survives_restart_and_expiry(
         self,
-    ):
+    ) -> None:
         from dataclasses import replace
 
         from daimon_matrix.messaging import MessagingDelivery
@@ -3158,7 +3158,7 @@ class NativeMessagingTests(unittest.TestCase):
         transport = sender.egress._transport
 
         class LoseMessageEcho:
-            def send(self, value):
+            def send(self, value: Mapping[str, Any]) -> bytes:
                 raw = transport.send(value)
                 if len(transport.requests) == 2:
                     raise EchoTransportFailure("response-validation-failed")

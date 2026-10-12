@@ -64,6 +64,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/telegram_mirror.py",
         "tests/test_agent_chat.py",
+        "tests/test_dm053_routes.py",
         "tests/test_labels.py",
         "tests/test_mandatory_echo.py",
         "tests/test_messaging_runtime.py",
