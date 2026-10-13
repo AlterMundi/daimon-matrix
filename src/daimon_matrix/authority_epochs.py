@@ -25,11 +25,13 @@ from .canonical import b64url, canonical_bytes, unb64url
 from .identity import (
     ControlState,
     VerificationError,
+    create_revocation,
     ed25519_public,
     key_id,
     verify_embodiment_credential,
     verify_incarnation_authorization,
     verify_recovery_from_anchor,
+    verify_successor,
 )
 from .weave import BeingManifest, RootAuthority, WeaveProtocolError
 
@@ -39,6 +41,188 @@ EMBODIMENT_ENROLLMENT_SCHEMA: Final = "dm.we.embodiment-enrollment/v1"
 EMBODIMENT_ENROLLMENT_DOMAIN: Final = b"daimon/weave-embodiment-enrollment/v1\x00"
 RECOVERY_REBIRTH_SCHEMA: Final = "dm.we.recovery-rebirth/v1"
 RECOVERY_REBIRTH_DOMAIN: Final = b"daimon/weave-recovery-rebirth/v1\x00"
+EMBODIMENT_RETIREMENT_SCHEMA: Final = "dm.we.embodiment-retirement/v1"
+EMBODIMENT_RETIREMENT_DOMAIN: Final = b"daimon/weave-embodiment-retirement/v1\x00"
+
+
+def create_embodiment_retirement(
+    previous: BeingManifest,
+    successor: BeingManifest,
+    *,
+    revocations: Sequence[Mapping[str, Any]],
+    root_seeds: Sequence[bytes],
+    issued_at_ms: int,
+) -> dict[str, Any]:
+    """Sign a closed retirement transition, never an arbitrary manifest edit."""
+    core = {
+        "schema": EMBODIMENT_RETIREMENT_SCHEMA,
+        "being_ref": previous.being_ref,
+        "previous_manifest_hash": previous.digest,
+        "successor_manifest_hash": successor.digest,
+        "previous_revision": previous.value["revision"],
+        "successor_revision": successor.value["revision"],
+        "previous_control_head": previous.value["control_head"],
+        "successor_control_head": successor.value["control_head"],
+        "revocations": copy.deepcopy(list(revocations)),
+        "issued_at_ms": issued_at_ms,
+    }
+    # Control signatures do not enter the transition preimage. Their exact
+    # content-derived IDs do; each control must independently meet threshold.
+    unsigned = {**core, "revocations": [row["artifact_id"] for row in revocations]}
+    content_hash = hashlib.sha256(
+        EMBODIMENT_RETIREMENT_DOMAIN + canonical_bytes(unsigned)
+    ).hexdigest()
+    signatures = [
+        {
+            "alg": "Ed25519",
+            "kid": key_id("Ed25519", ed25519_public(seed)),
+            "value": b64url(
+                Ed25519PrivateKey.from_private_bytes(seed).sign(
+                    EMBODIMENT_RETIREMENT_DOMAIN + bytes.fromhex(content_hash)
+                )
+            ),
+        }
+        for seed in root_seeds
+    ]
+    return {
+        **core,
+        "content_hash": content_hash,
+        "signatures": sorted(signatures, key=lambda row: row["kid"]),
+    }
+
+
+def verify_embodiment_retirement(
+    value: Mapping[str, Any],
+    previous: RootAuthority,
+    successor: RootAuthority,
+) -> dict[str, Any]:
+    """Verify threshold, precise revocations and only active-to-retired deltas."""
+    fields = {
+        "schema",
+        "being_ref",
+        "previous_manifest_hash",
+        "successor_manifest_hash",
+        "previous_revision",
+        "successor_revision",
+        "previous_control_head",
+        "successor_control_head",
+        "revocations",
+        "issued_at_ms",
+        "content_hash",
+        "signatures",
+    }
+    try:
+        if set(value) != fields or value["schema"] != EMBODIMENT_RETIREMENT_SCHEMA:
+            raise ValueError("shape")
+        instant = value["issued_at_ms"]
+        if (
+            isinstance(instant, bool)
+            or not isinstance(instant, int)
+            or not 0 <= instant < 2**53
+        ):
+            raise ValueError("time")
+        revocations = value["revocations"]
+        if not isinstance(revocations, list) or not 1 <= len(revocations) <= 128:
+            raise ValueError("controls")
+        selected = [row["body"]["embodiment_id"] for row in revocations]
+        if selected != sorted(set(selected)):
+            raise ValueError("members")
+        state = previous.state
+        expected_manifest = copy.deepcopy(dict(previous.manifest.value))
+        for artifact, embodiment_id in zip(revocations, selected, strict=True):
+            rows = [
+                row
+                for row in expected_manifest["embodiments"]
+                if row["embodiment_id"] == embodiment_id
+            ]
+            if not rows or sum(row["status"] == "active" for row in rows) != 1:
+                raise ValueError("inactive member")
+            cutoff = max(
+                previous.incarnations[row["incarnation_authorization_id"]]["body"][
+                    "incarnation_sequence"
+                ]
+                for row in rows
+            )
+            if any(
+                previous.incarnations[row["incarnation_authorization_id"]]["body"][
+                    "started_at_ms"
+                ]
+                > instant
+                for row in rows
+            ):
+                raise ValueError("time before incarnation")
+            generation = (
+                state.revocations.get(embodiment_id, {}).get("revocation_generation", 0)
+                + 1
+            )
+            if (
+                artifact["kind"] != "revocation"
+                or artifact["body"]["cutoff_incarnation_sequence"] != cutoff
+                or artifact["body"]["revocation_generation"] != generation
+            ):
+                raise ValueError("cutoff/generation")
+            expected_control = create_revocation(
+                state,
+                (),
+                embodiment_id=embodiment_id,
+                cutoff_incarnation_sequence=cutoff,
+                revocation_generation=generation,
+            )
+            if canonical_bytes(
+                {k: v for k, v in artifact.items() if k != "signatures"}
+            ) != canonical_bytes(
+                {k: v for k, v in expected_control.items() if k != "signatures"}
+            ):
+                raise ValueError("control mutation")
+            state = verify_successor(artifact, state)
+            for row in rows:
+                row["status"] = "retired"
+        expected_manifest["revision"] += 1
+        expected_manifest["control_head"] = state.head
+        if (
+            successor.state != state
+            or successor.manifest.value != expected_manifest
+            or successor.credentials != previous.credentials
+            or successor.incarnations != previous.incarnations
+        ):
+            raise ValueError("authority mutation")
+        expected = create_embodiment_retirement(
+            previous.manifest,
+            successor.manifest,
+            revocations=revocations,
+            root_seeds=(),
+            issued_at_ms=instant,
+        )
+        if canonical_bytes(
+            {k: v for k, v in value.items() if k != "signatures"}
+        ) != canonical_bytes({k: v for k, v in expected.items() if k != "signatures"}):
+            raise ValueError("lineage/hash")
+        signatures = value["signatures"]
+        public_keys, threshold = _root_public_keys(previous.state)
+        valid: set[str] = set()
+        if not isinstance(signatures, list) or not 1 <= len(signatures) <= 32:
+            raise ValueError("signatures")
+        for signature in signatures:
+            if (
+                not isinstance(signature, Mapping)
+                or set(signature) != {"alg", "kid", "value"}
+                or signature["alg"] != "Ed25519"
+                or signature["kid"] in valid
+                or signature["kid"] not in public_keys
+            ):
+                raise ValueError("signature")
+            Ed25519PublicKey.from_public_bytes(public_keys[signature["kid"]]).verify(
+                unb64url(signature["value"], length=64),
+                EMBODIMENT_RETIREMENT_DOMAIN + bytes.fromhex(expected["content_hash"]),
+            )
+            valid.add(signature["kid"])
+        if len(valid) < threshold or signatures != sorted(
+            signatures, key=lambda r: r["kid"]
+        ):
+            raise ValueError("threshold/order")
+    except (KeyError, TypeError, ValueError, InvalidSignature) as exception:
+        raise AuthorityEpochError("embodiment_retirement_rejected") from exception
+    return copy.deepcopy(dict(value))
 
 
 class AuthorityEpochError(WeaveProtocolError):
@@ -1124,6 +1308,8 @@ class RootHistoryAuthority:
                 verify_recovery_rebirth(value, previous, successor)
             elif value.get("schema") == CREDENTIAL_SUCCESSION_SCHEMA:
                 verify_credential_succession(value, previous, successor)
+            elif value.get("schema") == EMBODIMENT_RETIREMENT_SCHEMA:
+                verify_embodiment_retirement(value, previous, successor)
             else:
                 raise AuthorityEpochError("unsupported_authority_successor")
 
@@ -1178,13 +1364,16 @@ class RootHistoryAuthority:
 __all__ = [
     "AUTHORITY_EPOCH_SCHEMA",
     "EMBODIMENT_ENROLLMENT_SCHEMA",
+    "EMBODIMENT_RETIREMENT_SCHEMA",
     "RECOVERY_REBIRTH_SCHEMA",
     "AuthorityEpochError",
     "RootHistoryAuthority",
     "create_authority_epoch",
     "create_embodiment_enrollment",
+    "create_embodiment_retirement",
     "create_recovery_rebirth",
     "verify_authority_epoch",
     "verify_embodiment_enrollment",
+    "verify_embodiment_retirement",
     "verify_recovery_rebirth",
 ]

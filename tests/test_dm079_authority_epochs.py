@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -18,27 +21,356 @@ from daimon_matrix.authority_epochs import (
     RootHistoryAuthority,
     create_authority_epoch,
     verify_authority_epoch,
+    verify_embodiment_retirement,
 )
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.identity import (
+    VerificationError,
     create_incarnation_authorization,
     signing_descriptor,
+    verify_embodiment_credential,
     verify_genesis,
+    verify_successor,
 )
+from daimon_matrix.keystore import EncryptedKeystore
 from daimon_matrix.ledger import Ledger, LedgerStateError
 from daimon_matrix.local_api import LocalApiError, create_request
 from daimon_matrix.operator_capabilities import (
     create_operator_capability_binding,
     operator_runtime_id,
 )
+from daimon_matrix.operator_rebirth import (
+    RebirthError,
+    aggregate_retirement,
+    apply_retirement_to_runtime_bundle,
+    create_retirement_intent,
+    retirement_share_from_holder,
+)
 from daimon_matrix.projections import ProjectionEngine
 from daimon_matrix.runtime import load_runtime
+from daimon_matrix.scopes import ScopeResolver
 from daimon_matrix.weave import BeingManifest, RootAuthority, WeaveProtocolError
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 from tools.generate_dm079_vectors import generate as generate_vectors
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class EmbodimentRetirementTests(RuntimeFixture):
+    def test_native_holder_cli_reads_password_fd_and_preserves_exact_retry(
+        self,
+    ) -> None:
+        intent, _shares = self.prepare_retirement(
+            self.authority, ["embodiment:daimonmatrix"]
+        )
+        authority = {
+            "schema": "dm.operator.authority/v1",
+            "control_artifacts": [self.genesis],
+            "control_head": self.state.head,
+            "manifest": self.manifest.value,
+            "credentials": list(self.credentials.values()),
+            "incarnations": list(self.incarnations.values()),
+        }
+        authority_path = self.root_path / "authority.json"
+        intent_path = self.root_path / "intent.json"
+        output = self.root_path / "share.json"
+        for path, value in ((authority_path, authority), (intent_path, intent)):
+            path.write_bytes(canonical_bytes(value))
+            path.chmod(0o600)
+
+        def run_share() -> subprocess.CompletedProcess[str]:
+            read_fd, write_fd = os.pipe()
+            try:
+                os.write(write_fd, PASSWORD)
+                os.close(write_fd)
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import daimon_matrix.operator_rebirth as o; "
+                        f"o.time.time_ns=lambda: {(NOW + 21) * 1000000}; "
+                        "raise SystemExit(o.main())",
+                        "retirement-share",
+                        "--authority",
+                        str(authority_path),
+                        "--intent",
+                        str(intent_path),
+                        "--holder",
+                        str(self.root_path / "retirement-holder-0/holder.json"),
+                        "--password-fd",
+                        str(read_fd),
+                        "--output",
+                        str(output),
+                    ],
+                    pass_fds=(read_fd,),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=20,
+                )
+            finally:
+                os.close(read_fd)
+
+        first = run_share()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(
+            json.loads(first.stdout),
+            {"state": "prepared", "operation": "retirement-share"},
+        )
+        before = output.read_bytes()
+        second = run_share()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(output.read_bytes(), before)
+        substituted = b'{"schema":"unrelated"}\n'
+        output.write_bytes(substituted)
+        third = run_share()
+        self.assertNotEqual(third.returncode, 0)
+        self.assertEqual(output.read_bytes(), substituted)
+        self.assertNotIn(
+            PASSWORD.decode(),
+            first.stdout + first.stderr + second.stdout + second.stderr,
+        )
+
+    def test_public_retirement_vector_schema_and_threshold(self) -> None:
+        def read(relative: str) -> Any:
+            return json.loads((ROOT / relative).read_bytes())
+
+        path = "vectors/weave/v1/authority-epoch/"
+        transition = read(path + "embodiment-retirement.json")
+        schema = read("schemas/weave/v1/embodiment-retirement.schema.json")
+        Draft202012Validator(schema).validate(transition)
+        base = RootAuthority(
+            BeingManifest.from_value(read(path + "previous-manifest.json")),
+            verify_genesis(read("vectors/identity/v1/valid/genesis.json")),
+            {
+                c["artifact_id"]: c
+                for c in [read("vectors/identity/v1/valid/embodiment-credential.json")]
+            },
+            {
+                a["artifact_id"]: a
+                for a in [
+                    read("vectors/identity/v1/valid/incarnation-authorization.json")
+                ]
+            },
+        )
+        state = verify_successor(transition["revocations"][0], base.state)
+        successor = RootAuthority(
+            BeingManifest.from_value(read(path + "retirement-manifest.json")),
+            state,
+            base.credentials,
+            base.incarnations,
+        )
+        verify_embodiment_retirement(transition, base, successor)
+        with self.assertRaises(ValueError):
+            verify_embodiment_retirement(
+                read(path + "negative/retirement-missing-threshold.json"),
+                base,
+                successor,
+            )
+
+    def prepare_retirement(
+        self, base: RootAuthority, ids: list[str]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        intent = create_retirement_intent(
+            base, sorted(ids), issued_at_ms=NOW + 20, expires_at_ms=NOW + 60_000
+        )
+        shares = []
+        for index, seed in enumerate(self.root_seeds[:2]):
+            holder_root = self.root_path / f"retirement-holder-{index}"
+            holder_root.mkdir(mode=0o700)
+            holder = holder_root / "holder.json"
+            EncryptedKeystore.create(
+                holder,
+                lambda: bytearray(PASSWORD),
+                control_head=base.state.head,
+                secrets={"root.signing.v1:holder": seed},
+            )
+            shares.append(
+                retirement_share_from_holder(
+                    intent,
+                    base,
+                    holder,
+                    lambda: bytearray(PASSWORD),
+                    observed_at_ms=NOW + 21,
+                )
+            )
+        return intent, shares
+
+    def successor_authority(
+        self, base: RootAuthority, intent: dict[str, Any], transition: dict[str, Any]
+    ) -> RootAuthority:
+        state = base.state
+        for artifact in transition["revocations"]:
+            state = verify_successor(artifact, state)
+        return RootAuthority(
+            BeingManifest.from_value(intent["manifest"]),
+            state,
+            base.credentials,
+            base.incarnations,
+        )
+
+    def test_real_runtime_and_ledger_reopen_keep_history_and_exclude_retired_target(
+        self,
+    ) -> None:
+        root, bundle, _capability = self.make_bundle()
+        before = load_runtime(
+            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        old = before.service.ledger.append_local(
+            kind="experience.observed",
+            subject="preserved",
+            payload={"summary": "preserved"},
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+        intent, shares = self.prepare_retirement(
+            self.authority, ["embodiment:daimonmatrix"]
+        )
+        transition = aggregate_retirement(
+            intent, self.authority, shares, observed_at_ms=NOW + 22
+        )
+        candidate = apply_retirement_to_runtime_bundle(bundle, transition)
+        self.assertEqual(candidate["local_origin"], bundle["local_origin"])
+        self.assertEqual(candidate["credentials"], bundle["credentials"])
+        self.assertEqual(candidate["incarnations"], bundle["incarnations"])
+        self.assertEqual(candidate["capabilities"], bundle["capabilities"])
+        self.assertEqual(
+            candidate["authority_history"][-1]["control_head"], bundle["control_head"]
+        )
+        store = EncryptedKeystore(root / "custody.json")
+        store.rotate(
+            lambda: bytearray(PASSWORD),
+            lambda: bytearray(PASSWORD),
+            expected_counter=1,
+            control_head=candidate["control_head"],
+        )
+        candidate["keystore"]["counter"] = 2
+        (root / "runtime.json").write_bytes(canonical_bytes(candidate))
+        reopened = load_runtime(
+            root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW + 23
+        )
+        ledger = reopened.service.ledger
+        self.assertEqual(ledger.event(old["event_id"]), old)
+        ledger.integrity_check()
+        scopes = ScopeResolver(ledger, clock=lambda: NOW + 23)
+        result = scopes.resolution(
+            scope="/we", request_id="00000000-0000-4000-8000-000000000323"
+        )
+        self.assertEqual(
+            [r["recipient_id"] for r in result["targets"]], ["embodiment:legion"]
+        )
+        authority = ledger.authority
+        assert isinstance(authority, RootHistoryAuthority)
+        with self.assertRaises(WeaveProtocolError):
+            authority.validate_transport_principal(
+                self.origins["daimonmatrix"],
+                scheme="dm-peer-v1",
+                principal_id=self.origins["daimonmatrix"]["principal_id"],
+            )
+        with self.assertRaises(VerificationError):
+            credential = next(
+                c
+                for c in self.credentials.values()
+                if c["body"]["embodiment_id"] == "embodiment:daimonmatrix"
+            )
+            verify_embodiment_credential(credential, authority.state, at_ms=NOW + 23)
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        with self.assertRaises(ValueError):
+            load_runtime(
+                root,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=lambda: NOW + 24,
+            )
+
+    def test_batch_retirement_keeps_sequence_one_and_rejects_mutations_and_replay(
+        self,
+    ) -> None:
+        fixture = AuthorityEpochFixture()
+        fixture.setUp()
+        try:
+            _auth, _manifest, base, _epoch, _history, _origin = fixture.successor()
+            # Fixture roots are identical; stores remain separate one-key holders.
+            intent, shares = self.prepare_retirement(
+                base, ["embodiment:legion", "embodiment:daimonmatrix"]
+            )
+            transition = aggregate_retirement(
+                intent, base, shares, observed_at_ms=NOW + 22
+            )
+            successor = self.successor_authority(base, intent, transition)
+            self.assertEqual(
+                successor.state.revocations["embodiment:legion"][
+                    "cutoff_incarnation_sequence"
+                ],
+                1,
+            )
+            self.assertTrue(
+                all(
+                    r["status"] == "retired"
+                    for r in successor.manifest.value["embodiments"]
+                )
+            )
+            self.assertEqual(successor.state.root_policy, base.state.root_policy)
+            RootHistoryAuthority(successor, [base], [transition])
+            with self.assertRaises(ValueError):
+                aggregate_retirement(intent, base, shares[:1], observed_at_ms=NOW + 22)
+            with self.assertRaises(RebirthError):
+                aggregate_retirement(
+                    intent, base, [shares[0], shares[0]], observed_at_ms=NOW + 22
+                )
+            with self.assertRaises(RebirthError):
+                aggregate_retirement(intent, base, shares, observed_at_ms=NOW + 60_000)
+            with self.assertRaises(ValueError):
+                verify_embodiment_retirement(transition, successor, successor)
+            for field in (
+                "previous_revision",
+                "successor_control_head",
+                "content_hash",
+                "issued_at_ms",
+            ):
+                bad = copy.deepcopy(transition)
+                bad[field] = False
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    verify_embodiment_retirement(bad, base, successor)
+            bad_manifest = copy.deepcopy(successor.manifest.value)
+            bad_manifest["embodiments"][0]["body_ref"] = "cluster:unexpected:compaii"
+            with self.assertRaises(ValueError):
+                RootAuthority(
+                    BeingManifest.from_value(bad_manifest),
+                    successor.state,
+                    base.credentials,
+                    base.incarnations,
+                )
+        finally:
+            fixture.tearDown()
+
+    def test_rejects_unknown_member_local_retirement_and_unselected_edits(self) -> None:
+        with self.assertRaises(RebirthError):
+            create_retirement_intent(
+                self.authority,
+                ["embodiment:unknown"],
+                issued_at_ms=NOW,
+                expires_at_ms=NOW + 1000,
+            )
+        _root, bundle, _cap = self.make_bundle()
+        intent, shares = self.prepare_retirement(self.authority, ["embodiment:legion"])
+        transition = aggregate_retirement(
+            intent, self.authority, shares, observed_at_ms=NOW + 22
+        )
+        with self.assertRaises(RebirthError):
+            apply_retirement_to_runtime_bundle(bundle, transition)
+        successor = self.successor_authority(self.authority, intent, transition)
+        changed = copy.deepcopy(successor.manifest.value)
+        changed["embodiments"][0]["status"] = "retired"
+        other = RootAuthority(
+            BeingManifest.from_value(changed),
+            successor.state,
+            self.credentials,
+            self.incarnations,
+        )
+        with self.assertRaises(ValueError):
+            verify_embodiment_retirement(transition, self.authority, other)
 
 
 class AuthorityEpochFixture(RootLedgerFixture):
