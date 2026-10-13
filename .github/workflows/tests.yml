@@ -185,6 +185,8 @@ jobs:
       - run: python -m ruff check src tools/ci_scope.py tests/test_ci_scope.py tests/test_operator_messaging.py
       - run: python -m ruff format --check src tools/ci_scope.py tests/test_ci_scope.py tests/test_operator_messaging.py
       - run: MYPYPATH=src python -m mypy src
+      - name: Source inventory and artifact build boundary
+        run: python -W error::ResourceWarning -m unittest tests.test_package_scaffold -v
       - run: python tools/reproducible_build.py --output dist
       - run: python tools/scan_secrets.py dist
       - run: |
@@ -194,7 +196,7 @@ jobs:
       - name: Installed history, exact successor, retained acceptance and native HTTP contracts
         run: >-
           python -W error::ResourceWarning -m unittest
-          tests.test_ci_scope tests.test_package_scaffold
+          tests.test_ci_scope
           tests.test_dm041_hermes_body.PublicContractTests
           tests.test_dm079_authority_epochs tests.test_republish_after_advance
           tests.test_operator_messaging tests.test_chat_host
