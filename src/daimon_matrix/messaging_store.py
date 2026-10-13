@@ -114,50 +114,63 @@ class TribeRecordStore:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
-                row = database.execute(
-                    "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
-                    (kind, record_id),
-                ).fetchone()
-                if row is not None:
-                    if row["request_hash"] != request_hash:
-                        raise ValueError("tribe_record_request_conflict")
-                    result = self._checked(row)
-                else:
-                    result = factory()
-                    raw = canonical_bytes(result)
-                    recorded_at_ms = self.clock()
-                    binding = (
-                        None
-                        if self.sign is None
-                        else self.sign(
-                            {
-                                "kind": kind,
-                                "record_id": record_id,
-                                "request_hash": request_hash,
-                                "recorded_at_ms": recorded_at_ms,
-                                "document": result,
-                            }
-                        )
-                    )
-                    database.execute(
-                        "INSERT INTO tribe_records(kind,record_id,request_hash,"
-                        "document,binding,document_hash,recorded_at_ms) "
-                        "VALUES (?,?,?,?,?,?,?)",
-                        (
-                            kind,
-                            record_id,
-                            request_hash,
-                            raw,
-                            canonical_bytes(binding),
-                            hashlib.sha256(raw).hexdigest(),
-                            recorded_at_ms,
-                        ),
-                    )
+                result = self._reserve_in_transaction(
+                    database, kind, record_id, request_hash, factory
+                )
                 database.commit()
                 return result
             except BaseException:
                 database.rollback()
                 raise
+
+    def _reserve_in_transaction(
+        self,
+        database: sqlite3.Connection,
+        kind: str,
+        record_id: str,
+        request_hash: str,
+        factory: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        row = database.execute(
+            "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
+            (kind, record_id),
+        ).fetchone()
+        if row is not None:
+            if row["request_hash"] != request_hash:
+                raise ValueError("tribe_record_request_conflict")
+            result = self._checked(row)
+        else:
+            result = factory()
+            raw = canonical_bytes(result)
+            recorded_at_ms = self.clock()
+            binding = (
+                None
+                if self.sign is None
+                else self.sign(
+                    {
+                        "kind": kind,
+                        "record_id": record_id,
+                        "request_hash": request_hash,
+                        "recorded_at_ms": recorded_at_ms,
+                        "document": result,
+                    }
+                )
+            )
+            database.execute(
+                "INSERT INTO tribe_records(kind,record_id,request_hash,"
+                "document,binding,document_hash,recorded_at_ms) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    kind,
+                    record_id,
+                    request_hash,
+                    raw,
+                    canonical_bytes(binding),
+                    hashlib.sha256(raw).hexdigest(),
+                    recorded_at_ms,
+                ),
+            )
+        return result
 
     def received(self, message: Any, resolution: Any) -> dict[str, Any]:
         # Identity is the exact signed logical message/resolution, not a renewed
@@ -224,14 +237,28 @@ class TribeRecordStore:
             "deadline_ms": deadline_ms,
             "authority_head": authority_head,
         }
-        self.reserve("native", record_id, document, lambda: document)
-        try:
-            return self.egress.binding(self.catalog_id, record_id)
-        except NativeEgressError as exception:
-            if str(exception) != "egress_operation_missing":
-                raise
+        if str(uuid.UUID(record_id)) != record_id:
+            raise ValueError("tribe_record_id_invalid")
+        existing = self.get("native", record_id)
+        if existing is not None:
+            if existing != document:
+                raise ValueError("tribe_record_request_conflict")
+            try:
+                return self.egress.binding(self.catalog_id, record_id)
+            except NativeEgressError as exception:
+                if str(exception) != "egress_operation_missing":
+                    raise
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
+            # Commit the signed carrier and its mandatory visibility obligation
+            # together, so a crash cannot strand an untracked native operation.
+            self._reserve_in_transaction(
+                database,
+                "native",
+                record_id,
+                hashlib.sha256(canonical_bytes(document)).hexdigest(),
+                lambda: document,
+            )
             binding = self.egress.admit_in_transaction(
                 database,
                 catalog_id=self.catalog_id,

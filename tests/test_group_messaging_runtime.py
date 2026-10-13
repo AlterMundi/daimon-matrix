@@ -14,7 +14,11 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import CommunicationStore
 from daimon_matrix.daemon import create_messaging_http_server
 from daimon_matrix.messaging import GroupMessaging, MessagingTribePolicy
-from daimon_matrix.native_egress import synthetic_visibility
+from daimon_matrix.native_egress import (
+    VISIBILITY_SCHEMA_VERSION,
+    MandatoryEgressController,
+    synthetic_visibility,
+)
 from daimon_matrix.routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
 from tests import test_dm051_sealed as sealing_fixtures
 
@@ -29,6 +33,14 @@ class GroupRuntimeTests(unittest.TestCase):
         self.groups = []
         self.servers = []
         for index, lane in enumerate((fixture.sender_lane, fixture.receiver_lane)):
+            template = synthetic_visibility(clock=lane.clock)
+            controller = MandatoryEgressController(
+                policy=template._policy,
+                proof_key=template._proof_key,
+                transport=template._transport,
+                clock=lane.clock,
+                catalog_mode="migrate",
+            )
             communication = CommunicationStore(
                 lane.ledger,
                 clock=lane.clock,
@@ -48,9 +60,10 @@ class GroupRuntimeTests(unittest.TestCase):
                 communication=communication,
                 providers={},
                 config_digest="0" * 64,
-                egress=synthetic_visibility(clock=lane.clock),
+                egress=controller,
             )
             ingresses = {}
+            origin_body = lane.ledger.local_origin["body_ref"]
             for phase in ("evidence", "message"):
                 ingresses[phase] = TransportIngress(
                     provider_ref=f"body-{index}",
@@ -66,6 +79,10 @@ class GroupRuntimeTests(unittest.TestCase):
                     clock=lane.clock,
                     egress=group.egress,
                     egress_catalog_id=f"{phase}-responses",
+                    egress_authority_head=origin_body,
+                    egress_authorizer=lambda binding, origin=origin_body: (
+                        binding.authority_head == origin
+                    ),
                     intake_validator=getattr(group, "receive_" + phase),
                     carrier_inspector=group.inspect_carrier,
                 )
@@ -101,6 +118,10 @@ class GroupRuntimeTests(unittest.TestCase):
                     )
                     for phase in ("evidence", "message")
                 }
+
+        for group in self.groups:
+            group.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+            group.egress.validate_registered_catalogs()
 
     def test_real_http_intake_receipts_reply_and_exact_retry(self):
         sender, receiver = self.groups
@@ -151,6 +172,8 @@ class GroupRuntimeTests(unittest.TestCase):
             if "one group message" in request["text"]
         ]
         self.assertEqual(len(messages), 1)
+        sender.egress.validate_registered_catalogs()
+        receiver.egress.validate_registered_catalogs()
         self.fixture.now += 60_000
         with patch.object(
             sender, "_transmit", side_effect=AssertionError("expired I/O")
@@ -179,6 +202,25 @@ class GroupRuntimeTests(unittest.TestCase):
         ):
             receiver.intake(prepared["payload"])
         author.assert_not_called()
+
+    def test_interrupted_visibility_admission_does_not_strand_native_carrier(self):
+        sender = self.groups[0]
+        request = {
+            "client_id": "test",
+            "send_id": str(uuid.uuid4()),
+            "thread_id": str(uuid.uuid4()),
+            "text": "recover the exact group operation",
+        }
+        with (
+            patch.object(sender.egress, "admit_in_transaction", side_effect=OSError),
+            self.assertRaises(OSError),
+        ):
+            sender.send(**request)
+        self.assertIsNone(sender.records.get("native", request["send_id"]))
+        sender.egress.validate_registered_catalogs()
+        result = sender.send(**request)
+        self.assertTrue(result["semantic"]["terminal"])
+        sender.egress.validate_registered_catalogs()
 
     def test_restart_uses_byte_identical_frozen_envelope(self):
         lane = self.fixture.sender_lane
