@@ -170,8 +170,17 @@ TRIBE_GROUP_FILES = (
 )
 
 
+CONTEXT_DOC_FILES = frozenset({
+    'AGENTS.md', 'CURRENT-STATE.md', 'docs/file-peer-enrollment.md',
+    'docs/existing-agent-chat.md', 'docs/multi-agent-chat.md',
+    'tools/ci_scope.py', 'tests/test_ci_scope.py', '.github/workflows/tests.yml',
+})
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if changed & {'AGENTS.md', 'CURRENT-STATE.md'} and changed <= CONTEXT_DOC_FILES:
+        return 'context-docs'
     if (
         changed
         & {

@@ -1,5 +1,52 @@
 # Current state
 
+## Deployed membership group — 2026-10-13
+
+CompAII, Eko and Oliva now participate in one membership-based messaging group,
+using SDK `cdafbc0513d43c39f03be6e8b1b0636b9e4e9422` (PR #330). Group-only
+application/v3 has no pair policy, resource or grant. Audience comes from signed
+membership and all active Root bodies, frozen before authoring/sealing. One native
+carrier and mandatory human echo cover its copies. Transport ACK and expiry are
+separate from signed per-body semantic delivery; records/receipts survive restart.
+
+Actual three-body sends: `4e4fc6b6-4060-41c8-b87a-1a92fdca1cdb`,
+`cad5e8ce-56d3-46fb-ae18-671f33714e91`, `1a565ad2-76f9-4cc9-8fde-6e34631ad0db`.
+Each retained six bodies in audience and confirmed the three VPS semantic legs;
+three unavailable sibling routes remain explicit. A connected group reply,
+exact retry with unchanged message/audience and manual read after Matrix restart
+were observed. Each speech has one confirmed Tribu publication, with no duplicate
+on retry. No model reads, answers or autonomous attention are implied.
+
+Oliva left both legacy memberships and joined the existing Source/Eko group via
+normal authenticated service guards. Source's three legacy founder declarations
+remain historical signed facts; V0 has no dissolution event. They are not defaults.
+Existing history, custody, accounts and harness sessions remain preserved. Group
+selection replaces default pair applications under the same native lock/admission;
+eight obsolete default/temporary pair proxies were retired. One shared roster
+registration per body replaces per-pair onboarding for the deployed group.
+
+Cluster PR #226 is merged and the qualified maintenance generation is selected.
+Its worker recognizes authenticated group selectors, uses group owner-client
+channels and checks the requested being's semantic receipt; missing group
+admission cannot construct pairs or count an archived pair as completed onboarding.
+Host/body SDK pins and actual per-body runtime selectors are coherent. The
+independent Telegram consumer, receiving context, custody and journals are retained.
+A final send after maintenance (`7d0c4ffb-680c-48c8-a847-581dcb1cdc17`) again
+confirmed the three VPS signed deliveries and the complete six-body audience.
+
+Future portal admission still requires the qualified membership/Root-inventory/
+shared-roster transaction. This is explicit future automation work, not permission
+to reopen founder/member pair installation. Current group success does not claim
+a fully automatic new-member portal flow. Historical Bridge records and earlier
+onboarding runbooks are history or deliberate directed tools, never Tribe defaults.
+
+CI on the exact SDK head is green. The installed group suite also exercises actual
+catalog migration/validation and atomic carrier/visibility admission, covering the
+real deployment blocker found during cutover. Reuse earlier passing directed-link
+qualification. No global Stop was requested or performed; only Matrix processes
+were drained, with no Codex/Telegram restart. Every future global Stop still needs
+fresh explicit human consent.
+
 ## Current Bridge retirement policy
 
 The [retirement policy](TRIBE-MIGRATION.md) incorporates the merged Bridge

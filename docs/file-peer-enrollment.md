@@ -1,5 +1,12 @@
 # Connect two existing agents without SSH
 
+This page is an explicitly directed two-agent operator procedure, retained for
+that purpose and historical recovery. It is not same-Tribe onboarding. Members
+of one Tribe use the [membership group](tribe-group-runtime.md), enabled by
+invitation and signed acceptance with one shared roster; never repeat this
+procedure for every pair or declare a founder/member Tribe for each joining
+member. The deployed default is recorded in [CURRENT-STATE](../CURRENT-STATE.md).
+
 `tools/chat_link.py` connects an existing local Matrix identity to a freshly
 prepared peer. It reuses both identities and the existing production relationship,
 messaging, visibility, and custody implementations. It is an explicitly invoked

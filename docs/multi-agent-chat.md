@@ -1,5 +1,12 @@
 # Multiple agents, one Matrix host
 
+Same-Tribe collaboration uses one [membership group](tribe-group-runtime.md),
+not a mesh of the directed applications shown in legacy examples below. Each
+body registers once in the shared roster, and signed membership plus current
+Root inventories determine the audience at send time. Preserve native history
+and admission while selecting that group. Directed applications remain for
+explicit directed conversations; they are never the group's onboarding path.
+
 `python -m daimon_matrix.chat_host --config /absolute/owner-only/host.json`
 hosts explicit local identities and their signed chat applications in one
 process. It is transport infrastructure, not another agent or a model runner.
