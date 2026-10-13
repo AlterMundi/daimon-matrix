@@ -23,7 +23,23 @@ a second release identity or derive approval from an integrity hash.
   each containing `being_ref`, `control_head`, and `manifest_hash`.
 - `required_receivers`: sorted, unique `(being_ref, embodiment_id)` rows with
   `expected_selection_sha256`, the digest of each receiver's actual existing
-  selection vector. Failed adoption cannot remove a row or make it optional.
+  selection vector, and an optional `artifacts` map using the same existing
+  non-SDK roles/digests. Failed adoption cannot remove a row or make it optional.
+
+For the shared-SDK profile, `matrix_sdk` is exclusively global; receiver overrides
+for it are refused. Effective artifacts are global defaults overlaid by the exact
+receiver row. Only roles absent from BOTH maps remain unchanged. There are no null,
+reset or implicit upgrade semantics. Put genuinely shared components globally and
+heterogeneous receiving-code/other selections in receiver rows; one shared SDK
+does not imply equal receiving code or equal independent Telegram selections.
+The extended form requires `per-receiver-artifacts/v1`; older closed readers must
+refuse it, never strip an override or silently use only the global map.
+
+`selected_artifacts()` resolves this frozen public selection for one exact required
+receiver. The controller still verifies each effective combination through the
+maintained successor helper against its immutable original base; a selected
+code generation's SDK must match the shared selected SDK. Unselected components
+in a staged bundle do not become selected merely because they are present.
 
 The owning authenticated controller pins the SHA-256 of this complete canonical
 manifest in its existing approved operation before effects. That manifest digest
@@ -97,6 +113,16 @@ it does not reapply them or demand the pre-effect state again. A stale operation
 must not overwrite a newer selection/roster. The controller retains host/helper
 selection evidence as well as per-body evidence; this is CAS and forward recovery,
 not a distributed atomic transaction or another identity ceremony.
+
+Resolve artifact roles to actual selection targets before preparation. Distinct
+receiver rows cannot independently change the same physical host/helper target:
+contradictory intended digests are refused. Bind the complete pre/post-vector
+hashes in the existing operation's immutable intent and verify the returned
+retained vectors. The shared journal's separately stored precondition/transition
+arguments are not automatically part of its intent hash. On resume and apply,
+use retained journal vectors, never fresh caller values. Qualification evidence
+must cover every distinct selected artifact combination; one loaded receiver
+does not prove another receiver's readiness.
 
 Do not enable new-epoch egress until every required receiver has the selected
 compatible validator, exact adopted public authority and matching loaded
