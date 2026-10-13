@@ -31,7 +31,7 @@ from types import FrameType
 from typing import Any, cast
 
 from .authority_epochs import RootHistoryAuthority
-from .canonical import canonical_bytes, unb64url
+from .canonical import canonical_bytes
 from .local_api import create_messaging_capability
 from .messaging_config import (
     APPLICATION_SCHEMA,
@@ -55,6 +55,7 @@ from .messaging_config import (
     verify_binding,
     verify_binding_within_history,
     verify_public_binding,
+    verify_visibility_participant,
 )
 from .messaging_store import MessagingInboxStore
 from .native_egress import (
@@ -69,7 +70,7 @@ from .operator_rebirth import (
 )
 from .runtime import HostedRuntime, VisibilityFactory, VisibilityFactoryContext
 from .service import MESSAGING_METHODS
-from .weave import RootAuthority
+from .weave import BeingManifest, RootAuthority
 
 
 def _application_authorities(
@@ -120,30 +121,254 @@ def _runtime_epoch(runtime: HostedRuntime) -> RootAuthority:
 
 
 def _verify_visibility_participant(
-    authorities: Mapping[str, RootAuthority],
+    authorities: Mapping[str, RootAuthority | RootHistoryAuthority],
     participant: str,
     document: Any,
     binding: Any,
     *,
     at_ms: int,
 ) -> None:
-    authority = authorities[participant]
-    body = binding["body"]
-    identity = _public_identity(
-        authority,
-        body["origin"],
-        body["runtime_id"],
-        body["runtime_label"],
-        at_ms,
+    verify_visibility_participant(
+        authorities[participant], participant, document, binding, at_ms=at_ms
     )
-    credential = authority.credentials[identity["credential_id"]]
-    public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
-    verify_public_binding(identity, public_key, document, binding)
+
+
+def _verified_application_authorities(
+    application: Mapping[str, Any],
+    trusted: Mapping[str, RootAuthority | RootHistoryAuthority],
+) -> dict[str, RootAuthority | RootHistoryAuthority]:
+    """Retain verified runtime history only for an exactly matching active pin."""
+    result: dict[str, RootAuthority | RootHistoryAuthority] = dict(
+        _application_authorities(application)
+    )
+    for participant, pinned in tuple(result.items()):
+        verified = trusted.get(participant)
+        if verified is not None:
+            if _current_epoch(verified) != pinned:
+                raise MessagingConfigError("messaging_visibility_installation_rejected")
+            result[participant] = verified
+    return result
+
+
+def _runtime_authorities(
+    runtime: HostedRuntime,
+) -> dict[str, RootAuthority | RootHistoryAuthority]:
+    """Public authorities from the already verified, locked runtime."""
+    own = _runtime_authority(runtime)
+    result = {own.manifest.being_ref: own}
+    sources = runtime.service.sources
+    if sources is not None:
+        for participant, ledger in sources.registry.known_ledgers.items():
+            if not isinstance(ledger.authority, (RootAuthority, RootHistoryAuthority)):
+                raise MessagingConfigError("messaging_binding_rejected")
+            result[participant] = ledger.authority
+    return result
+
+
+def known_peer_successor(
+    previous: Mapping[str, Any],
+    document: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], RootHistoryAuthority]:
+    """Derive one existing peer's exact descendant; never enroll an unknown peer."""
+    active = authority_from_document(document)
+    if len(history) > 256:
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    historical: list[RootAuthority] = []
+    following = active
+    for entry in reversed(history):
+        if set(entry) == {"manifest", "successor"}:
+            epoch = RootAuthority(
+                BeingManifest.from_value(entry["manifest"]),
+                following.state,
+                following.credentials,
+                following.incarnations,
+            )
+        elif set(entry) == {
+            "manifest",
+            "control_artifacts",
+            "control_head",
+            "credentials",
+            "incarnations",
+            "successor",
+        }:
+            epoch = authority_from_document(
+                {
+                    "schema": AUTHORITY_SCHEMA,
+                    **{
+                        key: value for key, value in entry.items() if key != "successor"
+                    },
+                }
+            )
+        else:
+            raise MessagingConfigError("messaging_republish_peer_conflict")
+        historical.append(epoch)
+        following = epoch
+    verified = RootHistoryAuthority(
+        active, list(reversed(historical)), [entry["successor"] for entry in history]
+    )
+    known = {
+        key: copy.deepcopy(value) for key, value in document.items() if key != "schema"
+    }
+    known["authority_history"] = copy.deepcopy(list(history))
+    controls, epochs = previous["control_artifacts"], previous["authority_history"]
+    if (
+        known["control_artifacts"][: len(controls)] != controls
+        or known["authority_history"][: len(epochs)] != epochs
+    ):
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    anchored = next(
+        (
+            epoch
+            for epoch in (*verified.historical, verified.active)
+            if epoch.manifest.value == previous["manifest"]
+            and epoch.state.head == previous["control_head"]
+        ),
+        None,
+    )
+    if anchored is None or any(
+        getattr(anchored, field).get(artifact["artifact_id"]) != artifact
+        for field in ("credentials", "incarnations")
+        for artifact in previous[field]
+    ):
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    known["ledger_filename"] = (
+        previous["ledger_filename"]
+        if known["manifest"] == previous["manifest"]
+        else "peer-successor-" + config_digest(known["manifest"]) + ".sqlite"
+    )
+    return known, verified
+
+
+def adopt_peer_authority(
+    runtime: HostedRuntime,
+    document: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
+    *,
+    bundle_name: str = "runtime.json",
+) -> dict[str, Any]:
+    """Locked, resumable foreign-authority update preserving all local identity.
+
+    This changes no custody, routes, grants, capabilities or acceptance. The
+    caller must subsequently reload and republish affected applications before
+    readiness. Incomplete adoption is forward-resumable, never reported ready.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from .ledger import Ledger
+    from .runtime import _read_bundle, _safe_file
+    from .weave import verify_event
+
+    root = _directory(runtime.state_root)
+    path = _safe_file(root, bundle_name, must_exist=True)
+    bundle = _read_bundle(path)
+    _current_authority_document(runtime, bundle_name)
+    peer = document["manifest"]["being_ref"]
+    sources = runtime.service.sources
+    if sources is None or peer not in sources.registry.known_ledgers:
+        raise MessagingConfigError("messaging_republish_peer_untrusted")
+    ledger = sources.registry.known_ledgers[peer]
+    rows = bundle["sources"]["known_beings"]
+    matching = [row for row in rows if row["manifest"]["being_ref"] == peer]
+    if len(matching) != 1:
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    previous = matching[0]
+    old_document = {
+        "schema": AUTHORITY_SCHEMA,
+        **{key: previous[key] for key in document if key != "schema"},
+    }
+    if authority_from_document(old_document) != _current_epoch(ledger.authority):
+        raise MessagingConfigError("messaging_republish_epoch_mismatch")
+    known, authority = known_peer_successor(previous, document, history)
+    if known == previous:
+        return {
+            "status": "current",
+            "peer_being_ref": peer,
+            "manifest_hash": authority.manifest.digest,
+            "manifest_revision": authority.manifest.value["revision"],
+        }
+    member = next(
+        row
+        for row in authority.manifest.value["embodiments"]
+        if row["status"] == "active"
+    )
+    credential = authority.credentials[member["embodiment_credential_id"]]
+    origin = {
+        key: member[key] for key in ("body_ref", "embodiment_id", "incarnation_id")
+    }
+    origin["principal_id"] = credential["body"]["transport_principals"][0][
+        "principal_id"
+    ]
+    destination = _safe_file(root, known["ledger_filename"], must_exist=False)
+    if not destination.exists():
+        copy_path = root / (".peer-ledger-" + secrets.token_hex(16))
+        _write(root, copy_path.name, b"")
+        with (
+            ledger._database() as before,
+            closing(sqlite3.connect(copy_path)) as after,
+        ):
+            before.backup(after)
+        _sync(root)
+        os.replace(copy_path, destination)
+    with closing(sqlite3.connect(destination)) as database:
+        for (event_json,) in database.execute("SELECT event_json FROM events"):
+            verify_event(json.loads(event_json), authority)
+        selected = database.execute(
+            "SELECT value FROM metadata WHERE key='local_embodiment_id'"
+        ).fetchone()[0]
+    if selected not in (ledger.local_origin["embodiment_id"], origin["embodiment_id"]):
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    advanced = Ledger(
+        destination,
+        authority=authority,
+        local_origin=origin
+        if selected == origin["embodiment_id"]
+        else ledger.local_origin,
+        clock=runtime.service.clock,
+    )
+    advanced.initialize()
+    with advanced._database() as database:
+        database.execute("BEGIN IMMEDIATE")
+        database.execute(
+            "UPDATE metadata SET value=? WHERE key='local_embodiment_id'",
+            (member["embodiment_id"],),
+        )
+        database.commit()
+    Ledger(
+        destination,
+        authority=authority,
+        local_origin=origin,
+        clock=runtime.service.clock,
+    ).initialize()
+    candidate = copy.deepcopy(bundle)
+    candidate["sources"]["known_beings"][rows.index(previous)] = known
+    previous_sha = config_digest(bundle)
+    backup = bundle_name + ".pre-peer-" + previous_sha
+    if not (root / backup).exists():
+        _write(root, backup, canonical_bytes(bundle))
+    temporary = ".peer-authority-" + secrets.token_hex(16) + ".json"
+    _write(root, temporary, canonical_bytes(candidate))
+    _sync(root)
+    if _read_bundle(path) != bundle:
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    os.replace(root / temporary, path)
+    _sync(root)
+    receipt = {
+        "schema": "dm.messaging.peer-authority-adoption/v1",
+        "status": "accepted-awaiting-republication",
+        "peer_being_ref": peer,
+        "manifest_hash": authority.manifest.digest,
+        "manifest_revision": authority.manifest.value["revision"],
+        "previous_runtime_sha256": previous_sha,
+        "runtime_sha256": config_digest(candidate),
+    }
+    return {"document": receipt, "binding": create_binding(runtime, receipt)}
 
 
 def _owner_visibility_controller(
     *,
-    authorities: Mapping[str, RootAuthority],
+    authorities: Mapping[str, RootAuthority | RootHistoryAuthority],
     application_sha256: str,
     installation_path: Path,
     authority: RootAuthority | RootHistoryAuthority,
@@ -172,7 +397,9 @@ def _owner_visibility_controller(
     selected_owner = authorities.get(owner_identity["being_ref"])
     # The application pins the current public authority, not the wrapper
     # that additionally verifies events from earlier credential epochs.
-    if selected_owner != _current_epoch(authority):
+    if selected_owner is None or _current_epoch(selected_owner) != _current_epoch(
+        authority
+    ):
         raise MessagingConfigError("messaging_visibility_installation_rejected")
 
     def verify_owner(document: Any, binding: Any) -> None:
@@ -214,11 +441,12 @@ def _visibility_factory(
 
     validate_shape(application)
     application_sha256 = config_digest(application)
-    authorities = _application_authorities(application)
 
     def factory(context: VisibilityFactoryContext) -> MandatoryEgressController:
         return _owner_visibility_controller(
-            authorities=authorities,
+            authorities=_verified_application_authorities(
+                application, context.authorities
+            ),
             application_sha256=application_sha256,
             installation_path=installation_path,
             authority=context.authority,
@@ -1223,6 +1451,7 @@ def republish(
     *,
     installation: Path | None = None,
     bundle_name: str = "runtime.json",
+    peer_being_refs: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Re-publish the current application against the runtime's present epoch.
 
@@ -1234,9 +1463,10 @@ def republish(
     from a publication verified against the *current* epoch, and therefore refuse
     the very document that needs repairing.
 
-    This derives one successor from the published application changing exactly one
-    field: the local being's entry in ``authorities``, replaced by the present
-    epoch's public authority document. Routes, stores, ``relationship_mode``, the
+    This derives one successor changing the local being's authority and only
+    explicitly selected ``peer_being_refs``. Foreign successors must already be
+    trusted, anchored descendants in the loaded runtime; caller documents never
+    authorize republication. Routes, stores, ``relationship_mode``, the
     client descriptor and every secret reference are carried over untouched, and no
     capability is re-minted and no key is rotated -- that is ``renew``, not this.
 
@@ -1282,6 +1512,86 @@ def republish(
         if len(replaced) != 1 or set(previous) != set(successor):
             raise MessagingConfigError("messaging_republish_conflict")
         successor["authorities"][replaced[0]] = copy.deepcopy(current_document)
+        if (
+            len(set(peer_being_refs)) != len(peer_being_refs)
+            or being_ref in peer_being_refs
+        ):
+            raise MessagingConfigError("messaging_republish_conflict")
+        trusted = _runtime_authorities(runtime)
+        from .runtime import _read_bundle, _safe_file
+
+        bundle = _read_bundle(
+            _safe_file(Path(runtime.state_root), bundle_name, must_exist=True)
+        )
+        known = (
+            bundle["sources"]["known_beings"] if bundle["sources"] is not None else []
+        )
+        for peer in peer_being_refs:
+            authority = trusted.get(peer)
+            if authority is None:
+                raise MessagingConfigError("messaging_republish_peer_untrusted")
+            indexes = [
+                i
+                for i, row in enumerate(previous["authorities"])
+                if authority_from_document(row).manifest.being_ref == peer
+            ]
+            rows = [row for row in known if row["manifest"]["being_ref"] == peer]
+            if len(indexes) != 1 or len(rows) != 1:
+                raise MessagingConfigError("messaging_republish_conflict")
+            old = authority_from_document(previous["authorities"][indexes[0]])
+            epochs = (
+                (*authority.historical, authority.active)
+                if isinstance(authority, RootHistoryAuthority)
+                else (authority,)
+            )
+            anchored = next(
+                (
+                    epoch
+                    for epoch in epochs
+                    if epoch.manifest == old.manifest and epoch.state == old.state
+                ),
+                None,
+            )
+            if anchored is None or any(
+                getattr(anchored, field).get(key) != artifact
+                for field in ("credentials", "incarnations")
+                for key, artifact in getattr(old, field).items()
+            ):
+                raise MessagingConfigError("messaging_republish_peer_conflict")
+            public = {
+                "schema": AUTHORITY_SCHEMA,
+                **{
+                    key: rows[0][key]
+                    for key in (
+                        "control_artifacts",
+                        "control_head",
+                        "manifest",
+                        "credentials",
+                        "incarnations",
+                    )
+                },
+            }
+            if authority_from_document(public) != _current_epoch(authority):
+                raise MessagingConfigError("messaging_republish_epoch_mismatch")
+            successor["authorities"][indexes[0]] = copy.deepcopy(public)
+        if installation is not None:
+            accepted = read_document(installation)["document"]
+            candidate_authorities = _verified_application_authorities(
+                successor, trusted
+            )
+            for participant, binding in zip(
+                accepted["disclosure"]["participants"],
+                accepted["acceptance_set"]["bindings"],
+                strict=True,
+            ):
+                if participant != being_ref:
+                    _verify_visibility_participant(
+                        candidate_authorities,
+                        participant,
+                        accepted["disclosure"],
+                        binding,
+                        at_ms=runtime.service.clock(),
+                    )
         # Exactly one authority entry may differ, and nothing else at all. A
         # re-publication is not a way to smuggle in a route, a store or a client.
         if any(
@@ -1289,13 +1599,30 @@ def republish(
         ):
             raise MessagingConfigError("messaging_republish_conflict")
         if successor == previous:
+            installation_result = {"reissued": False}
+            if installation is not None:
+                installation_result = _reissue_installation(
+                    runtime, installation, application_sha256=predecessor_sha256
+                )
+                _owner_visibility_controller(
+                    authorities=_verified_application_authorities(successor, trusted),
+                    application_sha256=predecessor_sha256,
+                    installation_path=installation,
+                    authority=_runtime_authority(runtime),
+                    origin=runtime.service.origin,
+                    runtime_id=runtime.service.runtime_id,
+                    runtime_label=runtime.service.runtime_label,
+                    signer_public_key=runtime.service.signer.public_key,
+                    clock=runtime.service.clock,
+                    catalog_mode="validate",
+                )
             return {
                 "status": "current",
                 "schema": APPLICATION_SCHEMA,
                 "application_sha256": predecessor_sha256,
                 "generation": publication["body"]["generation"],
                 "manifest_revision": current_authority.manifest.value["revision"],
-                "installation": {"reissued": False},
+                "installation": installation_result,
             }
         validate_shape(successor)
 
@@ -1343,7 +1670,7 @@ def republish(
                 "messaging_published_durability_uncertain"
             ) from None
 
-        installation_result: dict[str, Any] = {"reissued": False}
+        installation_result = {"reissued": False}
         if installation is not None:
             installation_result = _reissue_installation(
                 runtime, installation, application_sha256=successor_sha256
@@ -1359,7 +1686,7 @@ def republish(
             raise MessagingConfigError("messaging_republish_conflict")
         if installation is not None:
             _owner_visibility_controller(
-                authorities=_application_authorities(republished),
+                authorities=_verified_application_authorities(republished, trusted),
                 application_sha256=successor_sha256,
                 installation_path=Path(installation),
                 authority=_runtime_authority(runtime),
@@ -1379,6 +1706,7 @@ def republish(
             "manifest_revision": current_authority.manifest.value["revision"],
             "runtime_id": runtime.service.runtime_id,
             "installation": installation_result,
+            "peer_being_refs": list(peer_being_refs),
         }
     except MessagingConfigError:
         raise
@@ -1408,6 +1736,7 @@ def visibility_presentation(
     from .telegram_mirror import REPRESENTATIONS
 
     root = _directory(installation.parent)
+    authorities: dict[str, RootAuthority | RootHistoryAuthority]
     if app_directory is None:
         if Path(bundle_name).name != bundle_name:
             raise MessagingConfigError("messaging_visibility_presentation_invalid")
@@ -1419,7 +1748,9 @@ def visibility_presentation(
     else:
         application, _ = read_publication(runtime, _directory(app_directory))
         application_sha256 = config_digest(application)
-        authorities = _application_authorities(application)
+        authorities = _verified_application_authorities(
+            application, _runtime_authorities(runtime)
+        )
     previous_envelope = read_document(installation)
     previous = previous_envelope["document"]
     controller = _owner_visibility_controller(
@@ -1626,6 +1957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "migrate-visibility",
             "renew",
             "republish",
+            "adopt-peer",
             "revoke",
             "recover",
             "diagnostics",
@@ -1638,6 +1970,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--password-fd", type=int, required=True)
     parser.add_argument("--visibility-installation", type=Path)
     parser.add_argument("--visibility-schema-version", type=int)
+    parser.add_argument("--peer-being-ref", action="append", default=[])
+    parser.add_argument("--peer-authority", type=Path)
+    parser.add_argument("--peer-history", type=Path)
     parser.add_argument(
         "--spec",
         type=Path,
@@ -1660,8 +1995,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock = None
     previous_signals = {}
     try:
+        if args.command == "adopt-peer":
+            if (
+                args.peer_authority is None
+                or args.peer_history is None
+                or args.app_dir is not None
+                or args.visibility_installation is not None
+                or args.ready_fd is not None
+                or args.expected_application_sha256 is not None
+            ):
+                raise ValueError()
+        elif args.peer_authority is not None or args.peer_history is not None:
+            raise ValueError()
+        if args.peer_being_ref and args.command != "republish":
+            raise ValueError()
         presentation_command = args.command.startswith("visibility-")
-        if not presentation_command and args.app_dir is None:
+        if (
+            not presentation_command
+            and args.command != "adopt-peer"
+            and args.app_dir is None
+        ):
             raise ValueError()
         if presentation_command:
             if args.ready_fd is not None or args.visibility_installation is None:
@@ -1714,7 +2067,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.spec is not None or args.secret_dir is not None:
             raise ValueError()
         if (
-            args.command not in {"prepare", "republish"}
+            args.command not in {"prepare", "republish", "adopt-peer"}
             and args.visibility_installation is None
         ):
             raise ValueError()
@@ -1737,7 +2090,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             visibility_factory = daemon._visibility_factory(
                 args.visibility_installation, clock=clock
             )
-        elif presentation_command or args.command in {"prepare", "republish"}:
+        elif presentation_command or args.command in {
+            "prepare",
+            "republish",
+            "adopt-peer",
+        }:
             # Signing an app presentation must not authenticate the base native
             # catalogs with that app's different proof key. The closed bootstrap
             # cannot send and leaves catalogs intact; visibility_presentation
@@ -1778,6 +2135,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for r in spec[d]["routes"].values()
             }
             result = prepare(runtime, args.app_dir, spec, secret_sources=sources)
+        elif args.command == "adopt-peer":
+            assert args.peer_authority is not None and args.peer_history is not None
+            result = adopt_peer_authority(
+                runtime,
+                read_document(args.peer_authority),
+                read_document(args.peer_history),
+                bundle_name=args.bundle,
+            )
         elif presentation_command:
             assert args.visibility_installation is not None
             proposal = (
@@ -1822,6 +2187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.app_dir,
                 installation=args.visibility_installation,
                 bundle_name=args.bundle,
+                peer_being_refs=args.peer_being_ref,
             )
         elif args.command in {"renew", "revoke", "recover"}:
             operation = {

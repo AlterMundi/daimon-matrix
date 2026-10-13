@@ -28,7 +28,11 @@ from .messaging_config import (
     read_publication,
 )
 from .native_egress import closed_visibility
-from .operator_messaging import _visibility_factory, host_visibility_factory
+from .operator_messaging import (
+    _runtime_authorities,
+    _visibility_factory,
+    host_visibility_factory,
+)
 from .runtime import HostedRuntime, VisibilityFactoryContext, load_runtime
 from .service import MESSAGING_METHODS
 from .weave import RootAuthority
@@ -48,7 +52,8 @@ def visibility_context(runtime: HostedRuntime) -> VisibilityFactoryContext:
         runtime_label=runtime.service.runtime_label,
         signer_public_key=runtime.service.signer.public_key,
         bundle_sha256=config_digest(read_document(runtime.state_root / "runtime.json")),
-        authorities={},  # App factory validates its own pinned public authorities.
+        authorities=_runtime_authorities(runtime),
+        labels=runtime.service.labels,
     )
 
 

@@ -12,6 +12,19 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_authority_adoption_scope_keeps_unknown_contracts_full(self):
+        from tools.ci_scope import AUTHORITY_ADOPTION_FILES
+
+        self.assertEqual(profile(list(AUTHORITY_ADOPTION_FILES)), "authority-adoption")
+        for path in (
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/authority_epochs.py",
+            "src/daimon_matrix/runtime.py",
+            "pyproject.toml",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*AUTHORITY_ADOPTION_FILES, path]), "full")
+
     def test_resource_doc_scope_is_exact_and_keeps_runtime_changes_full(self):
         from tools.ci_scope import RESOURCE_DOC_FILES
 
