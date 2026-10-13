@@ -25,7 +25,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final, Protocol
 
@@ -38,8 +38,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from .authority_epochs import (
     RootHistoryAuthority,
     create_embodiment_enrollment,
+    create_embodiment_retirement,
     create_recovery_rebirth,
     verify_embodiment_enrollment,
+    verify_embodiment_retirement,
     verify_recovery_rebirth,
 )
 from .canonical import b64url, canonical_bytes, digest, domain_bytes, unb64url
@@ -53,6 +55,7 @@ from .identity import (
     create_incarnation_authorization,
     create_recovery_authorization_share,
     create_recovery_possession_share,
+    create_revocation,
     create_synthetic_recovery_in_process,
     ed25519_public,
     generate_ed25519_seed,
@@ -65,6 +68,7 @@ from .identity import (
     verify_incarnation_authorization,
     verify_recovery,
     verify_recovery_from_anchor,
+    verify_successor,
     x25519_public,
 )
 from .keystore import EncryptedKeystore, KeystoreError, PasswordReader
@@ -142,6 +146,264 @@ TRANSPORT_SCHEME: Final = "dm-peer-v1"
 MAX_TIME: Final = 2**53 - 1
 MAX_ARTIFACT_BYTES: Final = 1024 * 1024
 AUTHORITY_SCHEMA: Final = "dm.operator.authority/v1"
+RETIREMENT_INTENT_SCHEMA: Final = "dm.operator.retirement-intent/v1"
+RETIREMENT_SHARE_SCHEMA: Final = "dm.operator.retirement-share/v1"
+
+
+def create_retirement_intent(
+    base: RootAuthority,
+    embodiment_ids: Sequence[str],
+    *,
+    issued_at_ms: int,
+    expires_at_ms: int,
+) -> dict[str, Any]:
+    """Prepare public retirement material; no unsigned state gains authority."""
+    instant = _uint(issued_at_ms, "invalid_retirement_time")
+    expires = _uint(expires_at_ms, "invalid_retirement_time")
+    if not instant < expires <= instant + 86_400_000:
+        raise RebirthError("invalid_retirement_time")
+    ids = list(embodiment_ids)
+    if (
+        not ids
+        or len(ids) > 128
+        or not all(isinstance(i, str) for i in ids)
+        or ids != sorted(set(ids))
+    ):
+        raise RebirthError("invalid_retirement_members")
+    manifest_value = copy.deepcopy(dict(base.manifest.value))
+    revocations = []
+    prior_head = base.state.head
+    for index, embodiment_id in enumerate(ids):
+        rows = [
+            r
+            for r in manifest_value["embodiments"]
+            if r["embodiment_id"] == embodiment_id
+        ]
+        if not rows or sum(r["status"] == "active" for r in rows) != 1:
+            raise RebirthError("invalid_retirement_members")
+        authorizations = [
+            base.incarnations[r["incarnation_authorization_id"]]["body"] for r in rows
+        ]
+        if any(a["started_at_ms"] > instant for a in authorizations):
+            raise RebirthError("invalid_retirement_time")
+        cutoff = max(a["incarnation_sequence"] for a in authorizations)
+        # Only the deterministic predecessor/sequence are projected for signing.
+        # Aggregation replays real threshold-verified controls from base.state.
+        signing_position = replace(
+            base.state, head=prior_head, sequence=base.state.sequence + index
+        )
+        artifact = create_revocation(
+            signing_position,
+            (),
+            embodiment_id=embodiment_id,
+            cutoff_incarnation_sequence=cutoff,
+            revocation_generation=base.state.revocations.get(embodiment_id, {}).get(
+                "revocation_generation", 0
+            )
+            + 1,
+        )
+        revocations.append(artifact)
+        prior_head = artifact["artifact_id"]
+        for row in rows:
+            row["status"] = "retired"
+    manifest_value["revision"] += 1
+    manifest_value["control_head"] = prior_head
+    manifest = BeingManifest.from_value(manifest_value)
+    transition = create_embodiment_retirement(
+        base.manifest,
+        manifest,
+        revocations=revocations,
+        root_seeds=(),
+        issued_at_ms=instant,
+    )
+    return {
+        "schema": RETIREMENT_INTENT_SCHEMA,
+        "expires_at_ms": expires,
+        "manifest": manifest_value,
+        "transition": transition,
+    }
+
+
+def _retirement_intent(
+    value: Any, base: RootAuthority, observed_at_ms: int
+) -> dict[str, Any]:
+    intent = _closed(
+        value,
+        {"schema", "expires_at_ms", "manifest", "transition"},
+        "invalid_retirement_intent",
+    )
+    try:
+        if intent["schema"] != RETIREMENT_INTENT_SCHEMA:
+            raise ValueError("schema")
+        transition = intent["transition"]
+        expected = create_retirement_intent(
+            base,
+            [r["body"]["embodiment_id"] for r in transition["revocations"]],
+            issued_at_ms=transition["issued_at_ms"],
+            expires_at_ms=intent["expires_at_ms"],
+        )
+        instant = _uint(observed_at_ms, "invalid_retirement_time")
+        if (
+            canonical_bytes(intent) != canonical_bytes(expected)
+            or not transition["issued_at_ms"] <= instant < intent["expires_at_ms"]
+        ):
+            raise ValueError("intent/time")
+    except (KeyError, TypeError, ValueError) as exception:
+        raise RebirthError("invalid_retirement_intent") from exception
+    return copy.deepcopy(dict(intent))
+
+
+def retirement_share_from_holder(
+    intent: Any,
+    base: RootAuthority,
+    holder: Path,
+    password_reader: PasswordReader,
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """One native holder signs only the reconstructed, exact public intent."""
+    verified = _retirement_intent(intent, base, observed_at_ms)
+    seed = _single_holder_seed(
+        holder,
+        base,
+        password_reader,
+        allowed_prefixes=("root.signing.v1:",),
+        code="retirement_holder_rejected",
+    )
+    descriptor = signing_descriptor(seed)
+    if descriptor not in base.state.root_policy["keys"]:
+        raise RebirthError("retirement_holder_rejected")
+    private = Ed25519PrivateKey.from_private_bytes(seed)
+    signatures = [
+        {
+            "algorithm": "Ed25519",
+            "key_id": descriptor["key_id"],
+            "role": "root-authorization",
+            "value": b64url(
+                private.sign(domain_bytes(DOMAINS["revocation"], r["body"]))
+            ),
+        }
+        for r in verified["transition"]["revocations"]
+    ]
+    transition = create_embodiment_retirement(
+        base.manifest,
+        BeingManifest.from_value(verified["manifest"]),
+        revocations=verified["transition"]["revocations"],
+        root_seeds=(seed,),
+        issued_at_ms=verified["transition"]["issued_at_ms"],
+    )
+    return {
+        "schema": RETIREMENT_SHARE_SCHEMA,
+        "intent_hash": hashlib.sha256(canonical_bytes(verified)).hexdigest(),
+        "revocation_signatures": signatures,
+        "signature": transition["signatures"][0],
+    }
+
+
+def aggregate_retirement(
+    intent: Any,
+    base: RootAuthority,
+    shares: Sequence[Mapping[str, Any]],
+    *,
+    observed_at_ms: int,
+) -> dict[str, Any]:
+    """Keyless threshold aggregation and full successor verification."""
+    verified = _retirement_intent(intent, base, observed_at_ms)
+    transition = copy.deepcopy(verified["transition"])
+    digest_value = hashlib.sha256(canonical_bytes(verified)).hexdigest()
+    seen: set[str] = set()
+    for raw in shares:
+        share = _closed(
+            raw,
+            {"schema", "intent_hash", "revocation_signatures", "signature"},
+            "invalid_retirement_share",
+        )
+        try:
+            kid = share["signature"]["kid"]
+            signatures = share["revocation_signatures"]
+            if (
+                share["schema"] != RETIREMENT_SHARE_SCHEMA
+                or share["intent_hash"] != digest_value
+                or kid in seen
+                or not isinstance(signatures, list)
+                or len(signatures) != len(transition["revocations"])
+                or any(s["key_id"] != kid for s in signatures)
+            ):
+                raise ValueError("share")
+            seen.add(kid)
+            transition["signatures"].append(share["signature"])
+            for artifact, signature in zip(
+                transition["revocations"], signatures, strict=True
+            ):
+                artifact["signatures"].append(signature)
+        except (KeyError, TypeError, ValueError) as exception:
+            raise RebirthError("invalid_retirement_share") from exception
+    transition["signatures"].sort(key=lambda row: row["kid"])
+    state = base.state
+    for artifact in transition["revocations"]:
+        artifact["signatures"].sort(key=lambda row: (row["key_id"], row["role"]))
+        state = verify_successor(artifact, state)
+    successor = RootAuthority(
+        BeingManifest.from_value(verified["manifest"]),
+        state,
+        base.credentials,
+        base.incarnations,
+    )
+    return verify_embodiment_retirement(transition, base, successor)
+
+
+def apply_retirement_to_runtime_bundle(
+    bundle: Mapping[str, Any],
+    transition: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Produce a forward-only candidate preserving local custody and journals."""
+    base = authority_from_runtime_bundle(bundle)
+    result = copy.deepcopy(dict(bundle))
+    selected = [r["body"]["embodiment_id"] for r in transition["revocations"]]
+    if bundle["local_origin"]["embodiment_id"] in selected:
+        raise RebirthError("retirement_local_body_forbidden")
+    state = base.state
+    for artifact in transition["revocations"]:
+        state = verify_successor(artifact, state)
+    for row in result["manifest"]["embodiments"]:
+        if row["embodiment_id"] in selected:
+            row["status"] = "retired"
+    result["manifest"]["revision"] += 1
+    result["manifest"]["control_head"] = state.head
+    successor = RootAuthority(
+        BeingManifest.from_value(result["manifest"]),
+        state,
+        base.credentials,
+        base.incarnations,
+    )
+    verify_embodiment_retirement(transition, base, successor)
+    result["authority_history"].append(
+        {
+            **{
+                key: copy.deepcopy(bundle[key])
+                for key in (
+                    "manifest",
+                    "control_artifacts",
+                    "control_head",
+                    "credentials",
+                    "incarnations",
+                )
+            },
+            "successor": copy.deepcopy(dict(transition)),
+        }
+    )
+    result["control_artifacts"].extend(copy.deepcopy(transition["revocations"]))
+    result["control_head"] = state.head
+    peer = result.get("peer_transport")
+    if isinstance(peer, dict):
+        peer["targets"] = [
+            r for r in peer["targets"] if r["embodiment_id"] not in selected
+        ]
+    if authority_from_runtime_bundle(result) != successor:
+        raise RebirthError("retirement_candidate_mismatch")
+    return result
+
+
 TARGET_PROFILE_SCHEMA: Final = "dm.operator.rebirth-target-profile/v1"
 PREPARATION_SCHEMA: Final = "dm.operator.rebirth-preparation/v1"
 MESSAGING_MIGRATION_APPROVAL_SCHEMA: Final = (
@@ -5381,6 +5643,36 @@ def authorize_from_root_custody(
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="daimon-rebirth", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
+    for name in (
+        "create-retirement-intent",
+        "retirement-share",
+        "aggregate-retirement",
+        "retire-bundle",
+    ):
+        retirement_command = commands.add_parser(
+            name, help="exact root-authorized embodiment retirement"
+        )
+        retirement_command.add_argument("--authority", type=Path, required=True)
+        retirement_command.add_argument("--output", type=Path, required=True)
+        if name == "create-retirement-intent":
+            retirement_command.add_argument(
+                "--embodiment-id", action="append", required=True
+            )
+            retirement_command.add_argument("--ttl-seconds", type=int, default=3600)
+        elif name == "retire-bundle":
+            retirement_command.add_argument("--base-runtime", type=Path, required=True)
+            retirement_command.add_argument("--transition", type=Path, required=True)
+        else:
+            retirement_command.add_argument("--intent", type=Path, required=True)
+            if name == "retirement-share":
+                retirement_command.add_argument("--holder", type=Path, required=True)
+                retirement_command.add_argument(
+                    "--password-fd", type=int, required=True
+                )
+            else:
+                retirement_command.add_argument(
+                    "--share", type=Path, action="append", required=True
+                )
     prepare = commands.add_parser("prepare", help="generate target-owned custody")
     prepare.add_argument("--authority", type=Path, required=True)
     prepare.add_argument("--profile", type=Path, required=True)
@@ -5582,6 +5874,64 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments = parser().parse_args(argv)
         now = time.time_ns() // 1_000_000
         if arguments.command in {
+            "create-retirement-intent",
+            "retirement-share",
+            "aggregate-retirement",
+            "retire-bundle",
+        }:
+            base = authority_from_document(
+                _safe_document(arguments.authority, "invalid_retirement_authority")
+            )
+            if arguments.command == "create-retirement-intent":
+                receipt = create_retirement_intent(
+                    base,
+                    sorted(arguments.embodiment_id),
+                    issued_at_ms=now,
+                    expires_at_ms=now + arguments.ttl_seconds * 1000,
+                )
+            elif arguments.command == "retirement-share":
+                password = _password(arguments.password_fd)
+                try:
+                    receipt = retirement_share_from_holder(
+                        _safe_document(arguments.intent, "invalid_retirement_intent"),
+                        base,
+                        arguments.holder,
+                        _password_reader(password),
+                        observed_at_ms=now,
+                    )
+                finally:
+                    password[:] = b"\x00" * len(password)
+            elif arguments.command == "aggregate-retirement":
+                receipt = aggregate_retirement(
+                    _safe_document(arguments.intent, "invalid_retirement_intent"),
+                    base,
+                    [
+                        _safe_document(p, "invalid_retirement_share")
+                        for p in arguments.share
+                    ],
+                    observed_at_ms=now,
+                )
+            else:
+                bundle = _safe_document(
+                    arguments.base_runtime, "invalid_retirement_bundle"
+                )
+                if authority_from_runtime_bundle(bundle) != base:
+                    raise RebirthError("retirement_base_mismatch")
+                receipt = apply_retirement_to_runtime_bundle(
+                    bundle,
+                    _safe_document(
+                        arguments.transition, "invalid_retirement_transition"
+                    ),
+                )
+            _write_new_document(arguments.output, receipt)
+            print(
+                json.dumps(
+                    {"state": "prepared", "operation": arguments.command},
+                    sort_keys=True,
+                )
+            )
+            return 0
+        elif arguments.command in {
             "apply-messaging-permissions-migration",
             "resume-messaging-permissions-migration",
         }:
@@ -6026,8 +6376,10 @@ __all__ = [
     "activate_recovery_target_runtime",
     "activate_target_runtime",
     "aggregate_distributed_enrollment",
+    "aggregate_retirement",
     "apply_activation_to_runtime_bundle",
     "apply_recovery_activation_to_runtime_bundle",
+    "apply_retirement_to_runtime_bundle",
     "authority_from_document",
     "authority_from_runtime_bundle",
     "authorize_enrollment_request",
@@ -6039,6 +6391,7 @@ __all__ = [
     "create_enrollment_request",
     "create_messaging_permissions_migration_approval",
     "create_recovery_target_preparation",
+    "create_retirement_intent",
     "create_synthetic_single_store_recovery_custody",
     "create_target_preparation",
     "main",
@@ -6047,6 +6400,7 @@ __all__ = [
     "recovery_request_base",
     "restore_recovery_ledger",
     "resume_messaging_permissions_migration",
+    "retirement_share_from_holder",
     "validate_activation",
     "validate_distributed_enrollment_intent",
     "validate_enrollment_request",

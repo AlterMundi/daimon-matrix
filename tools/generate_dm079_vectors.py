@@ -14,11 +14,16 @@ from typing import Any, cast
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from daimon_matrix.authority_epochs import create_authority_epoch  # noqa: E402
+from daimon_matrix.authority_epochs import (  # noqa: E402
+    create_authority_epoch,
+    create_embodiment_retirement,
+)
 from daimon_matrix.canonical import canonical_bytes  # noqa: E402
 from daimon_matrix.identity import (  # noqa: E402
     create_incarnation_authorization,
+    create_revocation,
     verify_genesis,
+    verify_successor,
 )
 from daimon_matrix.weave import BeingManifest  # noqa: E402
 
@@ -110,6 +115,32 @@ def generate(output: Path) -> None:
     write(output, "authority-epoch.json", transition)
     write(output, "negative/revision-tampered.json", negative)
     write(output, "index.json", index)
+    revocation = create_revocation(
+        state,
+        [seed("root-a"), seed("root-b")],
+        embodiment_id=credential["body"]["embodiment_id"],
+        cutoff_incarnation_sequence=0,
+        revocation_generation=1,
+    )
+    retired_state = verify_successor(revocation, state)
+    retired_value = copy.deepcopy(dict(previous.value))
+    retired_value["revision"] += 1
+    retired_value["control_head"] = retired_state.head
+    for row in retired_value["embodiments"]:
+        row["status"] = "retired"
+    retired = BeingManifest.from_value(retired_value)
+    retirement = create_embodiment_retirement(
+        previous,
+        retired,
+        revocations=[revocation],
+        root_seeds=[seed("root-a"), seed("root-b")],
+        issued_at_ms=NOW + 1,
+    )
+    write(output, "retirement-manifest.json", retired.value)
+    write(output, "embodiment-retirement.json", retirement)
+    missing_threshold = copy.deepcopy(retirement)
+    missing_threshold["signatures"] = missing_threshold["signatures"][:1]
+    write(output, "negative/retirement-missing-threshold.json", missing_threshold)
 
 
 def main() -> None:

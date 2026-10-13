@@ -98,3 +98,46 @@ the canonical signed positive and tampered negative fixtures are reproducibly
 generated under `vectors/weave/v1/authority-epoch/`;
 the installed cross-repository process/relocation proof lives in
 `daimon-cluster#48`.
+
+## Surgical embodiment retirement
+
+`dm.we.embodiment-retirement/v1` is a separate Root-threshold successor. It
+retains every manifest row, credential and incarnation authorization. Only the
+selected active rows become `retired`, the revision advances once, and the
+control head advances through one ordinary DM-021 revocation per selected
+embodiment, in sorted order. It neither rotates Root nor performs recovery.
+
+Each control independently meets the current Root threshold. Its cutoff equals
+the highest retained incarnation sequence, preserving historical verification;
+its revocation generation advances exactly once, rejecting fresh credential use.
+The transition also meets Root threshold and binds the exact preceding/successor
+manifest hashes, revisions, control heads, control artifact IDs and issue time.
+Unselected changes, forks, skipped revisions, insufficient signatures, replay
+and restoration of active authority are rejected.
+
+The previous epoch must be retained in the full supported format: manifest,
+control artifacts/head, credentials, incarnations and successor. Compact history
+would inherit the new control head and misinterpret the previous manifest.
+Historical event verification selects its original epoch; current scope and
+transport authorization use the retired manifest. Active `/we` delivery omits
+retired targets without silently changing conversation fan-out semantics.
+
+`daimon-rebirth create-retirement-intent` prepares exact public material with a
+bounded expiry. `retirement-share` opens one native encrypted holder using
+`--password-fd`, reconstructs that intent and emits only public signatures.
+`aggregate-retirement` verifies the controls and transition without custody.
+`retire-bundle` creates a verified public candidate and removes only the retired
+peer targets. It refuses retirement of that bundle's local origin. These tools
+do not install a bundle, interrupt a daemon, create an embodiment or wake models.
+
+The deployment owner quiesces the selected daemon, holds its runtime lock,
+retains the original encrypted custody and journals, and advances the existing
+keystore control-head metadata with its compare-and-swap counter; keys remain
+unchanged. Then install the verified candidate and a compatible SDK. Preserve
+the forward bundle after partial completion: once retirement is accepted, code
+rollback must continue understanding the signed successor or fail closed. An
+old manifest/control head is history, never an active rollback selector.
+
+Schema and deterministic positive/negative retirement vectors accompany the
+existing DM-079 evidence. Live receiver uptake remains an explicit observed
+deployment result, separate from preparation or signature creation.
