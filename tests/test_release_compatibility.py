@@ -15,6 +15,7 @@ from daimon_matrix.release_compatibility import (
     ReleaseCompatibilityError,
     assess_reader,
     describe_reader,
+    selected_artifacts,
     validate_release,
 )
 
@@ -48,6 +49,91 @@ def digest(value):
 
 
 class ReleaseCompatibilityTests(unittest.TestCase):
+    def test_distinct_receiver_code_keeps_shared_sdk_and_global_defaults(self):
+        release = release_fixture()
+        release["artifacts"]["owner_client"] = "6" * 64
+        first = release["required_receivers"][0]
+        first["artifacts"] = {"receiving_code": "7" * 64}
+        second = {
+            **first,
+            "embodiment_id": "embodiment:synthetic2",
+            "artifacts": {"receiving_code": "8" * 64},
+        }
+        release["required_receivers"].append(second)
+        for row in (first, second):
+            selected = selected_artifacts(
+                release,
+                being_ref=row["being_ref"],
+                embodiment_id=row["embodiment_id"],
+                expected_digest=digest(release),
+            )
+            self.assertEqual(selected["matrix_sdk"], release["artifacts"]["matrix_sdk"])
+            self.assertEqual(selected["owner_client"], "6" * 64)
+            self.assertEqual(
+                selected["receiving_code"], row["artifacts"]["receiving_code"]
+            )
+            self.assertNotIn("telecodex", selected)
+        selected.clear()
+        self.assertEqual(second["artifacts"], {"receiving_code": "8" * 64})
+        # Legacy rows still receive global selections without implicit upgrades.
+        first.pop("artifacts")
+        selected = selected_artifacts(
+            release,
+            being_ref=first["being_ref"],
+            embodiment_id=first["embodiment_id"],
+            expected_digest=digest(release),
+        )
+        self.assertEqual(selected, release["artifacts"])
+        with self.assertRaisesRegex(
+            ReleaseCompatibilityError, "release_receiver_missing"
+        ):
+            selected_artifacts(
+                release,
+                being_ref=first["being_ref"],
+                embodiment_id="embodiment:unselected",
+                expected_digest=digest(release),
+            )
+
+    def test_receiver_override_is_frozen_and_requires_declared_reader_support(self):
+        release = release_fixture()
+        release["required_receivers"][0]["artifacts"] = {"receiving_code": "7" * 64}
+        approved = digest(release)
+        altered = copy.deepcopy(release)
+        altered["required_receivers"][0]["artifacts"]["receiving_code"] = "8" * 64
+        with self.assertRaisesRegex(
+            ReleaseCompatibilityError, "release_digest_mismatch"
+        ):
+            validate_release(altered, expected_digest=approved)
+        old_reader = describe_reader()
+        old_reader["contract"]["capabilities"].remove("per-receiver-artifacts/v1")
+        result = assess_reader(release, old_reader, expected_digest=approved)
+        self.assertFalse(result["compatible"])
+        self.assertEqual(result["reasons"], ["capabilities_unsupported"])
+        self.assertEqual(result["receiving_readiness"], "unobserved")
+        release["contract"]["capabilities"].remove("per-receiver-artifacts/v1")
+        with self.assertRaisesRegex(
+            ReleaseCompatibilityError, "release_contract_invalid"
+        ):
+            validate_release(release, expected_digest=digest(release))
+
+    def test_receiver_cannot_override_shared_sdk_or_reset_unselected_components(self):
+        for artifacts in (
+            {"matrix_sdk": "7" * 64},
+            {"telecodex": None},
+            {},
+            {"custody": "7" * 64},
+            {"receiving_code": "invalid"},
+        ):
+            release = release_fixture()
+            release["required_receivers"][0]["artifacts"] = artifacts
+            with (
+                self.subTest(artifacts=artifacts),
+                self.assertRaisesRegex(
+                    ReleaseCompatibilityError, "release_contract_invalid"
+                ),
+            ):
+                validate_release(release, expected_digest=digest(release))
+
     def test_compatible_code_is_not_loaded_readiness(self):
         release = release_fixture()
         result = assess_reader(

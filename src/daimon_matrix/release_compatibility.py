@@ -43,6 +43,7 @@ _FEATURES = sorted(
         "semantic-body-legs/v3",
         "confirmed-visibility-before-egress/v1",
         "exact-carrier-retry/v1",
+        "per-receiver-artifacts/v1",
     }
 )
 _CONTRACT_FIELDS = {
@@ -95,6 +96,19 @@ def _names(value: Any) -> list[str]:
     if checked != sorted(set(checked)):
         raise ReleaseCompatibilityError("release_contract_invalid")
     return checked
+
+
+def _artifacts(value: Any, *, shared: bool) -> None:
+    if (
+        not isinstance(value, dict)
+        or not value
+        or not set(value) <= _ARTIFACTS
+        or (shared and "matrix_sdk" not in value)
+        or (not shared and "matrix_sdk" in value)
+    ):
+        raise ReleaseCompatibilityError("release_contract_invalid")
+    for digest in value.values():
+        _digest(digest)
 
 
 def _contract(value: Any) -> Mapping[str, Any]:
@@ -174,15 +188,7 @@ def validate_release(value: Any, *, expected_digest: str) -> dict[str, Any]:
         raise ReleaseCompatibilityError("release_contract_invalid")
     if hashlib.sha256(canonical_bytes(value)).hexdigest() != _digest(expected_digest):
         raise ReleaseCompatibilityError("release_digest_mismatch")
-    artifacts = document["artifacts"]
-    if (
-        not isinstance(artifacts, dict)
-        or "matrix_sdk" not in artifacts
-        or not set(artifacts) <= _ARTIFACTS
-    ):
-        raise ReleaseCompatibilityError("release_contract_invalid")
-    for digest in artifacts.values():
-        _digest(digest)
+    _artifacts(document["artifacts"], shared=True)
     provenance = _closed(
         document["provenance"], {"matrix_revision", "qualification_sha256"}
     )
@@ -209,12 +215,33 @@ def validate_release(value: Any, *, expected_digest: str) -> dict[str, Any]:
         raise ReleaseCompatibilityError("release_contract_invalid")
     identities = []
     for row in receivers:
-        _closed(row, {"being_ref", "embodiment_id", "expected_selection_sha256"})
+        fields = {"being_ref", "embodiment_id", "expected_selection_sha256"}
+        if isinstance(row, dict) and "artifacts" in row:
+            fields.add("artifacts")
+            _artifacts(row["artifacts"], shared=False)
+            if "per-receiver-artifacts/v1" not in document["contract"]["capabilities"]:
+                raise ReleaseCompatibilityError("release_contract_invalid")
+        _closed(row, fields)
         identities.append((_text(row["being_ref"]), _text(row["embodiment_id"])))
         _digest(row["expected_selection_sha256"])
     if identities != sorted(set(identities)):
         raise ReleaseCompatibilityError("release_contract_invalid")
     return copy.deepcopy(dict(document))
+
+
+def selected_artifacts(
+    release: Any, *, being_ref: str, embodiment_id: str, expected_digest: str
+) -> dict[str, str]:
+    """Resolve the exact frozen receiver selection; absent roles stay unchanged.
+
+    This is public selection data, not an installation, original-base verification
+    or evidence that any selected component is actually loaded.
+    """
+    document = validate_release(release, expected_digest=expected_digest)
+    for row in document["required_receivers"]:
+        if (row["being_ref"], row["embodiment_id"]) == (being_ref, embodiment_id):
+            return {**document["artifacts"], **row.get("artifacts", {})}
+    raise ReleaseCompatibilityError("release_receiver_missing")
 
 
 def assess_reader(release: Any, reader: Any, *, expected_digest: str) -> dict[str, Any]:
