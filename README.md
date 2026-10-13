@@ -7,25 +7,33 @@ The situated scopes are:
 
 - `/me`: this embodiment, here and now;
 - `/we`: embodiments of the same being;
-- `/tribe`: principals joined through signed relationship and grant history;
+- `/tribe`: beings joined by signed membership in one group; resource grants
+  and deliberately directed relationships remain separate;
 - `/species` and `/source`: capability lineage and attributed ancestry.
 
 Plurality is normal. A global admission mechanism prevents reuse of one
 embodiment credential in two bodies; it must not collapse every embodiment of
 the being into a singleton.
 
-## Release-candidate status
+## Current architecture and deployment
+
+Start with [current architecture and profiles](docs/current-architecture.md) and
+[CURRENT-STATE.md](CURRENT-STATE.md). CompAII, Eko and Oliva share one deployed
+membership group; I/O recovery and future automatic group admission remain
+separate unfinished increments. A delivery receipt is not model attention.
+Current runtime CI selects affected contracts on Python 3.13.5. Metadata support
+for Python 3.11+ is not a current multi-version qualification claim.
+
+## Historical release-candidate status
 
 The integrated V0 Matrix baseline is merged at commit
 `75b34804f8d013d348129946c0cd541a4448e71d`, tree
-`38f3edb002ac52aac2d51fbf533cb58c38b813c5`. The package is being qualified as
-`0.1.0rc1`. The conformance registry contains 102 closed scenarios and public
-CI covers Python 3.11 through 3.14.
+`38f3edb002ac52aac2d51fbf533cb58c38b813c5`. The historical package qualification was
+`0.1.0rc1`, with 102 closed scenarios and Python 3.11 through 3.14. Those figures
+record that RC checkpoint, not current CI or deployment.
 
-This status does not claim that any host, service or production deployment is
-currently running. Historical operational reports document bounded past
-experiments only. Start with [RESUME.md](RESUME.md) and
-[CURRENT-STATE.md](CURRENT-STATE.md) for the authoritative checkpoint.
+Historical qualification is retained in [RESUME.md](RESUME.md). Current receiving
+and service evidence belong in [CURRENT-STATE.md](CURRENT-STATE.md).
 
 ## Component boundary
 

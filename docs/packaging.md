@@ -15,10 +15,11 @@ identify `0.1.0rc1`; fresh reproducible hashes are required before freeze.
 
 ## Supported interpreter baseline
 
-The package requires Python 3.11 or newer. Public CI directly exercises Python
-3.11, 3.12, 3.13, and 3.14. A newer interpreter is not claimed tested until it
-is added to that matrix; the pure-Python metadata deliberately has no upper
-bound that would force an otherwise unnecessary protocol migration.
+Package metadata requires Python 3.11 or newer. Current affected-contract CI
+uses Python 3.13.5, matching the host and receiving containers; consult
+`../.github/workflows/tests.yml` for selected jobs. The older 3.11–3.14 matrix is
+dated RC evidence. Metadata support alone is not interpreter qualification.
+Pure-Python metadata has no upper bound forcing unnecessary protocol migration.
 
 ## Build
 

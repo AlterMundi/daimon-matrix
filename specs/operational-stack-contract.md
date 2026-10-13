@@ -12,10 +12,10 @@ migration stage described below is historical.
 > remain in force. No schema, runtime, live removal or archive is changed by
 > this documentation reconciliation.
 
-This contract assigns authority while the provisional Cluster/Tribe canary is
-migrated into the required `daimon-matrix` runtime. It is intentionally strict
-about the difference between operational trust and cryptographic identity.
-The external Matrix.org protocol is not part of this stack.
+This contract assigns current component authority. Start operational work from
+[current architecture and profiles](../docs/current-architecture.md). The
+provisional canary section retains signed-binding history, not a current
+installation flow. The external Matrix.org protocol is not part of this stack.
 
 ## Authority map
 
@@ -24,7 +24,7 @@ The external Matrix.org protocol is not part of this stack.
 | `daimon-matrix` | ontology, being-root continuity, canonical schemas/state, Weave ledger/sync, scopes, memory policy, communications | host resources and container lifecycle |
 | Cluster | bodies, embodiments, incarnations, Matrix process/state-volume hosting, resource fences, lifecycle evidence | being identity, event meaning, memory meaning, Tribe governance |
 | Weave subsystem | independent per-embodiment ledger and reusable `/we.sync` evidence inside `daimon-matrix` | transport directory, resource fencing, root identity |
-| Tribe Bridge | transitional authenticated principals, encrypted delivery, audiences, ACKs | same-being membership, memory adoption, resource effects |
+| Native Matrix messaging and authenticated carriers | membership-based group/directed semantics and separate transport observations | resource permission, memory adoption, model activation |
 
 Codex and Hermes are replaceable body runtimes above this authority map. They
 may consume Matrix scopes and submit authorized requests, but neither owns
@@ -50,7 +50,10 @@ membership, or lets a Cluster receipt authorize Matrix meaning. The full
 contract and the later Cluster pin-bump checklist are in
 `docs/dm070-multihost-convergence.md`.
 
-## Provisional same-being manifest
+## Historical provisional same-being manifest
+
+This section describes canary-to-Root binding only. New receiving bodies use
+signed identity/enrollment, never administrator-only identity or Bridge setup.
 
 Before a Matrix root exists, an administrator installs the same canonical
 `being-manifest/v1` document on every participating host. Its required fields
@@ -71,17 +74,19 @@ that binding. Tribe keys MUST NOT become Matrix root keys.
 After binding, Matrix credential verification replaces the administrator
 manifest as same-being authority. The exact bound provisional manifest and
 event closure remain readable historical authorities but cannot authorize new
-events. DM-050 through DM-055 replace the standalone Tribe Bridge runtime while
-preserving its recipient-encrypted delivery evidence. Neither migration changes
-Cluster's resource authority.
+events. Native Matrix communication supersedes Bridge; its operational state is
+not a required migration input. Original provisional evidence remains preserved
+through explicit binding. Neither history mechanism changes Cluster authority.
 
 ## End-to-end flow
 
 1. Cluster resolves the local body, embodiment, and current incarnation.
 2. `daimon-matrix` verifies the being root, embodiment credential, incarnation
    authorization, and any provisional-history binding.
-3. The Matrix communications layer authenticates and encrypts direct messages;
-   during migration, Tribe Bridge supplies that transport.
+3. Matrix resolves signed group membership or deliberate directed authority,
+   freezes the audience and encrypts the native message. Authenticated carrier
+   adapters move unchanged bytes without adding recipients. No Bridge fallback
+   participates.
 4. Matrix verifies the sender, credential/revocation state, event signature,
    origin chain, bounds, and `being_ref` before adding data to `known` state.
 5. Imported data is not effective until a local decision accepts it.

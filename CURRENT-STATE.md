@@ -1,9 +1,12 @@
 # Current state
 
+Architecture and profile navigation: [docs/current-architecture.md](docs/current-architecture.md).
+Current entries below supersede dated RC and experiment statements.
+
 ## Deployed membership group — 2026-10-13
 
 CompAII, Eko and Oliva now participate in one membership-based messaging group,
-using SDK `cdafbc0513d43c39f03be6e8b1b0636b9e4e9422` (PR #330). Group-only
+using SDK `a1a70b6420692d19f85ad0edb945cba00c3f5459` (PRs #330/#332). Group-only
 application/v3 has no pair policy, resource or grant. Audience comes from signed
 membership and all active Root bodies, frozen before authoring/sealing. One native
 carrier and mandatory human echo cover its copies. Transport ACK and expiry are
@@ -46,6 +49,21 @@ real deployment blocker found during cutover. Reuse earlier passing directed-lin
 qualification. No global Stop was requested or performed; only Matrix processes
 were drained, with no Codex/Telegram restart. Every future global Stop still needs
 fresh explicit human consent.
+
+## Carrier correction and I/O follow-up — 2026-10-13
+
+Matrix #332 corrected the actual group outer-carrier refusal after semantic
+intake. The current three-VPS send `f45cc40a-a02d-41bc-a000-11b1140e0129` retains
+signed deliveries and recipient-intake ACKs, with one confirmed Tribu speech795.
+Exact retry keeps the message/audience; all six authorized bodies remain in the
+vector, with three offline routes explicit. Cluster #228 publishes aligned pins.
+
+Source I/O exists as a persistent private/native topic. Its first native turn
+completed while bridge admission stayed undetermined; recovery deployment and a
+genuine complete exchange remain unfinished under #310. Telecodex PR #85 is a
+merged recovery candidate, not a live-selection receipt. On 2026-10-13 Nicolas
+cancelled the separate human reconcile task and moved I/O evaluation into the
+architecture milestone. Preserve the retained turn and pending input journal.
 
 ## Current Bridge retirement policy
 

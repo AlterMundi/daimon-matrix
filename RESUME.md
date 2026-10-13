@@ -1,4 +1,9 @@
-# Project resume checkpoint
+# Historical release candidate checkpoint
+
+For current architecture, profiles and deployment, start with
+[docs/current-architecture.md](docs/current-architecture.md) and
+[CURRENT-STATE.md](CURRENT-STATE.md). Pins, release procedures and the CI matrix
+below preserve dated RC evidence, not the current execution path.
 
 Status: this checkpoint records the merged integrated V0 Matrix baseline and
 the release-candidate qualification contract. It does not claim a current

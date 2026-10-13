@@ -172,6 +172,12 @@ TRIBE_GROUP_FILES = (
 
 CONTEXT_DOC_FILES = frozenset(
     {
+        "README.md",
+        "RESUME.md",
+        "docs/current-architecture.md",
+        "docs/packaging.md",
+        "specs/identity-continuity.md",
+        "specs/operational-stack-contract.md",
         "AGENTS.md",
         "CURRENT-STATE.md",
         "docs/file-peer-enrollment.md",
