@@ -882,6 +882,7 @@ class TransportIngress:
         fence_ref: str | None = None,
         intake_validator: IntakeValidator | None = None,
         intake_gate: IntakeGate | None = None,
+        carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> None:
         for value in (
             provider_ref,
@@ -954,6 +955,7 @@ class TransportIngress:
         self.fence_ref = fence_ref
         self.intake_validator = intake_validator
         self.intake_gate = intake_gate
+        self.carrier_inspector = carrier_inspector
 
     def _authorize_egress(self, binding: OperationBinding) -> bool:
         if binding.authority_head != self.egress_authority_head:
@@ -1034,7 +1036,7 @@ class TransportIngress:
                     != submission["envelope_sha256"]
                 ):
                     raise RouteError("transport_request_refused")
-                metadata = inspect_delivery(envelope, at_ms=now)
+                metadata = self.carrier_inspector(envelope, at_ms=now)
                 if (
                     metadata["delivery_id"] != submission["delivery_id"]
                     or metadata["event_id"] != submission["message_id"]
@@ -1456,10 +1458,50 @@ class AuthenticatedProvider:
             raise RouteError(code) from exception
 
     def send_prepared(
-        self, request: bytes, *, response_sink: Callable[[bytes], None] | None = None
+        self,
+        request: bytes,
+        *,
+        response_sink: Callable[[bytes], None] | None = None,
+        carrier_binding: OperationBinding | None = None,
     ) -> Mapping[str, Any]:
         """Transmit exact bytes; optionally retain the authenticated response."""
         value, _, _ = self._prepared_submission(request)
+        carrier = unb64url(cast(str, value["envelope"]))
+        if carrier_binding is not None and (
+            carrier_binding.path_id
+            not in {"tribe-message-request", "tribe-receipt-request"}
+            or carrier_binding.native_sha256 != hashlib.sha256(carrier).hexdigest()
+        ):
+            raise RouteError("route_group_carrier_mismatch")
+        if carrier_binding is not None:
+            group = _decode_canonical(carrier, "route_group_carrier_mismatch")
+            if carrier_binding.path_id == "tribe-message-request":
+                if group.get("schema") != "dm.tribe.conversation/v1":
+                    raise RouteError("route_group_carrier_mismatch")
+                sealed = unb64url(cast(str, group["envelope"]))
+                metadata = inspect_delivery(sealed, at_ms=self._clock())
+                sender = _decode_canonical(sealed, "route_group_carrier_mismatch")[
+                    "sender"
+                ]
+                if (
+                    value["message_id"] != metadata["event_id"]
+                    or value["delivery_id"] != metadata["delivery_id"]
+                    or value["recipient_id"] not in metadata["recipient_embodiment_ids"]
+                    or sender["being_ref"] != self._sender_principal
+                ):
+                    raise RouteError("route_group_carrier_mismatch")
+            elif (
+                group.get("schema") != "dm.tribe.intake-result/v1"
+                or group["receipt"]["being_ref"] != self._sender_principal
+                or value["message_id"] != group["receipt"]["event_id"]
+                or value["delivery_id"]
+                != str(
+                    uuid.uuid5(
+                        uuid.UUID(group["receipt"]["event_id"]), "tribe-receipt/v1"
+                    )
+                )
+            ):
+                raise RouteError("route_group_carrier_mismatch")
         if not self._available:
             return self._result(value, "unavailable", "unavailable", None)
         try:
@@ -1473,18 +1515,32 @@ class AuthenticatedProvider:
             if type(self._round_trip) is _SplitRoundTrip:
                 exchange = self._round_trip.open()
                 try:
-                    self._egress.release_registered(
-                        request, allowed_paths=paths, effect=exchange.write
-                    )
+                    if carrier_binding is None:
+                        self._egress.release_registered(
+                            request, allowed_paths=paths, effect=exchange.write
+                        )
+                    else:
+                        self._egress.release(
+                            carrier_binding,
+                            carrier,
+                            lambda _carrier: exchange.write(request),
+                        )
                     raw_response = exchange.read()
                 finally:
                     exchange.close()
             else:
                 # Opaque callbacks have no separate write boundary. Preserve
                 # their existing atomic authorization/execution semantics.
-                raw_response = self._egress.release_registered(
-                    request, allowed_paths=paths, effect=self._round_trip
-                )
+                if carrier_binding is None:
+                    raw_response = self._egress.release_registered(
+                        request, allowed_paths=paths, effect=self._round_trip
+                    )
+                else:
+                    raw_response = self._egress.release(
+                        carrier_binding,
+                        carrier,
+                        lambda _carrier: self._round_trip(request),
+                    )
             result = self.validate_prepared_response(request, raw_response)
             if response_sink is not None:
                 response_sink(raw_response)

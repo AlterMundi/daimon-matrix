@@ -292,6 +292,31 @@ def load_owner_visibility(
             raise ValueError
         disclosed_participants: set[str] = set()
         for channel in channels:
+            if isinstance(channel, dict) and channel.get("direction") == "group":
+                group = _closed(
+                    channel,
+                    {
+                        "channel_id",
+                        "direction",
+                        "local_being_ref",
+                        "tribe_ref",
+                        "membership_ref",
+                        "participants",
+                    },
+                )
+                if (
+                    not isinstance(group["channel_id"], str)
+                    or not group["channel_id"]
+                    or group["local_being_ref"] != owner_actor
+                    or not isinstance(group["tribe_ref"], str)
+                    or not group["tribe_ref"]
+                    or not isinstance(group["membership_ref"], str)
+                    or not group["membership_ref"]
+                    or group["participants"] != participants
+                ):
+                    raise ValueError
+                disclosed_participants.update(participants)
+                continue
             channel = _closed(
                 channel,
                 {
@@ -521,6 +546,8 @@ PEER_EGRESS_PATHS: Final[frozenset[str]] = frozenset(
         "messaging-message-request",
         "messaging-evidence-result",
         "messaging-message-result",
+        "tribe-message-request",
+        "tribe-receipt-request",
         "peer-scope-request",
         "peer-sync-request",
         "peer-scope-response",
@@ -1135,6 +1162,9 @@ class MandatoryEgressController:
     def _authoritative_paths(cls, database: sqlite3.Connection) -> frozenset[str]:
         names = cls._table_names(database)
         mappings = {
+            "tribe_records": frozenset(
+                {"tribe-message-request", "tribe-receipt-request"}
+            ),
             "communication_egress_requests": frozenset({"route-provider-request"}),
             "peer_exchanges": frozenset(
                 {
@@ -1180,6 +1210,33 @@ class MandatoryEgressController:
         if not allowed_paths or not allowed_paths <= authoritative_paths:
             raise NativeEgressError("egress_catalog_invalid")
         histories: list[list[_NativeHistory]] = []
+        if "tribe_records" in names:
+            catalog = self._catalogs[catalog_id]
+            entries = []
+            for row in database.execute(
+                "SELECT record_id FROM tribe_records WHERE kind='native' "
+                "ORDER BY record_id"
+            ):
+                locator = str(row[0])
+                # The resolver authenticates the signed record's locator,
+                # request and historical recording epoch before returning bytes.
+                native = catalog.resolve(locator)
+                document = json.loads(native)
+                paths = {
+                    "dm.tribe.conversation/v1": "tribe-message-request",
+                    "dm.tribe.intake-result/v1": "tribe-receipt-request",
+                }
+                if document.get("schema") not in paths:
+                    raise NativeEgressError("egress_historical_obligation_inconsistent")
+                entries.append(
+                    _NativeHistory(
+                        operation_id=locator,
+                        locator=locator,
+                        native_sha256=_digest(native),
+                        path_id=paths[document["schema"]],
+                    )
+                )
+            histories.append(entries)
         if "communication_egress_requests" in names:
             histories.append(
                 [

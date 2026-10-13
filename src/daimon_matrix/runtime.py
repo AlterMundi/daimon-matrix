@@ -1469,6 +1469,11 @@ def load_runtime(
             tribe_provider=(
                 None if relationship_context is None else current_tribe_provider
             ),
+            tribe_authority_resolver=(
+                None
+                if relationship_context is None
+                else relationship_context.authority_resolver
+            ),
         )
     except ScopeError as exception:
         raise RuntimeError("runtime_scope_configuration_rejected") from exception

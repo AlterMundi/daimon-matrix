@@ -234,6 +234,31 @@ class TribeChannelConfigurationTests(unittest.TestCase):
         validate_shape(spec, specification=True)
 
 
+class DirectRelationshipConfigurationTests(unittest.TestCase):
+    def test_direct_relationship_needs_no_invented_membership(self) -> None:
+        from daimon_matrix.messaging import MessagingPeerPolicy
+
+        specification = _spec()
+        for direction in ("incoming", "outgoing"):
+            policy = specification[direction]["policy"]
+            policy.update(tribe_ref=None, membership_ref=None)
+            parsed = MessagingPeerPolicy(**policy)
+            self.assertEqual(parsed.recipient_id, policy["relationship_id"])
+        validate_shape(specification, specification=True)
+
+    def test_partial_membership_is_rejected(self) -> None:
+        from daimon_matrix.messaging import MessagingPeerPolicy
+
+        for field in ("tribe_ref", "membership_ref"):
+            specification = _spec()
+            policy = specification["incoming"]["policy"]
+            policy[field] = None
+            with self.assertRaises(ValueError):
+                MessagingPeerPolicy(**policy)
+            with self.assertRaises(MessagingConfigError):
+                validate_shape(specification, specification=True)
+
+
 class PublishedSchemaTests(unittest.TestCase):
     def test_the_tribe_section_is_optional_and_closed_in_both_versions(self) -> None:
         root = Path(__file__).resolve().parents[1] / "schemas" / "messaging"

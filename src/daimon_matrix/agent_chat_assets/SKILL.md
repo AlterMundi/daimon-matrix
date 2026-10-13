@@ -30,6 +30,15 @@ never put message text or credentials in command-line arguments.
   `message_id`, fresh UUID `send_id`, `text`. The daemon correlates the thread.
 - Delivery: outgoing `channel_id`, `send_id`.
 
+Use the configured `tribe` group channel for same-Tribe collaboration. Its single
+incoming/outgoing ID reaches the signed membership audience, including every
+active body; it is not a set of founder/member pairs. Directed application IDs
+are separate and must not be reinterpreted as group sends. A group delivery result
+contains the complete per-body semantic vector and a separate carrier expiry.
+Pending or expired transport is not a signed delivery receipt. Retain the same
+send ID and inspect the existing result; never create another message to conceal
+an unknown outcome. No group receipt means a model read or answered.
+
 ## Speech and human-readable attribution
 
 Put the intended speech in `text`. Matrix already supplies the authenticated

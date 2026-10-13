@@ -31,6 +31,7 @@ from .communication import (
     _resolution_payload,
 )
 from .ledger import Clock, Ledger, LedgerError
+from .messaging_store import TribeRecordStore
 from .relationship_store import RelationshipStore, RelationshipStoreError
 from .sealed import (
     MAX_RECIPIENTS as MAX_TRIBE_RECIPIENTS,
@@ -43,11 +44,15 @@ from .sealed import (
     TRIBE_SCOPE,
     DeliveryCustody,
     DisclosureAuthorization,
+    EnvelopeStore,
     RecipientTarget,
     SealedDeliveryError,
     _parse,
+    inspect_delivery,
     open_event,
+    recipient_descriptor,
     seal_event,
+    sealing_plan_hash,
 )
 from .weave import (
     Event,
@@ -299,11 +304,10 @@ flattened into "this member is owed a retry".
 class TribeConversation:
     """One tribe's members conversing, authorized by membership alone.
 
-    Foreign material never enters a local ledger. A message sealed by another being
-    cannot verify against this being's root, so the lane opens it, returns it, and
-    leaves retention to the host's own inbox and communication stores, exactly as
-    the inter-daimon lane does. What this lane writes locally is one thing only:
-    the receipt this body signed for what it heard.
+    Foreign material never enters a local ledger. The lane retains authenticated
+    plaintext and its resolution in the body's protected inbox before signing a
+    receipt into its own ledger. Its outbox freezes the signed send plan and exact
+    envelope before any transport effect.
 
     Authority is active signed membership in one exact tribe at send time plus a
     root-authorized credential for the event time. No grant, resource or operation
@@ -332,6 +336,8 @@ class TribeConversation:
         relationships: RelationshipStore,
         card_verifier: Any,
         authority_resolver: Callable[[str], Any],
+        records: TribeRecordStore | None = None,
+        envelopes: EnvelopeStore | None = None,
     ) -> None:
         history = ledger.authority
         authority = (
@@ -350,6 +356,12 @@ class TribeConversation:
         self.relationships = relationships
         self.card_verifier = card_verifier
         self.authority_resolver = authority_resolver
+        self.records = records or TribeRecordStore(
+            ledger.path.with_name(ledger.path.name + ".tribe-records.sqlite")
+        )
+        self.envelopes = envelopes or EnvelopeStore(
+            ledger.path.with_name(ledger.path.name + ".tribe-envelopes.sqlite")
+        )
         self.being_ref = authority.manifest.being_ref
         self.local_embodiment_id = _text(
             ledger.local_origin["embodiment_id"], "tribe_lane_origin_invalid"
@@ -375,7 +387,10 @@ class TribeConversation:
         authority = (
             resolved.active if isinstance(resolved, RootHistoryAuthority) else resolved
         )
-        if not isinstance(authority, RootAuthority):
+        if (
+            not isinstance(authority, RootAuthority)
+            or authority.manifest.being_ref != being_ref
+        ):
             raise TribeConversationError("tribe_lane_authority_invalid")
         return authority
 
@@ -403,7 +418,10 @@ class TribeConversation:
             membership_ref = _text(
                 member["membership_ref"], "tribe_lane_member_invalid"
             )
-            for row in self._active(being_ref).manifest.value["embodiments"]:
+            authority = self._active(being_ref)
+            if authority.manifest.being_ref != being_ref:
+                raise TribeConversationError("tribe_lane_authority_invalid")
+            for row in authority.manifest.value["embodiments"]:
                 if row["status"] != "active":
                     continue
                 embodiment_id = _text(row["embodiment_id"], "tribe_lane_member_invalid")
@@ -426,9 +444,99 @@ class TribeConversation:
             raise TribeConversationError("tribe_lane_audience_empty")
         if len(rows) > MAX_TRIBE_RECIPIENTS:
             raise TribeConversationError("tribe_lane_audience_too_large")
-        return tuple(sorted(rows, key=lambda item: tuple(sorted(item.values()))))
+        return tuple(
+            sorted(
+                rows, key=lambda item: (item["membership_ref"], item["embodiment_id"])
+            )
+        )
 
-    def converse(
+    def _epoch(self, being_ref: str, digest: str) -> RootAuthority:
+        resolved = self.authority_resolver(being_ref)
+        epochs = (
+            [*resolved.historical, resolved.active]
+            if isinstance(resolved, RootHistoryAuthority)
+            else [resolved]
+        )
+        matches = [
+            epoch
+            for epoch in epochs
+            if isinstance(epoch, RootAuthority)
+            and epoch.manifest.being_ref == being_ref
+            and epoch.manifest.digest == digest
+        ]
+        if len(matches) != 1:
+            raise TribeConversationError("tribe_lane_frozen_authority_missing")
+        return matches[0]
+
+    def _operational(
+        self, being: str, credential: str, embodiment: str, now: int
+    ) -> None:
+        authority = self._active(being)
+        if not any(
+            row["status"] == "active"
+            and row["embodiment_id"] == embodiment
+            and row["embodiment_credential_id"] == credential
+            for row in authority.manifest.value["embodiments"]
+        ):
+            raise TribeConversationError("tribe_lane_credential_not_active")
+        recipient_descriptor(RecipientTarget(authority, credential), at_ms=now)
+
+    def _frozen_recipient(
+        self, entry: Mapping[str, Any], sent_at: int
+    ) -> RecipientTarget:
+        resolved = self.authority_resolver(str(entry["being_ref"]))
+        epochs = (
+            [resolved.active, *reversed(resolved.historical)]
+            if isinstance(resolved, RootHistoryAuthority)
+            else [resolved]
+        )
+        for authority in epochs:
+            if (
+                not isinstance(authority, RootAuthority)
+                or authority.manifest.being_ref != entry["being_ref"]
+            ):
+                continue
+            target = RecipientTarget(authority, str(entry["credential_id"]))
+            try:
+                descriptor = recipient_descriptor(target, at_ms=sent_at)
+            except SealedDeliveryError:
+                continue
+            if all(descriptor[key] == entry[key] for key in descriptor):
+                return target
+        raise TribeConversationError("tribe_lane_frozen_authority_missing")
+
+    def _freeze(self, tribe: str, now: int, ttl: int) -> dict[str, Any]:
+        snapshot = self.snapshot(tribe, now)
+        members = list(snapshot.value["members"])
+        rows = self.audience(snapshot)
+        own = [row for row in members if row["principal_id"] == self.being_ref]
+        if len(own) != 1 or own[0]["state"] != "active":
+            raise TribeConversationError("tribe_lane_not_a_member")
+        if not any(
+            (row["being_ref"], row["embodiment_id"])
+            != (self.being_ref, self.local_embodiment_id)
+            for row in rows
+        ):
+            raise TribeConversationError("tribe_lane_no_other_body")
+        authorizer = MembershipAuthorizer(self.relationships.events())
+        return {
+            "issued_at_ms": now,
+            "expires_at_ms": now + ttl,
+            "rows": list(rows),
+            "members": members,
+            "epochs": {
+                row["being_ref"]: self._active(row["being_ref"]).manifest.digest
+                for row in rows
+            },
+            "proofs": authorizer.proofs(members=members, tribe_ref=tribe),
+            "sender_proof": authorizer.proof(
+                membership_ref=str(own[0]["membership_ref"]),
+                tribe_ref=tribe,
+                principal_id=self.being_ref,
+            ),
+        }
+
+    def prepare(
         self,
         *,
         text: str,
@@ -437,21 +545,12 @@ class TribeConversation:
         thread_id: str | None = None,
         sensitivity: str = "personal",
         ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
-        deliver: DeliverTribeConversation | None = None,
+        response_context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Author, seal and hand over one message to the whole tribe.
+        """Freeze before authoring; durably return one exact sealed carrier.
 
-        One message is one signed event in one envelope with one wrapped key per
-        member body. Authoring is idempotent under the caller's request id, so an
-        exact retry says the same thing once; byte-exact transport retry belongs to
-        the carrier's own outbox, not here.
-
-        The returned ``deliveries`` vector has exactly one row per audience member and
-        is the only honest answer about who got it: ``author`` for this body's own
-        embodiments, ``sealed`` when no carrier was supplied, ``delivered`` with the
-        member's verified receipt, and ``undelivered`` for a member the carrier could
-        not reach. An ``undelivered`` row is retryable under the same request id, which
-        re-authors the same event and re-attempts delivery rather than saying it twice.
+        No network effect or receipt authoring occurs here. A retry, including
+        after a restart or membership change, consults the original signed plan.
         """
         now = _uint(self.clock(), "tribe_lane_clock_invalid")
         request = _uuid_text(request_id, "tribe_lane_request_invalid")
@@ -460,10 +559,7 @@ class TribeConversation:
             raise TribeConversationError("tribe_lane_ttl_invalid")
         tribe = _text(tribe_ref, "tribe_lane_tribe_ref_invalid")
         content = _text(text, "tribe_lane_text_invalid", maximum=MAX_TRIBE_TEXT_BYTES)
-        classification = _text(
-            sensitivity, "tribe_lane_sensitivity_invalid", maximum=32
-        )
-        if classification not in {"personal", "private", "shareable"}:
+        if sensitivity not in {"personal", "private", "shareable"}:
             raise TribeConversationError("tribe_lane_sensitivity_invalid")
         thread = (
             _uuid_text(thread_id, "tribe_lane_thread_invalid")
@@ -472,18 +568,21 @@ class TribeConversation:
                 uuid.uuid5(uuid.NAMESPACE_URL, f"{TRIBE_CLIENT_ID}:thread:{request}")
             )
         )
-        snapshot = self.snapshot(tribe, now)
-        members = list(snapshot.value["members"])
-        rows = self.audience(snapshot)
-        own = [row for row in members if row["principal_id"] == self.being_ref]
-        if len(own) != 1 or own[0]["state"] != "active":
-            raise TribeConversationError("tribe_lane_not_a_member")
-        authorizer = MembershipAuthorizer(self.relationships.events())
-        proofs = authorizer.proofs(members=members, tribe_ref=tribe)
-        sender_proof = authorizer.proof(
-            membership_ref=_text(own[0]["membership_ref"], "tribe_lane_member_invalid"),
+        parameters = dict(
+            text=content,
             tribe_ref=tribe,
-            principal_id=self.being_ref,
+            thread_id=thread,
+            sensitivity=sensitivity,
+            ttl_ms=ttl,
+            response_context=response_context,
+        )
+        plan = self.records.reserve(
+            "send", request, parameters, lambda: self._freeze(tribe, now, ttl)
+        )
+        rows, issued, expires = (
+            plan["rows"],
+            plan["issued_at_ms"],
+            plan["expires_at_ms"],
         )
         targets = [
             {
@@ -500,7 +599,15 @@ class TribeConversation:
             request_id=request,
             subject=TRIBE_MESSAGE_SUBJECT,
             payload={
-                "body": {"text": content},
+                "body": {
+                    "text": content,
+                    "audience": rows,
+                    **(
+                        {"response_context": dict(response_context)}
+                        if response_context is not None
+                        else {}
+                    ),
+                },
                 "intent": {
                     "operation": TRIBE_CONVERSE_OPERATION,
                     "scope": TRIBE_SCOPE,
@@ -509,55 +616,119 @@ class TribeConversation:
                 "reply": None,
                 "schema": MESSAGE_PAYLOAD_SCHEMA,
             },
-            sensitivity=classification,
-            occurred_at_ms=now,
+            sensitivity=sensitivity,
+            occurred_at_ms=issued,
             causal_parents=(),
-        )
-        message_id = _text(
-            message["event_id"], "tribe_lane_message_invalid", maximum=64
         )
         resolution = self._author(
             client_id=TRIBE_RESOLUTION_CLIENT_ID,
             request_id=request,
             subject=TRIBE_RESOLUTION_SUBJECT,
             payload={
-                "message_id": message_id,
+                "message_id": message["event_id"],
                 "schema": RESOLUTION_PAYLOAD_SCHEMA,
                 "scope": TRIBE_SCOPE,
                 "targets": targets,
             },
             sensitivity="shareable",
-            occurred_at_ms=now,
-            causal_parents=(message_id,),
+            occurred_at_ms=issued,
+            causal_parents=(message["event_id"],),
         )
         recipient_targets = [
-            RecipientTarget(self._active(row["being_ref"]), row["credential_id"])
+            RecipientTarget(
+                self._epoch(row["being_ref"], plan["epochs"][row["being_ref"]]),
+                row["credential_id"],
+            )
             for row in rows
         ]
-        authorization = self._authorize(
-            message,
-            resolution,
-            tribe_ref=tribe,
-            proofs=proofs,
-            sender_proof=sender_proof,
+        sender = self._epoch(self.being_ref, message["manifest_hash"])
+        authorization = DisclosureAuthorization.from_membership_resolution_event(
+            event=message,
+            resolution_event=resolution,
+            sender_authority=sender,
             recipient_targets=recipient_targets,
-            expires_at_ms=now + ttl,
+            memberships=plan["proofs"],
+            sender_membership=plan["sender_proof"],
+            tribe_ref=tribe,
+            expires_at_ms=expires,
+            authorization_id=str(
+                uuid.uuid5(uuid.UUID(request), "tribe-authorization/v1")
+            ),
         )
-        envelope = seal_event(
+        digest = sealing_plan_hash(
             message,
-            sender_authority=self.authority,
-            recipients=recipient_targets,
-            authorization=authorization,
-            custody=self.custody,
-            issued_at_ms=now,
-            expires_at_ms=now + ttl,
+            authorization,
+            recipient_targets,
+            issued_at_ms=issued,
+            expires_at_ms=expires,
         )
-        payload = tribe_conversation_payload(
-            envelope=envelope, resolution=resolution, tribe_ref=tribe
+        envelope = self.envelopes.get_or_create(
+            request,
+            digest,
+            lambda: seal_event(
+                message,
+                sender_authority=sender,
+                recipients=recipient_targets,
+                authorization=authorization,
+                custody=self.custody,
+                issued_at_ms=issued,
+                expires_at_ms=expires,
+            ),
         )
+        return {
+            "message": message,
+            "resolution": resolution,
+            "rows": rows,
+            "payload": tribe_conversation_payload(
+                envelope=envelope, resolution=resolution, tribe_ref=tribe
+            ),
+            "issued_at_ms": issued,
+            "expires_at_ms": expires,
+        }
+
+    def converse(
+        self,
+        *,
+        text: str,
+        request_id: str,
+        tribe_ref: str,
+        thread_id: str | None = None,
+        sensitivity: str = "personal",
+        ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
+        deliver: DeliverTribeConversation | None = None,
+    ) -> dict[str, Any]:
+        """Author, seal and hand over one message to the whole tribe.
+
+        One message is one signed event in one envelope with one wrapped key per
+        member body. Authoring is idempotent under the caller's request id, so an
+        exact retry says the same thing once and retains the byte-exact envelope.
+
+        The returned ``deliveries`` vector has exactly one row per audience member and
+        is the only honest answer about who got it: ``author`` for the author body,
+        ``sealed`` when no carrier was supplied, ``delivered`` with the
+        member's verified receipt, and ``undelivered`` for a member the carrier could
+        not reach. An ``undelivered`` row is retryable under the same request id, which
+        re-authors the same event and re-attempts delivery rather than saying it twice.
+        """
+        prepared = self.prepare(
+            text=text,
+            request_id=request_id,
+            tribe_ref=tribe_ref,
+            thread_id=thread_id,
+            sensitivity=sensitivity,
+            ttl_ms=ttl_ms,
+        )
+        message, resolution = prepared["message"], prepared["resolution"]
+        rows, payload = prepared["rows"], prepared["payload"]
+        tribe = tribe_ref
+        message_id = message["event_id"]
+        thread = message["payload"]["intent"]["thread_id"]
         deliveries: list[dict[str, Any]] = []
         for row in rows:
-            if row["being_ref"] == self.being_ref:
+            if (
+                row["being_ref"] == self.being_ref
+                and row["embodiment_id"] == self.local_embodiment_id
+            ):
                 # The author is inside the sealed carrier set and still does not
                 # intake its own message: hearing only yourself is a ledger note.
                 deliveries.append(
@@ -595,6 +766,7 @@ class TribeConversation:
                 row=row,
                 message=message,
                 resolution=resolution,
+                tribe_ref=tribe,
             )
             deliveries.append(
                 {
@@ -686,6 +858,7 @@ class TribeConversation:
         row: Mapping[str, str],
         message: Mapping[str, Any],
         resolution: Mapping[str, Any],
+        tribe_ref: str,
     ) -> Mapping[str, Any]:
         """Bind one returned intake result to this message and this member body."""
         if not isinstance(result, Mapping) or set(result) != {
@@ -702,6 +875,7 @@ class TribeConversation:
         receipt = result["receipt"]
         if (
             result["schema"] != TRIBE_INTAKE_SCHEMA
+            or result["tribe_ref"] != tribe_ref
             or result["message_id"] != message["event_id"]
             or result["message_hash"] != message["content_hash"]
             or result["recipient_embodiment_id"] != row["embodiment_id"]
@@ -723,12 +897,28 @@ class TribeConversation:
             or payload.get("recipient_type") != "relationship"
             or payload.get("recipient_id") != row["membership_ref"]
             or payload.get("outcome") != "delivered"
+            or receipt.get("being_ref") != row["being_ref"]
+            or payload.get("message_being_ref") != message["being_ref"]
+            or payload.get("message_ref")
+            != {"event_id": message["event_id"], "event_hash": message["content_hash"]}
+            or payload.get("resolution_ref")
+            != {
+                "event_id": resolution["event_id"],
+                "event_hash": resolution["content_hash"],
+            }
+            or payload.get("thread_id") != message["payload"]["intent"]["thread_id"]
+            or type(payload.get("observed_at_ms")) is not int
+            or payload["observed_at_ms"] < message["occurred_at_ms"]
+            or payload["observed_at_ms"] > receipt.get("occurred_at_ms", -1)
         ):
             raise TribeConversationError("tribe_lane_intake_result_invalid")
         # A foreign receipt must be signed by the member's own authority, so the
         # sender cannot accept a receipt nobody authored.
         try:
-            verify_event(receipt, self._active(str(row["being_ref"])))
+            verify_event(
+                receipt,
+                self._epoch(str(row["being_ref"]), str(receipt["manifest_hash"])),
+            )
         except WeaveProtocolError as exception:
             raise TribeConversationError("tribe_lane_receipt_unverified") from exception
         return receipt
@@ -754,13 +944,23 @@ class TribeConversation:
         raw = unb64url(
             _text(payload["envelope"], "tribe_lane_envelope_invalid", maximum=1 << 22)
         )
+        inspect_delivery(raw, at_ms=now)
+        if not isinstance(payload["resolution"], Mapping) or not isinstance(
+            payload["resolution"].get("manifest_hash"), str
+        ):
+            raise TribeConversationError("tribe_lane_payload_invalid")
         envelope = _closed_envelope(_parse(raw))
         sender_being = _text(
             envelope["sender"]["being_ref"], "tribe_lane_sender_invalid"
         )
-        if sender_being == self.being_ref:
+        if (
+            sender_being == self.being_ref
+            and envelope["sender"]["embodiment_id"] == self.local_embodiment_id
+        ):
             raise TribeConversationError("tribe_lane_sender_is_local")
-        sender_authority = self._active(sender_being)
+        sender_authority = self._epoch(
+            sender_being, payload["resolution"]["manifest_hash"]
+        )
         try:
             resolution = verify_event(payload["resolution"], sender_authority)
         except WeaveProtocolError as exception:
@@ -771,39 +971,77 @@ class TribeConversation:
             envelope["event_id"], "tribe_lane_message_invalid", maximum=64
         )
         _resolution_payload(resolution, message_id=message_id, scope=TRIBE_SCOPE)
-        snapshot = self.snapshot(tribe, now)
+        # Resolve the signed send-time membership, not today's roster. Later
+        # admissions cannot acquire an old wrapped key and a leave cannot erase
+        # the conversation a body was already party to.
+        sent_at = _uint(resolution["occurred_at_ms"], "tribe_lane_send_time_invalid")
+        if sent_at > now:
+            raise TribeConversationError("tribe_lane_send_time_invalid")
+        snapshot = self.relationships.view(
+            at_ms=sent_at, card_verifier=self.card_verifier
+        ).snapshot(tribe)
         members = list(snapshot.value["members"])
-        rows = self.audience(snapshot)
+        by_membership = {member["membership_ref"]: member for member in members}
+        _, frozen_targets = _resolution_payload(
+            resolution, message_id=message_id, scope=TRIBE_SCOPE
+        )
+        rows = []
+        recipient_targets = []
+        for target in frozen_targets:
+            member = by_membership.get(target["recipient_id"])
+            if member is None or member["state"] != "active":
+                raise TribeConversationError("tribe_lane_not_in_audience")
+            entries = [
+                entry
+                for entry in envelope["recipients"]
+                if entry["being_ref"] == member["principal_id"]
+                and entry["embodiment_id"] == target["receipt_origin_embodiment_id"]
+            ]
+            if len(entries) != 1:
+                raise TribeConversationError("tribe_lane_audience_mismatch")
+            entry = entries[0]
+            rows.append(
+                {
+                    "being_ref": entry["being_ref"],
+                    "credential_id": entry["credential_id"],
+                    "embodiment_id": entry["embodiment_id"],
+                    "membership_ref": member["membership_ref"],
+                }
+            )
+            recipient_targets.append(self._frozen_recipient(entry, sent_at))
+        if len(rows) != len(envelope["recipients"]):
+            raise TribeConversationError("tribe_lane_audience_mismatch")
         local = [
             row
             for row in rows
-            if row["embodiment_id"] == self.local_embodiment_id
-            and row["being_ref"] == self.being_ref
+            if row["being_ref"] == self.being_ref
+            and row["embodiment_id"] == self.local_embodiment_id
         ]
         if len(local) != 1:
             raise TribeConversationError("tribe_lane_not_in_audience")
+        self._operational(
+            self.being_ref, self.local_credential_id, self.local_embodiment_id, now
+        )
+        self._operational(
+            sender_being,
+            envelope["sender"]["credential_id"],
+            envelope["sender"]["embodiment_id"],
+            now,
+        )
         authorizer = MembershipAuthorizer(self.relationships.events())
         proofs = authorizer.proofs(members=members, tribe_ref=tribe)
-        own = [row for row in members if row["principal_id"] == self.being_ref]
-        if len(own) != 1 or own[0]["state"] != "active":
-            raise TribeConversationError("tribe_lane_not_a_member")
-        # The author's proof is the author's own membership, not this body's: a
-        # receiver that substituted its membership for the sender's would be
-        # reconstructing an authorization for a different conversation.
-        sender_rows = [row for row in members if row["principal_id"] == sender_being]
-        if len(sender_rows) != 1 or sender_rows[0]["state"] != "active":
+        sender_members = [
+            member
+            for member in members
+            if member["principal_id"] == sender_being and member["state"] == "active"
+        ]
+        if len(sender_members) != 1:
             raise TribeConversationError("tribe_lane_sender_not_a_member")
         sender_proof = authorizer.proof(
-            membership_ref=_text(
-                sender_rows[0]["membership_ref"], "tribe_lane_member_invalid"
-            ),
+            membership_ref=sender_members[0]["membership_ref"],
             tribe_ref=tribe,
             principal_id=sender_being,
         )
-        recipient_targets = [
-            RecipientTarget(self._active(row["being_ref"]), row["credential_id"])
-            for row in rows
-        ]
         authorization = DisclosureAuthorization.from_membership_resolution_identity(
             message_id=message_id,
             message_hash=str(envelope["event_hash"]),
@@ -823,7 +1061,12 @@ class TribeConversation:
             message = open_event(
                 raw,
                 sender_authority=sender_authority,
-                local_target=RecipientTarget(self.authority, self.local_credential_id),
+                local_target=next(
+                    target
+                    for target in recipient_targets
+                    if target.authority.manifest.being_ref == self.being_ref
+                    and target.credential_id == self.local_credential_id
+                ),
                 recipient_targets=recipient_targets,
                 authorization=authorization,
                 custody=self.custody,
@@ -838,11 +1081,16 @@ class TribeConversation:
                 row
                 for row in rows
                 if row["embodiment_id"] == message["origin"]["embodiment_id"]
+                and row["being_ref"] == sender_being
             ),
             None,
         )
         if sender_row is None or sender_row["being_ref"] != sender_being:
             raise TribeConversationError("tribe_lane_origin_invalid")
+        if message["payload"]["body"].get("audience") != rows:
+            raise TribeConversationError("tribe_lane_audience_mismatch")
+        # Durable readable intake is the effect the following receipt observes.
+        self.records.received(message, resolution)
         receipt = self._author_receipt(
             message, resolution, membership_ref=local[0]["membership_ref"], now=now
         )
@@ -864,6 +1112,7 @@ class TribeConversation:
         *,
         membership_ref: str,
         now: int,
+        authored_local: bool = False,
     ) -> Event:
         """Sign this body's own receipt for the message it just heard."""
         occurred = _uint(message["occurred_at_ms"], "tribe_lane_message_invalid")
@@ -875,16 +1124,32 @@ class TribeConversation:
             membership_ref=membership_ref,
             observed_at_ms=now,
         )
+        client = TRIBE_RECEIPT_CLIENT_ID
+        if authored_local:
+            if (
+                message["being_ref"] != self.being_ref
+                or message["origin"]["embodiment_id"] != self.local_embodiment_id
+            ):
+                raise TribeConversationError("tribe_lane_author_receipt_invalid")
+            core = {
+                "schema": "dm.communication.receipt/v1",
+                "message_id": message["event_id"],
+                "thread_id": message["payload"]["intent"]["thread_id"],
+                "recipient_id": membership_ref,
+                "recipient_type": "relationship",
+                "outcome": "delivered",
+                "evidence_ref": None,
+                "observed_at_ms": now,
+            }
+            client = "dm.tribe.authored-receipt/v1"
         # Identity must not depend on when a retry happened, so the operation id and
         # request hash cover everything but the instant observed.
         core.pop("observed_at_ms")
         digest = hashlib.sha256(canonical_bytes(core)).hexdigest()
-        operation_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"{TRIBE_RECEIPT_CLIENT_ID}:{digest}")
-        )
+        operation_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{client}:{digest}"))
         try:
             return self.ledger.append_local_idempotent(
-                client_id=TRIBE_RECEIPT_CLIENT_ID,
+                client_id=client,
                 request_id=operation_id,
                 request_hash=digest,
                 kind="experience.observed",
@@ -895,7 +1160,7 @@ class TribeConversation:
                     message["sensitivity"], "tribe_lane_message_invalid", maximum=32
                 ),
                 occurred_at_ms=now,
-                causal_parents=(),
+                causal_parents=(message["event_id"],) if authored_local else (),
             )
         except (LedgerError, WeaveProtocolError) as exception:
             raise TribeConversationError("tribe_lane_receipt_rejected") from exception

@@ -144,8 +144,43 @@ AUTHORITY_ADOPTION_FILES = frozenset(
 )
 
 
+TRIBE_GROUP_FILES = (
+    VISIBILITY_FILES
+    | AUTHORITY_ADOPTION_FILES
+    | frozenset(
+        {
+            "specs/tribe-conversation.md",
+            "docs/tribe-group-runtime.md",
+            "schemas/messaging/v1/application.schema.json",
+            "schemas/messaging/v2/application.schema.json",
+            "schemas/messaging/v3/application.schema.json",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/relationship_store.py",
+            "src/daimon_matrix/scopes.py",
+            "src/daimon_matrix/service.py",
+            "src/daimon_matrix/tribe_conversation.py",
+            "tests/test_group_messaging_runtime.py",
+            "tests/test_dm051_sealed.py",
+            "tests/test_dm052_communication.py",
+            "tests/test_dm054_scopes.py",
+            "tests/test_dm082_relationships.py",
+            "tests/test_dm091_tribe_policy.py",
+        }
+    )
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed
+        & {
+            "src/daimon_matrix/tribe_conversation.py",
+            "tests/test_group_messaging_runtime.py",
+        }
+        and changed <= TRIBE_GROUP_FILES
+    ):
+        return "tribe-group"
     if (
         changed <= AUTHORITY_ADOPTION_FILES
         and "src/daimon_matrix/operator_messaging.py" in changed

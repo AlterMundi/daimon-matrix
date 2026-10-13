@@ -1374,6 +1374,64 @@ class TribeConversationLaneTests(TribeMembershipFixture):
                 deliver=carry,
             )
 
+    def test_valid_signed_receipt_for_another_context_is_rejected(self) -> None:
+        for field in ("message_ref", "resolution_ref", "thread_id", "observed_at_ms"):
+            with self.subTest(field=field):
+
+                def carry(
+                    embodiment_id: str,
+                    payload: Mapping[str, Any],
+                    *,
+                    field: str = field,
+                ) -> Mapping[str, Any]:
+                    result = self.receiver_lane.intake(payload)
+                    receipt = result["receipt"]
+                    changed = copy.deepcopy(receipt["payload"])
+                    if field in {"message_ref", "resolution_ref"}:
+                        changed[field]["event_id"] = str(uuid.uuid4())
+                    elif field == "thread_id":
+                        changed[field] = str(uuid.uuid4())
+                    else:
+                        changed[field] = receipt["occurred_at_ms"] + 1
+                    forged = create_event(
+                        self.member.authority,
+                        self.member.origin,
+                        self.member.signer,
+                        **{
+                            key: receipt[key]
+                            for key in (
+                                "event_id",
+                                "sequence",
+                                "previous_event_id",
+                                "occurred_at_ms",
+                                "causal_parents",
+                                "kind",
+                                "subject",
+                                "supersedes",
+                                "sensitivity",
+                            )
+                        },
+                        payload=changed,
+                    )
+                    return {
+                        **result,
+                        "receipt": forged,
+                        "receipt_hash": hashlib.sha256(
+                            canonical_bytes(forged)
+                        ).hexdigest(),
+                    }
+
+                with self.assertRaisesRegex(
+                    TribeConversationError, "tribe_lane_intake_result_invalid"
+                ):
+                    self.sender_lane.converse(
+                        text="receipt context check",
+                        request_id=str(uuid.uuid4()),
+                        tribe_ref=self.tribe_ref,
+                        ttl_ms=30_000,
+                        deliver=carry,
+                    )
+
     def test_a_non_member_cannot_intake_the_message(self) -> None:
         delegate = self.journey.identities["delegate"]
         delegate_ledger = Ledger(

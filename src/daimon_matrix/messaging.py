@@ -1,4 +1,4 @@
-"""Grant-gated encrypted evidence and sparse foreign inbox admission.
+"""Authenticated directed evidence and membership-based group messages.
 
 Foreign events never enter a Ledger. Explicit application V2 replies author
 recipient-local receipts and carry sparse signed proof to the original sender.
@@ -12,10 +12,10 @@ import hashlib
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, cast
 
 from .authority_epochs import RootHistoryAuthority
-from .canonical import CanonicalError, b64url, canonical_bytes
+from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
     RESOLUTION_PAYLOAD_SCHEMA,
@@ -52,6 +52,7 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
+from .tribe_conversation import TribeConversation
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
@@ -141,19 +142,29 @@ class MessagingTribePolicy:
 
 @dataclass(frozen=True)
 class MessagingPeerPolicy:
-    """One explicitly configured directional /tribe channel, not a wire claim."""
+    """One explicit bilateral lane, separate from the membership-based group."""
 
     peer_being_ref: str
     peer_embodiment_id: str
     peer_credential_id: str
     relationship_id: str
-    tribe_ref: str
-    membership_ref: str
+    tribe_ref: str | None
+    membership_ref: str | None
     resource_ref: str
     operation: str
     classification: str
     grant_refs: tuple[GrantReference, ...]
     max_ttl_ms: int = 60_000
+
+    def __post_init__(self) -> None:
+        if (self.tribe_ref is None) != (self.membership_ref is None):
+            raise ValueError("messaging_membership_policy_mismatch")
+
+    @property
+    def recipient_id(self) -> str:
+        return (
+            self.relationship_id if self.membership_ref is None else self.membership_ref
+        )
 
 
 class MessagingSender:
@@ -256,7 +267,7 @@ class MessagingSender:
             },
             "thread_id": message["payload"]["intent"]["thread_id"],
             "recipient_type": "relationship",
-            "recipient_id": channel.policy.membership_ref,
+            "recipient_id": channel.policy.recipient_id,
             "outcome": "delivered",
         }
         digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
@@ -506,7 +517,7 @@ class MessagingSender:
                             "receipt_origin_embodiment_id": recipient_descriptor(
                                 target, at_ms=now
                             )["embodiment_id"],
-                            "recipient_id": policy.membership_ref,
+                            "recipient_id": policy.recipient_id,
                             "recipient_type": "relationship",
                             "scope_kind": "relationship",
                         }
@@ -527,7 +538,7 @@ class MessagingSender:
             sender_authority=context._sender(),
             recipient_targets=[target],
             disclosures={
-                policy.membership_ref: context._disclosure_from_view(
+                policy.recipient_id: context._disclosure_from_view(
                     _authority_view, at_ms=now
                 )
             },
@@ -773,7 +784,7 @@ class MessagingDelivery:
                 # Application stage label, not a fabricated DM-052 semantic leg.
                 "leg_id": "application-stage:" + phase,
                 "message_id": metadata["event_id"],
-                "recipient_id": self.sender.context.policy.membership_ref,
+                "recipient_id": self.sender.context.policy.recipient_id,
                 "delivery_id": metadata["delivery_id"],
                 "envelope": b64url(envelope),
                 "envelope_sha256": hashlib.sha256(envelope).hexdigest(),
@@ -1153,13 +1164,14 @@ class MessagingChannel:
         # active body. Independently validate this channel's exact receiving
         # credential before using that being's signed membership.
         recipient_descriptor(self._local(), at_ms=at_ms)
-        snapshot = view.snapshot(policy.tribe_ref)
-        if not any(
-            member["principal_id"] == self.local_being_ref
-            and member["membership_ref"] == policy.membership_ref
-            for member in snapshot.value["members"]
-        ):
-            raise SealedDeliveryError()
+        if policy.tribe_ref is not None:
+            snapshot = view.snapshot(policy.tribe_ref)
+            if not any(
+                member["principal_id"] == self.local_being_ref
+                and member["membership_ref"] == policy.membership_ref
+                for member in snapshot.value["members"]
+            ):
+                raise SealedDeliveryError()
         disclosure = view.disclosure(
             requester_being_ref=self.local_being_ref,
             resource_ref=policy.resource_ref,
@@ -1340,12 +1352,12 @@ class MessagingChannel:
             or len(targets) != 1
             or targets[0]["recipient_type"] != "relationship"
             or targets[0]["scope_kind"] != "relationship"
-            or targets[0]["recipient_id"] != self.policy.membership_ref
+            or targets[0]["recipient_id"] != self.policy.recipient_id
             or targets[0]["receipt_origin_embodiment_id"] != local["embodiment_id"]
         ):
             raise SealedDeliveryError()
         proof = {
-            self.policy.membership_ref: self._disclosure_from_view(
+            self.policy.recipient_id: self._disclosure_from_view(
                 authority_view, at_ms=at_ms
             )
         }
@@ -1542,7 +1554,7 @@ class MessagingChannel:
             sender_authority=self._sender(),
             recipient_targets=[self._local()],
             disclosures={
-                self.policy.membership_ref: self._disclosure_from_view(
+                self.policy.recipient_id: self._disclosure_from_view(
                     authority_view, at_ms=now
                 )
             },
@@ -1618,3 +1630,461 @@ class MessagingChannel:
                 )
             except (ValueError, KeyError, TypeError):
                 raise MessagingInboxError("messaging_stored_evidence_invalid") from None
+
+
+class GroupMessaging:
+    """One membership channel over existing authenticated opaque route providers.
+
+    A single durable carrier obligation gates every copy of the exact frame. Its
+    human projection is admitted once, independently of the number of transports.
+    Transport ACKs never close semantic legs; only verified member receipts do.
+    All work is synchronous with an explicit send/intake, with no model wakeup.
+    """
+
+    def __init__(
+        self,
+        *,
+        lane: TribeConversation,
+        policy: MessagingTribePolicy,
+        communication: CommunicationStore,
+        providers: Mapping[tuple[str, str], Any],
+        config_digest: str,
+        egress: MandatoryEgressController,
+        labels: LabelIndex | None = None,
+    ) -> None:
+        self.lane, self.policy = lane, policy
+        self.ledger, self.signer = lane.ledger, lane.signer
+        self.inbox = self.records = lane.records
+        self.communication, self.providers = communication, dict(providers)
+        self.config_digest, self.egress, self.labels = config_digest, egress, labels
+        self.records.bind_egress(
+            egress,
+            catalog_id="tribe-carriers",
+            authorize=self._authorize,
+        )
+
+    def validate(self, service: Any) -> None:
+        if self.ledger is not service.ledger or self.signer is not service.signer:
+            raise ValueError("tribe_runtime_binding")
+        self.lane._operational(
+            self.lane.being_ref,
+            self.lane.local_credential_id,
+            self.lane.local_embodiment_id,
+            self.lane.clock(),
+        )
+
+    def _authorize(self, binding: OperationBinding) -> bool:
+        try:
+            self.lane._operational(
+                self.lane.being_ref,
+                self.lane.local_credential_id,
+                self.lane.local_embodiment_id,
+                self.lane.clock(),
+            )
+            return binding.authority_head == self.ledger.local_origin["body_ref"]
+        except ValueError:
+            return False
+
+    def _policy_hash(self, _at_ms: int) -> str:
+        # Historical reads do not acquire today's membership or resource grants.
+        return self.config_digest
+
+    def message(self, message_id: str) -> Mapping[str, Any]:
+        record = self.records.get("inbox", _uuid(message_id))
+        if record is None:
+            raise ValueError("tribe_message_missing")
+        message = record["message"]
+        return verify_event(
+            message, self.lane._epoch(message["being_ref"], message["manifest_hash"])
+        )
+
+    def page(self, *, after: int, limit: int) -> list[dict[str, Any]]:
+        result = self.records.page(after=after, limit=limit)
+        for item in result["items"]:
+            self.message(item["message"]["event_id"])
+        return cast(list[dict[str, Any]], result["items"])
+
+    def inspect(
+        self, *, client_id: str, send_id: str, response_channels: tuple[Any, ...] = ()
+    ) -> dict[str, Any]:
+        request = self.records.get("request", _uuid(send_id))
+        if request is None or request["client_id"] != client_id:
+            raise ValueError("tribe_send_missing")
+        retained = self.records.get("result", send_id)
+        if retained is None:
+            raise ValueError("tribe_send_missing")
+        message = self.ledger.event(retained["message_id"])
+        if message is None:
+            raise ValueError("tribe_send_missing")
+        return self._result(message, send_id)
+
+    def _result(self, message: Any, send_id: str) -> dict[str, Any]:
+        semantic = self.communication.result(message["event_id"])
+        plan = self.records.get("send", send_id)
+        if plan is None:
+            raise ValueError("tribe_send_missing")
+        transport = []
+        for row in message["payload"]["body"]["audience"]:
+            target = (row["being_ref"], row["embodiment_id"])
+            state, proof_hash = "pending", None
+            if target == (self.lane.being_ref, self.lane.local_embodiment_id):
+                state = "author-retained"
+            elif target not in self.providers:
+                state = "unroutable"
+            else:
+                request_id = str(
+                    uuid.uuid5(
+                        uuid.UUID(send_id),
+                        f"tribe-transport/v1:{target[0]}:{target[1]}",
+                    )
+                )
+                proof = self.records.transport_result(request_id)
+                if proof is not None:
+                    state = proof["result"]["outcome"]
+                    proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
+            transport.append(
+                {
+                    "being_ref": target[0],
+                    "embodiment_id": target[1],
+                    "state": state,
+                    "response_sha256": proof_hash,
+                }
+            )
+        return {
+            "schema": "dm.tribe.delivery/v1",
+            "send_id": send_id,
+            "message_id": message["event_id"],
+            "thread_id": message["payload"]["intent"]["thread_id"],
+            "tribe_ref": self.policy.tribe_ref,
+            "audience": message["payload"]["body"]["audience"],
+            "semantic": semantic,
+            "transport": transport,
+            "carrier": {
+                "expires_at_ms": plan["expires_at_ms"],
+                "expired": self.lane.clock() >= plan["expires_at_ms"],
+            },
+        }
+
+    def send(
+        self,
+        *,
+        client_id: str,
+        send_id: str,
+        thread_id: str,
+        text: str,
+        response_to: tuple[Any, str] | None = None,
+        authorize: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        if authorize is not None:
+            authorize()
+        parameters = {
+            "client_id": client_id,
+            "thread_id": thread_id,
+            "text": text,
+            "response_to": None if response_to is None else response_to[1],
+        }
+        self.records.reserve("request", send_id, parameters, lambda: parameters)
+        response = None
+        if response_to is not None:
+            if response_to[0] is not self:
+                raise ValueError("tribe_reply_channel_mismatch")
+            parent = self.message(response_to[1])
+            if parent["payload"]["intent"]["thread_id"] != thread_id:
+                raise ValueError("tribe_reply_thread_mismatch")
+            response = {
+                "message_id": parent["event_id"],
+                "message_hash": parent["content_hash"],
+                "sender_being_ref": parent["being_ref"],
+                "sender_embodiment_id": parent["origin"]["embodiment_id"],
+            }
+        if self.records.get("send", send_id) is None:
+            snapshot = self.lane.snapshot(self.policy.tribe_ref, self.lane.clock())
+            if not any(
+                member["principal_id"] == self.lane.being_ref
+                and member["membership_ref"] == self.policy.membership_ref
+                and member["state"] == "active"
+                for member in snapshot.value["members"]
+            ):
+                raise ValueError("tribe_membership_binding")
+        prepared = self.lane.prepare(
+            text=text,
+            request_id=send_id,
+            tribe_ref=self.policy.tribe_ref,
+            thread_id=thread_id,
+            ttl_ms=self.policy.max_ttl_ms,
+            sensitivity={
+                "public": "shareable",
+                "shareable": "shareable",
+                "private": "private",
+            }[self.policy.classification],
+            response_context=response,
+        )
+        message, resolution = prepared["message"], prepared["resolution"]
+        identifiers = {
+            "message_id": message["event_id"],
+            "resolution_id": resolution["event_id"],
+        }
+        self.records.reserve("result", send_id, identifiers, lambda: identifiers)
+        self.communication.accept(
+            message_event_id=message["event_id"],
+            resolution_event_id=resolution["event_id"],
+        )
+        own_receipt = self.lane._author_receipt(
+            message,
+            resolution,
+            membership_ref=self.policy.membership_ref,
+            now=self.lane.clock(),
+            authored_local=True,
+        )
+        self.communication.record_receipt(own_receipt["event_id"])
+        if self.lane.clock() >= prepared["expires_at_ms"]:
+            return self._result(message, send_id)
+        native = canonical_bytes(prepared["payload"])
+        sender = _sender_display(
+            self.labels, message["origin"], message["being_ref"], body_fallback=True
+        )
+        recipients = [
+            _sender_display(
+                self.labels,
+                {"embodiment_id": row["embodiment_id"]},
+                row["being_ref"],
+                body_fallback=True,
+            )
+            for row in prepared["rows"]
+        ]
+        projection: dict[str, Any] = {
+            "event_id": message["event_id"],
+            "event_digest": message["content_hash"],
+            "sender": sender,
+            "recipients": recipients,
+            "thread_id": thread_id,
+            "kind": "message",
+            "reply_to": None,
+            "content": {"text": text},
+        }
+        if response_to is not None:
+            projection.update(
+                kind="reply",
+                reply_to={
+                    "event_id": parent["event_id"],
+                    "event_digest": parent["content_hash"],
+                    "sender": _sender_display(
+                        self.labels,
+                        parent["origin"],
+                        parent["being_ref"],
+                        body_fallback=True,
+                    ),
+                    "text": parent["payload"]["body"]["text"][:160],
+                },
+            )
+        retained_native = self.records.get("native", send_id)
+        if retained_native is not None:
+            projection = retained_native["projection"]
+        operation = self.records.admit(
+            send_id,
+            native,
+            path_id="tribe-message-request",
+            projection=projection,
+            deadline_ms=prepared["expires_at_ms"],
+            authority_head=self.ledger.local_origin["body_ref"],
+        )
+        # Even an unreachable first route must not let later copies bypass the
+        # one logical message's mandatory confirmed visibility.
+        self.egress.advance_one(operation)
+        completed = {
+            (leg["recipient_id"], leg["receipt_origin_embodiment_id"])
+            for leg in self.communication.result(message["event_id"])["legs"]
+            if leg["state"] == "delivered"
+        }
+        for row in prepared["rows"]:
+            if (row["being_ref"], row["embodiment_id"]) == (
+                self.lane.being_ref,
+                self.lane.local_embodiment_id,
+            ):
+                continue
+            if (row["membership_ref"], row["embodiment_id"]) in completed:
+                continue
+            if authorize is not None:
+                authorize()
+            self._transmit(native, row, operation, receipt=False)
+        return self._result(message, send_id)
+
+    def _transmit(
+        self,
+        native: bytes,
+        row: Mapping[str, Any],
+        operation: OperationBinding,
+        *,
+        receipt: bool,
+    ) -> None:
+        from .routes import RouteError
+        from .sealed import inspect_delivery
+
+        providers = self.providers.get((row["being_ref"], row["embodiment_id"]))
+        if providers is None:
+            return  # The full signed audience remains present and pending.
+        if self.lane.clock() >= operation.deadline_ms:
+            return
+        provider = providers["evidence" if receipt else "message"]
+        document = _parse(native)
+        if receipt:
+            identifier = document["receipt"]["event_id"]
+            delivery_id = str(uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1"))
+        else:
+            metadata = inspect_delivery(
+                unb64url(document["envelope"]), at_ms=self.lane.clock()
+            )
+            identifier, delivery_id = metadata["event_id"], metadata["delivery_id"]
+        request_id = str(
+            uuid.uuid5(
+                uuid.UUID(operation.operation_id),
+                f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+            )
+        )
+        submission = {
+            "schema": ROUTE_SUBMISSION_SCHEMA,
+            "attempt_id": request_id,
+            "leg_id": "application-stage:" + ("evidence" if receipt else "message"),
+            "message_id": identifier,
+            "recipient_id": row["embodiment_id"],
+            "delivery_id": delivery_id,
+            "envelope": b64url(native),
+            "envelope_sha256": hashlib.sha256(native).hexdigest(),
+            "deadline_ms": operation.deadline_ms,
+        }
+        fingerprint = {
+            "submission": submission,
+            "config_digest": self.config_digest,
+            "provider_ref": provider.provider_ref,
+            "route_ref": provider.route_ref,
+        }
+        retained = self.records.reserve(
+            "transport",
+            request_id,
+            fingerprint,
+            lambda: {"request": b64url(provider.prepare_submission(submission))},
+        )
+        raw = unb64url(retained["request"])
+
+        def retain_response(response: bytes) -> None:
+            observed = {
+                "request_id": request_id,
+                "response": b64url(response),
+                "result": dict(provider.validate_prepared_response(raw, response)),
+                "request_sha256": hashlib.sha256(raw).hexdigest(),
+            }
+            proof_id = str(
+                uuid.uuid5(uuid.UUID(request_id), hashlib.sha256(response).hexdigest())
+            )
+            self.records.reserve(
+                "transport-result", proof_id, observed, lambda: observed
+            )
+
+        try:
+            provider.send_prepared(
+                raw, carrier_binding=operation, response_sink=retain_response
+            )
+        except RouteError:
+            # An unknown outcome stays pending. Retrying uses the same bytes and
+            # receipt identity; never substitute a new logical message.
+            return
+
+    def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
+        from .sealed import inspect_delivery
+        from .tribe_conversation import TRIBE_CONVERSATION_SCHEMA, TRIBE_INTAKE_SCHEMA
+
+        document = _parse(raw)
+        if document.get("schema") == TRIBE_CONVERSATION_SCHEMA:
+            if (
+                set(document) != {"schema", "envelope", "resolution", "tribe_ref"}
+                or not isinstance(document["envelope"], str)
+                or not isinstance(document["resolution"], Mapping)
+            ):
+                raise ValueError("tribe_carrier_invalid")
+            return inspect_delivery(unb64url(document["envelope"]), at_ms=at_ms)
+        if document.get("schema") == TRIBE_INTAKE_SCHEMA:
+            if set(document) != {
+                "schema",
+                "membership_ref",
+                "message_hash",
+                "message_id",
+                "receipt",
+                "receipt_hash",
+                "recipient_embodiment_id",
+                "tribe_ref",
+            } or not isinstance(document["receipt"], Mapping):
+                raise ValueError("tribe_carrier_invalid")
+            _uuid(document["message_id"])
+            identifier = _uuid(document["receipt"].get("event_id"))
+            return {
+                "event_id": identifier,
+                "delivery_id": str(
+                    uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1")
+                ),
+                "recipient_embodiment_ids": [self.lane.local_embodiment_id],
+            }
+        raise ValueError("tribe_carrier_invalid")
+
+    def receive_message(self, raw: bytes) -> None:
+        result = self.lane.intake(_parse(raw))
+        self.records.reserve("receipt", result["message_id"], result, lambda: result)
+        message = self.message(result["message_id"])
+        sender = {
+            "being_ref": message["being_ref"],
+            "embodiment_id": message["origin"]["embodiment_id"],
+        }
+        native = canonical_bytes(result)
+        operation_id = result["receipt"]["event_id"]
+        existing = self.records.get("native", operation_id)
+        deadline = (
+            existing["deadline_ms"]
+            if existing is not None
+            else self.lane.clock() + self.policy.max_ttl_ms
+        )
+        operation = self.records.admit(
+            operation_id,
+            native,
+            path_id="tribe-receipt-request",
+            projection={
+                "event_id": operation_id,
+                "event_digest": result["receipt"]["content_hash"],
+                "sender": self.lane.being_ref,
+                "recipients": [message["being_ref"]],
+                "thread_id": message["payload"]["intent"]["thread_id"],
+                "kind": "authorization-control",
+                "reply_to": None,
+                "content": {"stage": "semantic-receipt"},
+            },
+            deadline_ms=deadline,
+            authority_head=self.ledger.local_origin["body_ref"],
+        )
+        self._transmit(native, sender, operation, receipt=True)
+
+    def receive_evidence(self, raw: bytes) -> None:
+        result = _parse(raw)
+        message = self.ledger.event(result["message_id"])
+        if message is None:
+            raise ValueError("tribe_receipt_message_missing")
+        receipt = result["receipt"]
+        resolution = self.ledger.event(receipt["payload"]["resolution_ref"]["event_id"])
+        row = next(
+            (
+                row
+                for row in message["payload"]["body"]["audience"]
+                if row["being_ref"] == receipt["being_ref"]
+                and row["embodiment_id"] == receipt["origin"]["embodiment_id"]
+            ),
+            None,
+        )
+        if resolution is None or row is None:
+            raise ValueError("tribe_receipt_target_missing")
+        verified = self.lane._accept_member_receipt(
+            result,
+            row=row,
+            message=message,
+            resolution=resolution,
+            tribe_ref=self.policy.tribe_ref,
+        )
+        self.communication.record_foreign_receipt(
+            verified, recipient_being_ref=row["being_ref"]
+        )
