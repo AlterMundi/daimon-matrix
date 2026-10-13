@@ -39,6 +39,26 @@ is not retransmitted or silently replaced. V0 does not re-wrap old messages.
 Historical reads verify retained records and their original authority epochs;
 later membership changes do not erase readable history or reveal it to newcomers.
 
+The delivery result retains the complete `semantic.legs` and all-body terminal
+rule. Its additive `members` view reports `receiving_copy: "proved"` only when
+at least one receiving body's signed intake receipt is verified. The referenced
+`receiving_leg_ids` identify those proofs. `author_retained_leg_ids` separately
+identify the author's local retention; it does not establish receiving uptake.
+Without a receiving receipt the member remains `unknown`, even after an ACK or
+carrier expiry. One proved receiving copy does not close pending sibling legs.
+
+Transport rows separate recorded `attempt_state` from `current_route`
+availability. Removing a route never erases a retained authenticated response.
+An unconfirmed attempted effect stays uncertain when its route disappears.
+Carrier expiry ends transmission permission; it does not prove non-delivery.
+Late authenticated semantic receipts may improve retained knowledge without
+reopening transmission, resolving membership again or replacing logical IDs.
+This increment adds no long-offline catch-up policy, store migration or wire
+format. Confirmed Telegram echo remains the selected prerequisite. Exact retry
+reuses confirmed publication proof; ambiguous platform acceptance stays visible
+and is not an unconditional exactly-once promise. Delivery does not imply model
+reading, and none of these technical stages wakes a model.
+
 Managed bodies select the owner-signed group application under their existing
 daemon lock, receiving admission and body fence. The selection replaces default
 bootstrap pair applications while retaining their configuration, proofs and
