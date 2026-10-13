@@ -56,3 +56,10 @@ Evidence discipline — these three cost a red head and a corrected public recor
   development dependencies. A test in that set may import `src` and light test
   helpers only; importing a module that reaches the daemon or the MCP server breaks
   those jobs and not the local run.
+
+
+For signed authority, installed validator or wire-contract updates, execute the
+receiver-compatible rollout in `docs/runbooks/receiver-compatible-authority-updates.md`.
+Preflight required receivers before irreversible activation; retain their adoption
+and communication receipts. Record offline/failed bodies explicitly and recover
+forward after accepted authority changes. Sender readiness alone is incomplete.

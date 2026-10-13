@@ -2380,3 +2380,289 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(child.returncode, 0, stderr.decode())
         self.assertNotIn(PASSWORD, stdout + stderr)
         self.assertFalse(runtime.socket_path.exists())
+
+
+class RetainedVisibilityAcceptanceTests(unittest.TestCase):
+    def test_signed_retirement_preserves_only_current_body_acceptance(self):
+        from daimon_matrix.authority_epochs import (
+            RootHistoryAuthority,
+            create_embodiment_retirement,
+        )
+        from daimon_matrix.identity import create_revocation, verify_successor
+        from daimon_matrix.messaging_config import (
+            MessagingConfigError,
+            verify_visibility_participant,
+        )
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+        from tests.test_dm022_ledger import NOW, RootLedgerFixture
+
+        fixture = RootLedgerFixture()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        previous = fixture.authority
+        document = {"issued_at_ms": NOW - 50, "scope": "unchanged"}
+        # Disclosure predates incarnation start: binding has no signing time.
+        bindings = {}
+        for label in ("legion", "daimonmatrix"):
+            identity = _public_identity(
+                previous, fixture.origins[label], "runtime", "runtime", NOW
+            )
+            body = {**identity, "application_sha256": config_digest(document)}
+            bindings[label] = {
+                "schema": "dm.messaging.operator-binding/v1",
+                "body": body,
+                "signature": b64url(
+                    Ed25519PrivateKey.from_private_bytes(
+                        fixture.signing_seeds[label]
+                    ).sign(BINDING_DOMAIN + canonical_bytes(body))
+                ),
+            }
+            verify_visibility_participant(
+                previous,
+                previous.manifest.being_ref,
+                document,
+                bindings[label],
+                at_ms=NOW,
+            )
+        control = create_revocation(
+            previous.state,
+            fixture.root_seeds,
+            embodiment_id="embodiment:daimonmatrix",
+            revocation_generation=1,
+            cutoff_incarnation_sequence=0,
+        )
+        state = verify_successor(control, previous.state)
+        value = copy.deepcopy(dict(previous.manifest.value))
+        value.update(control_head=state.head, revision=value["revision"] + 1)
+        for member in value["embodiments"]:
+            if member["embodiment_id"] == "embodiment:daimonmatrix":
+                member["status"] = "retired"
+        active = RootAuthority(
+            BeingManifest.from_value(value),
+            state,
+            previous.credentials,
+            previous.incarnations,
+        )
+        transition = create_embodiment_retirement(
+            previous.manifest,
+            active.manifest,
+            revocations=[control],
+            root_seeds=fixture.root_seeds,
+            issued_at_ms=NOW + 10,
+        )
+        history = RootHistoryAuthority(active, [previous], [transition])
+        verify_visibility_participant(
+            history,
+            previous.manifest.being_ref,
+            document,
+            bindings["legion"],
+            at_ms=NOW + 20,
+        )
+        with self.assertRaises(MessagingConfigError):
+            verify_visibility_participant(
+                history,
+                previous.manifest.being_ref,
+                document,
+                bindings["daimonmatrix"],
+                at_ms=NOW + 20,
+            )
+        for changed in (
+            {**document, "scope": "changed"},
+            {**document, "issued_at_ms": NOW + 21},
+        ):
+            with self.assertRaises(MessagingConfigError):
+                verify_visibility_participant(
+                    history,
+                    previous.manifest.being_ref,
+                    changed,
+                    bindings["legion"],
+                    at_ms=NOW + 20,
+                )
+
+    def test_republish_recovers_selected_publication_before_installation_reissue(self):
+        from daimon_matrix.operator_messaging import republish
+        from tests.test_republish_after_advance import (
+            advance_manifest,
+            daemon_visibility_check,
+        )
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "app"
+        prepare(runtime, target, spec, secret_sources=sources)
+        installation = signed_visibility_installation(
+            self.root, runtime, self.pair, target
+        )
+        advanced = advance_manifest(runtime)
+        with (
+            patch(
+                "daimon_matrix.operator_messaging._reissue_installation",
+                side_effect=OSError("interrupted"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            republish(advanced, target, installation=installation)
+        selected = read_publication(advanced, target)[1]
+        before = sorted(path.name for path in target.iterdir())
+        receipt = republish(advanced, target, installation=installation)
+        self.assertEqual(receipt["status"], "current")
+        self.assertTrue(receipt["installation"]["reissued"])
+        self.assertEqual(read_publication(advanced, target)[1], selected)
+        self.assertEqual(sorted(path.name for path in target.iterdir()), before)
+        daemon_visibility_check(advanced, target, installation)
+
+
+class ForeignAuthorityAdoptionTests(unittest.TestCase):
+    def test_real_foreign_ledger_and_current_local_keys_survive_signed_retirement(self):
+        from daimon_matrix.authority_epochs import create_embodiment_retirement
+        from daimon_matrix.identity import create_revocation, verify_successor
+        from daimon_matrix.messaging_config import verify_binding
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.operator_messaging import (
+            adopt_peer_authority,
+            known_peer_successor,
+        )
+        from daimon_matrix.runtime import load_runtime
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+        from tests.test_dm022_ledger import NOW, RootLedgerFixture
+        from tests.test_dm024_runtime import PASSWORD
+
+        runtime, _, _, _ = application_fixture(self)
+        foreign = RootLedgerFixture()
+        foreign.setUp()
+        self.addCleanup(foreign.tearDown)
+        before_authority = {
+            "schema": "dm.operator.authority/v1",
+            "control_artifacts": [foreign.genesis],
+            "control_head": foreign.state.head,
+            "manifest": foreign.manifest.value,
+            "credentials": list(foreign.credentials.values()),
+            "incarnations": list(foreign.incarnations.values()),
+        }
+        known = {
+            key: value for key, value in before_authority.items() if key != "schema"
+        }
+        known.update(authority_history=[], ledger_filename="foreign.sqlite")
+        bundle = json.loads((runtime.state_root / "runtime.json").read_bytes())
+        bundle["sources"] = {"cas_filename": "sources.sqlite", "known_beings": [known]}
+        (runtime.state_root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        before = load_runtime(
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 30,
+            egress=closed_visibility(clock=lambda: NOW + 30, catalog_mode="migrate"),
+        )
+        foreign_ledger = before.service.sources.registry.known_ledgers[
+            foreign.state.being_ref
+        ]
+        event = foreign_ledger.append_local(
+            kind="experience.observed",
+            subject="retained",
+            payload={"summary": "retained"},
+            signer=foreign.signers["daimonmatrix"],
+            occurred_at_ms=NOW,
+        )
+        custody = (runtime.state_root / "custody.json").read_bytes()
+        control = create_revocation(
+            foreign.state,
+            foreign.root_seeds,
+            embodiment_id="embodiment:daimonmatrix",
+            revocation_generation=1,
+            cutoff_incarnation_sequence=0,
+        )
+        state = verify_successor(control, foreign.state)
+        value = copy.deepcopy(dict(foreign.manifest.value))
+        value.update(control_head=state.head, revision=2)
+        for row in value["embodiments"]:
+            if row["embodiment_id"] == "embodiment:daimonmatrix":
+                row["status"] = "retired"
+        active = RootAuthority(
+            BeingManifest.from_value(value),
+            state,
+            foreign.credentials,
+            foreign.incarnations,
+        )
+        transition = create_embodiment_retirement(
+            foreign.manifest,
+            active.manifest,
+            revocations=[control],
+            root_seeds=foreign.root_seeds,
+            issued_at_ms=NOW + 10,
+        )
+        public = {
+            **before_authority,
+            "manifest": value,
+            "control_head": state.head,
+            "control_artifacts": [foreign.genesis, control],
+        }
+        history = [
+            {
+                **{
+                    key: value
+                    for key, value in before_authority.items()
+                    if key != "schema"
+                },
+                "successor": transition,
+            }
+        ]
+        invalid = copy.deepcopy(history)
+        invalid[0]["successor"]["signatures"] = []
+        with self.assertRaises(ValueError):
+            adopt_peer_authority(before, public, invalid)
+        self.assertEqual(
+            json.loads((runtime.state_root / "runtime.json").read_bytes()), bundle
+        )
+        replace = os.replace
+
+        def fail_bundle_switch(source, destination):
+            if Path(destination) == runtime.state_root / "runtime.json":
+                raise OSError("interrupted before bundle selection")
+            return replace(source, destination)
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.os.replace",
+                side_effect=fail_bundle_switch,
+            ),
+            self.assertRaises(OSError),
+        ):
+            adopt_peer_authority(before, public, history)
+        self.assertEqual(
+            json.loads((runtime.state_root / "runtime.json").read_bytes()), bundle
+        )
+        later = foreign_ledger.append_local(
+            kind="experience.observed",
+            subject="received-between-attempts",
+            payload={"summary": "retained after interruption"},
+            signer=foreign.signers["daimonmatrix"],
+            occurred_at_ms=NOW + 1,
+        )
+        receipt = adopt_peer_authority(before, public, history)
+        verify_binding(before, receipt["document"], receipt["binding"])
+        after = load_runtime(
+            runtime.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 30,
+            egress=closed_visibility(clock=lambda: NOW + 30, catalog_mode="migrate"),
+        )
+        selected = after.service.sources.registry.known_ledgers[foreign.state.being_ref]
+        self.assertEqual(selected.known_page(cursor=None)["events"], [event, later])
+        selected.integrity_check()
+        self.assertEqual((runtime.state_root / "custody.json").read_bytes(), custody)
+        candidate = json.loads((runtime.state_root / "runtime.json").read_bytes())
+        self.assertEqual(
+            {k: v for k, v in candidate.items() if k != "sources"},
+            {k: v for k, v in bundle.items() if k != "sources"},
+        )
+        files = sorted(path.name for path in runtime.state_root.iterdir())
+        self.assertEqual(
+            adopt_peer_authority(after, public, history)["status"], "current"
+        )
+        self.assertEqual(
+            sorted(path.name for path in runtime.state_root.iterdir()), files
+        )
+        with self.assertRaises(ValueError):
+            known_peer_successor(
+                candidate["sources"]["known_beings"][0], before_authority, []
+            )

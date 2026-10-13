@@ -16,15 +16,19 @@ import struct
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
-from .canonical import canonical_bytes, unb64url
+from .canonical import canonical_bytes
 from .local_api import MAX_FRAME_BYTES, LocalApiError, decode_document, encode_frame
-from .messaging_config import _public_identity, verify_public_binding
+from .messaging_config import (
+    _public_identity,
+    verify_public_binding,
+    verify_visibility_participant,
+)
 from .native_egress import (
     VISIBILITY_SCHEMA_VERSION,
     MandatoryEgressController,
@@ -616,23 +620,11 @@ def _visibility_factory(
 
         def verify_participant(participant: str, document: Any, binding: Any) -> None:
             authority = context.authorities.get(participant)
-            if authority is None or not isinstance(binding, Mapping):
+            if authority is None:
                 raise ValueError()
-            body = binding.get("body")
-            if not isinstance(body, Mapping):
-                raise ValueError()
-            identity = _public_identity(
-                authority,
-                body["origin"],
-                body["runtime_id"],
-                body["runtime_label"],
-                clock(),
+            verify_visibility_participant(
+                authority, participant, document, binding, at_ms=clock()
             )
-            credential = authority.credentials[identity["credential_id"]]
-            public_key = unb64url(
-                credential["body"]["signing_key"]["public"], length=32
-            )
-            verify_public_binding(identity, public_key, document, binding)
 
         return load_owner_visibility_file(
             installation_path,

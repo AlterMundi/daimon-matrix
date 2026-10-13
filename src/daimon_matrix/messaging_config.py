@@ -189,6 +189,72 @@ def verify_binding_within_history(
         raise MessagingConfigError("messaging_binding_rejected") from None
 
 
+def verify_visibility_participant(
+    authority: RootAuthority | RootHistoryAuthority,
+    participant: str,
+    document: Any,
+    binding: Any,
+    *,
+    at_ms: int,
+) -> None:
+    """Keep an unchanged disclosure's acceptance across a verified succession.
+
+    Authenticate the binding in its exact epoch, then require the same body and
+    credential to remain valid and active now. V1 bindings have no signing time;
+    disclosure issuance does not establish one. An earlier
+    incarnation may have ended; retirement or key replacement is not consent by
+    the new body. No receipt or caller timestamp selects the historical epoch.
+    """
+    try:
+        body = binding["body"]
+        epoch = (
+            authority.select(body)
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+        active = (
+            authority.active
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+        instant = document["issued_at_ms"]
+        if type(instant) is not int or not 0 <= instant <= at_ms or instant >= 2**53:
+            raise ValueError()
+        if epoch.manifest.being_ref != participant or body["being_ref"] != participant:
+            raise ValueError()
+        identity = _public_identity(
+            epoch,
+            body["origin"],
+            body["runtime_id"],
+            body["runtime_label"],
+            at_ms,
+        )
+        credential = epoch.credentials[identity["credential_id"]]
+        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+        verify_public_binding(identity, public_key, document, binding)
+        members = [
+            row
+            for row in active.manifest.value["embodiments"]
+            if row["status"] == "active"
+            and row["embodiment_id"] == body["origin"]["embodiment_id"]
+            and row["body_ref"] == body["origin"]["body_ref"]
+            and row["embodiment_credential_id"] == identity["credential_id"]
+        ]
+        if len(members) != 1:
+            raise ValueError()
+        member = members[0]
+        current_origin = {**body["origin"], "incarnation_id": member["incarnation_id"]}
+        current = _public_identity(
+            active, current_origin, body["runtime_id"], body["runtime_label"], at_ms
+        )
+        if active.credentials[current["credential_id"]] != credential:
+            raise ValueError()
+    except Exception:
+        raise MessagingConfigError(
+            "messaging_visibility_installation_rejected"
+        ) from None
+
+
 # Kept in Python too: wheels do not ship the repository's public schemas.
 def _object(properties: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -1214,7 +1280,7 @@ def _compose(
     if application["schema"] == APPLICATION_SCHEMA_V2:
         if not communication.receipts_v2:
             raise MessagingConfigError("messaging_semantic_migration_required")
-        communication.foreign_authority_resolver = resolve_authority
+        communication.foreign_authority_resolver = channel_authority
         sender.communication = communication
         receiver.communication = communication
         receiver.reconcile_receipts()
@@ -1348,7 +1414,11 @@ def read_application_authorities(
     before readiness. Neither this reader nor application loading ingests grants.
     This is not enrollment, a custody reader, or a historical-root subscription.
     """
-    from .operator_rebirth import authority_from_document, authority_from_runtime_bundle
+    from .operator_rebirth import (
+        AUTHORITY_SCHEMA,
+        authority_from_document,
+        authority_from_runtime_bundle,
+    )
     from .runtime import _read_bundle, _safe_file
 
     try:
@@ -1398,6 +1468,31 @@ def read_application_authorities(
         # Local epochs remain owned by the runtime bundle, never replaced by
         # the app's active public snapshot.
         del authorities[local.manifest.being_ref]
+        # The runtime already verifies these histories. Do not replace them with
+        # an application's active snapshot (or compare a snapshot to its wrapper).
+        for known in bundle["sources"]["known_beings"] if bundle["sources"] else []:
+            ref = known["manifest"]["being_ref"]
+            if ref in authorities:
+                active = authority_from_document(
+                    {
+                        "schema": AUTHORITY_SCHEMA,
+                        **{
+                            key: known[key]
+                            for key in (
+                                "control_artifacts",
+                                "control_head",
+                                "manifest",
+                                "credentials",
+                                "incarnations",
+                            )
+                        },
+                    }
+                )
+                if active != authorities[ref]:
+                    raise MessagingConfigError(
+                        "messaging_relationship_authority_mismatch"
+                    )
+                del authorities[ref]
         return authorities
     except MessagingConfigError:
         raise

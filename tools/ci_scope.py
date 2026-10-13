@@ -122,8 +122,36 @@ RESOURCE_DOC_FILES = frozenset(
 )
 
 
+AUTHORITY_ADOPTION_FILES = frozenset(
+    {
+        "src/daimon_matrix/operator_messaging.py",
+        "src/daimon_matrix/messaging_config.py",
+        "src/daimon_matrix/chat_host.py",
+        "src/daimon_matrix/daemon.py",
+        "tests/test_operator_messaging.py",
+        "tests/test_chat_host.py",
+        "tests/test_native_messaging.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+        "AGENTS.md",
+        "docs/runbooks/receiver-compatible-authority-updates.md",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed <= AUTHORITY_ADOPTION_FILES
+        and "src/daimon_matrix/operator_messaging.py" in changed
+        and "src/daimon_matrix/messaging_config.py" in changed
+    ):
+        return "authority-adoption"
     if "docs/resource-access.md" in changed and changed <= RESOURCE_DOC_FILES:
         return "resource-docs"
     if (
