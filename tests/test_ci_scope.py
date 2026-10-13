@@ -70,6 +70,14 @@ class CIScopeTests(unittest.TestCase):
         from tools.ci_scope import AUTHORITY_ADOPTION_FILES
 
         self.assertEqual(profile(list(AUTHORITY_ADOPTION_FILES)), "authority-adoption")
+        inspection = [
+            "src/daimon_matrix/messaging.py",
+            "src/daimon_matrix/messaging_store.py",
+            "src/daimon_matrix/messaging_config.py",
+            "tests/test_republish_after_advance.py",
+        ]
+        self.assertEqual(profile(inspection), "authority-adoption")
+        self.assertEqual(profile([*inspection, "schemas/unknown.json"]), "full")
         for path in (
             "src/daimon_matrix/identity.py",
             "src/daimon_matrix/authority_epochs.py",

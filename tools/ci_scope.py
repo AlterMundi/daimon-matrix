@@ -126,11 +126,14 @@ AUTHORITY_ADOPTION_FILES = frozenset(
     {
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/messaging_config.py",
+        "src/daimon_matrix/messaging.py",
+        "src/daimon_matrix/messaging_store.py",
         "src/daimon_matrix/chat_host.py",
         "src/daimon_matrix/daemon.py",
         "tests/test_operator_messaging.py",
         "tests/test_chat_host.py",
         "tests/test_native_messaging.py",
+        "tests/test_republish_after_advance.py",
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
         ".github/workflows/tests.yml",
@@ -233,8 +236,9 @@ def profile(paths: list[str]) -> str:
         return "tribe-group"
     if (
         changed <= AUTHORITY_ADOPTION_FILES
-        and "src/daimon_matrix/operator_messaging.py" in changed
         and "src/daimon_matrix/messaging_config.py" in changed
+        and changed
+        & {"src/daimon_matrix/operator_messaging.py", "src/daimon_matrix/messaging.py"}
     ):
         return "authority-adoption"
     if "docs/resource-access.md" in changed and changed <= RESOURCE_DOC_FILES:

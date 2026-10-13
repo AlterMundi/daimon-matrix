@@ -128,8 +128,18 @@ def _generations(target: Path) -> list[str]:
 
 
 class RepublishAfterAdvanceTests(unittest.TestCase):
-    def published(self) -> tuple[Any, Path, Path, dict[str, Any], dict[str, bytes]]:
+    def published(
+        self, *, max_ttl_ms: int | None = None
+    ) -> tuple[Any, Path, Path, dict[str, Any], dict[str, bytes]]:
         runtime, spec, sources, _ = application_fixture(self)
+        if max_ttl_ms is not None:
+            from dataclasses import replace
+
+            self.pair.policy = replace(self.pair.policy, max_ttl_ms=max_ttl_ms)
+            self.pair.sender_context.policy = self.pair.receiver.policy = (
+                self.pair.policy
+            )
+            spec["outgoing"]["policy"]["max_ttl_ms"] = max_ttl_ms
         target = self.root / "app"
         prepare(runtime, target, spec, secret_sources=sources)
         installation = signed_visibility_installation(
@@ -140,6 +150,245 @@ class RepublishAfterAdvanceTests(unittest.TestCase):
             name: (target / name).read_bytes() for name in spec["stores"].values()
         }
         return runtime, target, installation, application, stores
+
+    def retained_send(self, *, lose_message_response: bool = False):
+        from dataclasses import replace
+
+        from daimon_matrix.native_egress import synthetic_visibility
+        from daimon_matrix.routes import OpaqueInbox, TransportIngress
+        from daimon_matrix.synthetic_relationships import _uuid
+
+        runtime, target, installation, application, _ = self.published(max_ttl_ms=1_000)
+        loaded = load_application(runtime, target)
+        delivery = loaded.service.messaging.deliveries["peer-out"]
+        calls = []
+        receiver_egress = synthetic_visibility(clock=lambda: self.pair.now)
+        for phase, provider in zip(
+            ("evidence", "message"), delivery.providers, strict=True
+        ):
+            route = application["outgoing"]["routes"][phase]
+            ingress = TransportIngress(
+                **{key: route[key] for key in ("provider_ref", "route_ref", "key_ref")},
+                secret=(target / route["secret_file"]).read_bytes(),
+                recipient_id=self.pair.policy.recipient_id,
+                recipient_body_ref=self.pair.recipient.origin["body_ref"],
+                recipient_embodiment_id=self.pair.recipient.origin["embodiment_id"],
+                inbox=OpaqueInbox(
+                    self.root / ("history-" + phase + ".sqlite"),
+                    clock=lambda: self.pair.now,
+                ),
+                clock=lambda: self.pair.now,
+                egress=receiver_egress,
+                egress_catalog_id="history-" + phase,
+                intake_validator=getattr(self.pair.receiver, "receive_" + phase),
+            )
+
+            def exchange(raw, phase=phase, ingress=ingress):
+                calls.append((phase, raw))
+                response = bytes(ingress.handle(raw))
+                if lose_message_response and phase == "message":
+                    raise ConnectionError("synthetic lost return after intake")
+                return response
+
+            provider._round_trip = exchange
+        arguments = dict(
+            client_id=application["client"]["descriptor"]["client_id"],
+            send_id=_uuid("history-send"),
+            thread_id=_uuid("history-thread"),
+            text="Retained delivery proof",
+        )
+        result = delivery.send(**arguments)
+        self.assertEqual(
+            result["transport_status"],
+            "pending" if lose_message_response else "recipient-intake",
+        )
+        advanced = advance_manifest(runtime)
+        # Preserve this fixture's qualified echo proof key and destination. The
+        # receive-only controller used by advance_manifest cannot verify these
+        # already-authenticated synthetic transport/echo records.
+        advanced = replace(
+            advanced, egress=synthetic_visibility(clock=lambda: self.pair.now)
+        )
+        republish(advanced, target, installation=installation)
+        selected = load_application(advanced, target).service.messaging.deliveries[
+            "peer-out"
+        ]
+        for provider in selected.providers:
+            provider._round_trip = lambda raw: self.fail(
+                "historical inspection transmitted"
+            )
+        return advanced, target, selected, arguments, calls
+
+    def test_historical_delivery_survives_actual_authority_advance_without_replay(self):
+        for pending in (False, True):
+            with self.subTest(pending=pending):
+                _runtime, target, delivery, arguments, calls = self.retained_send(
+                    lose_message_response=pending
+                )
+                self.pair.now += delivery.sender.context.policy.max_ttl_ms + 1
+                delivery.sender.prepare = lambda **kwargs: self.fail(
+                    "historical inspection prepared or renewed a carrier"
+                )
+                before = {
+                    path.relative_to(target): path.read_bytes()
+                    for path in target.rglob("*")
+                    if path.is_file()
+                }
+                events = delivery.sender.ledger.events()
+                result = delivery.inspect(
+                    client_id=arguments["client_id"], send_id=arguments["send_id"]
+                )
+                self.assertEqual(
+                    result["transport_status"],
+                    "pending" if pending else "recipient-intake",
+                )
+                self.assertFalse(result["retryable"])
+                self.assertEqual(
+                    result["recovery"]["action"], "historical-inspection-only"
+                )
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(events, delivery.sender.ledger.events())
+                self.assertEqual(
+                    before,
+                    {
+                        path.relative_to(target): path.read_bytes()
+                        for path in target.rglob("*")
+                        if path.is_file()
+                    },
+                )
+
+    def test_historical_delivery_refuses_missing_or_forged_provenance(self):
+        _runtime, target, delivery, arguments, _calls = self.retained_send()
+        binding = target / "binding.json"
+        original = binding.read_bytes()
+        binding.unlink()
+        with self.assertRaises(ValueError):
+            delivery.inspect(
+                client_id=arguments["client_id"], send_id=arguments["send_id"]
+            )
+        forged = json.loads(original)
+        forged["signature"] = "A" * len(forged["signature"])
+        binding.write_bytes(canonical_bytes(forged))
+        with self.assertRaises(ValueError):
+            delivery.inspect(
+                client_id=arguments["client_id"], send_id=arguments["send_id"]
+            )
+
+    def test_historical_configuration_refuses_signed_context_substitutions(self):
+        from daimon_matrix.messaging_config import (
+            _transport_config_digest,
+            _verify_historical_transport,
+            create_binding,
+        )
+
+        runtime, target, _delivery, _arguments, _calls = self.retained_send()
+        current, metadata = read_publication(runtime, target)
+        retained_digest = _transport_config_digest(
+            read_document(target / "application.json")
+        )
+        publication = read_document(target / "publication.json")
+        for field in (
+            "endpoint",
+            "provider_ref",
+            "route_ref",
+            "key_ref",
+            "secret_sha256",
+            "policy",
+            "stores",
+            "foreign",
+            "history",
+            "schema",
+        ):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(current)
+                route = changed["outgoing"]["routes"]["message"]
+                if field == "policy":
+                    changed["outgoing"]["policy"]["max_ttl_ms"] -= 1
+                elif field == "stores":
+                    changed["stores"]["inbox"] = "different.sqlite"
+                elif field == "foreign":
+                    changed["authorities"].reverse()
+                elif field == "history":
+                    changed["relationship_events"] = changed["relationship_events"][:-1]
+                elif field == "schema":
+                    changed["schema"] = "dm.messaging.application/v2"
+                elif field == "endpoint":
+                    route[field] = "http://127.0.0.1:45201/dm-messaging/v1/message"
+                elif field == "secret_sha256":
+                    route[field] = "f" * 64
+                else:
+                    route[field] = "different:" + field
+                (metadata / "application.json").write_bytes(canonical_bytes(changed))
+                (metadata / "binding.json").write_bytes(
+                    canonical_bytes(create_binding(runtime, changed))
+                )
+                body = {
+                    **publication["body"],
+                    "application_sha256": config_digest(changed),
+                }
+                (target / "publication.json").write_bytes(
+                    canonical_bytes(
+                        dict(body=body, binding=create_binding(runtime, body))
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+                    _verify_historical_transport(
+                        runtime, target, changed, retained_digest
+                    )
+
+    def test_historical_inspection_rechecks_current_publication_before_return(self):
+        from daimon_matrix.messaging_config import create_binding
+
+        runtime, target, delivery, arguments, _calls = self.retained_send()
+        current, metadata = read_publication(runtime, target)
+        publication = read_document(target / "publication.json")
+        provider = delivery.providers[0]
+        verify = provider.validate_prepared_response
+
+        def replace_publication(request, response):
+            result = verify(request, response)
+            current["outgoing"]["routes"]["message"]["endpoint"] = (
+                "http://127.0.0.1:45201/dm-messaging/v1/message"
+            )
+            (metadata / "application.json").write_bytes(canonical_bytes(current))
+            (metadata / "binding.json").write_bytes(
+                canonical_bytes(create_binding(runtime, current))
+            )
+            body = {**publication["body"], "application_sha256": config_digest(current)}
+            (target / "publication.json").write_bytes(
+                canonical_bytes(dict(body=body, binding=create_binding(runtime, body)))
+            )
+            return result
+
+        provider.validate_prepared_response = replace_publication
+        with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+            delivery.inspect(
+                client_id=arguments["client_id"], send_id=arguments["send_id"]
+            )
+
+    def test_historical_inspection_refuses_mixed_phase_selections(self):
+        import sqlite3
+        from contextlib import closing
+
+        _runtime, _target, delivery, arguments, _calls = self.retained_send()
+        with closing(sqlite3.connect(delivery.sender.outbox.path)) as database:
+            encoded = database.execute(
+                "SELECT binding FROM messaging_transport_stages WHERE phase='evidence'"
+            ).fetchone()[0]
+            binding = json.loads(encoded)
+            binding["config_digest"] = delivery.config_digest
+            database.execute(
+                "UPDATE messaging_transport_stages SET binding=? "
+                "WHERE phase='evidence'",
+                (canonical_bytes(binding),),
+            )
+            database.commit()
+        before = delivery.sender.outbox.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+            delivery.inspect(
+                client_id=arguments["client_id"], send_id=arguments["send_id"]
+            )
+        self.assertEqual(before, delivery.sender.outbox.path.read_bytes())
 
     def test_advance_strands_the_application_and_republish_repairs_it(self) -> None:
         runtime, target, installation, previous, stores = self.published()

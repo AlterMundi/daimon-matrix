@@ -2056,6 +2056,23 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertFalse(self.invoke(hosted, request)["ok"])
         self.assertEqual(len(calls), 2)
 
+    def test_historical_digest_never_enters_a_transmitting_or_completed_retry(self):
+        pair, hosted, delivery, calls = self.setup_sender()
+        request = self.request(pair)
+        self.assertTrue(self.invoke(hosted, request)["ok"])
+        before = delivery.sender.outbox.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "messaging_transport_conflict"):
+            delivery._run(
+                client_id=self.capability.client_id,
+                send_id=self.send_id,
+                thread_id=request["params"]["thread_id"],
+                text=TEXT,
+                transmit=True,
+                inspection_config_digest=delivery.config_digest,
+            )
+        self.assertEqual(delivery.sender.outbox.path.read_bytes(), before)
+        self.assertEqual(len(calls), 2)
+
     def test_completed_exact_rpc_retry_after_expiry_and_restart_is_read_only(
         self,
     ) -> None:

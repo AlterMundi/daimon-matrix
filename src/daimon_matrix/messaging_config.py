@@ -1273,6 +1273,7 @@ def _compose(
         or local.incarnations != runtime_authority.incarnations
     ):
         raise ValueError()
+    resolve_authority: Callable[[str], RootAuthority | RootHistoryAuthority]
     if shared is not None:
         assert ordinary is not None and ordinary.authority_resolver is not None
         for ref, approved in authorities.items():
@@ -1289,8 +1290,19 @@ def _compose(
                 raise MessagingConfigError("messaging_shared_history_incomplete")
     else:
 
-        def resolve_authority(being_ref: str) -> RootAuthority:
-            return authorities[being_ref]
+        def standalone_authority(
+            being_ref: str,
+        ) -> RootAuthority | RootHistoryAuthority:
+            # The selected local epoch was checked against this runtime above.
+            # Retained signed relationship events still verify in their own
+            # accepted epoch; they must not be rebound to the current manifest.
+            return (
+                runtime_authority
+                if being_ref == identity["being_ref"]
+                else authorities[being_ref]
+            )
+
+        resolve_authority = standalone_authority
 
     incoming, outgoing = application["incoming"], application["outgoing"]
     if (
@@ -1379,7 +1391,7 @@ def _compose(
     if shared is None:
         relationships = RelationshipStore(
             stores["relationships"],
-            authority_resolver=lambda being_ref: authorities[being_ref],
+            authority_resolver=lambda being_ref: resolve_authority(being_ref),
         )
         if initialize:
             for event in application["relationship_events"]:
@@ -1505,12 +1517,9 @@ def _compose(
         sender=sender,
         evidence_provider=providers["evidence"],
         message_provider=providers["message"],
-        # Client lease renewal does not change transport replay bindings.
-        config_digest=config_digest(
-            {
-                **{k: v for k, v in application.items() if k != "client"},
-                "schema": APPLICATION_SCHEMA,
-            }
+        config_digest=_transport_config_digest(application),
+        historical_inspection=lambda retained: _verify_historical_transport(
+            runtime, root, application, retained
         ),
     )
 
@@ -1910,6 +1919,88 @@ def read_application_authorities(
         raise
     except Exception:
         raise MessagingConfigError("messaging_application_rejected") from None
+
+
+def _transport_config_digest(application: Mapping[str, Any]) -> str:
+    # Client lease renewal does not change transport replay bindings.
+    return config_digest(
+        {
+            **{key: value for key, value in application.items() if key != "client"},
+            "schema": APPLICATION_SCHEMA,
+        }
+    )
+
+
+def _verify_historical_transport(
+    runtime: HostedRuntime,
+    root: Path,
+    application: Mapping[str, Any],
+    retained_digest: str,
+) -> None:
+    """Prove retained configuration evidence, not historical transmission authority."""
+    import re
+
+    from .operator_rebirth import authority_from_document
+
+    current, _ = read_publication(runtime, root)
+    if canonical_bytes(current) != canonical_bytes(application):
+        raise MessagingConfigError("messaging_transport_conflict")
+    history = runtime.service.ledger.authority
+    if not isinstance(history, RootHistoryAuthority):
+        raise MessagingConfigError("messaging_transport_conflict")
+    being_ref = history.manifest.being_ref
+    local = next(
+        document
+        for document in application["authorities"]
+        if document["manifest"]["being_ref"] == being_ref
+    )
+    metadata_roots = [root]
+    metadata_roots.extend(
+        _directory(candidate)
+        for candidate in root.iterdir()
+        if re.fullmatch(r"generation-[0-9a-f]{32}", candidate.name)
+    )
+    for metadata in metadata_roots:
+        if not (metadata / "application.json").exists():
+            continue
+        previous = read_document(metadata / "application.json")
+        if _transport_config_digest(previous) != retained_digest:
+            continue
+        validate_shape(previous)
+        if previous["schema"] != application["schema"]:
+            raise MessagingConfigError("messaging_transport_conflict")
+        binding = read_document(metadata / "binding.json")
+        verify_binding_within_history(runtime, previous, binding)
+        epoch = history.select(binding["body"])
+        restored = {**previous, "authorities": list(previous["authorities"])}
+        changed = 0
+        for index, document in enumerate(previous["authorities"]):
+            if document["manifest"]["being_ref"] == being_ref:
+                previous_authority = authority_from_document(document)
+                # The runtime can retain additional unused credential/history
+                # artifacts. Every artifact supplied by this signed application
+                # must nevertheless be identical to its accepted epoch.
+                if (
+                    previous_authority.manifest != epoch.manifest
+                    or previous_authority.state != epoch.state
+                    or any(
+                        epoch.credentials.get(key) != value
+                        for key, value in previous_authority.credentials.items()
+                    )
+                    or any(
+                        epoch.incarnations.get(key) != value
+                        for key, value in previous_authority.incarnations.items()
+                    )
+                ):
+                    raise MessagingConfigError("messaging_transport_conflict")
+                restored["authorities"][index] = local
+                changed += 1
+        if changed != 1 or _transport_config_digest(
+            restored
+        ) != _transport_config_digest(application):
+            raise MessagingConfigError("messaging_transport_conflict")
+        return
+    raise MessagingConfigError("messaging_transport_conflict")
 
 
 def load_application(
