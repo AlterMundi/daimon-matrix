@@ -25,7 +25,15 @@ explicitly identified as implemented. Schemas are
 `schemas/messaging/v2/echo-proof.schema.json`; they do not modify historical V1
 application contracts or #132-owned schemas.
 
-## 2. Exact projection and closed communication registry
+## 2. Current projection and closed communication registry
+
+The current native/group successor is implemented by `GroupMessaging`,
+`TribeRecordStore`, `native_egress.py` and `mandatory_echo.py`. The original
+single-recipient V2 slice is retained historical qualification; current group
+projection accepts the complete frozen recipient list. See
+[the group runtime](tribe-group-runtime.md) and
+[current architecture/profiles](current-architecture.md) for its deployed
+composition. A group is one logical message/echo, not N pair enrollments.
 
 The trusted native producer supplies this exact object (no extra keys):
 
@@ -33,8 +41,10 @@ The trusted native producer supplies this exact object (no extra keys):
   64-hex digest, authenticated by the runtime resolver. The primitive does not
   invent native event hashing or verify native signatures itself.
 - `sender`: exact origin/being/embodiment identity descriptor, not a display name.
-- `recipients`: exactly one exact identity descriptor. Fanout/group is rejected
-  in this version, not silently exempted.
+- `recipients`: a bounded list of 1..256 trusted-producer identity strings. The
+  current group supplies its complete frozen audience. The producer binds actual
+  identities through authenticated native records; display labels never grant
+  audience authority. The earlier one-recipient restriction is historical.
 - `thread_id`: exact application correlation.
 - `reply_to`: `null` for `message`; otherwise exact `{event_id, event_digest}`.
   The readable producer may also retain the paired `sender` and `text` fields
@@ -47,7 +57,7 @@ The trusted native producer supplies this exact object (no extra keys):
 | `reply` | `{text: string}` | Complete reply, with mandatory referenced event. |
 | `semantic-receipt` | `{outcome: delivered\|failed:transport\|refused:policy\|expired\|resolved:unroutable}` | Authenticated native outcome associated with its exact parent. Delivery is not reading, understanding or an authored response. |
 | `transport-result` | `{stage: evidence\|message, outcome: accepted\|refused}` | Safe result projection correlated to the logical event; no envelope, MAC, capability or raw protocol response. |
-| `authorization-control` | `{stage: evidence-before-message}` | Safe declaration of the correlated authorization/evidence stage. Fresh native carrier must later validate against this exact semantic projection. |
+| `authorization-control` | `{stage: evidence-before-message\|scope\|sync\|converse\|transport-response\|semantic-receipt}` | Safe declaration of the correlated authorization/evidence stage. Fresh native carrier must later validate against this exact semantic projection. |
 
 Opaque identity/event/thread strings are nonempty, at most 256 Unicode scalar
 characters. The parent MUST resolve the actual native descriptor format and
@@ -125,7 +135,7 @@ Explicit Telegram entities style only the generated header. There is no
 Paragraph-aware UTF-16 chunking preserves every character within 32 parts of
 4,096 units. Continuations carry `i/n` and reply to the first confirmed part.
 
-The echo binding may freeze `presentation` (sender, single recipient, and
+The echo binding may freeze `presentation` (sender, complete recipient list, and
 optional reply sender) and `telegram_reference` (parent event ID, digest and
 confirmed Telegram message ID). Both are authenticated with the existing proof
 key. The canonical producer projection remains intact; relabelling and policy
@@ -169,6 +179,8 @@ tables, never by a caller-supplied flag, so no path can opt itself out.
 | `messaging-message-request`, `messaging-evidence-request` | inter-daimon message and evidence | yes |
 | `messaging-message-result`, `messaging-evidence-result` | inter-daimon intake result | yes |
 | `route-provider-request` | message routing submission | yes |
+| `tribe-message-request` | one group message carrier, gating every transport copy | yes, one logical speech echo |
+| `tribe-receipt-request` | authenticated group receipt control frame | bound obligation; compact control is suppressed, not a confirmed post |
 | `peer-scope-request`, `peer-scope-response` | one being's own `/we` scope resolution | no |
 | `peer-sync-request`, `peer-sync-response` | one being's own `/we` state convergence | no |
 | `peer-converse-request`, `peer-converse-response` | one being's own `/we` sibling conversation | only under the signed sibling-conversation opt-in |
@@ -315,7 +327,14 @@ detects row edits and swaps without the key, but does not prevent whole-store
 rollback, deletion followed by unauthorized fresh admission, or compromised
 runtime/key forgery. Independent monotonic witnesses are not implemented.
 
-### Switching the representation (operator procedure)
+### Directed legacy representation enrollment
+
+This procedure applies to the explicit directed profile, not current Tribe
+onboarding or group representation changes. Group installations use the maintained
+signed group publication/visibility successor; preserve valid existing participant
+acceptance and historical obligations. Never create founder/member pairs to
+change group presentation. The current receiving profile determines which exact
+owner/participant bindings need a successor.
 
 The representation lives inside the co-signed visibility disclosure, and the
 `acceptance_digest` binds it, so a mode switch is a two-party re-enrollment —
@@ -534,9 +553,17 @@ capacity/commit failure after remote acceptance may leave an ambiguous intent;
 it cannot be silently upgraded to success. No fictitious Bot API `getMessage`
 is used.
 
-## 5. Concrete parent obligations before activation / issue closure
+## 5. Historical parent checklist for the original V2 primitive
 
-All of the following remain **unimplemented by this slice**:
+At the original isolated-slice checkpoint the following parent integrations
+were unfinished. This list retains that dated qualification, not current
+implementation status, current module counts, CI requirements or new work
+ownership. Native egress and group integration have since landed; consult
+[CURRENT-STATE](../CURRENT-STATE.md) for actual receiving evidence and
+[current architecture](current-architecture.md) for selected profiles. In
+particular, ordinary same-being sync is not public inter-daimon speech and does
+not inherit the old all-path echo assumption below. Future work belongs in the
+current milestone/issues, not a repetition of this obsolete checklist.
 
 1. Reconcile final #132 semantic carrier/outcome contracts and obtain accepted
    successor scope for overlapping messaging/store/config/service/routes/daemon
@@ -577,7 +604,7 @@ All of the following remain **unimplemented by this slice**:
    `tools/reproducible_build.py` (`BUILD_INPUTS`),
    `tools/check_distribution.py` (`SDIST_FILES` / `WHEEL_FILES`),
    `tests/test_package_scaffold.py`, and `tests/test_dm041_hermes_body.py`.
-   The isolated slice has 59 modules against the baseline's asserted 58; derive
+   That isolated slice had 59 modules against its baseline's asserted 58; derive
    the final integrated count and explicitly assert all new modules rather than
    weakening closed inventories. Merely tracking/committing the new file does
    not fix the build-input omission: the builder copies its explicit list.

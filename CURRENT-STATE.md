@@ -2,6 +2,9 @@
 
 Architecture and profile navigation: [docs/current-architecture.md](docs/current-architecture.md).
 Current entries below supersede dated RC and experiment statements.
+[Architecture alignment milestone6](https://github.com/AlterMundi/daimon-matrix/milestone/6)
+and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
+the reviewed next changes; they do not activate automatic peer attention.
 
 ## Deployed membership group — 2026-10-13
 

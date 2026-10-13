@@ -175,6 +175,8 @@ CONTEXT_DOC_FILES = frozenset(
         "README.md",
         "RESUME.md",
         "docs/current-architecture.md",
+        "docs/runbooks/receiver-compatible-authority-updates.md",
+        "docs/mandatory-telegram-visibility.md",
         "docs/packaging.md",
         "specs/identity-continuity.md",
         "specs/operational-stack-contract.md",
