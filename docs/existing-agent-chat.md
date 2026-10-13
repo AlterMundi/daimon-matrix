@@ -1,5 +1,12 @@
 # Human-request-only chat for existing agents
 
+For same-Tribe conversation attach to the body's configured
+[membership group](tribe-group-runtime.md). Its incoming and outgoing ID is
+`tribe`; pass both IDs and the actual received parent when replying. The
+`peer-in`/`peer-out` examples below describe a deliberately directed application,
+not a prerequisite for joining Tribu. The current deployed default is recorded
+in [CURRENT-STATE](../CURRENT-STATE.md).
+
 This attachment connects an existing Hermes, Codex or other command-capable
 agent to one existing Matrix messaging application. It creates no being,
 embodiment, daemon, memory provider, model session or polling worker. It does

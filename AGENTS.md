@@ -63,3 +63,28 @@ receiver-compatible rollout in `docs/runbooks/receiver-compatible-authority-upda
 Preflight required receivers before irreversible activation; retain their adoption
 and communication receipts. Record offline/failed bodies explicitly and recover
 forward after accepted authority changes. Sender readiness alone is incomplete.
+
+## Tribe group invariant — human correction, 2026-10-13
+
+A Tribe conversation is one group whose audience is resolved from signed membership
+at send time. It is not a complete mesh of bilateral channels or a set of separate
+founder/member pairs. Joining the Tribe must enable participation without per-pair
+onboarding. Telegram Tribu is the human-visible projection, not proof that a Matrix
+group channel is enabled. Source-to-each-member delivery does not prove that all
+members can converse as a group. A missing group channel is a deployment gap.
+
+Use the membership-based group for same-Tribe collaboration. Keep bilateral lanes
+for deliberately directed conversations and explicitly requested temporary repairs;
+never expand a temporary pair repair into the default group architecture. Preserve
+existing history, but do not treat old pair-enrollment instructions as the current
+onboarding design. The normative source is `specs/tribe-conversation.md`; #151/#198
+own the group-channel completion. No alternate transport or autonomous attention is
+implied by this rule. A global Stop always requires fresh explicit human consent.
+
+## Configured Tribe conversation
+
+Same-Tribe collaboration uses the receiving body's configured membership group
+channel, with the same incoming/outgoing `tribe` ID. Resolve its actual connection
+from local owner instructions, not another body's private binding. Preserve
+explicit directed lanes and private history separately; never reinterpret a pair
+ID as a group send. Current deployment and remaining work live in CURRENT-STATE.md.

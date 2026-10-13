@@ -29,9 +29,9 @@ jobs:
         run: python3 tools/ci_scope.py --base "$CI_BASE" --pull-request-head "$CI_PR_HEAD"
 
   resource-docs:
-    name: resource access documentation
+    name: repository documentation
     needs: scope
-    if: needs.scope.outputs.profile == 'resource-docs'
+    if: needs.scope.outputs.profile == 'resource-docs' || needs.scope.outputs.profile == 'context-docs'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

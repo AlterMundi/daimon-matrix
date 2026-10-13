@@ -12,6 +12,13 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_current_context_docs_do_not_repeat_runtime_qualification(self):
+        from tools.ci_scope import CONTEXT_DOC_FILES
+        self.assertEqual(profile(list(CONTEXT_DOC_FILES)), 'context-docs')
+        for other in ('src/daimon_matrix/runtime.py', 'specs/tribe-conversation.md',
+                      'schemas/unknown.json', 'docs/unknown.md', 'pyproject.toml'):
+            self.assertEqual(profile([*CONTEXT_DOC_FILES, other]), 'full')
+
     def test_membership_group_qualifies_affected_contracts_once(self):
         from tools.ci_scope import TRIBE_GROUP_FILES
 
