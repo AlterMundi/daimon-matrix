@@ -301,16 +301,23 @@ def adopt_peer_authority(
         "principal_id"
     ]
     destination = _safe_file(root, known["ledger_filename"], must_exist=False)
-    if not destination.exists():
-        copy_path = root / (".peer-ledger-" + secrets.token_hex(16))
-        _write(root, copy_path.name, b"")
+    # The selected predecessor remains the authoritative store until the bundle
+    # switches. An interrupted attempt's unselected copy can be stale: refresh
+    # the entire SQLite snapshot on every retry, including journals and heads.
+    copy_path = root / (".peer-ledger-" + secrets.token_hex(16))
+    _write(root, copy_path.name, b"")
+    try:
         with (
             ledger._database() as before,
             closing(sqlite3.connect(copy_path)) as after,
         ):
             before.backup(after)
+            for (event_json,) in after.execute("SELECT event_json FROM events"):
+                verify_event(json.loads(event_json), authority)
         _sync(root)
         os.replace(copy_path, destination)
+    finally:
+        copy_path.unlink(missing_ok=True)
     with closing(sqlite3.connect(destination)) as database:
         for (event_json,) in database.execute("SELECT event_json FROM events"):
             verify_event(json.loads(event_json), authority)

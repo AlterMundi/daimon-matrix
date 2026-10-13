@@ -2612,6 +2612,31 @@ class ForeignAuthorityAdoptionTests(unittest.TestCase):
         self.assertEqual(
             json.loads((runtime.state_root / "runtime.json").read_bytes()), bundle
         )
+        replace = os.replace
+
+        def fail_bundle_switch(source, destination):
+            if Path(destination) == runtime.state_root / "runtime.json":
+                raise OSError("interrupted before bundle selection")
+            return replace(source, destination)
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.os.replace",
+                side_effect=fail_bundle_switch,
+            ),
+            self.assertRaises(OSError),
+        ):
+            adopt_peer_authority(before, public, history)
+        self.assertEqual(
+            json.loads((runtime.state_root / "runtime.json").read_bytes()), bundle
+        )
+        later = foreign_ledger.append_local(
+            kind="experience.observed",
+            subject="received-between-attempts",
+            payload={"summary": "retained after interruption"},
+            signer=foreign.signers["daimonmatrix"],
+            occurred_at_ms=NOW + 1,
+        )
         receipt = adopt_peer_authority(before, public, history)
         verify_binding(before, receipt["document"], receipt["binding"])
         after = load_runtime(
@@ -2622,7 +2647,7 @@ class ForeignAuthorityAdoptionTests(unittest.TestCase):
             egress=closed_visibility(clock=lambda: NOW + 30, catalog_mode="migrate"),
         )
         selected = after.service.sources.registry.known_ledgers[foreign.state.being_ref]
-        self.assertEqual(selected.known_page(cursor=None)["events"], [event])
+        self.assertEqual(selected.known_page(cursor=None)["events"], [event, later])
         selected.integrity_check()
         self.assertEqual((runtime.state_root / "custody.json").read_bytes(), custody)
         candidate = json.loads((runtime.state_root / "runtime.json").read_bytes())
