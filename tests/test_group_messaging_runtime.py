@@ -133,6 +133,14 @@ class GroupRuntimeTests(unittest.TestCase):
             text="one group message",
         )
         self.assertTrue(first["semantic"]["terminal"])
+        members = {row["being_ref"]: row for row in first["members"]}
+        own = members[sender.lane.being_ref]
+        remote = members[receiver.lane.being_ref]
+        self.assertEqual(own["receiving_copy"], "unknown")
+        self.assertEqual(len(own["author_retained_leg_ids"]), 1)
+        self.assertEqual(remote["receiving_copy"], "proved")
+        self.assertEqual(len(remote["receiving_leg_ids"]), 1)
+        self.assertEqual(remote["author_retained_leg_ids"], [])
         remote_transport = [
             leg for leg in first["transport"] if leg["state"] != "author-retained"
         ]
@@ -216,6 +224,96 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertTrue(expired["carrier"]["expired"])
         self.assertEqual(expired["semantic"], first["semantic"])
         self.assertEqual(sender.inspect(client_id="test", send_id=send_id), expired)
+
+    def test_route_removal_preserves_recorded_ack_and_signed_receipt(self):
+        sender, receiver = self.groups
+        send_id = str(uuid.uuid4())
+        first = sender.send(
+            client_id="test",
+            send_id=send_id,
+            thread_id=str(uuid.uuid4()),
+            text="recorded receiving proof",
+        )
+        sender.providers.clear()
+        with patch.object(sender, "_transmit", side_effect=AssertionError("read I/O")):
+            retained = sender.inspect(client_id="test", send_id=send_id)
+        remote = next(
+            row
+            for row in retained["transport"]
+            if row["being_ref"] == receiver.lane.being_ref
+        )
+        self.assertEqual(remote["state"], "recipient-intake")
+        self.assertEqual(remote["attempt_state"], "recipient-intake")
+        self.assertEqual(remote["current_route"], "unavailable")
+        self.assertTrue(remote["response_sha256"])
+        self.assertEqual(retained["semantic"], first["semantic"])
+        self.assertEqual(retained["members"], first["members"])
+
+    def test_late_receipt_improves_unknown_after_expiry_without_retransmission(self):
+        sender, receiver = self.groups
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="receipt return is unavailable",
+        )
+        with patch.object(receiver, "_transmit"):
+            first = sender.send(**request)
+        remote = next(
+            row
+            for row in first["transport"]
+            if row["being_ref"] == receiver.lane.being_ref
+        )
+        self.assertEqual(remote["state"], "recipient-intake")
+        self.assertFalse(first["semantic"]["terminal"])
+        self.assertTrue(all(m["receiving_copy"] == "unknown" for m in first["members"]))
+        self.fixture.now += 60_000
+        with patch.object(
+            sender, "_transmit", side_effect=AssertionError("expired I/O")
+        ):
+            expired = sender.send(**request)
+            self.assertTrue(expired["carrier"]["expired"])
+            self.assertEqual(expired["semantic"], first["semantic"])
+            receipt = receiver.records.get("receipt", first["message_id"])
+            sender.receive_evidence(canonical_bytes(receipt))
+            late = sender.send(**request)
+        self.assertTrue(late["semantic"]["terminal"])
+        self.assertTrue(late["carrier"]["expired"])
+        self.assertEqual(late["audience"], first["audience"])
+        self.assertEqual(late["message_id"], first["message_id"])
+        member = next(
+            m for m in late["members"] if m["being_ref"] == receiver.lane.being_ref
+        )
+        self.assertEqual(member["receiving_copy"], "proved")
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_expired_unroutable_leg_is_not_a_semantic_nondelivery_receipt(self):
+        sender, receiver = self.groups
+        sender.providers.clear()
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="offline route",
+        )
+        first = sender.send(**request)
+        self.fixture.now += 60_000
+        with patch.object(
+            sender, "_transmit", side_effect=AssertionError("expired I/O")
+        ):
+            expired = sender.send(**request)
+        self.assertEqual(expired["semantic"], first["semantic"])
+        self.assertFalse(expired["semantic"]["terminal"])
+        member = next(
+            m for m in expired["members"] if m["being_ref"] == receiver.lane.being_ref
+        )
+        self.assertEqual(member["receiving_copy"], "unknown")
+        remote = next(
+            t for t in expired["transport"] if t["being_ref"] == receiver.lane.being_ref
+        )
+        self.assertEqual(remote["attempt_state"], "not-attempted")
+        self.assertEqual(remote["current_route"], "unavailable")
+        self.assertEqual(receiver.page(after=0, limit=10), [])
 
     def test_persistence_failure_cannot_sign_receipt(self):
         prepared = self.fixture.sender_lane.prepare(

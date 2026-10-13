@@ -1724,13 +1724,45 @@ class GroupMessaging:
         if plan is None:
             raise ValueError("tribe_send_missing")
         transport = []
+        members: dict[str, dict[str, Any]] = {}
+        legs = {
+            (leg["recipient_id"], leg["receipt_origin_embodiment_id"]): leg
+            for leg in semantic["legs"]
+        }
         for row in message["payload"]["body"]["audience"]:
             target = (row["being_ref"], row["embodiment_id"])
+            leg = legs[(row["membership_ref"], row["embodiment_id"])]
+            author = target == (
+                message["being_ref"],
+                message["origin"]["embodiment_id"],
+            )
+            member = members.setdefault(
+                row["being_ref"],
+                {
+                    "being_ref": row["being_ref"],
+                    "membership_ref": row["membership_ref"],
+                    "body_count": 0,
+                    "receiving_copy": "unknown",
+                    "receiving_leg_ids": [],
+                    "author_retained_leg_ids": [],
+                },
+            )
+            member["body_count"] += 1
+            # CommunicationStore has reverified each terminal receipt. The
+            # author's local retention is not receiving uptake, even though its
+            # existing semantic leg also uses the delivered outcome.
+            if leg["state"] == "delivered":
+                if author:
+                    member["author_retained_leg_ids"].append(leg["leg_id"])
+                else:
+                    member["receiving_copy"] = "proved"
+                    member["receiving_leg_ids"].append(leg["leg_id"])
             state, proof_hash = "pending", None
-            if target == (self.lane.being_ref, self.lane.local_embodiment_id):
+            route = "available" if target in self.providers else "unavailable"
+            attempt = "not-attempted"
+            if author:
                 state = "author-retained"
-            elif target not in self.providers:
-                state = "unroutable"
+                route, attempt = "not-required", "author-retained"
             else:
                 request_id = str(
                     uuid.uuid5(
@@ -1741,13 +1773,20 @@ class GroupMessaging:
                 proof = self.records.transport_result(request_id)
                 if proof is not None:
                     state = proof["result"]["outcome"]
+                    attempt = state
                     proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
+                elif self.records.get("transport", request_id) is not None:
+                    attempt = "unconfirmed"
+                elif route == "unavailable":
+                    state = "unroutable"
             transport.append(
                 {
                     "being_ref": target[0],
                     "embodiment_id": target[1],
                     "state": state,
                     "response_sha256": proof_hash,
+                    "attempt_state": attempt,
+                    "current_route": route,
                 }
             )
         return {
@@ -1758,6 +1797,7 @@ class GroupMessaging:
             "tribe_ref": self.policy.tribe_ref,
             "audience": message["payload"]["body"]["audience"],
             "semantic": semantic,
+            "members": [members[ref] for ref in sorted(members)],
             "transport": transport,
             "carrier": {
                 "expires_at_ms": plan["expires_at_ms"],
