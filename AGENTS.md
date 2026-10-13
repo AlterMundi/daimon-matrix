@@ -1,5 +1,11 @@
 # Agent instructions
 
+For current architecture and receiving profiles, read
+[`docs/current-architecture.md`](docs/current-architecture.md); use
+[`CURRENT-STATE.md`](CURRENT-STATE.md) for actual deployment and remaining work.
+Historical RC/provisional/Bridge records and archived pair runbooks do not select
+the current default. Preserve their evidence without executing their old flow.
+
 Read [`docs/foundation/daimon-matrix.md`](docs/foundation/daimon-matrix.md)
 before any naming, scope or ontology decision. It is the functional document: the
 living original is <https://hackmd.io/@nicoechaniz/daimon-matrix> and the

@@ -1,22 +1,25 @@
 # Being, embodiment, and incarnation continuity
 
-Status: normative.
+Status: normative identity separation, with historical provisional binding
+explicitly separated below. Current execution uses verified Root identity.
 
 ## Operational identifiers
 
-The first release uses an administrator-created `being_ref` and a canonical
-being manifest. It is an explicit trust configuration, not cryptographic
-proof. Cluster assigns an `embodiment_id` when a body is created and an
-`incarnation_id` whenever that body runtime starts.
+Current being identity comes from verified Root-authorized signed history.
+Administrator labels or a manually copied manifest cannot establish it. Cluster
+observes the enrolled embodiment and actual physical incarnation; these must
+match Matrix signed authority. Process creation alone does not issue credentials
+or incarnation authorization.
 
 Multiple active embodiments with one `being_ref` are valid. Presence evidence
 is per incarnation and exists for observability and routing only. It MUST NOT
 act as a fence against another embodiment.
 
-Each embodiment maps to exactly one active Tribe principal in a manifest
-revision. A principal authenticates messages and event signatures but does not
-prove the being by itself. Manifest changes are installed explicitly and
-audited on every host; peers with different hashes do not synchronize.
+Transport principals are bound to embodiment credentials, not being names or
+Tribe membership. Verify and adopt authority successors through the
+[receiver-compatible rollout](../docs/runbooks/receiver-compatible-authority-updates.md).
+Historical epochs remain available for original-event verification; a newer
+unverified manifest is never an automatic winner.
 
 ## Matrix identity in the V0.1 MVP
 
@@ -30,7 +33,12 @@ Root material is never installed in ordinary runtime custody and is never
 replaced by Tribe transport keys. Source access is an explicit operator grant,
 not authority inherited by other embodiments, models, species or descendants.
 
-DM-021 implements an explicit binding artifact naming the provisional
+## Historical provisional binding
+
+The original canary used administrator-created `being_ref` and
+`being-manifest/v1` as trust configuration, not cryptographic identity. This is
+retained migration evidence, never current onboarding authority.
+DM-021 implements an explicit binding artifact naming that provisional
 `being_ref`, manifest hash, accepted event heads, new Matrix identifier, and
 complete authorization evidence. Pre-binding events retain their original
 signatures and identifiers; the binding adds continuity rather than rewriting

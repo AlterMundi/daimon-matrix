@@ -12,9 +12,14 @@ and receiving observers must agree before a rollout is complete.
    receiving validator against that chain before irreversible sender activation.
    Stage a content-addressed receiving code/SDK successor using the existing
    deployment adapter, retaining the original context and previous generations.
-3. Activate the sender only when required compatibility preflight succeeds.
-   Publish a credential-free update package for offline bodies. Never distribute
-   Root custody, unlock files, provider logins or private routes in that package.
+3. Keep new-epoch egress disabled or the selected Matrix sender quiesced through
+   required receiver adoption and republication. An accepted authority commit is
+   separate from enabling new-epoch egress: compatible candidate validation alone
+   is not receiving readiness. Commit the exact signed authority only after the
+   required preflight; once accepted, retain it and recover forward. Publish a
+   credential-free update package for offline bodies, without Root custody,
+   unlock files, provider logins or private routes. Ordinary code-only updates
+   do not manufacture an authority transition or require unrelated interruption.
 4. Under each receiver's existing runtime writer lock, use `adopt_peer_authority`
    (or `operator_messaging adopt-peer --peer-authority ... --peer-history ...`)
    for an already-known foreign being. The exact signed descendant must anchor
@@ -28,9 +33,13 @@ and receiving observers must agree before a rollout is complete.
    bytes remain intact, require the same currently active body and credential,
    and verify in their exact historical epoch. Incarnation restart does not
    silently change the audience or replace the accepting key.
-6. Verify the receiving observer and authenticated native/application readiness.
-   Retain adoption receipts and actual communication/intake/echo evidence before
-   marking each body current. Neither publication nor authoring proves delivery.
+6. Verify each required receiver has selected the compatible validator, adopted
+   the exact signed successor and loaded matching application/visibility state.
+   Retain the adoption and authenticated observer/readiness receipts before
+   enabling general new-epoch egress. Use only a scoped authorized probe for the
+   receiving communication check, then retain actual intake/echo evidence before
+   marking the cohort current. Neither publication, preflight nor authoring
+   proves delivery. Explicit offline exclusions remain pending, never healthy.
 
 ## Restart and failure
 
