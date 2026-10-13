@@ -476,12 +476,15 @@ class OpaqueInbox:
         envelope: bytes,
         response_factory: Callable[[Mapping[str, Any]], tuple[bytes, RouteEgressSpec]]
         | None = None,
+        carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> dict[str, Any]:
         _uuid(request_id, "invalid_transport_request")
         _digest(request_hash, "invalid_transport_request")
         _text(recipient_id, "invalid_transport_request")
-        metadata = inspect_delivery(envelope, at_ms=self.clock())
-        envelope_hash = cast(str, metadata["envelope_sha256"])
+        metadata = carrier_inspector(envelope, at_ms=self.clock())
+        # Persist the exact outer carrier, even when inspection opens a sealed
+        # envelope inside a group frame or validates a signed receipt frame.
+        envelope_hash = hashlib.sha256(envelope).hexdigest()
         delivery_id = cast(str, metadata["delivery_id"])
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
@@ -1106,6 +1109,7 @@ class TransportIngress:
                     recipient_id=self.recipient_id,
                     envelope=envelope,
                     response_factory=accepted_response,
+                    carrier_inspector=self.carrier_inspector,
                 )
             except (RouteError, SealedDeliveryError, CanonicalError, ValueError):
                 evidence = _opaque_evidence(

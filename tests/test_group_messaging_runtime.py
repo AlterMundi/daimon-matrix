@@ -133,6 +133,20 @@ class GroupRuntimeTests(unittest.TestCase):
             text="one group message",
         )
         self.assertTrue(first["semantic"]["terminal"])
+        remote_transport = [
+            leg for leg in first["transport"] if leg["state"] != "author-retained"
+        ]
+        self.assertEqual(
+            [leg["state"] for leg in remote_transport], ["recipient-intake"]
+        )
+        self.assertTrue(remote_transport[0]["response_sha256"])
+        for group in self.groups:
+            self.assertFalse(
+                any(
+                    "El transporte rechazó" in request["text"]
+                    for request in group.egress._transport.requests
+                )
+            )
         items = receiver.page(after=0, limit=10)
         self.assertEqual(len(items), 1)
         self.assertEqual(
@@ -160,6 +174,21 @@ class GroupRuntimeTests(unittest.TestCase):
             response_to=(receiver, first["message_id"]),
         )
         self.assertTrue(reply["semantic"]["terminal"])
+        self.assertEqual(
+            [
+                leg["state"]
+                for leg in reply["transport"]
+                if leg["state"] != "author-retained"
+            ],
+            ["recipient-intake"],
+        )
+        for group in self.groups:
+            self.assertFalse(
+                any(
+                    "El transporte rechazó" in request["text"]
+                    for request in group.egress._transport.requests
+                )
+            )
         received = sender.page(after=0, limit=10)[0]["message"]
         self.assertEqual(
             received["payload"]["body"]["response_context"]["message_id"],
