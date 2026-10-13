@@ -702,7 +702,7 @@ class RelationshipContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 len(without_consent.tribes[report["tribe_ref"]]["memberships"]),
-                1,
+                2,
             )
             self.assertEqual(
                 without_consent.grants[report["grant_id"]]["state"], "incomplete"
@@ -867,7 +867,7 @@ class RelationshipContractTests(unittest.TestCase):
                 self.assertEqual(snapshot.value["grants"], [])
             self.assertEqual(forward.report(), reverse.report())
 
-    def test_expired_cards_remove_relationship_and_snapshot_authority(self) -> None:
+    def test_expired_cards_remove_grants_but_preserve_signed_membership(self) -> None:
         with tempfile.TemporaryDirectory(prefix="dm082-expiry-") as temporary:
             journey = _Journey(Path(temporary))
             report = journey.run()
@@ -879,10 +879,9 @@ class RelationshipContractTests(unittest.TestCase):
                 "stale-card",
             )
             self.assertNotEqual(expired.grants[report["grant_id"]]["state"], "active")
-            with self.assertRaisesRegex(
-                RelationshipStoreError, "tribe_member_card_not_current"
-            ):
-                expired.snapshot(report["tribe_ref"])
+            snapshot = expired.snapshot(report["tribe_ref"])
+            self.assertEqual(len(snapshot.value["members"]), 2)
+            self.assertEqual(snapshot.value["grants"], [])
 
     def test_origin_card_fork_quarantines_its_lane_and_dependants(self) -> None:
         with tempfile.TemporaryDirectory(prefix="dm082-fork-") as temporary:

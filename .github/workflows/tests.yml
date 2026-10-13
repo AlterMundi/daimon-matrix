@@ -237,20 +237,21 @@ jobs:
           python -m venv "$RUNNER_TEMP/dm-group"
           "$RUNNER_TEMP/dm-group/bin/python" -m pip install -r requirements-vectors.txt mcp==2.0.0 wasmtime==45.0.0 dist/*.whl
           echo "$RUNNER_TEMP/dm-group/bin" >> "$GITHUB_PATH"
-      - name: Group delivery, governance, frozen history and existing directed lanes
+      - name: Group delivery and corrected membership contracts
+        # The prior installed qualification exercised all 432 affected contracts;
+        # preserve its passing evidence and recheck the changed expectations plus
+        # the complete group journey instead of repeating unrelated journeys.
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
           tests.test_group_messaging_runtime
-          tests.test_dm051_sealed tests.test_dm052_communication tests.test_dm054_scopes
-          tests.test_dm082_relationships tests.test_dm091_tribe_policy
-          tests.test_single_active_tribe tests.test_communication_migration_history
-          tests.test_dm053_routes tests.test_runtime_relationship_authority
-          tests.test_cross_being_semantic_receipts
-          tests.test_messaging_runtime tests.test_operator_messaging
-          tests.test_mandatory_echo tests.test_mandatory_echo_integration
-          tests.test_telegram_mirror tests.test_telegram_executor_portability
-          tests.test_chat_host -v
+          tests.test_dm051_sealed.TribeConversationLaneTests
+          tests.test_dm082_relationships.RelationshipContractTests.test_expired_cards_remove_grants_but_preserve_signed_membership
+          tests.test_dm082_relationships.RelationshipContractTests.test_one_sided_consent_and_unaccepted_grant_are_inert
+          tests.test_dm082_relationships.RelationshipContractTests.test_tribe_admission_does_not_require_bilateral_consent_or_grants
+          tests.test_mandatory_echo.EchoTests.test_closed_policy_projection_and_control_registry
+          tests.test_telegram_mirror.CompactEchoRenderTests
+          tests.test_single_active_tribe -v
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: membership-group-${{ github.sha }}

@@ -247,7 +247,7 @@ class EchoTests(unittest.TestCase):
             ("kind", "secret"),
             ("kind", "reply"),
             ("recipients", []),
-            ("recipients", ["a", "b"]),
+            ("recipients", [f"member:{index}" for index in range(257)]),
             ("event_digest", "bad"),
             ("event_id", ""),
             ("sender", True),
