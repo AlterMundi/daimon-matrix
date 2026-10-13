@@ -902,18 +902,9 @@ class RelationshipView:
                     invite_epoch, invitation_payload["issued_at_ms"]
                 ):
                     continue
-                if not any(
-                    self._relationship_active_at(
-                        relationship, invitation_payload["issued_at_ms"]
-                    )
-                    and set(relationship["participants"])
-                    == {
-                        invitation_payload["founder_being_ref"],
-                        invitation_payload["invitee_being_ref"],
-                    }
-                    for relationship in self.relationships.values()
-                ):
-                    continue
+                # Admission is the founder's signed invitation plus the invitee's
+                # signed acceptance. Bilateral relationship consent and resource
+                # grants are independent authorities, never onboarding gates.
                 accepted = [
                     event
                     for event in self.kind["matrix/tribe-membership-acceptance"]
@@ -1430,15 +1421,20 @@ class RelationshipView:
             if membership["state"] != "active":
                 continue
             card = self.cards.get(being_ref)
-            if card is None or card["current"] is None:
-                raise RelationshipStoreError("tribe_member_card_not_current")
+            # Membership is independent of resource advertisement. Keep the
+            # legacy presentation body when a verified current card exists;
+            # otherwise use the membership signer's historical body. Group
+            # delivery resolves active recipient bodies from Root, never here.
+            presentation_body = (
+                card["current"]["payload"]["control_position"]["embodiment_id"]
+                if card is not None and card["current"] is not None
+                else membership["membership_event"]["origin"]["embodiment_id"]
+            )
             members.append(
                 {
                     "tribe_ref": tribe_ref,
                     "principal_id": being_ref,
-                    "embodiment_id": card["latest"]["payload"]["control_position"][
-                        "embodiment_id"
-                    ],
+                    "embodiment_id": presentation_body,
                     "membership_ref": membership["membership_event"]["event_id"],
                     "state": membership["state"],
                 }

@@ -117,17 +117,12 @@ document keeps the per-body requirement because a being's bodies taking part in
 the tribes it belongs to, all of them hearing the channel, is the requirement this
 plan was written against.
 
-The cost is concrete. `communication.py` derives leg identity from
-`(message_id, recipient_type, recipient_id)`, `accept()` recomputes that identity
-on every call including for an already-materialized message, and the receipt path
-validates against the recomputed value. Widening the key therefore changes how
-existing communication stores re-accept in-flight messages, so per-body legs
-require that migration to be decided explicitly; per-member legs do not.
-
-Deferring is a legitimate choice but not a cheaper one: falling back to the
-per-member reading for V0 only moves the same cost later, because reaching §3
-afterwards still needs the identity widening. What deferring does buy is that the
-tribe channel can ship against delivered leg semantics untouched.
+The runtime uses the explicit `CommunicationStore.upgrade_legs_v3` migration
+after receipts V2. It adds the receipt-author embodiment to leg identity and
+retains aliases, historical queue positions, counters and immutable proof bytes.
+An unmigrated store keeps its old derivation and refuses several bodies for one
+semantic recipient. A group application requires the per-body store capability;
+loading an application is never permission to migrate existing state.
 
 ## 4. One envelope, one wrapped key per member key
 
@@ -200,6 +195,14 @@ for no gain, because the authorization that actually gates decryption already
 binds the tribe. Multi-tribe and parallel membership in several tribes therefore
 become additive — lifting the one-active-tribe check, with no format change, no
 migration and no reinterpretation of existing evidence.
+
+The admission guard applies to new declarations and membership acceptances.
+Historical founders may already have declared several tribes before that guard
+existed; the governance contract has no dissolution for a founded tribe. Such
+declarations remain authentic and explicitly resolvable. Selecting one default
+group does not mark another declaration inactive or delete its history. Migration
+must retain that exception and must not brick historical resolution or author a
+fictitious leave for an original founder.
 
 ## 7. Admission is the onboarding path
 

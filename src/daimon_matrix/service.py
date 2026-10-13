@@ -47,7 +47,7 @@ from .memory_policy import (
     memory_checkpoint,
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
-from .messaging import MessagingChannel, MessagingDelivery
+from .messaging import GroupMessaging, MessagingChannel, MessagingDelivery
 from .native_egress import NativeEgressError
 from .peer_transport import (
     PeerClientContext,
@@ -427,9 +427,11 @@ def _transport(value: Any) -> Mapping[str, str]:
 class MessagingServiceContext:
     """Trusted owner-local channel assignments, never model-supplied authority."""
 
-    channels: Mapping[str, MessagingChannel]
+    channels: Mapping[str, MessagingChannel | GroupMessaging]
     client_channels: Mapping[str, frozenset[str]]
-    deliveries: Mapping[str, MessagingDelivery] = dataclass_field(default_factory=dict)
+    deliveries: Mapping[str, MessagingDelivery | GroupMessaging] = dataclass_field(
+        default_factory=dict
+    )
     capability_guard: Callable[[LocalCapability], None] | None = None
     labels: LabelIndex | None = None
 
@@ -997,6 +999,14 @@ class HostedWeave:
                 self.origin, require_active=True
             )
             for channel_id, channel in context.channels.items():
+                if isinstance(channel, GroupMessaging):
+                    if (
+                        _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+                        or context.deliveries.get(channel_id) is not channel
+                    ):
+                        raise ValueError
+                    channel.validate(self)
+                    continue
                 if (
                     not isinstance(channel_id, str)
                     or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
@@ -1014,6 +1024,14 @@ class HostedWeave:
                 ):
                     raise ValueError
             for channel_id, delivery in context.deliveries.items():
+                if isinstance(delivery, GroupMessaging):
+                    if (
+                        _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+                        or context.channels.get(channel_id) is not delivery
+                    ):
+                        raise ValueError
+                    delivery.validate(self)
+                    continue
                 if (
                     not isinstance(channel_id, str)
                     or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
@@ -1035,6 +1053,20 @@ class HostedWeave:
         incoming: str | None = None,
     ) -> Callable[[], None]:
         delivery = context.deliveries[outgoing]
+        if isinstance(delivery, GroupMessaging):
+
+            def authorize_group() -> None:
+                current = self._messaging_context()
+                assigned = current.client_channels.get(client_id, frozenset())
+                if (
+                    current is not context
+                    or outgoing not in assigned
+                    or current.deliveries.get(outgoing) is not delivery
+                    or (incoming is not None and incoming != outgoing)
+                ):
+                    raise ServiceError("messaging_rejected")
+
+            return authorize_group
         sender = delivery.sender
         binding = (
             sender.context,
@@ -1095,6 +1127,7 @@ class HostedWeave:
                     channel
                     for name, channel in context.channels.items()
                     if name in context.client_channels.get(client_id, frozenset())
+                    and isinstance(channel, MessagingChannel)
                 ),
             )
         except Exception:
@@ -1124,13 +1157,18 @@ class HostedWeave:
             } <= context.client_channels.get(client_id, frozenset()):
                 raise ValueError
             incoming = context.channels[value["received_channel_id"]]
+            delivery = context.deliveries[value["channel_id"]]
+            if isinstance(delivery, MessagingDelivery) and not isinstance(
+                incoming, MessagingChannel
+            ):
+                raise ValueError
             received = incoming.message(message_id)
-            return context.deliveries[value["channel_id"]].send(
+            return delivery.send(
                 client_id=client_id,
                 send_id=send_id,
                 thread_id=received["payload"]["intent"]["thread_id"],
                 text=text,
-                response_to=(incoming, message_id),
+                response_to=(cast(MessagingChannel, incoming), message_id),
                 authorize=self._messaging_guard(
                     context,
                     client_id,

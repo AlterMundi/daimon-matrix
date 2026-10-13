@@ -434,6 +434,16 @@ def _enabled_egress_paths(runtime: HostedRuntime) -> set[str]:
     messaging = runtime.service.messaging
     if messaging is not None and messaging.deliveries:
         paths.update({"messaging-evidence-request", "messaging-message-request"})
+        from .messaging import GroupMessaging
+
+        if any(
+            isinstance(delivery, GroupMessaging)
+            for delivery in messaging.deliveries.values()
+        ):
+            paths.difference_update(
+                {"messaging-evidence-request", "messaging-message-request"}
+            )
+            paths.update({"tribe-message-request", "tribe-receipt-request"})
     return paths
 
 

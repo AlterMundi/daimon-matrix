@@ -239,6 +239,7 @@ class ScopeResolver:
     body_reader: BodyReader | None = None
     tribes: Mapping[str, VerifiedTribeSnapshot] | None = None
     tribe_provider: TribeProvider | None = None
+    tribe_authority_resolver: Callable[[str], Any] | None = None
     peer_embodiments: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
@@ -528,6 +529,28 @@ class ScopeResolver:
                 raise ScopeError("tribe_ref_required")
             tribe = self._tribe_at(tribe_ref=tribe_ref, at_ms=now)
             origins = cast(list[Mapping[str, Any]], tribe["members"])
+            if self.tribe_authority_resolver is not None:
+                expanded: list[Mapping[str, Any]] = []
+                for member in origins:
+                    resolved = self.tribe_authority_resolver(
+                        str(member["principal_id"])
+                    )
+                    authority = (
+                        resolved.active
+                        if isinstance(resolved, RootHistoryAuthority)
+                        else resolved
+                    )
+                    if (
+                        not isinstance(authority, RootAuthority)
+                        or authority.manifest.being_ref != member["principal_id"]
+                    ):
+                        raise ScopeError("tribe_member_authority_required")
+                    for body in authority.manifest.value["embodiments"]:
+                        if body["status"] == "active":
+                            expanded.append(
+                                {**member, "embodiment_id": body["embodiment_id"]}
+                            )
+                origins = expanded
         for row in origins:
             embodiment_id = cast(str, row["embodiment_id"])
             relationship = scope == "/tribe"
@@ -548,7 +571,23 @@ class ScopeResolver:
                     ),
                 }
             )
-        targets.sort(key=lambda row: (row["recipient_type"], row["recipient_id"]))
+        targets.sort(
+            key=lambda row: (
+                row["recipient_type"],
+                row["recipient_id"],
+                row["receipt_origin_embodiment_id"],
+            )
+        )
+        identities = [
+            (r["recipient_type"], r["recipient_id"], r["receipt_origin_embodiment_id"])
+            for r in targets
+        ]
+        if (
+            not targets
+            or len(targets) > MAX_FANOUT_TARGETS
+            or len(identities) != len(set(identities))
+        ):
+            raise ScopeError("invalid_scope_targets")
         core = {
             "schema": RESOLUTION_SCHEMA,
             "request_id": request_id,

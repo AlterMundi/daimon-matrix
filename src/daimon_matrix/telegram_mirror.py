@@ -292,7 +292,9 @@ def render_compact_parts(projection: Mapping[str, Any]) -> list[str]:
     """
     kind = projection["kind"]
     sender = _display_identity(projection["sender"])
-    recipient = _display_identity(projection["recipients"][0])
+    recipient = ", ".join(
+        _display_identity(value) for value in projection["recipients"]
+    )
     if kind in _SPEECH_KINDS:
         text = projection["content"]["text"]
         if len(text) > MAX_TEXT_BYTES or len(text.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -399,7 +401,9 @@ def render_readable_parts(projection: Mapping[str, Any]) -> list[str]:
     """Successor plaintext presentation; old representations stay byte-exact."""
     kind = projection["kind"]
     sender = _readable_identity(projection["sender"])
-    recipient = _readable_identity(projection["recipients"][0])
+    recipient = ", ".join(
+        _readable_identity(value) for value in projection["recipients"]
+    )
     route = f"{sender} → {recipient}"
     if kind in _SPEECH_KINDS:
         context = ""

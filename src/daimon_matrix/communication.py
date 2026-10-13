@@ -2763,12 +2763,14 @@ class CommunicationStore:
     ) -> tuple[Event, sqlite3.Row]:
         if not self.receipts_v2 or self.foreign_authority_resolver is None:
             raise CommunicationError("foreign_receipts_not_enabled")
-        event = _event(receipt, self.foreign_authority_resolver(recipient_being_ref))
+        receipt_authority = (
+            self.ledger.authority
+            if recipient_being_ref == self.ledger.authority.manifest.being_ref
+            else self.foreign_authority_resolver(recipient_being_ref)
+        )
+        event = _event(receipt, receipt_authority)
         payload = _foreign_receipt_payload(event)
-        if (
-            event["being_ref"] != recipient_being_ref
-            or event["being_ref"] == self.ledger.authority.manifest.being_ref
-        ):
+        if event["being_ref"] != recipient_being_ref:
             raise CommunicationError("receipt_origin_mismatch")
         message = _event(
             self._known_event(database, payload["message_ref"]["event_id"]),
@@ -2786,10 +2788,39 @@ class CommunicationStore:
             for target in targets
             if target["recipient_type"] == "relationship"
             and target["recipient_id"] == payload["recipient_id"]
+            and target["receipt_origin_embodiment_id"]
+            == event["origin"]["embodiment_id"]
         ]
+        message_payload = _message_payload(message)
+        group = (
+            message_payload["intent"].get("operation") == "tribe.converse"
+            and message_payload["intent"].get("scope") == "/tribe"
+        )
+        if group:
+            # The signed message freezes the being/body binding alongside the
+            # resolution's membership/body leg. A UUID alone is not a globally
+            # unique identity across independent being roots.
+            audience = message_payload["body"].get("audience")
+            if not isinstance(audience, list):
+                raise CommunicationError("foreign_receipt_binding_mismatch")
+            bound = [
+                row
+                for row in audience
+                if isinstance(row, Mapping)
+                and row.get("membership_ref") == payload["recipient_id"]
+                and row.get("embodiment_id") == event["origin"]["embodiment_id"]
+            ]
+            if len(bound) != 1 or bound[0].get("being_ref") != recipient_being_ref:
+                raise CommunicationError("foreign_receipt_binding_mismatch")
+        if not group and event["being_ref"] == self.ledger.authority.manifest.being_ref:
+            raise CommunicationError("receipt_origin_mismatch")
         if (
-            _message_payload(message)["body"].get("recipient_being_ref")
-            != recipient_being_ref
+            (
+                not group
+                and message_payload["body"].get("recipient_being_ref")
+                != recipient_being_ref
+            )
+            or (group and "recipient_being_ref" in message_payload["body"])
             or payload["message_being_ref"] != message["being_ref"]
             or payload["message_ref"]["event_hash"] != message["content_hash"]
             or payload["resolution_ref"]["event_hash"] != resolution["content_hash"]

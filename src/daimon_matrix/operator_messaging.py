@@ -43,6 +43,7 @@ from .messaging_config import (
     _public_identity,
     _read_publication,
     _validate_store_schema,
+    application_routes,
     capability_state_record,
     config_digest,
     create_binding,
@@ -1187,11 +1188,7 @@ def prepare(
             raise ValueError()
         validate_shape(specification, specification=True)
         application = copy.deepcopy(specification)
-        names = {
-            r["secret_file"]
-            for d in ("incoming", "outgoing")
-            for r in application[d]["routes"].values()
-        }
+        names = {route["secret_file"] for route in application_routes(application)}
         if set(secret_sources) != names:
             raise ValueError()
         route_keys = {
@@ -2137,9 +2134,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_shape(spec, specification=True)
             source_root = _directory(args.secret_dir)
             sources = {
-                r["secret_file"]: source_root / r["secret_file"]
-                for d in ("incoming", "outgoing")
-                for r in spec[d]["routes"].values()
+                route["secret_file"]: source_root / route["secret_file"]
+                for route in application_routes(spec)
             }
             result = prepare(runtime, args.app_dir, spec, secret_sources=sources)
         elif args.command == "adopt-peer":

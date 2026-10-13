@@ -292,6 +292,31 @@ def load_owner_visibility(
             raise ValueError
         disclosed_participants: set[str] = set()
         for channel in channels:
+            if isinstance(channel, dict) and channel.get("direction") == "group":
+                group = _closed(
+                    channel,
+                    {
+                        "channel_id",
+                        "direction",
+                        "local_being_ref",
+                        "tribe_ref",
+                        "membership_ref",
+                        "participants",
+                    },
+                )
+                if (
+                    not isinstance(group["channel_id"], str)
+                    or not group["channel_id"]
+                    or group["local_being_ref"] != owner_actor
+                    or not isinstance(group["tribe_ref"], str)
+                    or not group["tribe_ref"]
+                    or not isinstance(group["membership_ref"], str)
+                    or not group["membership_ref"]
+                    or group["participants"] != participants
+                ):
+                    raise ValueError
+                disclosed_participants.update(participants)
+                continue
             channel = _closed(
                 channel,
                 {
@@ -521,6 +546,8 @@ PEER_EGRESS_PATHS: Final[frozenset[str]] = frozenset(
         "messaging-message-request",
         "messaging-evidence-result",
         "messaging-message-result",
+        "tribe-message-request",
+        "tribe-receipt-request",
         "peer-scope-request",
         "peer-sync-request",
         "peer-scope-response",

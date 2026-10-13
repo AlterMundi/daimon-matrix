@@ -12,6 +12,18 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_membership_group_qualifies_affected_contracts_once(self):
+        from tools.ci_scope import TRIBE_GROUP_FILES
+
+        self.assertEqual(profile(list(TRIBE_GROUP_FILES)), "tribe-group")
+        for other in (
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/keystore.py",
+            "pyproject.toml",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*TRIBE_GROUP_FILES, other]), "full")
+
     def test_authority_adoption_scope_keeps_unknown_contracts_full(self):
         from tools.ci_scope import AUTHORITY_ADOPTION_FILES
 

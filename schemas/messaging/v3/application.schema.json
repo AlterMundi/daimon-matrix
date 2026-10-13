@@ -1,0 +1,302 @@
+{
+  "$id": "https://daimon.network/schemas/messaging/v3/application.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authorities": {
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 64,
+      "minItems": 2,
+      "type": "array"
+    },
+    "client": {
+      "additionalProperties": false,
+      "properties": {
+        "descriptor": {
+          "type": "object"
+        },
+        "secret_file": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "secret_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "descriptor",
+        "secret_file",
+        "secret_sha256"
+      ],
+      "type": "object"
+    },
+    "intake": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "key_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "route_ref": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "secret_file": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "secret_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_ref",
+        "route_ref",
+        "key_ref",
+        "endpoint",
+        "secret_file",
+        "secret_sha256"
+      ],
+      "type": "object"
+    },
+    "listen": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host",
+        "port"
+      ],
+      "type": "object"
+    },
+    "relationship_events": {
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "type": "array"
+    },
+    "relationship_mode": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "shared"
+        },
+        "runtime_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "state_root": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "store_filename": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "runtime_id",
+        "state_root",
+        "store_filename"
+      ],
+      "type": "object"
+    },
+    "roster": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "being_ref": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "body_ref": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "embodiment_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "route": {
+            "additionalProperties": false,
+            "properties": {
+              "endpoint": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "key_ref": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "provider_ref": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "route_ref": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "secret_file": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+                "type": "string"
+              },
+              "secret_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_ref",
+              "route_ref",
+              "key_ref",
+              "endpoint",
+              "secret_file",
+              "secret_sha256"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "being_ref",
+          "embodiment_id",
+          "body_ref",
+          "route"
+        ],
+        "type": "object"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema": {
+      "const": "dm.messaging.application/v3"
+    },
+    "stores": {
+      "additionalProperties": false,
+      "properties": {
+        "envelopes": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "opaque-evidence": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "opaque-message": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "records": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "records",
+        "envelopes",
+        "opaque-evidence",
+        "opaque-message"
+      ],
+      "type": "object"
+    },
+    "tribe": {
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+          "type": "string"
+        },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "classification": {
+              "enum": [
+                "private",
+                "shareable",
+                "public"
+              ]
+            },
+            "max_ttl_ms": {
+              "maximum": 60000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "membership_ref": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "tribe_ref": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "tribe_ref",
+            "membership_ref",
+            "classification",
+            "max_ttl_ms"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "channel_id",
+        "policy"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "listen",
+    "authorities",
+    "relationship_events",
+    "relationship_mode",
+    "tribe",
+    "intake",
+    "roster",
+    "stores",
+    "client"
+  ],
+  "type": "object"
+}

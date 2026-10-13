@@ -167,9 +167,10 @@ def validate_projection(projection: dict[str, Any]) -> None:
             _text(projection[field])
         _digest_field(projection["event_digest"])
         recipients = projection["recipients"]
-        if type(recipients) is not list or len(recipients) != 1:
+        if type(recipients) is not list or not 1 <= len(recipients) <= 256:
             raise ValueError
-        _text(recipients[0])
+        for recipient in recipients:
+            _text(recipient)
         kind, content, reply = (
             projection["kind"],
             projection["content"],
@@ -380,12 +381,12 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                 keys.add("reply_sender")
             _fields(display, keys)
             _text(display["sender"])
-            if (
-                type(display["recipients"]) is not list
-                or len(display["recipients"]) != 1
-            ):
+            if type(display["recipients"]) is not list or len(
+                display["recipients"]
+            ) != len(binding["projection"]["recipients"]):
                 raise ValueError
-            _text(display["recipients"][0])
+            for recipient in display["recipients"]:
+                _text(recipient)
             if binding["policy"]["representation"] != READABLE_REPRESENTATION:
                 raise ValueError
             if "reply_sender" in display:

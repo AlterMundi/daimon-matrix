@@ -34,6 +34,13 @@ never put message text or credentials in command-line arguments.
   `message_id`, fresh UUID `send_id`, `text`. The daemon correlates the thread.
 - Delivery: outgoing `channel_id`, `send_id`.
 
+Same-Tribe collaboration uses the configured membership group channel. It has
+one incoming/outgoing channel ID; signed membership and Root determine all active
+recipient bodies at send time. Do not onboard reciprocal peer channels or create
+one founder/member Tribe per being. Directed lanes remain explicitly directed.
+The delivery vector is per body; carrier expiry is separate from signed semantic
+delivery. Group publication or intake never claims that a model read or answered.
+
 ## Speech and human-readable attribution
 
 Put the intended speech in `text`. Matrix already supplies the authenticated

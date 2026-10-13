@@ -5,20 +5,282 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .canonical import canonical_bytes
+from .canonical import b64url, canonical_bytes, unb64url
 from .mandatory_echo import read_diagnostic, write_diagnostic
-from .native_egress import MandatoryEgressController, OperationBinding
+from .native_egress import (
+    MandatoryEgressController,
+    NativeEgressError,
+    OperationBinding,
+)
 from .relationship_store import _prepare_path
 
 
 class MessagingInboxError(ValueError):
     """Foreign evidence conflicts or local persistence is unsafe."""
+
+
+class TribeRecordStore:
+    """Owned frozen send plans and received group messages, not foreign ledgers.
+
+    The application supplies the existing operator-binding signer/verifier. The
+    low-level primitive may use ownership plus canonical digests in fixtures;
+    deployed applications must supply both binding callbacks.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        sign: Callable[[Any], Any] | None = None,
+        verify: Callable[[Any, Any], None] | None = None,
+        clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+    ) -> None:
+        if (sign is None) != (verify is None):
+            raise ValueError("tribe_record_binding_required")
+        self.path = path.absolute()
+        self.sign, self.verify = sign, verify
+        self.clock = clock
+        self.egress: MandatoryEgressController | None = None
+        self.catalog_id: str | None = None
+        with self._database() as database:
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS tribe_records ("
+                "kind TEXT NOT NULL, record_id TEXT NOT NULL, "
+                "request_hash TEXT NOT NULL, document BLOB NOT NULL, "
+                "binding BLOB NOT NULL, document_hash TEXT NOT NULL, "
+                "recorded_at_ms INTEGER NOT NULL, "
+                "sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "UNIQUE(kind, record_id))"
+            )
+
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
+        _prepare_path(self.path)
+        with closing(sqlite3.connect(self.path, isolation_level=None)) as database:
+            database.row_factory = sqlite3.Row
+            database.execute("PRAGMA journal_mode=DELETE")
+            database.execute("PRAGMA synchronous=FULL")
+            yield database
+
+    def _checked(self, row: sqlite3.Row) -> dict[str, Any]:
+        raw = bytes(row["document"])
+        value = json.loads(raw)
+        if (
+            canonical_bytes(value) != raw
+            or hashlib.sha256(raw).hexdigest() != row["document_hash"]
+        ):
+            raise ValueError("tribe_record_corrupt")
+        if self.verify is not None:
+            self.verify(
+                {
+                    "kind": row["kind"],
+                    "record_id": row["record_id"],
+                    "request_hash": row["request_hash"],
+                    "recorded_at_ms": row["recorded_at_ms"],
+                    "document": value,
+                },
+                json.loads(bytes(row["binding"])),
+            )
+        return dict(value)
+
+    def reserve(
+        self,
+        kind: str,
+        record_id: str,
+        request: Any,
+        factory: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        if kind not in {
+            "send",
+            "inbox",
+            "receipt",
+            "native",
+            "transport",
+            "request",
+            "result",
+            "transport-result",
+        }:
+            raise ValueError("tribe_record_kind_invalid")
+        if str(uuid.UUID(record_id)) != record_id:
+            raise ValueError("tribe_record_id_invalid")
+        request_hash = hashlib.sha256(canonical_bytes(request)).hexdigest()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                row = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
+                    (kind, record_id),
+                ).fetchone()
+                if row is not None:
+                    if row["request_hash"] != request_hash:
+                        raise ValueError("tribe_record_request_conflict")
+                    result = self._checked(row)
+                else:
+                    result = factory()
+                    raw = canonical_bytes(result)
+                    recorded_at_ms = self.clock()
+                    binding = (
+                        None
+                        if self.sign is None
+                        else self.sign(
+                            {
+                                "kind": kind,
+                                "record_id": record_id,
+                                "request_hash": request_hash,
+                                "recorded_at_ms": recorded_at_ms,
+                                "document": result,
+                            }
+                        )
+                    )
+                    database.execute(
+                        "INSERT INTO tribe_records(kind,record_id,request_hash,"
+                        "document,binding,document_hash,recorded_at_ms) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (
+                            kind,
+                            record_id,
+                            request_hash,
+                            raw,
+                            canonical_bytes(binding),
+                            hashlib.sha256(raw).hexdigest(),
+                            recorded_at_ms,
+                        ),
+                    )
+                database.commit()
+                return result
+            except BaseException:
+                database.rollback()
+                raise
+
+    def received(self, message: Any, resolution: Any) -> dict[str, Any]:
+        # Identity is the exact signed logical message/resolution, not a renewed
+        # carrier's random ciphertext, so retries do not create another inbox row.
+        document = {"message": message, "resolution": resolution}
+        return self.reserve("inbox", message["event_id"], document, lambda: document)
+
+    def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
+                (kind, record_id),
+            ).fetchone()
+        return None if row is None else self._checked(row)
+
+    def transport_result(self, request_id: str) -> dict[str, Any] | None:
+        with self._database() as database:
+            row = database.execute(
+                "SELECT * FROM tribe_records WHERE kind='transport-result' "
+                "AND json_extract(CAST(document AS TEXT),'$.request_id')=? "
+                "ORDER BY recorded_at_ms DESC, sequence DESC LIMIT 1",
+                (request_id,),
+            ).fetchone()
+        return None if row is None else self._checked(row)
+
+    def bind_egress(
+        self,
+        controller: MandatoryEgressController,
+        *,
+        catalog_id: str,
+        authorize: Callable[[OperationBinding], bool],
+    ) -> None:
+        self.egress, self.catalog_id = controller, catalog_id
+        controller.register_catalog(
+            catalog_id=catalog_id,
+            path=self.path,
+            resolve=self._native,
+            authorize=lambda binding: authorize(binding),
+        )
+        controller.register_path("tribe-message-request", catalog_id)
+        controller.register_path("tribe-receipt-request", catalog_id)
+
+    def _native(self, locator: str) -> bytes:
+        value = self.get("native", locator)
+        if value is None:
+            raise ValueError("tribe_native_missing")
+        return unb64url(value["native"])
+
+    def admit(
+        self,
+        record_id: str,
+        native: bytes,
+        *,
+        path_id: str,
+        projection: Any,
+        deadline_ms: int,
+        authority_head: str,
+    ) -> OperationBinding:
+        if self.egress is None or self.catalog_id is None:
+            raise ValueError("tribe_egress_required")
+        document = {
+            "native": b64url(native),
+            "projection": projection,
+            "deadline_ms": deadline_ms,
+            "authority_head": authority_head,
+        }
+        self.reserve("native", record_id, document, lambda: document)
+        try:
+            return self.egress.binding(self.catalog_id, record_id)
+        except NativeEgressError as exception:
+            if str(exception) != "egress_operation_missing":
+                raise
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            binding = self.egress.admit_in_transaction(
+                database,
+                catalog_id=self.catalog_id,
+                path_id=path_id,
+                operation_id=record_id,
+                locator=record_id,
+                native_bytes=native,
+                projection=projection,
+                deadline_ms=deadline_ms,
+                authority_head=authority_head,
+            )
+            database.commit()
+        return binding
+
+    def page(
+        self, *, thread_id: str | None = None, after: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        if (
+            type(after) is not int
+            or after < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+        ):
+            raise ValueError("tribe_record_page_invalid")
+        if thread_id is not None and str(uuid.UUID(thread_id)) != thread_id:
+            raise ValueError("tribe_record_thread_invalid")
+        with self._database() as database:
+            rows = database.execute(
+                "SELECT * FROM tribe_records WHERE kind='inbox' AND sequence>? "
+                "AND (? IS NULL OR json_extract(CAST(document AS TEXT), "
+                "'$.message.payload.intent.thread_id')=?) ORDER BY sequence LIMIT ?",
+                (after, thread_id, thread_id, limit + 1),
+            ).fetchall()
+        selected = [(row, self._checked(row)) for row in rows]
+        page = selected[:limit]
+        return {
+            "messages": [value["message"] for _, value in page],
+            "items": [
+                {
+                    "inbox_sequence": row["sequence"],
+                    "message": value["message"],
+                    "evidence": value["resolution"],
+                    "admission_version": 3,
+                }
+                for row, value in page
+            ],
+            "next_cursor": page[-1][0]["sequence"] if page else after,
+            "more": len(selected) > limit,
+        }
 
 
 class MessagingOutboxStore:

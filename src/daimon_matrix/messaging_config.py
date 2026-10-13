@@ -23,6 +23,7 @@ from .weave import RootAuthority
 
 APPLICATION_SCHEMA = "dm.messaging.application/v1"
 APPLICATION_SCHEMA_V2 = "dm.messaging.application/v2"
+APPLICATION_SCHEMA_V3 = "dm.messaging.application/v3"
 BINDING_SCHEMA = "dm.messaging.operator-binding/v1"
 BINDING_DOMAIN = b"daimon/messaging-operator-binding/v1\x00"
 CAPABILITY_STATE_SCHEMA = "dm.messaging.capability-state/v1"
@@ -181,6 +182,44 @@ def verify_binding_within_history(
             runtime.service.runtime_id,
             runtime.service.runtime_label,
             at_ms,
+        )
+        credential = epoch.credentials[identity["credential_id"]]
+        public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
+        _verify_public_binding(identity, public_key, value, binding)
+    except Exception:
+        raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def verify_record_binding(runtime: HostedRuntime, value: Any, binding: Any) -> None:
+    """Authenticate a retained body record at its signed recording time.
+
+    An expired credential cannot authorize new effects, but its expiration must
+    not erase an authenticated record it signed while valid. Historical identity
+    must name the same being and body; incarnation/credential renewal is retained
+    evidence, never permission to send with an obsolete credential.
+    """
+    try:
+        instant, body = value["recorded_at_ms"], binding["body"]
+        authority = runtime.service.ledger.authority
+        if not isinstance(authority, (RootAuthority, RootHistoryAuthority)):
+            raise ValueError()
+        if (
+            type(instant) is not int
+            or not 0 <= instant <= runtime.service.clock()
+            or body["being_ref"] != authority.manifest.being_ref
+            or any(
+                body["origin"][key] != runtime.service.origin[key]
+                for key in ("body_ref", "embodiment_id")
+            )
+        ):
+            raise ValueError()
+        epoch = (
+            authority.select(body)
+            if isinstance(authority, RootHistoryAuthority)
+            else authority
+        )
+        identity = _public_identity(
+            epoch, body["origin"], body["runtime_id"], body["runtime_label"], instant
         )
         credential = epoch.credentials[identity["credential_id"]]
         public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
@@ -400,6 +439,52 @@ for _application_schema in (SPECIFICATION_SCHEMA, APPLICATION_JSON_SCHEMA):
 for _application_schema in (SPECIFICATION_SCHEMA, APPLICATION_JSON_SCHEMA):
     _application_schema["properties"]["tribe"] = _TRIBE_CHANNEL
 
+GROUP_STORE_NAMES = ("records", "envelopes", "opaque-evidence", "opaque-message")
+GROUP_SPECIFICATION_SCHEMA = _object(
+    {
+        "schema": {"const": APPLICATION_SCHEMA_V3},
+        "listen": SPECIFICATION_SCHEMA["properties"]["listen"],
+        "authorities": SPECIFICATION_SCHEMA["properties"]["authorities"],
+        "relationship_events": SPECIFICATION_SCHEMA["properties"][
+            "relationship_events"
+        ],
+        "relationship_mode": SPECIFICATION_SCHEMA["properties"]["relationship_mode"],
+        "tribe": _TRIBE_CHANNEL,
+        "intake": _ROUTE,
+        "roster": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": _object(
+                {
+                    "being_ref": _TEXT,
+                    "embodiment_id": _TEXT,
+                    "body_ref": _TEXT,
+                    "route": _ROUTE,
+                }
+            ),
+        },
+        "stores": _object({name: _LEAF for name in GROUP_STORE_NAMES}),
+    }
+)
+GROUP_APPLICATION_SCHEMA = _object(
+    {
+        **GROUP_SPECIFICATION_SCHEMA["properties"],
+        "client": APPLICATION_JSON_SCHEMA["properties"]["client"],
+    }
+)
+
+
+def application_routes(application: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Transport registrations, never conversation membership or recipients."""
+    if application["schema"] == APPLICATION_SCHEMA_V3:
+        return [application["intake"], *[row["route"] for row in application["roster"]]]
+    return [
+        route
+        for direction in ("incoming", "outgoing")
+        for route in application[direction]["routes"].values()
+    ]
+
 
 BINDING_JSON_SCHEMA = _object(
     {
@@ -493,8 +578,14 @@ def validate_shape(application: Any, *, specification: bool = False) -> None:
     try:
         import copy
 
+        group = (
+            isinstance(application, dict)
+            and application.get("schema") == APPLICATION_SCHEMA_V3
+        )
         shape = copy.deepcopy(
-            SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA
+            (GROUP_SPECIFICATION_SCHEMA if specification else GROUP_APPLICATION_SCHEMA)
+            if group
+            else (SPECIFICATION_SCHEMA if specification else APPLICATION_JSON_SCHEMA)
         )
         if (
             isinstance(application, dict)
@@ -502,6 +593,9 @@ def validate_shape(application: Any, *, specification: bool = False) -> None:
         ):
             shape["properties"]["schema"] = {"const": APPLICATION_SCHEMA_V2}
         _shape(application, shape)
+        if group:
+            _validate_group_shape(application, specification=specification)
+            return
         for direction in ("incoming", "outgoing"):
             policy = application[direction]["policy"]
             if (policy["tribe_ref"] is None) != (policy["membership_ref"] is None):
@@ -569,6 +663,58 @@ def validate_shape(application: Any, *, specification: bool = False) -> None:
             raise ValueError()
     except Exception:
         raise MessagingConfigError("messaging_application_rejected") from None
+
+
+def _validate_group_shape(application: Any, *, specification: bool) -> None:
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    ipaddress.IPv4Address(application["listen"]["host"])
+    seen = set()
+    names = [
+        "application.json",
+        "binding.json",
+        "client.json",
+        "client.key",
+        "publication.json",
+        *application["stores"].values(),
+    ]
+    for route in application_routes(application):
+        endpoint = urlsplit(route["endpoint"])
+        if (
+            endpoint.scheme not in {"http", "https"}
+            or not endpoint.hostname
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.query
+            or endpoint.fragment
+            or endpoint.port is None
+            or endpoint.path != "/dm-messaging/v1/message"
+        ):
+            raise ValueError()
+    for row in application["roster"]:
+        key = (row["being_ref"], row["embodiment_id"])
+        if key in seen:
+            raise ValueError()
+        seen.add(key)
+    intake = urlsplit(application["intake"]["endpoint"])
+    if (
+        intake.scheme != "http"
+        or intake.hostname != application["listen"]["host"]
+        or intake.port != application["listen"]["port"]
+    ):
+        raise ValueError()
+    # One body registration key may occur both in the roster and local intake.
+    files: dict[str, str] = {}
+    for row in application_routes(application):
+        prior = files.setdefault(row["secret_file"], row["secret_sha256"])
+        if prior != row["secret_sha256"]:
+            raise ValueError()
+    names += list(files)
+    if len(set(names)) != len(names):
+        raise ValueError()
+    if not specification and application["client"]["secret_file"] != "client.key":
+        raise ValueError()
 
 
 def _directory(path: Path | str) -> Path:
@@ -934,9 +1080,21 @@ _STORE_SCHEMA_SQL = {
     """,
 }
 
+_STORE_SCHEMA_SQL["records"] = """
+    CREATE TABLE IF NOT EXISTS tribe_records (
+        kind TEXT NOT NULL, record_id TEXT NOT NULL, request_hash TEXT NOT NULL,
+        document BLOB NOT NULL, binding BLOB NOT NULL, document_hash TEXT NOT NULL,
+        recorded_at_ms INTEGER NOT NULL,
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, UNIQUE(kind,record_id));
+"""
+_STORE_SCHEMA_SQL["envelopes"] = """
+    CREATE TABLE IF NOT EXISTS envelopes (
+        request_id TEXT PRIMARY KEY, plan_hash TEXT NOT NULL,
+        envelope BLOB NOT NULL, envelope_hash TEXT NOT NULL);
+"""
 _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY = dict(_STORE_SCHEMA_SQL)
 _EGRESS_SCHEMA_SQL = ";".join((OPERATION_TABLE_SQL, *ECHO_TABLE_SQL.values(), ""))
-for _egress_store in ("outbox", "opaque"):
+for _egress_store in ("outbox", "opaque", "records"):
     _STORE_SCHEMA_SQL[_egress_store] += _EGRESS_SCHEMA_SQL
 
 _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
@@ -998,7 +1156,7 @@ def _validate_store_schema(
             # No store constructor is used even for these references.
             expected.executescript(_STORE_SCHEMA_SQL[schema])
             expected_catalogs = [catalog(expected)]
-            if allow_missing_visibility and schema in {"outbox", "opaque"}:
+            if allow_missing_visibility and schema in {"outbox", "opaque", "records"}:
                 legacy.executescript(_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY[schema])
                 expected_catalogs.append(catalog(legacy))
             elif schema == "inbox" and not require_inbox_admission:
@@ -1038,6 +1196,17 @@ def _compose(
     metadata_root: Path | None = None,
     capability_predecessor: Mapping[str, Any] | None = None,
 ) -> HostedRuntime:
+    if application["schema"] == APPLICATION_SCHEMA_V3:
+        return _compose_group(
+            runtime,
+            root,
+            application,
+            initialize=initialize,
+            metadata_root=metadata_root,
+            capability_predecessor=capability_predecessor,
+        )
+    if application.get("tribe") is not None:
+        raise MessagingConfigError("messaging_group_application_required")
     from dataclasses import replace
 
     from .local_api import LocalCapability
@@ -1358,6 +1527,237 @@ def _compose(
                 {incoming["channel_id"], outgoing["channel_id"]}
             )
         },
+        capability_guard=capability_guard,
+        labels=service.labels,
+    )
+    return replace(
+        runtime,
+        service=replace(
+            service,
+            messaging=messaging,
+            capabilities={**service.capabilities, capability.capability_id: capability},
+        ),
+        messaging_http=MessagingHTTPContext(
+            (application["listen"]["host"], application["listen"]["port"]),
+            ingresses["evidence"],
+            ingresses["message"],
+        ),
+    )
+
+
+def _compose_group(
+    runtime: HostedRuntime,
+    root: Path,
+    application: Any,
+    *,
+    initialize: bool,
+    metadata_root: Path | None,
+    capability_predecessor: Mapping[str, Any] | None,
+) -> HostedRuntime:
+    from dataclasses import replace
+
+    from .local_api import LocalCapability
+    from .messaging import GroupMessaging, MessagingTribePolicy
+    from .messaging_store import TribeRecordStore
+    from .operator_rebirth import authority_from_document
+    from .routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
+    from .runtime import MessagingHTTPContext
+    from .sealed import EnvelopeStore
+    from .service import MESSAGING_METHODS, MessagingServiceContext
+    from .tribe_conversation import TribeConversation
+
+    service, ordinary = runtime.service, runtime.service.relationships
+    if ordinary is None or ordinary.authority_resolver is None:
+        raise MessagingConfigError("messaging_relationship_composition_rejected")
+    if not runtime.egress.release_enabled and runtime.egress.catalog_mode != "migrate":
+        raise MessagingConfigError("messaging_visibility_required")
+    if application["relationship_mode"] != {
+        "mode": "shared",
+        "runtime_id": service.runtime_id,
+        "state_root": str(runtime.state_root),
+        "store_filename": ordinary.store.path.name,
+    }:
+        raise MessagingConfigError("messaging_relationship_composition_rejected")
+    if ordinary.store.path != runtime.state_root / ordinary.store.path.name:
+        raise MessagingConfigError("messaging_relationship_composition_rejected")
+    identity = _identity(runtime)
+    approved_by_being: dict[str, Any] = {}
+    for document in application["authorities"]:
+        approved = authority_from_document(document)
+        if approved.manifest.being_ref in approved_by_being:
+            raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        approved_by_being[approved.manifest.being_ref] = approved
+        verified = ordinary.authority_resolver(approved.manifest.being_ref)
+        active = (
+            verified.active if isinstance(verified, RootHistoryAuthority) else verified
+        )
+        if active != approved:
+            raise MessagingConfigError("messaging_relationship_authority_mismatch")
+    if identity["being_ref"] not in approved_by_being:
+        raise MessagingConfigError("messaging_relationship_authority_mismatch")
+    retained = {canonical_bytes(event) for event in ordinary.store.events()}
+    if any(
+        canonical_bytes(event) not in retained
+        for event in application["relationship_events"]
+    ):
+        raise MessagingConfigError("messaging_shared_history_incomplete")
+    secrets = {}
+    for row in [application["client"], *application_routes(application)]:
+        key = protected_read(root / row["secret_file"], size=32)
+        if hashlib.sha256(key).hexdigest() != row["secret_sha256"]:
+            raise MessagingConfigError("messaging_key_rejected")
+        secrets[row["secret_file"]] = key
+    client = application["client"]
+    capability = LocalCapability.from_value(
+        client["descriptor"], secrets[client["secret_file"]]
+    )
+    if (
+        set(capability.methods) != MESSAGING_METHODS
+        or not capability.active_at(service.clock())
+        or capability.capability_id in service.capabilities
+        or any(
+            other.client_id == capability.client_id
+            for other in service.capabilities.values()
+        )
+    ):
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    expected_client = {
+        "schema": "dm.local.client-config/v3",
+        "capability": capability.descriptor,
+        "expected_server": dict(service.origin),
+        "runtime_id": service.runtime_id,
+        "runtime_label": service.runtime_label,
+    }
+    if read_document((metadata_root or root) / "client.json") != expected_client:
+        raise MessagingConfigError("messaging_capability_state_rejected")
+    read_capability_state(
+        runtime,
+        capability.descriptor
+        if capability_predecessor is None
+        else capability_predecessor,
+    )
+    stores = {
+        name: _store_path(root, filename)
+        for name, filename in application["stores"].items()
+    }
+    if not initialize and any(
+        not path.is_file() or path.stat().st_size == 0 for path in stores.values()
+    ):
+        raise MessagingConfigError("messaging_required_store_missing")
+    if not initialize:
+        for name, path in stores.items():
+            _validate_store_schema(
+                name,
+                path,
+                allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
+            )
+    records = TribeRecordStore(
+        stores["records"],
+        sign=lambda value: create_binding(runtime, value),
+        verify=lambda value, binding: verify_record_binding(runtime, value, binding),
+        clock=service.clock,
+    )
+    lane = TribeConversation(
+        service.ledger,
+        signer=service.signer,
+        custody=runtime.create_delivery_custody(),
+        clock=service.clock,
+        relationships=ordinary.store,
+        card_verifier=ordinary.card_verifier,
+        authority_resolver=ordinary.store.authority_resolver
+        or ordinary.authority_resolver,
+        records=records,
+        envelopes=EnvelopeStore(stores["envelopes"]),
+    )
+    communication = service.communication
+    if (
+        communication is None
+        or not communication.receipts_v2
+        or not communication.legs_v3
+    ):
+        raise MessagingConfigError("messaging_semantic_migration_required")
+    communication.foreign_authority_resolver = lane.authority_resolver
+    providers = {}
+    for row in application["roster"]:
+        verified = lane._active(row["being_ref"])
+        if not any(
+            member["status"] == "active"
+            and member["embodiment_id"] == row["embodiment_id"]
+            and member["body_ref"] == row["body_ref"]
+            for member in verified.manifest.value["embodiments"]
+        ):
+            raise MessagingConfigError("messaging_roster_binding_rejected")
+        route = row["route"]
+        providers[(row["being_ref"], row["embodiment_id"])] = {
+            phase: DirectHTTPProvider(
+                **{key: route[key] for key in ("provider_ref", "route_ref", "key_ref")},
+                endpoint=route["endpoint"].removesuffix("message") + phase,
+                secret=secrets[route["secret_file"]],
+                route_class="direct",
+                sender_principal=identity["being_ref"],
+                sender_body_ref=service.origin["body_ref"],
+                clock=service.clock,
+                egress=runtime.egress,
+                timeout_seconds=2,
+                response_timeout_seconds=10,
+            )
+            for phase in ("message", "evidence")
+        }
+    labels = service.labels
+    if labels is not None:
+        labels = labels._with_verified_entries(
+            [
+                {
+                    "being_ref": being_ref,
+                    "body_ref": member["body_ref"],
+                    "embodiment_id": member["embodiment_id"],
+                }
+                for being_ref, authority in approved_by_being.items()
+                for member in authority.manifest.value["embodiments"]
+                if member["status"] == "active"
+            ]
+        )
+    group = GroupMessaging(
+        lane=lane,
+        policy=MessagingTribePolicy(**application["tribe"]["policy"]),
+        communication=communication,
+        providers=providers,
+        config_digest=config_digest(
+            {key: value for key, value in application.items() if key != "client"}
+        ),
+        egress=runtime.egress,
+        labels=labels,
+    )
+    group.validate(service)
+    ingresses = {}
+    route = application["intake"]
+    for phase in ("message", "evidence"):
+        ingresses[phase] = TransportIngress(
+            **{key: route[key] for key in ("provider_ref", "route_ref", "key_ref")},
+            secret=secrets[route["secret_file"]],
+            recipient_id=service.origin["embodiment_id"],
+            recipient_body_ref=service.origin["body_ref"],
+            recipient_embodiment_id=service.origin["embodiment_id"],
+            inbox=OpaqueInbox(stores["opaque-" + phase], clock=service.clock),
+            clock=service.clock,
+            egress=runtime.egress,
+            egress_catalog_id=f"messaging-{phase}-responses",
+            egress_authority_head=service.origin["body_ref"],
+            egress_authorizer=group._authorize,
+            intake_validator=getattr(group, "receive_" + phase),
+            carrier_inspector=group.inspect_carrier,
+        )
+    channel_id = application["tribe"]["channel_id"]
+
+    def capability_guard(selected: LocalCapability) -> None:
+        if selected.capability_id != capability.capability_id:
+            raise ValueError()
+        read_capability_state(runtime, selected.descriptor)
+
+    messaging = MessagingServiceContext(
+        channels={channel_id: group},
+        deliveries={channel_id: group},
+        client_channels={capability.client_id: frozenset({channel_id})},
         capability_guard=capability_guard,
         labels=service.labels,
     )

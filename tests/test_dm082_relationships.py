@@ -113,6 +113,33 @@ def _ref(event: dict[str, Any]) -> dict[str, str]:
 
 
 class RelationshipContractTests(unittest.TestCase):
+    def test_tribe_admission_does_not_require_bilateral_consent_or_grants(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tribe-admission-") as temporary:
+            journey = _Journey(Path(temporary))
+            journey.run()
+            # Keep only identity advertisements and signed Tribe governance.
+            # All relationship offers/acceptances and grants are absent.
+            events = [
+                e
+                for e in journey.store.events()
+                if e["kind"].startswith("matrix/tribe-")
+            ]
+            view = RelationshipView(
+                events, at_ms=journey.now, card_verifier=journey.card_verifier
+            )
+            for tribe_ref, tribe in view.tribes.items():
+                if tribe["state"] != "active":
+                    continue
+                snapshot = view.snapshot(tribe_ref)
+                self.assertTrue(
+                    any(
+                        m["principal_id"]
+                        == journey.identities["member"].state.being_ref
+                        for m in snapshot.value["members"]
+                    )
+                )
+                self.assertEqual(snapshot.value["grants"], [])
+
     def test_generated_positive_negative_vectors_and_scenario_map_are_exact(
         self,
     ) -> None:
