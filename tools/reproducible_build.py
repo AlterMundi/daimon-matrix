@@ -107,6 +107,7 @@ BUILD_INPUTS: Final = (
     Path("src/daimon_matrix/routes.py"),
     Path("src/daimon_matrix/relationships.py"),
     Path("src/daimon_matrix/relationship_store.py"),
+    Path("src/daimon_matrix/release_compatibility.py"),
     Path("src/daimon_matrix/review_runner.py"),
     Path("src/daimon_matrix/scopes.py"),
     Path("src/daimon_matrix/sealed.py"),

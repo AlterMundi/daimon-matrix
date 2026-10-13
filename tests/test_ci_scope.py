@@ -12,6 +12,35 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_release_contract_qualifies_installed_codec_without_unchanged_transport(
+        self,
+    ):
+        from tools.ci_scope import RELEASE_COMPATIBILITY_FILES
+
+        self.assertEqual(
+            profile(list(RELEASE_COMPATIBILITY_FILES)), "release-compatibility"
+        )
+        for other in (
+            "src/daimon_matrix/messaging.py",
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/keystore.py",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*RELEASE_COMPATIBILITY_FILES, other]), "full")
+        self.assertEqual(profile(["specs/receiver-compatible-release.md"]), "full")
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/tests.yml").read_text()
+        self.assertIn(
+            "if: needs.scope.outputs.profile == 'release-compatibility'", workflow
+        )
+        self.assertIn("tests.test_release_compatibility", workflow)
+        portability = (root / ".github/workflows/telegram-portability.yml").read_text()
+        self.assertIn(
+            "needs.scope.outputs.profile != 'release-compatibility'", portability
+        )
+
     def test_current_context_docs_do_not_repeat_runtime_qualification(self):
         from tools.ci_scope import CONTEXT_DOC_FILES
 

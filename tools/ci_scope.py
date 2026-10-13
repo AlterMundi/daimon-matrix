@@ -192,8 +192,34 @@ CONTEXT_DOC_FILES = frozenset(
 )
 
 
+RELEASE_COMPATIBILITY_FILES = frozenset(
+    {
+        "src/daimon_matrix/release_compatibility.py",
+        "tests/test_release_compatibility.py",
+        "specs/receiver-compatible-release.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        "tools/reproducible_build.py",
+        "tools/check_distribution.py",
+        "tests/test_package_scaffold.py",
+        "tests/test_dm041_hermes_body.py",
+        ".github/workflows/tests.yml",
+        ".github/workflows/telegram-portability.yml",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        "src/daimon_matrix/release_compatibility.py" in changed
+        and changed <= RELEASE_COMPATIBILITY_FILES
+    ):
+        return "release-compatibility"
     if changed & {"AGENTS.md", "CURRENT-STATE.md"} and changed <= CONTEXT_DOC_FILES:
         return "context-docs"
     if (
