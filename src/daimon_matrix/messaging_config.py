@@ -289,6 +289,10 @@ _POLICY = _object(
                 "resource_ref",
             )
         },
+        **{
+            k: {**_TEXT, "type": ["string", "null"]}
+            for k in ("tribe_ref", "membership_ref")
+        },
         "operation": {"enum": ["read", "messaging.read"]},
         "classification": {"enum": ["private", "shareable", "public"]},
         "max_ttl_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
@@ -444,6 +448,10 @@ def _shape(value: Any, schema: dict[str, Any]) -> None:
     import re
 
     kind = schema.get("type")
+    if kind == ["string", "null"]:
+        if value is None:
+            return
+        kind = "string"
     if kind == "object":
         if not isinstance(value, dict):
             raise ValueError()
@@ -494,6 +502,10 @@ def validate_shape(application: Any, *, specification: bool = False) -> None:
         ):
             shape["properties"]["schema"] = {"const": APPLICATION_SCHEMA_V2}
         _shape(application, shape)
+        for direction in ("incoming", "outgoing"):
+            policy = application[direction]["policy"]
+            if (policy["tribe_ref"] is None) != (policy["membership_ref"] is None):
+                raise ValueError()
         # Numeric addresses only: no resolver changes to listener binding.
         import ipaddress
         from urllib.parse import urlsplit
@@ -1309,7 +1321,7 @@ def _compose(
         ingresses[phase] = TransportIngress(
             **{k: row[k] for k in ("provider_ref", "route_ref", "key_ref")},
             secret=secrets[row["secret_file"]],
-            recipient_id=incoming["policy"]["membership_ref"],
+            recipient_id=receiver.policy.recipient_id,
             recipient_body_ref=service.origin["body_ref"],
             recipient_embodiment_id=service.origin["embodiment_id"],
             inbox=OpaqueInbox(stores["opaque-" + phase], clock=service.clock),

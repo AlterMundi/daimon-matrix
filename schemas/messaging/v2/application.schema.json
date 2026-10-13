@@ -81,12 +81,18 @@
               "maxLength": 256
             },
             "tribe_ref": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 256
             },
             "membership_ref": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 256
             },
@@ -305,12 +311,18 @@
               "maxLength": 256
             },
             "tribe_ref": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 256
             },
             "membership_ref": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 256
             },

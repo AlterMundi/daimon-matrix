@@ -141,19 +141,29 @@ class MessagingTribePolicy:
 
 @dataclass(frozen=True)
 class MessagingPeerPolicy:
-    """One explicitly configured directional /tribe channel, not a wire claim."""
+    """One explicit bilateral lane, separate from the membership-based group."""
 
     peer_being_ref: str
     peer_embodiment_id: str
     peer_credential_id: str
     relationship_id: str
-    tribe_ref: str
-    membership_ref: str
+    tribe_ref: str | None
+    membership_ref: str | None
     resource_ref: str
     operation: str
     classification: str
     grant_refs: tuple[GrantReference, ...]
     max_ttl_ms: int = 60_000
+
+    def __post_init__(self) -> None:
+        if (self.tribe_ref is None) != (self.membership_ref is None):
+            raise ValueError("messaging_membership_policy_mismatch")
+
+    @property
+    def recipient_id(self) -> str:
+        return (
+            self.relationship_id if self.membership_ref is None else self.membership_ref
+        )
 
 
 class MessagingSender:
@@ -256,7 +266,7 @@ class MessagingSender:
             },
             "thread_id": message["payload"]["intent"]["thread_id"],
             "recipient_type": "relationship",
-            "recipient_id": channel.policy.membership_ref,
+            "recipient_id": channel.policy.recipient_id,
             "outcome": "delivered",
         }
         digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
@@ -506,7 +516,7 @@ class MessagingSender:
                             "receipt_origin_embodiment_id": recipient_descriptor(
                                 target, at_ms=now
                             )["embodiment_id"],
-                            "recipient_id": policy.membership_ref,
+                            "recipient_id": policy.recipient_id,
                             "recipient_type": "relationship",
                             "scope_kind": "relationship",
                         }
@@ -527,7 +537,7 @@ class MessagingSender:
             sender_authority=context._sender(),
             recipient_targets=[target],
             disclosures={
-                policy.membership_ref: context._disclosure_from_view(
+                policy.recipient_id: context._disclosure_from_view(
                     _authority_view, at_ms=now
                 )
             },
@@ -773,7 +783,7 @@ class MessagingDelivery:
                 # Application stage label, not a fabricated DM-052 semantic leg.
                 "leg_id": "application-stage:" + phase,
                 "message_id": metadata["event_id"],
-                "recipient_id": self.sender.context.policy.membership_ref,
+                "recipient_id": self.sender.context.policy.recipient_id,
                 "delivery_id": metadata["delivery_id"],
                 "envelope": b64url(envelope),
                 "envelope_sha256": hashlib.sha256(envelope).hexdigest(),
@@ -1153,13 +1163,14 @@ class MessagingChannel:
         # active body. Independently validate this channel's exact receiving
         # credential before using that being's signed membership.
         recipient_descriptor(self._local(), at_ms=at_ms)
-        snapshot = view.snapshot(policy.tribe_ref)
-        if not any(
-            member["principal_id"] == self.local_being_ref
-            and member["membership_ref"] == policy.membership_ref
-            for member in snapshot.value["members"]
-        ):
-            raise SealedDeliveryError()
+        if policy.tribe_ref is not None:
+            snapshot = view.snapshot(policy.tribe_ref)
+            if not any(
+                member["principal_id"] == self.local_being_ref
+                and member["membership_ref"] == policy.membership_ref
+                for member in snapshot.value["members"]
+            ):
+                raise SealedDeliveryError()
         disclosure = view.disclosure(
             requester_being_ref=self.local_being_ref,
             resource_ref=policy.resource_ref,
@@ -1340,12 +1351,12 @@ class MessagingChannel:
             or len(targets) != 1
             or targets[0]["recipient_type"] != "relationship"
             or targets[0]["scope_kind"] != "relationship"
-            or targets[0]["recipient_id"] != self.policy.membership_ref
+            or targets[0]["recipient_id"] != self.policy.recipient_id
             or targets[0]["receipt_origin_embodiment_id"] != local["embodiment_id"]
         ):
             raise SealedDeliveryError()
         proof = {
-            self.policy.membership_ref: self._disclosure_from_view(
+            self.policy.recipient_id: self._disclosure_from_view(
                 authority_view, at_ms=at_ms
             )
         }
@@ -1542,7 +1553,7 @@ class MessagingChannel:
             sender_authority=self._sender(),
             recipient_targets=[self._local()],
             disclosures={
-                self.policy.membership_ref: self._disclosure_from_view(
+                self.policy.recipient_id: self._disclosure_from_view(
                     authority_view, at_ms=now
                 )
             },
