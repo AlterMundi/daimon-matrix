@@ -11,7 +11,7 @@ import stat
 import sys
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
@@ -69,6 +69,7 @@ from .relationships import (
     SnapshotVerifier,
     VerifiedTribeSnapshot,
 )
+from .release_compatibility import describe_reader
 from .routes import (
     DirectHTTPProvider,
     HubProvider,
@@ -83,7 +84,12 @@ from .routes import (
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import SIGNATURE_DOMAIN as DELIVERY_SIGNATURE_DOMAIN
 from .sealed import DeliveryCustody, RecipientTarget, SealedDeliveryError
-from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
+from .service import (
+    OPERATOR_CAPABILITY_PROFILES,
+    SERVICE_METHODS,
+    HostedWeave,
+    LoadedStoreBinding,
+)
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
@@ -484,6 +490,7 @@ def load_runtime(
             "no_site",
             "no_bytecode",
             "interpreter",
+            "reader",
         }
         try:
             startup_observation = json.loads(canonical_bytes(qualified_startup))
@@ -515,6 +522,7 @@ def load_runtime(
                         "no_site",
                         "no_bytecode",
                         "interpreter",
+                        "reader",
                     }
                 )
                 or not isinstance(startup_observation["matrix_commit"], str)
@@ -540,6 +548,7 @@ def load_runtime(
                         Path("/proc/self/exe").read_bytes()
                     ).hexdigest(),
                 }
+                or startup_observation["reader"] != describe_reader()
             ):
                 raise ValueError("startup")
         except (CanonicalError, KeyError, TypeError, ValueError, OSError) as error:
@@ -1389,6 +1398,11 @@ def load_runtime(
         except ValueError as exception:
             raise RuntimeError("runtime_peer_transport_rejected") from exception
 
+    initial_stores = {
+        path: LoadedStoreBinding.file_identity(path) if path.exists() else None
+        for path in (ledger_path, relationship_store_path)
+        if path is not None
+    }
     ledger = Ledger(
         ledger_path,
         authority=authority,
@@ -1676,6 +1690,50 @@ def load_runtime(
         ),
     )
     ledger.integrity_check()
+    loaded_stores = {
+        "ledger": LoadedStoreBinding.capture(
+            ledger_path,
+            metadata={"ledger": "metadata", "communication": "communication_meta"},
+        )
+    }
+    if relationship_store_path is not None:
+        loaded_stores["relationships"] = LoadedStoreBinding.capture(
+            relationship_store_path, metadata={"relationships": "metadata"}
+        )
+    for binding in loaded_stores.values():
+        previous = initial_stores[binding.path]
+        if previous is not None and binding.identity != previous:
+            raise RuntimeError("runtime_store_replaced")
+    loaded_base = json.loads(service.loaded_runtime or b"null")
+    loaded_base.update(
+        {
+            "runtime_id": runtime_id,
+            "local_origin": local_origin,
+            "authority_epoch": {
+                "active_manifest_hash": active.manifest.digest,
+                "accepted_manifest_hashes": list(
+                    getattr(
+                        authority, "accepted_manifest_hashes", (active.manifest.digest,)
+                    )
+                ),
+            },
+            "state_root_identity": {
+                "device": root_info.st_dev,
+                "inode": root_info.st_ino,
+            },
+            "stores": {
+                role: json.loads(binding.observation)
+                for role, binding in loaded_stores.items()
+            },
+        }
+    )
+    service = replace(
+        service,
+        loaded_runtime=canonical_bytes(loaded_base),
+        loaded_stores=loaded_stores,
+    )
+    for binding in loaded_stores.values():
+        binding.verify()
     final_root = root.lstat()
     identity = (root_info.st_dev, root_info.st_ino)
     if (final_root.st_dev, final_root.st_ino) != identity:

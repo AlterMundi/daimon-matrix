@@ -7,12 +7,16 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
+import stat
 import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, cast
 
@@ -454,6 +458,85 @@ class ReceivingServiceContext:
 
 
 @dataclass(frozen=True)
+class LoadedStoreBinding:
+    """One boot-validated store locator, not a hash of mutable database data."""
+
+    path: Path
+    identity: tuple[int, int, int, int]
+    observation: bytes
+
+    @staticmethod
+    def file_identity(path: Path) -> tuple[int, int, int, int]:
+        info = path.lstat()
+        if (
+            not path.is_absolute()
+            or path.resolve() != path
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ServiceError("loaded_store_binding_invalid")
+        return info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)
+
+    @classmethod
+    def capture(
+        cls, path: Path, *, metadata: Mapping[str, str] | None = None
+    ) -> LoadedStoreBinding:
+        """Read schema metadata after the owning loader's validation, without DDL.
+
+        The caller retains native lifecycle ownership around validation/capture.
+        This observes the layout; it does not replace the owning store validator.
+        """
+        try:
+            before = cls.file_identity(path)
+            if any(
+                path.with_name(path.name + suffix).exists()
+                for suffix in ("-journal", "-wal", "-shm")
+            ):
+                raise ServiceError("loaded_store_capture_busy")
+            versions = {}
+            with closing(
+                sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
+            ) as db:
+                layout = db.execute(
+                    "SELECT type, tbl_name, name, sql FROM sqlite_schema ORDER BY name"
+                ).fetchall()
+                for role, table in (metadata or {}).items():
+                    if table not in {"metadata", "communication_meta"}:
+                        raise ServiceError("loaded_store_metadata_invalid")
+                    row = db.execute(
+                        f"SELECT value FROM {table} WHERE key='schema_version'"
+                    ).fetchone()
+                    if row is None or str(int(row[0])) != row[0]:
+                        raise ServiceError("loaded_store_metadata_invalid")
+                    versions[role] = int(row[0])
+            if cls.file_identity(path) != before:
+                raise ServiceError("loaded_store_replaced")
+            observed = {
+                "locator_sha256": hashlib.sha256(
+                    canonical_bytes(str(path))
+                ).hexdigest(),
+                "device": before[0],
+                "inode": before[1],
+                "owner_uid": before[2],
+                "mode": before[3],
+                "layout_sha256": hashlib.sha256(canonical_bytes(layout)).hexdigest(),
+                "schema_versions": versions,
+            }
+            return cls(path, before, canonical_bytes(observed))
+        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+            raise ServiceError("loaded_store_capture_rejected") from error
+
+    def verify(self) -> None:
+        try:
+            if self.file_identity(self.path) != self.identity:
+                raise ServiceError("loaded_store_replaced")
+        except OSError as error:
+            raise ServiceError("loaded_store_replaced") from error
+
+
+@dataclass(frozen=True)
 class HostedWeave:
     """One root-authorized ledger, signer, and authenticated local API."""
 
@@ -477,9 +560,16 @@ class HostedWeave:
     messaging: MessagingServiceContext | None = None
     receiving: ReceivingServiceContext | None = None
     loaded_runtime: bytes | None = None
+    loaded_application: bytes | None = None
+    loaded_stores: Mapping[str, LoadedStoreBinding] = dataclass_field(
+        default_factory=dict
+    )
     visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "loaded_stores", MappingProxyType(dict(self.loaded_stores))
+        )
         if (
             re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", self.runtime_id) is None
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", self.runtime_label)
@@ -609,6 +699,20 @@ class HostedWeave:
         client_id = capability.client_id
         request_id = request["request_id"]
         method = request["method"]
+        try:
+            for binding in self.loaded_stores.values():
+                binding.verify()
+        except ServiceError as error:
+            # Refuse before opening/reinitializing any replaced journal. This
+            # current refusal does not claim that an earlier request had no effect.
+            return create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=now,
+                error={"code": error.code, "retryable": False},
+            )
         if method == "runtime.reader-selection" and (
             capability.client_id
             != f"client:host:{self.runtime_label}:receiving-controller"
@@ -1041,6 +1145,8 @@ class HostedWeave:
         )
 
     def _reader_selection(self, params: Any, *, request_hash: str) -> dict[str, Any]:
+        for binding in self.loaded_stores.values():
+            binding.verify()
         context = self.receiving
         if context is None:
             raise ServiceError("reader_controller_unavailable")
@@ -2283,6 +2389,8 @@ class HostedWeave:
             )
         if method == "runtime.status":
             _closed(params, set())
+            for binding in self.loaded_stores.values():
+                binding.verify()
             self.ledger.integrity_check()
             accepted = tuple(
                 getattr(
@@ -2324,6 +2432,15 @@ class HostedWeave:
                 if loaded["process_id"] != os.getpid():
                     raise ServiceError("loaded_runtime_process_changed")
                 result["loaded_runtime"] = loaded
+            if self.loaded_application is not None:
+                application = json.loads(self.loaded_application)
+                if (
+                    self.loaded_runtime is None
+                    or application["loaded_base_sha256"]
+                    != hashlib.sha256(self.loaded_runtime).hexdigest()
+                ):
+                    raise ServiceError("loaded_application_base_changed")
+                result["loaded_application"] = application
             if self.receiving is not None:
                 deadline = time.monotonic_ns() + 2_000_000_000
                 try:

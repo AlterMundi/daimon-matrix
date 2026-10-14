@@ -1600,6 +1600,9 @@ class GroupRuntimeTests(unittest.TestCase):
             )
 
     def test_group_only_application_uses_supported_signed_provisioning(self):
+        GroupRuntimeTests._signed_group_application(self)
+
+    def _signed_group_application(self, *, record_key_check=True):
         import hashlib
 
         from daimon_matrix.messaging_config import (
@@ -1764,6 +1767,8 @@ class GroupRuntimeTests(unittest.TestCase):
                     self.assertLessEqual(set(selected.methods), MESSAGING_METHODS)
         else:
             self.assertIsNone(view.service.receiving)
+        if not record_key_check:
+            return runtime, app, view
         request_id, moved_id = str(uuid.uuid4()), str(uuid.uuid4())
         document = {"client_id": "test", "text": "signed record"}
         group.records.reserve("request", request_id, document, lambda: document)
@@ -1774,6 +1779,7 @@ class GroupRuntimeTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "messaging_binding_rejected"):
             group.records.get("request", moved_id)
+        return runtime, app, view
 
 
 class DurableIntakeStoreTests(unittest.TestCase):

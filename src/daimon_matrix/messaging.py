@@ -16,7 +16,10 @@ import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .service import LoadedStoreBinding
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
@@ -1701,12 +1704,14 @@ class GroupMessaging:
         labels: LabelIndex | None = None,
         direct_reader_ready: Callable[[Mapping[str, Any]], bool] | None = None,
         controlled_readers: bool = False,
+        loaded_store_bindings: tuple[LoadedStoreBinding, ...] = (),
     ) -> None:
         if type(controlled_readers) is not bool or (
             controlled_readers and direct_reader_ready is not None
         ):
             raise ValueError("tribe_reader_composition_invalid")
         self._controlled_readers = controlled_readers
+        self._loaded_store_bindings = tuple(loaded_store_bindings)
         self.lane, self.policy = lane, policy
         self.ledger, self.signer = lane.ledger, lane.signer
         self.inbox = self.records = lane.records
@@ -1741,6 +1746,8 @@ class GroupMessaging:
         return self._controlled_readers
 
     def validate(self, service: Any) -> None:
+        for binding in self._loaded_store_bindings:
+            binding.verify()
         if self.ledger is not service.ledger or self.signer is not service.signer:
             raise ValueError("tribe_runtime_binding")
         self.lane._operational(
@@ -1750,8 +1757,18 @@ class GroupMessaging:
             self.lane.clock(),
         )
 
+    def _verify_loaded_stores(self) -> None:
+        """A changed physical store is uncertain storage, not a peer refusal."""
+        try:
+            for binding in self._loaded_store_bindings:
+                binding.verify()
+        except (ValueError, OSError) as failure:
+            raise RouteAmbiguous("tribe_loaded_store_uncertain") from failure
+
     def _authorize(self, binding: OperationBinding) -> bool:
         try:
+            for store in self._loaded_store_bindings:
+                store.verify()
             self.lane._operational(
                 self.lane.being_ref,
                 self.lane.local_credential_id,
@@ -2451,6 +2468,7 @@ class GroupMessaging:
         }
 
     def _known_admission(self, request_id: str) -> dict[str, Any] | None:
+        self._verify_loaded_stores()
         try:
             return self.records.get("intake-admission", request_id)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -2615,6 +2633,7 @@ class GroupMessaging:
     def retained_message_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
+        self._verify_loaded_stores()
         try:
             return self._retained_message_ticket(context)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -2647,6 +2666,7 @@ class GroupMessaging:
     def _acknowledge_intake(
         self, admission: Mapping[str, Any], context: Mapping[str, Any], response: bytes
     ) -> None:
+        self._verify_loaded_stores()
         value = _parse(response)
         if (
             value["status"] != "accepted"
@@ -2674,6 +2694,7 @@ class GroupMessaging:
         self, message_id: str, *, deadline_ns: int | None = None
     ) -> dict[str, Any]:
         """One finite retained technical attempt under the runtime owner."""
+        self._verify_loaded_stores()
         if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
             return {"state": "pending", "code": "attempt_budget_exhausted"}
         with self._receipt_lock:
@@ -2850,6 +2871,7 @@ class GroupMessaging:
         starting further items. Local storage completion retains ownership;
         this method never abandons an active writer.
         """
+        self._verify_loaded_stores()
         if (
             type(max_bytes) is not int
             or not 1 <= max_bytes <= 32 * 1024 * 1024
@@ -2964,6 +2986,7 @@ class GroupMessaging:
     def retained_evidence_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
+        self._verify_loaded_stores()
         try:
             return self._retained_evidence_ticket(context)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -3011,6 +3034,7 @@ class GroupMessaging:
     def complete_control(
         self, request_id: str, *, deadline_ns: int | None = None
     ) -> dict[str, Any]:
+        self._verify_loaded_stores()
         if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
             return {"state": "pending", "code": "attempt_budget_exhausted"}
         key = "control:" + request_id
@@ -3045,6 +3069,7 @@ class GroupMessaging:
                 self._receipt_inflight.remove(key)
 
     def receive_message(self, raw: bytes) -> None:
+        self._verify_loaded_stores()
         result = self.lane.intake(_parse(raw))
         self.records.reserve("receipt", result["message_id"], result, lambda: result)
         message = self.message(result["message_id"])
@@ -3108,5 +3133,6 @@ class GroupMessaging:
         return dict(verified), str(row["being_ref"])
 
     def receive_evidence(self, raw: bytes) -> None:
+        self._verify_loaded_stores()
         verified, being = self._validated_evidence(raw)
         self.communication.record_foreign_receipt(verified, recipient_being_ref=being)

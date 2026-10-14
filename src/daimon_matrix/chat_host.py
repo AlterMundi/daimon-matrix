@@ -8,6 +8,7 @@ polling, message generation or harness execution is performed by this host.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import signal
@@ -25,7 +26,7 @@ from .messaging_config import (
     load_application,
     protected_read,
     read_document,
-    read_publication,
+    read_verified_publication,
 )
 from .native_egress import closed_visibility
 from .operator_capabilities import STATUS_OBSERVER_METHODS
@@ -52,7 +53,11 @@ def visibility_context(runtime: HostedRuntime) -> VisibilityFactoryContext:
         runtime_id=runtime.service.runtime_id,
         runtime_label=runtime.service.runtime_label,
         signer_public_key=runtime.service.signer.public_key,
-        bundle_sha256=config_digest(read_document(runtime.state_root / "runtime.json")),
+        bundle_sha256=json.loads(runtime.service.loaded_runtime)[
+            "runtime_bundle_sha256"
+        ]
+        if runtime.service.loaded_runtime is not None
+        else config_digest(read_document(runtime.state_root / "runtime.json")),
         authorities=_runtime_authorities(runtime),
         labels=runtime.service.labels,
     )
@@ -66,11 +71,14 @@ def application_view(
     catalog_mode: str = "validate",
 ) -> HostedRuntime:
     """Additional link with independent visibility, no duplicate native transport."""
-    document, _ = read_publication(base, app)
+    selected = read_verified_publication(base, app)
+    document = json.loads(selected.application)
     controller = _visibility_factory(
         document, visibility, clock=base.service.clock, catalog_mode=catalog_mode
     )(visibility_context(base))
-    view = load_application(replace(base, egress=controller), app)
+    view = load_application(
+        replace(base, egress=controller), app, verified_publication=selected
+    )
     receiving = view.service.receiving
     return replace(
         view,

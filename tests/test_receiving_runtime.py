@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import shutil
 import socket
 import struct
 import sys
@@ -28,6 +29,7 @@ from daimon_matrix.local_api import (
     request_hash,
 )
 from daimon_matrix.native_egress import NativeEgressError, synthetic_visibility
+from daimon_matrix.release_compatibility import describe_reader
 from daimon_matrix.runtime import RuntimeError as RuntimeLoadError
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.service import (
@@ -124,6 +126,7 @@ class ReceivingOwnerConnectionTests(client_fixtures.ClientFixture):
                     Path("/proc/self/exe").read_bytes()
                 ).hexdigest(),
             },
+            "reader": describe_reader(),
             "isolated": True,
             "no_site": True,
             "no_bytecode": True,
@@ -188,6 +191,7 @@ class ReceivingOwnerConnectionTests(client_fixtures.ClientFixture):
                     "no_site": True,
                     "no_bytecode": True,
                     "interpreter": {},
+                    "reader": {},
                 },
             )
 
@@ -550,6 +554,192 @@ class ReceivingCompositionTests(unittest.TestCase):
         group_fixtures.GroupRuntimeTests.test_group_only_application_uses_supported_signed_provisioning(
             self
         )
+
+    def test_loaded_publication_and_view_digest_survive_disk_pointer_and_record_changes(
+        self,
+    ):
+        from daimon_matrix.messaging_config import (
+            create_binding,
+            load_application,
+            read_document,
+            read_verified_publication,
+        )
+
+        base, app, view = group_fixtures.GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False
+        )
+        loaded = json.loads(view.service.loaded_application)
+        selected = read_verified_publication(base, app)
+        digest = loaded["loaded_view_sha256"]
+        group = view.service.messaging.channels["tribe"]
+        gate = loaded["reader_gates"]["tribe"]
+        self.assertEqual(gate["process_id"], os.getpid())
+        self.assertEqual(gate["context_sha256"], loaded["config_sha256"])
+        self.assertEqual(
+            loaded["loaded_base_sha256"],
+            hashlib.sha256(base.service.loaded_runtime).hexdigest(),
+        )
+        self.assertEqual(
+            set(loaded["stores"]),
+            {"records", "envelopes", "opaque-message", "opaque-evidence"},
+        )
+        self.assertNotIn(str(app), canonical_bytes(loaded).decode())
+        group.records.reserve(
+            "request",
+            str(uuid.uuid4()),
+            {"text": "ordinary committed row"},
+            lambda: {"text": "ordinary committed row"},
+        )
+        current = load_application(base, app)
+        self.assertEqual(
+            json.loads(current.service.loaded_application)["loaded_view_sha256"], digest
+        )
+        packet = read_document(app / "publication.json")
+        generation = "generation-" + uuid.uuid4().hex
+        directory = app / generation
+        directory.mkdir(mode=0o700)
+        for name in ("application.json", "binding.json", "client.json"):
+            shutil.copyfile(app / name, directory / name)
+            (directory / name).chmod(0o600)
+        body = {**packet["body"], "generation": generation}
+        (app / "publication.json").write_bytes(
+            canonical_bytes({"body": body, "binding": create_binding(base, body)})
+        )
+        self.assertEqual(
+            json.loads(view.service.loaded_application)["publication"], packet["body"]
+        )
+        retained = load_application(base, app, verified_publication=selected)
+        self.assertEqual(
+            json.loads(retained.service.loaded_application)["loaded_view_sha256"],
+            digest,
+        )
+        newer = load_application(base, app)
+        self.assertEqual(
+            json.loads(newer.service.loaded_application)["publication"], body
+        )
+        self.assertNotEqual(
+            json.loads(newer.service.loaded_application)["loaded_view_sha256"], digest
+        )
+
+    def test_replaced_group_store_invalidates_view_before_any_request_journal_write(
+        self,
+    ):
+        _base, _app, view = group_fixtures.GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False
+        )
+        group = view.service.messaging.channels["tribe"]
+        path = group.records.path
+        old = path.with_name("retained-records.sqlite")
+        path.rename(old)
+        shutil.copyfile(old, path)
+        path.chmod(0o600)
+        observer = next(
+            cap
+            for cap in view.service.capabilities.values()
+            if "runtime.status" in cap.methods
+        )
+        request = create_request(
+            observer,
+            request_id=str(uuid.uuid4()),
+            method="runtime.status",
+            params={},
+            issued_at_ms=view.service.clock(),
+        )
+        with patch.object(view.service.ledger, "begin_rpc") as begin:
+            response = view.service.handle(request)
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "loaded_store_replaced")
+        begin.assert_not_called()
+        with self.assertRaisesRegex(ServiceError, "loaded_store_replaced"):
+            group.validate(view.service)
+        from daimon_matrix.routes import RouteAmbiguous
+
+        # HTTP intake and its deferred recovery bypass the owner RPC service.
+        # A byte-identical replacement must stay uncertain before either can
+        # inspect, commit or acknowledge storage under the old loaded view.
+        context = {"request": {"request_id": str(uuid.uuid4())}}
+        operations = (
+            lambda: group.admit_message(context),
+            lambda: group.admit_evidence(context),
+            lambda: group.retained_message_ticket(context),
+            lambda: group.retained_evidence_ticket(context),
+            lambda: group._acknowledge_intake({}, context, b"{}"),
+            lambda: group.complete_receipt(str(uuid.uuid4())),
+            lambda: group.complete_control(str(uuid.uuid4())),
+            lambda: group.reconcile_intake(),
+            lambda: group.receive_message(b"{}"),
+            lambda: group.receive_evidence(b"{}"),
+        )
+        with (
+            patch.object(group.records, "get") as read,
+            patch.object(group.records, "reserve") as write,
+            patch.object(group.records, "commit_intake") as intake,
+            patch.object(group.records, "commit_control") as control,
+            patch.object(group.records, "intake_page") as page,
+        ):
+            for operation in operations:
+                with self.assertRaisesRegex(
+                    RouteAmbiguous, "tribe_loaded_store_uncertain"
+                ):
+                    operation()
+            for store_access in (read, write, intake, control, page):
+                store_access.assert_not_called()
+
+    def test_authenticated_invalid_intake_cannot_persist_into_replaced_opaque_store(
+        self,
+    ):
+        import hmac
+
+        from daimon_matrix.canonical import b64url
+        from daimon_matrix.routes import RouteAmbiguous, RouteError
+
+        _base, _app, view = group_fixtures.GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False
+        )
+        ingress = view.messaging_http.message_ingress
+        path = ingress.inbox.path
+        old = path.with_name("retained-opaque.sqlite")
+        path.rename(old)
+        shutil.copyfile(old, path)
+        path.chmod(0o600)
+        retained_bytes = path.read_bytes()
+        now = ingress.clock()
+        unsigned = {
+            "schema": "dm.transport-request/v1",
+            "version": "v1",
+            "provider_ref": ingress.provider_ref,
+            "route_ref": ingress.route_ref,
+            "request_id": str(uuid.uuid4()),
+            "issued_at_ms": now,
+            "expires_at_ms": now + 60_000,
+            "sender_principal": "synthetic-test-sender",
+            "sender_body_ref": "synthetic-test-body",
+            # Authenticated but semantically invalid: no intake callback runs.
+            "submission": {},
+        }
+        auth = {
+            "schema": "dm.transport-auth/v1",
+            "alg": "HMAC-SHA256",
+            "key_ref": ingress.key_ref,
+            "value": b64url(
+                hmac.digest(ingress._secret, canonical_bytes(unsigned), "sha256")
+            ),
+        }
+        with patch.object(ingress.inbox, "admit_response") as refused:
+            with self.assertRaisesRegex(RouteAmbiguous, "tribe_loaded_store_uncertain"):
+                ingress.handle_deferred(canonical_bytes({**unsigned, "auth": auth}))
+            refused.assert_not_called()
+        self.assertEqual(path.read_bytes(), retained_bytes)
+        # A request without authenticated route authorship cannot consult the
+        # owner-local storage guard or reveal its state.
+        with patch.object(ingress, "store_guard") as guarded:
+            with self.assertRaisesRegex(RouteError, "transport_request_rejected"):
+                ingress.handle_deferred(
+                    canonical_bytes(
+                        {**unsigned, "auth": {**auth, "value": b64url(b"x" * 32)}}
+                    )
+                )
+            guarded.assert_not_called()
 
 
 class ReaderSelectionTests(unittest.TestCase):

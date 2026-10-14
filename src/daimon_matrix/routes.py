@@ -1114,6 +1114,7 @@ class TransportIngress:
         intake_validator: IntakeValidator | None = None,
         intake_admission: IntakeAdmission | None = None,
         intake_gate: IntakeGate | None = None,
+        store_guard: Callable[[], None] | None = None,
         carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> None:
         for value in (
@@ -1188,6 +1189,7 @@ class TransportIngress:
         self.intake_validator = intake_validator
         self.intake_admission = intake_admission
         self.intake_gate = intake_gate
+        self.store_guard = store_guard
         self.carrier_inspector = carrier_inspector
 
     def _authorize_egress(self, binding: OperationBinding) -> bool:
@@ -1265,6 +1267,11 @@ class TransportIngress:
             if not hmac.compare_digest(presented, expected):
                 raise RouteError("transport_request_rejected")
             request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+            # Authentication precedes local storage observation. A changed
+            # loaded store is uncertain before semantic admission or refusal
+            # persistence; it must never become a sticky peer refusal.
+            if self.store_guard is not None:
+                self.store_guard()
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:

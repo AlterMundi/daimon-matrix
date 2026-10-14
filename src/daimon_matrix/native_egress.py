@@ -1336,6 +1336,22 @@ class MandatoryEgressController:
             catalog = self._catalogs[catalog_id]
             self._validate_catalog(catalog.path, catalog_id)
 
+    def observe_loaded_binding(self) -> dict[str, Any]:
+        """Actual boot binding after catalog validation, without peer I/O."""
+        self.validate_registered_catalogs()
+        return {
+            "schema": "dm.visibility.loaded-binding/v1",
+            "catalog_mode": self.catalog_mode,
+            "release_enabled": self.release_enabled,
+            "installation_sha256": self._installation_digest,
+            "policy_sha256": _digest(canonical_bytes(self._policy)),
+            "catalog_schema_version": VISIBILITY_SCHEMA_VERSION,
+            "catalogs": {
+                catalog_id: _digest(canonical_bytes(str(catalog.path)))
+                for catalog_id, catalog in sorted(self._catalogs.items())
+            },
+        }
+
     def validate_registry(self, enabled_paths: set[str]) -> None:
         if (
             not enabled_paths <= PEER_EGRESS_PATHS
