@@ -1244,6 +1244,7 @@ class MandatoryEgressController:
                 document = json.loads(native)
                 paths = {
                     "dm.tribe.conversation/v1": "tribe-message-request",
+                    "dm.tribe.direct-conversation/v1": "tribe-message-request",
                     "dm.tribe.intake-result/v1": "tribe-receipt-request",
                 }
                 if document.get("schema") not in paths:

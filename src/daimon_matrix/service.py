@@ -1180,7 +1180,10 @@ class HostedWeave:
             raise ServiceError("messaging_rejected") from None
 
     def _messaging_send(self, params: Any, *, client_id: str) -> dict[str, Any]:
-        value = _closed(params, {"channel_id", "send_id", "thread_id", "text"})
+        fields = {"channel_id", "send_id", "thread_id", "text"}
+        if isinstance(params, Mapping) and "destination" in params:
+            fields.add("destination")
+        value = _closed(params, fields)
         channel_id = value["channel_id"]
         if (
             not isinstance(channel_id, str)
@@ -1195,12 +1198,21 @@ class HostedWeave:
             context = self._messaging_context()
             if channel_id not in context.client_channels.get(client_id, frozenset()):
                 raise ValueError
-            return context.deliveries[channel_id].send(
+            delivery = context.deliveries[channel_id]
+            directed: dict[str, Any] = {}
+            if "destination" in value:
+                if not isinstance(delivery, GroupMessaging):
+                    raise ValueError("tribe_direct_channel_required")
+                from .tribe_conversation import direct_destination
+
+                directed["destination"] = direct_destination(value["destination"])
+            return delivery.send(
                 client_id=client_id,
                 send_id=send_id,
                 thread_id=thread_id,
                 text=text,
                 authorize=self._messaging_guard(context, client_id, channel_id),
+                **directed,
             )
         except Exception:
             raise ServiceError("messaging_rejected") from None

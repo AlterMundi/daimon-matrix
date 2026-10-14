@@ -63,7 +63,11 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
-from .tribe_conversation import TribeConversation, ValidatedTribeIntake
+from .tribe_conversation import (
+    TribeConversation,
+    ValidatedTribeIntake,
+    direct_destination,
+)
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
@@ -1691,12 +1695,14 @@ class GroupMessaging:
         config_digest: str,
         egress: MandatoryEgressController,
         labels: LabelIndex | None = None,
+        direct_reader_ready: Callable[[Mapping[str, Any]], bool] | None = None,
     ) -> None:
         self.lane, self.policy = lane, policy
         self.ledger, self.signer = lane.ledger, lane.signer
         self.inbox = self.records = lane.records
         self.communication, self.providers = communication, dict(providers)
         self.config_digest, self.egress, self.labels = config_digest, egress, labels
+        self.direct_reader_ready = direct_reader_ready
         self.intake_ingresses: dict[str, Any] = {}
         self._receipt_lock = threading.Lock()
         self._receipt_inflight: set[str] = set()
@@ -1837,7 +1843,7 @@ class GroupMessaging:
                     "current_route": route,
                 }
             )
-        return {
+        result = {
             "schema": "dm.tribe.delivery/v1",
             "send_id": send_id,
             "message_id": message["event_id"],
@@ -1852,6 +1858,35 @@ class GroupMessaging:
                 "expired": self.lane.clock() >= plan["expires_at_ms"],
             },
         }
+        destination = message["payload"]["body"].get("destination")
+        if destination is not None:
+            result.update(
+                schema="dm.tribe.direct-delivery/v1",
+                destination=destination,
+                author_retention={
+                    "being_ref": message["being_ref"],
+                    "embodiment_id": message["origin"]["embodiment_id"],
+                    "message_id": message["event_id"],
+                    "state": "authored-local",
+                },
+            )
+            for row, outcome in zip(
+                message["payload"]["body"]["audience"], transport, strict=True
+            ):
+                outcome["reader_readiness"] = self._direct_ready(row)
+        return result
+
+    def _direct_ready(self, row: Mapping[str, Any]) -> bool:
+        # A route or prepared wheel never establishes a loaded compatible reader.
+        # This owner-local guard is supplied by the receiving cohort controller;
+        # refreshable evidence is not part of immutable retry/config bindings.
+        try:
+            return (
+                self.direct_reader_ready is not None
+                and self.direct_reader_ready(row) is True
+            )
+        except (OSError, ValueError):
+            return False
 
     def send(
         self,
@@ -1862,16 +1897,10 @@ class GroupMessaging:
         text: str,
         response_to: tuple[Any, str] | None = None,
         authorize: Callable[[], None] | None = None,
+        destination: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if authorize is not None:
             authorize()
-        parameters = {
-            "client_id": client_id,
-            "thread_id": thread_id,
-            "text": text,
-            "response_to": None if response_to is None else response_to[1],
-        }
-        self.records.reserve("request", send_id, parameters, lambda: parameters)
         response = None
         if response_to is not None:
             if response_to[0] is not self:
@@ -1885,6 +1914,33 @@ class GroupMessaging:
                 "sender_being_ref": parent["being_ref"],
                 "sender_embodiment_id": parent["origin"]["embodiment_id"],
             }
+            parent_destination = parent["payload"]["body"].get("destination")
+            reply_destination = None
+            if parent_destination is not None:
+                reply_destination = {
+                    "kind": parent_destination["kind"],
+                    "being_ref": parent["being_ref"],
+                }
+                if parent_destination["kind"] == "body":
+                    reply_destination["embodiment_id"] = parent["origin"][
+                        "embodiment_id"
+                    ]
+            if (
+                destination is not None
+                and direct_destination(destination) != reply_destination
+            ):
+                raise ValueError("tribe_reply_destination_mismatch")
+            destination = reply_destination
+        if destination is not None:
+            destination = direct_destination(destination)
+        parameters = {
+            "client_id": client_id,
+            "thread_id": thread_id,
+            "text": text,
+            "response_to": None if response_to is None else response_to[1],
+            **({"destination": dict(destination)} if destination is not None else {}),
+        }
+        self.records.reserve("request", send_id, parameters, lambda: parameters)
         if self.records.get("send", send_id) is None:
             snapshot = self.lane.snapshot(self.policy.tribe_ref, self.lane.clock())
             if not any(
@@ -1906,6 +1962,7 @@ class GroupMessaging:
                 "private": "private",
             }[self.policy.classification],
             response_context=response,
+            destination=destination,
         )
         message, resolution = prepared["message"], prepared["resolution"]
         identifiers = {
@@ -1917,14 +1974,15 @@ class GroupMessaging:
             message_event_id=message["event_id"],
             resolution_event_id=resolution["event_id"],
         )
-        own_receipt = self.lane._author_receipt(
-            message,
-            resolution,
-            membership_ref=self.policy.membership_ref,
-            now=self.lane.clock(),
-            authored_local=True,
-        )
-        self.communication.record_receipt(own_receipt["event_id"])
+        if destination is None:
+            own_receipt = self.lane._author_receipt(
+                message,
+                resolution,
+                membership_ref=self.policy.membership_ref,
+                now=self.lane.clock(),
+                authored_local=True,
+            )
+            self.communication.record_receipt(own_receipt["event_id"])
         if self.lane.clock() >= prepared["expires_at_ms"]:
             return self._result(message, send_id)
         native = canonical_bytes(prepared["payload"])
@@ -1940,6 +1998,16 @@ class GroupMessaging:
             )
             for row in prepared["rows"]
         ]
+        if destination is not None:
+            recipients = [
+                "Direct · "
+                + _sender_display(
+                    self.labels,
+                    destination,
+                    destination["being_ref"],
+                    body_fallback=destination["kind"] == "body",
+                )
+            ]
         projection: dict[str, Any] = {
             "event_id": message["event_id"],
             "event_digest": message["content_hash"],
@@ -1965,6 +2033,11 @@ class GroupMessaging:
                     "text": parent["payload"]["body"]["text"][:160],
                 },
             )
+            if destination is not None:
+                # Correlation is authorized by the verified parent; copying
+                # parent plaintext requires its separate disclosure provenance.
+                projection["reply_to"].pop("text")
+                projection["reply_to"].pop("sender")
         retained_native = self.records.get("native", send_id)
         if retained_native is not None:
             projection = retained_native["projection"]
@@ -1986,6 +2059,8 @@ class GroupMessaging:
         }
         eligible = []
         for row in prepared["rows"]:
+            if destination is not None and not self._direct_ready(row):
+                continue
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
                 self.lane.local_embodiment_id,
@@ -2143,6 +2218,11 @@ class GroupMessaging:
             return
         provider = providers["evidence" if receipt else "message"]
         document = _parse(native)
+        directed = (
+            not receipt and document.get("schema") == "dm.tribe.direct-conversation/v1"
+        )
+        if directed and not self._direct_ready(row):
+            return
         if receipt:
             identifier = document["receipt"]["event_id"]
             delivery_id = str(uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1"))
@@ -2205,13 +2285,19 @@ class GroupMessaging:
                 "transport-result", proof_id, observed, lambda: observed
             )
 
+        def authorize_write() -> None:
+            if authorize is not None:
+                authorize()
+            if directed and not self._direct_ready(row):
+                raise RouteError("tribe_direct_reader_unconfirmed")
+
         try:
             provider.send_prepared(
                 raw,
                 carrier_binding=operation,
                 response_sink=retain_response,
                 attempt_deadline_ns=deadline_ns,
-                authorize=authorize,
+                authorize=authorize_write,
             )
         except RouteError:
             # An unknown outcome stays pending. Retrying uses the same bytes and
@@ -2220,10 +2306,14 @@ class GroupMessaging:
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
         from .sealed import inspect_delivery
-        from .tribe_conversation import TRIBE_CONVERSATION_SCHEMA, TRIBE_INTAKE_SCHEMA
+        from .tribe_conversation import (
+            TRIBE_CONVERSATION_SCHEMA,
+            TRIBE_DIRECT_SCHEMA,
+            TRIBE_INTAKE_SCHEMA,
+        )
 
         document = _parse(raw)
-        if document.get("schema") == TRIBE_CONVERSATION_SCHEMA:
+        if document.get("schema") in {TRIBE_CONVERSATION_SCHEMA, TRIBE_DIRECT_SCHEMA}:
             if (
                 set(document) != {"schema", "envelope", "resolution", "tribe_ref"}
                 or not isinstance(document["envelope"], str)

@@ -25,7 +25,481 @@ from daimon_matrix.routes import DirectHTTPProvider, OpaqueInbox, TransportIngre
 from tests import test_dm051_sealed as sealing_fixtures
 
 
+class DirectLaneTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = sealing_fixtures.TribeConversationLaneTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+
+    def prepare(self, **changes):
+        f = self.fixture
+        return f.sender_lane.prepare(
+            text="explicit member direct",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={"kind": "being", "being_ref": f.member.state.being_ref},
+            **changes,
+        )
+
+    def test_direct_has_only_recipient_keys_and_author_retains_its_ledger_event(self):
+        from daimon_matrix.tribe_conversation import TRIBE_DIRECT_SCHEMA
+
+        f = self.fixture
+        prepared = self.prepare()
+        self.assertEqual(prepared["payload"]["schema"], TRIBE_DIRECT_SCHEMA)
+        self.assertEqual(
+            [row["being_ref"] for row in prepared["rows"]], [f.member.state.being_ref]
+        )
+        self.assertIsNotNone(f.founder_ledger.event(prepared["message"]["event_id"]))
+        validated = f.receiver_lane.validate_intake(prepared["payload"])
+        self.assertEqual(validated.message, prepared["message"])
+        self.assertEqual(
+            prepared["message"]["payload"]["body"]["destination"][
+                "authority_manifest_hash"
+            ],
+            f.member.authority.manifest.digest,
+        )
+
+    def test_explicit_body_direct_receives_signed_receipt_without_author_semantic_copy(
+        self,
+    ):
+        f = self.fixture
+        result = f.sender_lane.converse(
+            text="one selected body",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={
+                "kind": "body",
+                "being_ref": f.member.state.being_ref,
+                "embodiment_id": f.member.origin["embodiment_id"],
+            },
+            deliver=lambda _body, payload: f.receiver_lane.intake(payload),
+        )
+        self.assertEqual(len(result["deliveries"]), 1)
+        self.assertEqual(result["deliveries"][0]["state"], "delivered")
+
+    def test_direct_cannot_be_relabelled_as_old_group_wire(self):
+        from daimon_matrix.tribe_conversation import (
+            TRIBE_CONVERSATION_SCHEMA,
+            open_event,
+        )
+
+        prepared = self.prepare()
+        prepared["payload"]["schema"] = TRIBE_CONVERSATION_SCHEMA
+        with patch(
+            "daimon_matrix.tribe_conversation.open_event", wraps=open_event
+        ) as decrypted:
+            with self.assertRaises(ValueError):
+                self.fixture.receiver_lane.validate_intake(prepared["payload"])
+            # The old complete-membership proof map must reject the omitted
+            # author before touching recipient keys, not after decryption.
+            decrypted.assert_not_called()
+
+    def enroll_second_member_body(self, label="member"):
+        import copy
+
+        from daimon_matrix.authority_epochs import (
+            RootHistoryAuthority,
+            create_embodiment_enrollment,
+        )
+        from daimon_matrix.identity import (
+            create_embodiment_credential,
+            create_incarnation_authorization,
+            x25519_public,
+        )
+        from daimon_matrix.synthetic_relationships import _seed, _transport
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        f = self.fixture
+        old = f.journey.identities[label].authority
+        roots = tuple(_seed(f"{label}:root:{index}") for index in range(3))
+        signing = _seed(f"{label}-second:signing")
+        origin = dict(
+            body_ref=f"codex:synthetic:{label}-second",
+            embodiment_id=f"embodiment:{label}-second",
+            incarnation_id=f"incarnation:{label}-second:0",
+            principal_id=f"{label}-second@loopback",
+        )
+        credential = create_embodiment_credential(
+            old.state,
+            roots,
+            signing,
+            x25519_public(_seed(f"{label}-second:encryption")),
+            embodiment_id=origin["embodiment_id"],
+            body_ref=origin["body_ref"],
+            purposes=["dm.we", "messages"],
+            valid_from_ms=0,
+            valid_until_ms=2**53 - 1,
+            transport_principals=[
+                {
+                    **_transport(f"{label}-second", origin["principal_id"]),
+                    "scheme": "dm-peer-v1",
+                }
+            ],
+        )
+        incarnation = create_incarnation_authorization(
+            credential,
+            signing,
+            incarnation_id=origin["incarnation_id"],
+            incarnation_sequence=0,
+            started_at_ms=0,
+        )
+        manifest = copy.deepcopy(old.manifest.value)
+        manifest["revision"] += 1
+        manifest["embodiments"].append(
+            dict(
+                body_ref=origin["body_ref"],
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                status="active",
+                embodiment_credential_id=credential["artifact_id"],
+                incarnation_authorization_id=incarnation["artifact_id"],
+            )
+        )
+        manifest["embodiments"].sort(
+            key=lambda row: (row["embodiment_id"], row["incarnation_id"])
+        )
+        current = RootAuthority(
+            BeingManifest.from_value(manifest),
+            old.state,
+            {**old.credentials, credential["artifact_id"]: credential},
+            {**old.incarnations, incarnation["artifact_id"]: incarnation},
+        )
+        enrollment = create_embodiment_enrollment(
+            old.manifest,
+            current.manifest,
+            root_seeds=roots,
+            request_id=str(uuid.uuid4()),
+            body_ref=origin["body_ref"],
+            embodiment_id=origin["embodiment_id"],
+            incarnation_id=origin["incarnation_id"],
+            embodiment_credential_id=credential["artifact_id"],
+            incarnation_authorization_id=incarnation["artifact_id"],
+            principal_id=origin["principal_id"],
+            issued_at_ms=f.now,
+        )
+        f.journey.authorities[old.state.being_ref] = RootHistoryAuthority(
+            current, [old], [enrollment]
+        )
+        return current, origin
+
+    def test_group_with_bodyless_active_member_retains_complete_membership_proofs(self):
+        import copy
+
+        from daimon_matrix.authority_epochs import (
+            RootHistoryAuthority,
+            create_embodiment_retirement,
+        )
+        from daimon_matrix.identity import create_revocation, verify_successor
+        from daimon_matrix.synthetic_relationships import _seed
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        f = self.fixture
+        # A sibling permits group preparation even when the other being has
+        # retired its last body. Signed membership itself remains active.
+        self.enroll_second_member_body("founder")
+        old = f.member.authority
+        roots = tuple(_seed(f"member:root:{index}") for index in range(3))
+        control = create_revocation(
+            old.state,
+            roots,
+            embodiment_id=f.member.origin["embodiment_id"],
+            cutoff_incarnation_sequence=0,
+            revocation_generation=1,
+        )
+        state = verify_successor(control, old.state)
+        manifest = copy.deepcopy(old.manifest.value)
+        manifest.update(control_head=state.head, revision=manifest["revision"] + 1)
+        for row in manifest["embodiments"]:
+            row["status"] = "retired"
+        current = RootAuthority(
+            BeingManifest.from_value(manifest), state, old.credentials, old.incarnations
+        )
+        transition = create_embodiment_retirement(
+            old.manifest,
+            current.manifest,
+            revocations=[control],
+            root_seeds=roots,
+            issued_at_ms=f.now,
+        )
+        f.journey.authorities[old.state.being_ref] = RootHistoryAuthority(
+            current, [old], [transition]
+        )
+        # Preserve the v1 sealing contract: a proof without any recipient body
+        # rejects preparation, rather than emitting a frame its reader rejects.
+        request_id = str(uuid.uuid4())
+        with self.assertRaises(ValueError):
+            f.sender_lane.prepare(
+                text="bodyless member cannot be silently omitted",
+                request_id=request_id,
+                tribe_ref=f.tribe_ref,
+            )
+        self.assertIsNone(f.sender_lane.records.get("native", request_id))
+
+    def test_retry_retains_original_root_audience_and_next_direct_selects_new_bodies(
+        self,
+    ):
+        f = self.fixture
+        arguments = dict(
+            text="freeze before extra body",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={"kind": "being", "being_ref": f.member.state.being_ref},
+        )
+        previous = f.sender_lane.prepare(**arguments)
+        current, origin = self.enroll_second_member_body()
+        f.now += 1
+        retried = f.sender_lane.prepare(**arguments)
+        self.assertEqual(retried, previous)
+        self.assertEqual(
+            f.receiver_lane.validate_intake(retried["payload"]).message,
+            previous["message"],
+        )
+        next_message = f.sender_lane.prepare(
+            **{**arguments, "request_id": str(uuid.uuid4())}
+        )
+        self.assertEqual(
+            {row["embodiment_id"] for row in next_message["rows"]},
+            {f.member.origin["embodiment_id"], origin["embodiment_id"]},
+        )
+        self.assertEqual(
+            next_message["message"]["payload"]["body"]["destination"][
+                "authority_manifest_hash"
+            ],
+            current.manifest.digest,
+        )
+        self.assertEqual(
+            f.receiver_lane.validate_intake(next_message["payload"]).message,
+            next_message["message"],
+        )
+        selected = f.sender_lane.prepare(
+            **{
+                **arguments,
+                "request_id": str(uuid.uuid4()),
+                "destination": {
+                    "kind": "body",
+                    "being_ref": f.member.state.being_ref,
+                    "embodiment_id": origin["embodiment_id"],
+                },
+            }
+        )
+        self.assertEqual(
+            [row["embodiment_id"] for row in selected["rows"]],
+            [origin["embodiment_id"]],
+        )
+
+
 class GroupRuntimeTests(unittest.TestCase):
+    def test_direct_catalog_reopen_and_migration_preserve_native_echo_and_ack(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        delivered = self.direct_arguments(sender, receiver)
+        result = self.send_and_settle(sender, **delivered)
+        self.assertTrue(result["semantic"]["terminal"])
+        sender.direct_reader_ready = None
+        blocked = self.direct_arguments(sender, receiver)
+        denied = self.send_and_settle(sender, **blocked)
+        self.assertEqual(denied["transport"][0]["attempt_state"], "not-attempted")
+        retained = {
+            arguments["send_id"]: (
+                sender.records.get("native", arguments["send_id"]),
+                sender.inspect(client_id="test", send_id=arguments["send_id"]),
+            )
+            for arguments in (delivered, blocked)
+        }
+        for mode in ("validate", "migrate"):
+            with self.subTest(mode=mode):
+                lane = self.fixture.lane_for(
+                    "founder",
+                    self.fixture.founder_ledger,
+                    self.fixture.sender_custody,
+                    self.fixture.journey.store,
+                )
+                lane.records.clock = lane.clock
+                controller = MandatoryEgressController(
+                    policy=sender.egress._policy,
+                    proof_key=sender.egress._proof_key,
+                    transport=sender.egress._transport,
+                    clock=lane.clock,
+                    catalog_mode=mode,
+                )
+                reopened = GroupMessaging(
+                    lane=lane,
+                    policy=sender.policy,
+                    communication=sender.communication,
+                    providers=sender.providers,
+                    config_digest=sender.config_digest,
+                    egress=controller,
+                )
+                if mode == "migrate":
+                    controller.migrate_registered_catalogs(
+                        version=VISIBILITY_SCHEMA_VERSION
+                    )
+                controller.validate_registered_catalogs()
+                controller.validate_registry(
+                    {"tribe-message-request", "tribe-receipt-request"}
+                )
+                for send_id, (native, evidence) in retained.items():
+                    self.assertEqual(reopened.records.get("native", send_id), native)
+                    self.assertEqual(
+                        reopened.inspect(client_id="test", send_id=send_id), evidence
+                    )
+
+    def test_owner_service_forwards_typed_direct_and_rejects_null_or_nongroup_lane(
+        self,
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from daimon_matrix.service import HostedWeave, ServiceError
+
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        context = SimpleNamespace(
+            client_channels={"test": frozenset({"tribe"})}, deliveries={"tribe": sender}
+        )
+        service = SimpleNamespace(
+            _messaging_context=lambda: context,
+            _messaging_guard=lambda *args: lambda: None,
+        )
+        arguments = {**self.direct_arguments(sender, receiver), "channel_id": "tribe"}
+        arguments.pop("client_id")
+        result = HostedWeave._messaging_send(service, arguments, client_id="test")
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        result = sender.inspect(client_id="test", send_id=result["send_id"])
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(
+            [row["being_ref"] for row in result["audience"]], [receiver.lane.being_ref]
+        )
+        count = len(sender.ledger.events())
+        with self.assertRaises(ServiceError):
+            HostedWeave._messaging_send(
+                service,
+                {**arguments, "send_id": str(uuid.uuid4()), "destination": None},
+                client_id="test",
+            )
+        self.assertEqual(len(sender.ledger.events()), count)
+        other = SimpleNamespace(send=Mock())
+        context.deliveries["tribe"] = other
+        with self.assertRaises(ServiceError):
+            HostedWeave._messaging_send(service, arguments, client_id="test")
+        other.send.assert_not_called()
+
+    def direct_arguments(self, sender, receiver, *, kind="being", **changes):
+        destination = {"kind": kind, "being_ref": receiver.lane.being_ref}
+        if kind == "body":
+            destination["embodiment_id"] = receiver.lane.local_embodiment_id
+        return dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="explicit direct over the enrolled shared carrier",
+            destination=destination,
+            **changes,
+        )
+
+    def test_direct_default_denies_unknown_reader_without_losing_frozen_leg_or_echo(
+        self,
+    ):
+        sender, receiver = self.groups
+        arguments = self.direct_arguments(sender, receiver)
+        blocked = self.send_and_settle(sender, **arguments)
+        self.assertEqual(blocked["schema"], "dm.tribe.direct-delivery/v1")
+        self.assertEqual(len(blocked["audience"]), 1)
+        self.assertEqual(blocked["transport"][0]["attempt_state"], "not-attempted")
+        self.assertFalse(blocked["transport"][0]["reader_readiness"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(
+            native["projection"]["recipients"], ["Direct · " + receiver.lane.being_ref]
+        )
+        sender.direct_reader_ready = lambda row: (
+            row["being_ref"] == receiver.lane.being_ref
+        )
+        delivered = self.send_and_settle(sender, **arguments)
+        self.assertEqual(delivered["message_id"], blocked["message_id"])
+        self.assertEqual(delivered["audience"], blocked["audience"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertTrue(delivered["semantic"]["terminal"])
+        self.assertEqual(delivered["semantic"]["legs"][0]["state"], "delivered")
+        self.assertEqual(delivered["author_retention"]["state"], "authored-local")
+        self.assertEqual(sender.page(after=0, limit=10), [])
+        sender.direct_reader_ready = None
+        historical = self.send_and_settle(sender, **arguments)
+        self.assertEqual(
+            historical["transport"][0]["attempt_state"], "recipient-intake"
+        )
+        self.assertFalse(historical["transport"][0]["reader_readiness"])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_direct_reader_invalidation_at_actual_write_retains_uncertain_attempt(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        round_trip = provider._round_trip
+        original = round_trip.bounded_open
+
+        def withdraw_after_connect(deadline):
+            exchange = original(deadline)
+            sender.direct_reader_ready = None
+            return exchange
+
+        provider._round_trip = replace(round_trip, bounded_open=withdraw_after_connect)
+        arguments = self.direct_arguments(sender, receiver)
+        result = self.send_and_settle(sender, **arguments)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertEqual(result["transport"][0]["attempt_state"], "unconfirmed")
+        self.assertFalse(result["transport"][0]["reader_readiness"])
+        provider._round_trip = round_trip
+        sender.direct_reader_ready = lambda row: True
+        retried = self.send_and_settle(sender, **arguments)
+        self.assertEqual(retried["message_id"], result["message_id"])
+        self.assertTrue(retried["semantic"]["terminal"])
+
+    def test_direct_cannot_use_legacy_opaque_provider_to_bypass_the_write_guard(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        with patch.object(provider, "_round_trip") as opaque:
+            result = self.send_and_settle(
+                sender, **self.direct_arguments(sender, receiver)
+            )
+            opaque.assert_not_called()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertEqual(result["transport"][0]["attempt_state"], "unconfirmed")
+        self.assertFalse(result["semantic"]["terminal"])
+
+    def test_body_direct_reply_targets_parent_author_without_quote_or_broadcast(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = receiver.direct_reader_ready = lambda row: True
+        arguments = self.direct_arguments(sender, receiver, kind="body")
+        first = self.send_and_settle(sender, **arguments)
+        reply_id = str(uuid.uuid4())
+        reply = self.send_and_settle(
+            receiver,
+            client_id="test",
+            send_id=reply_id,
+            thread_id=arguments["thread_id"],
+            text="direct response",
+            response_to=(receiver, first["message_id"]),
+        )
+        self.assertTrue(reply["semantic"]["terminal"])
+        self.assertEqual(reply["destination"]["kind"], "body")
+        self.assertEqual(
+            reply["destination"]["embodiment_id"], sender.lane.local_embodiment_id
+        )
+        self.assertEqual(
+            [row["being_ref"] for row in reply["audience"]], [sender.lane.being_ref]
+        )
+        projection = receiver.records.get("native", reply_id)["projection"]
+        self.assertNotIn("text", projection["reply_to"])
+        self.assertEqual(projection["reply_to"]["event_id"], first["message_id"])
+
     def test_owned_ack_and_refusal_recheck_authority_before_actual_http_writer(self):
         sender, receiver = self.groups
         ingress = receiver.intake_ingresses["message"]

@@ -23,6 +23,38 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_messaging_selector_is_closed_typed_and_never_a_telegram_alias(self):
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import _messaging_tool_params
+
+        arguments = dict(
+            channel_id="tribe",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="direct",
+        )
+        selected = {"kind": "being", "being_ref": "dm:being:v1:" + "A" * 43}
+        method, params, _ = _messaging_tool_params(
+            "messaging_send", {**arguments, "destination": selected}
+        )
+        self.assertEqual(method, "messaging.send")
+        self.assertEqual(params["destination"], selected)
+        _, old_params, _ = _messaging_tool_params("messaging_send", arguments)
+        self.assertNotIn("destination", old_params)
+        for wrong in (
+            None,
+            "@compaii",
+            {"kind": []},
+            {**selected, "authority_manifest_hash": "a" * 64},
+            {**selected, "being_ref": "@eko"},
+            {**selected, "embodiment_id": "unrequested"},
+        ):
+            with self.subTest(wrong=wrong), self.assertRaises(MCPError):
+                _messaging_tool_params(
+                    "messaging_send", {**arguments, "destination": wrong}
+                )
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

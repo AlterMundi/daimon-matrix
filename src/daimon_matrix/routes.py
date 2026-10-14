@@ -1890,8 +1890,18 @@ class AuthenticatedProvider:
         if carrier_binding is not None:
             group = _decode_canonical(carrier, "route_group_carrier_mismatch")
             if carrier_binding.path_id == "tribe-message-request":
-                if group.get("schema") != "dm.tribe.conversation/v1":
+                if group.get("schema") not in {
+                    "dm.tribe.conversation/v1",
+                    "dm.tribe.direct-conversation/v1",
+                }:
                     raise RouteError("route_group_carrier_mismatch")
+                if group["schema"] == "dm.tribe.direct-conversation/v1" and (
+                    type(self._round_trip) is not _SplitRoundTrip
+                    or self._round_trip.bounded_open is None
+                ):
+                    # The new reader guard must execute inside the actual write
+                    # fence. Legacy opaque callbacks are not this qualification.
+                    raise RouteError("route_bounded_transport_required")
                 sealed = unb64url(cast(str, group["envelope"]))
                 metadata = inspect_delivery(sealed, at_ms=self._clock())
                 sender = _decode_canonical(sealed, "route_group_carrier_mismatch")[

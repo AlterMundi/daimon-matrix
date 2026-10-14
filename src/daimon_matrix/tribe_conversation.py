@@ -278,6 +278,7 @@ __all__ = [
 TRIBE_MESSAGE_CONTENT_TYPE: Final = "application/vnd.daimon.tribe-message+json"
 TRIBE_RECEIPT_CONTENT_TYPE: Final = "application/vnd.daimon.tribe-receipt+json"
 TRIBE_CONVERSATION_SCHEMA: Final = "dm.tribe.conversation/v1"
+TRIBE_DIRECT_SCHEMA: Final = "dm.tribe.direct-conversation/v1"
 TRIBE_CONVERSE_RESULT_SCHEMA: Final = "dm.tribe.converse-result/v1"
 TRIBE_INTAKE_SCHEMA: Final = "dm.tribe.intake-result/v1"
 TRIBE_RECEIPT_SCHEMA: Final = "dm.communication.receipt/v2"
@@ -291,6 +292,27 @@ TRIBE_RESOLUTION_SUBJECT: Final = "communication-resolution"
 TRIBE_RECEIPT_SUBJECT: Final = "communication-receipt"
 MAX_TRIBE_TEXT_BYTES: Final = 64 * 1024
 DEFAULT_TRIBE_TTL_MS: Final = 10 * 60 * 1000
+
+
+def direct_destination(value: Any) -> dict[str, str]:
+    """An explicit native selector, never an alias or caller-supplied Root pin."""
+    if (
+        not isinstance(value, Mapping)
+        or not isinstance(value.get("kind"), str)
+        or value["kind"] not in {"being", "body"}
+    ):
+        raise TribeConversationError("tribe_direct_destination_invalid")
+    fields = {"kind", "being_ref"}
+    if value["kind"] == "body":
+        fields.add("embodiment_id")
+    if set(value) != fields or not isinstance(value["being_ref"], str):
+        raise TribeConversationError("tribe_direct_destination_invalid")
+    if _BEING_REF.fullmatch(value["being_ref"]) is None:
+        raise TribeConversationError("tribe_direct_destination_invalid")
+    if "embodiment_id" in fields:
+        _text(value["embodiment_id"], "tribe_direct_destination_invalid")
+    return dict(value)
+
 
 DeliverTribeConversation = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
 """Hand one sealed tribe conversation to a member body, return its intake.
@@ -518,10 +540,70 @@ class TribeConversation:
                 return target
         raise TribeConversationError("tribe_lane_frozen_authority_missing")
 
-    def _freeze(self, tribe: str, now: int, ttl: int) -> dict[str, Any]:
+    def _direct_rows(
+        self,
+        members: Sequence[Mapping[str, Any]],
+        destination: Mapping[str, str],
+        authority: RootAuthority,
+    ) -> tuple[dict[str, str], ...]:
+        """Derive hash and recipient rows from the same verified Root epoch."""
+        selected = [
+            member
+            for member in members
+            if member["principal_id"] == destination["being_ref"]
+            and member["state"] == "active"
+        ]
+        if (
+            len(selected) != 1
+            or authority.manifest.being_ref != destination["being_ref"]
+        ):
+            raise TribeConversationError("tribe_direct_not_a_member")
+        rows = [
+            dict(
+                being_ref=destination["being_ref"],
+                credential_id=row["embodiment_credential_id"],
+                embodiment_id=row["embodiment_id"],
+                membership_ref=selected[0]["membership_ref"],
+            )
+            for row in authority.manifest.value["embodiments"]
+            if row["status"] == "active"
+            and (
+                destination["kind"] == "being"
+                or row["embodiment_id"] == destination["embodiment_id"]
+            )
+        ]
+        if not rows or len(rows) > MAX_TRIBE_RECIPIENTS:
+            raise TribeConversationError("tribe_direct_audience_invalid")
+        return tuple(
+            sorted(rows, key=lambda row: (row["membership_ref"], row["embodiment_id"]))
+        )
+
+    def _freeze(
+        self,
+        tribe: str,
+        now: int,
+        ttl: int,
+        destination: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
         snapshot = self.snapshot(tribe, now)
         members = list(snapshot.value["members"])
-        rows = self.audience(snapshot)
+        selected_destination = None
+        if destination is None:
+            rows = self.audience(snapshot)
+            epochs = {
+                row["being_ref"]: self._active(row["being_ref"]).manifest.digest
+                for row in rows
+            }
+        else:
+            if destination["being_ref"] == self.being_ref:
+                raise TribeConversationError("tribe_direct_same_being_requires_we")
+            authority = self._active(destination["being_ref"])
+            rows = self._direct_rows(members, destination, authority)
+            epochs = {destination["being_ref"]: authority.manifest.digest}
+            selected_destination = {
+                **destination,
+                "authority_manifest_hash": authority.manifest.digest,
+            }
         own = [row for row in members if row["principal_id"] == self.being_ref]
         if len(own) != 1 or own[0]["state"] != "active":
             raise TribeConversationError("tribe_lane_not_a_member")
@@ -532,22 +614,31 @@ class TribeConversation:
         ):
             raise TribeConversationError("tribe_lane_no_other_body")
         authorizer = MembershipAuthorizer(self.relationships.events())
-        return {
+        result = {
             "issued_at_ms": now,
             "expires_at_ms": now + ttl,
             "rows": list(rows),
             "members": members,
-            "epochs": {
-                row["being_ref"]: self._active(row["being_ref"]).manifest.digest
-                for row in rows
-            },
-            "proofs": authorizer.proofs(members=members, tribe_ref=tribe),
+            "epochs": epochs,
+            "proofs": authorizer.proofs(
+                members=[
+                    member
+                    for member in members
+                    if destination is None
+                    or member["membership_ref"]
+                    in {row["membership_ref"] for row in rows}
+                ],
+                tribe_ref=tribe,
+            ),
             "sender_proof": authorizer.proof(
                 membership_ref=str(own[0]["membership_ref"]),
                 tribe_ref=tribe,
                 principal_id=self.being_ref,
             ),
         }
+        if selected_destination is not None:
+            result["destination"] = selected_destination
+        return result
 
     def prepare(
         self,
@@ -559,6 +650,7 @@ class TribeConversation:
         sensitivity: str = "personal",
         ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
         response_context: Mapping[str, Any] | None = None,
+        destination: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Freeze before authoring; durably return one exact sealed carrier.
 
@@ -589,8 +681,14 @@ class TribeConversation:
             ttl_ms=ttl,
             response_context=response_context,
         )
+        if destination is not None:
+            destination = direct_destination(destination)
+            parameters["destination"] = destination
         plan = self.records.reserve(
-            "send", request, parameters, lambda: self._freeze(tribe, now, ttl)
+            "send",
+            request,
+            parameters,
+            lambda: self._freeze(tribe, now, ttl, destination),
         )
         rows, issued, expires = (
             plan["rows"],
@@ -615,6 +713,11 @@ class TribeConversation:
                 "body": {
                     "text": content,
                     "audience": rows,
+                    **(
+                        {"destination": plan["destination"]}
+                        if "destination" in plan
+                        else {}
+                    ),
                     **(
                         {"response_context": dict(response_context)}
                         if response_context is not None
@@ -693,7 +796,10 @@ class TribeConversation:
             "resolution": resolution,
             "rows": rows,
             "payload": tribe_conversation_payload(
-                envelope=envelope, resolution=resolution, tribe_ref=tribe
+                envelope=envelope,
+                resolution=resolution,
+                tribe_ref=tribe,
+                directed=destination is not None,
             ),
             "issued_at_ms": issued,
             "expires_at_ms": expires,
@@ -709,6 +815,7 @@ class TribeConversation:
         sensitivity: str = "personal",
         ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
         deliver: DeliverTribeConversation | None = None,
+        destination: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Author, seal and hand over one message to the whole tribe.
 
@@ -730,6 +837,7 @@ class TribeConversation:
             thread_id=thread_id,
             sensitivity=sensitivity,
             ttl_ms=ttl_ms,
+            destination=destination,
         )
         message, resolution = prepared["message"], prepared["resolution"]
         rows, payload = prepared["rows"], prepared["payload"]
@@ -950,8 +1058,9 @@ class TribeConversation:
             "tribe_ref",
         }:
             raise TribeConversationError("tribe_lane_payload_invalid")
-        if payload["schema"] != TRIBE_CONVERSATION_SCHEMA:
+        if payload["schema"] not in {TRIBE_CONVERSATION_SCHEMA, TRIBE_DIRECT_SCHEMA}:
             raise TribeConversationError("tribe_lane_payload_invalid")
+        directed = payload["schema"] == TRIBE_DIRECT_SCHEMA
         now = _uint(self.clock(), "tribe_lane_clock_invalid")
         tribe = _text(payload["tribe_ref"], "tribe_lane_tribe_ref_invalid")
         raw = unb64url(
@@ -1042,7 +1151,15 @@ class TribeConversation:
             now,
         )
         authorizer = MembershipAuthorizer(self.relationships.events())
-        proofs = authorizer.proofs(members=members, tribe_ref=tribe)
+        proofs = authorizer.proofs(
+            members=[
+                member
+                for member in members
+                if not directed
+                or member["membership_ref"] in {row["membership_ref"] for row in rows}
+            ],
+            tribe_ref=tribe,
+        )
         sender_members = [
             member
             for member in members
@@ -1098,10 +1215,36 @@ class TribeConversation:
             ),
             None,
         )
-        if sender_row is None or sender_row["being_ref"] != sender_being:
+        if not directed and (
+            sender_row is None or sender_row["being_ref"] != sender_being
+        ):
             raise TribeConversationError("tribe_lane_origin_invalid")
         if message["payload"]["body"].get("audience") != rows:
             raise TribeConversationError("tribe_lane_audience_mismatch")
+        destination = message["payload"]["body"].get("destination")
+        if directed:
+            if (
+                not isinstance(destination, Mapping)
+                or "authority_manifest_hash" not in destination
+            ):
+                raise TribeConversationError("tribe_direct_destination_invalid")
+            selector = direct_destination(
+                {
+                    key: value
+                    for key, value in destination.items()
+                    if key != "authority_manifest_hash"
+                }
+            )
+            if selector["being_ref"] == sender_being:
+                raise TribeConversationError("tribe_direct_same_being_requires_we")
+            authority = self._epoch(
+                selector["being_ref"], destination["authority_manifest_hash"]
+            )
+            if list(self._direct_rows(members, selector, authority)) != rows:
+                raise TribeConversationError("tribe_direct_audience_mismatch")
+        elif destination is not None:
+            # An explicit direct may never masquerade as the old group format.
+            raise TribeConversationError("tribe_direct_payload_mismatch")
         return ValidatedTribeIntake(
             message=message,
             resolution=resolution,
@@ -1207,7 +1350,11 @@ class TribeConversation:
 
 
 def tribe_conversation_payload(
-    *, envelope: bytes, resolution: Mapping[str, Any], tribe_ref: str
+    *,
+    envelope: bytes,
+    resolution: Mapping[str, Any],
+    tribe_ref: str,
+    directed: bool = False,
 ) -> dict[str, Any]:
     """One carrier payload: the sealed message, its frozen audience, and the tribe.
 
@@ -1220,7 +1367,7 @@ def tribe_conversation_payload(
     return {
         "envelope": b64url(envelope),
         "resolution": copy.deepcopy(dict(resolution)),
-        "schema": TRIBE_CONVERSATION_SCHEMA,
+        "schema": TRIBE_DIRECT_SCHEMA if directed else TRIBE_CONVERSATION_SCHEMA,
         "tribe_ref": _text(tribe_ref, "tribe_lane_tribe_ref_invalid"),
     }
 

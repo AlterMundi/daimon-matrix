@@ -295,6 +295,7 @@ jobs:
           tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
           tests.test_native_messaging.NativeMessagingDaemonLifecycleTests.test_shutdown_waits_for_inflight_messaging_intake
           tests.test_group_messaging_runtime
+          tests.test_agent_chat
           tests.test_dm053_routes.BoundedTransportTests
           tests.test_dm053_routes.InboxAndProtocolTests
           tests.test_release_compatibility
