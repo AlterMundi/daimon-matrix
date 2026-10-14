@@ -44,6 +44,8 @@ _FEATURES = sorted(
         "confirmed-visibility-before-egress/v1",
         "exact-carrier-retry/v1",
         "per-receiver-artifacts/v1",
+        "durable-group-intake/v1",
+        "deferred-receipt-observation/v1",
     }
 )
 _CONTRACT_FIELDS = {
@@ -160,7 +162,10 @@ def describe_reader() -> dict[str, Any]:
             "wire_write": list(_WIRES),
             "store_versions": {"communication": [4], "visibility_catalog": [1]},
             "capabilities": list(_FEATURES),
-            "pending_inspection": ["dm.tribe.delivery/v1"],
+            "pending_inspection": [
+                "dm.tribe.delivery/v1",
+                "dm.tribe.intake-reconciliation/v1",
+            ],
             "pending_transmission": "original-binding-unexpired",
         },
     }

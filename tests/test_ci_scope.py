@@ -12,6 +12,25 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_group_scope_includes_durable_intake_reader_qualification(self):
+        paths = [
+            "src/daimon_matrix/messaging.py",
+            "src/daimon_matrix/routes.py",
+            "src/daimon_matrix/release_compatibility.py",
+            "tests/test_group_messaging_runtime.py",
+            "tests/test_release_compatibility.py",
+        ]
+        self.assertEqual(profile(paths), "tribe-group")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        group = workflow.split("  tribe-group:", 1)[1]
+        self.assertIn("tests.test_release_compatibility", group)
+        self.assertIn(
+            "test_deferred_receipt_preserves_observation_before_current_signing_time",
+            group,
+        )
+
     def test_release_contract_qualifies_installed_codec_without_unchanged_transport(
         self,
     ):

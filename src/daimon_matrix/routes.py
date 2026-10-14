@@ -21,7 +21,7 @@ import stat
 import struct
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
@@ -98,6 +98,27 @@ class RouteEgressSpec:
 
 
 IntakeValidator = Callable[[bytes], None]
+
+
+@dataclass(frozen=True)
+class DurableIntakeTicket:
+    """Owner-local committed intake, with per-request technical completion."""
+
+    received_at_ms: int
+    metadata: Mapping[str, Any]
+    acknowledge: Callable[[bytes], None]
+    after_response: Callable[[], None]
+
+
+@dataclass(frozen=True)
+class TransportReply:
+    """HTTP writes the exact ACK before invoking its retained completion ticket."""
+
+    response: bytes
+    after_response: Callable[[], None]
+
+
+IntakeAdmission = Callable[[Mapping[str, Any]], DurableIntakeTicket]
 IntakeGate = Callable[[str, str], None]
 TerminalValidator = Callable[[str, str, str], None]
 GatewayPolicyValidator = Callable[[Mapping[str, Any]], None]
@@ -482,6 +503,38 @@ class OpaqueInbox:
         _digest(request_hash, "invalid_transport_request")
         _text(recipient_id, "invalid_transport_request")
         metadata = carrier_inspector(envelope, at_ms=self.clock())
+        return self._finalize_retained_intake(
+            request_id=request_id,
+            request_hash=request_hash,
+            recipient_id=recipient_id,
+            envelope=envelope,
+            metadata=metadata,
+            received_at_ms=self.clock(),
+            response_factory=response_factory,
+        )
+
+    def _finalize_retained_intake(
+        self,
+        *,
+        request_id: str,
+        request_hash: str,
+        recipient_id: str,
+        envelope: bytes,
+        metadata: Mapping[str, Any],
+        received_at_ms: int,
+        response_factory: Callable[[Mapping[str, Any]], tuple[bytes, RouteEgressSpec]]
+        | None = None,
+    ) -> dict[str, Any]:
+        """Owner-local bookkeeping from validated durable intake, not wire admission.
+
+        The group owner verifies its signed admission, readable inbox and exact
+        receipt obligation before invoking this path. It neither decrypts a frame
+        nor supplies fresh transmission permission after expiry.
+        """
+        _uuid(request_id, "invalid_transport_request")
+        _digest(request_hash, "invalid_transport_request")
+        _text(recipient_id, "invalid_transport_request")
+        _uint(received_at_ms, "invalid_transport_request")
         # Persist the exact outer carrier, even when inspection opens a sealed
         # envelope inside a group frame or validates a signed receipt frame.
         envelope_hash = hashlib.sha256(envelope).hexdigest()
@@ -528,7 +581,7 @@ class OpaqueInbox:
                             "SELECT next_sequence FROM inbox_meta WHERE singleton=1"
                         ).fetchone()[0]
                     )
-                    received = self.clock()
+                    received = received_at_ms
                     database.execute(
                         "INSERT INTO inbox_items VALUES "
                         "(?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL)",
@@ -571,13 +624,32 @@ class OpaqueInbox:
                 }
                 if response_factory is not None:
                     response, spec = response_factory(result)
-                    self._admit_response(
-                        database,
-                        request_id=request_id,
-                        request_hash=request_hash,
-                        response=response,
-                        spec=spec,
-                    )
+                    if spec.deadline_ms <= self.clock():
+                        # An expired retained ACK is history, not a newly admitted
+                        # egress operation. The group persists its exact bytes in
+                        # the signed intake-ack record; ordinary ingest cannot
+                        # enter here because it rechecks the carrier's lifetime.
+                        retained_response = database.execute(
+                            "SELECT response,response_sha256,egress_path_id "
+                            "FROM inbox_requests WHERE request_id=?",
+                            (request_id,),
+                        ).fetchone()
+                        if retained_response["response"] is not None and (
+                            bytes(retained_response["response"]) != response
+                            or retained_response["response_sha256"]
+                            != hashlib.sha256(response).hexdigest()
+                            or retained_response["egress_path_id"] != spec.path_id
+                        ):
+                            raise RouteError("transport_response_conflict")
+                        result["_historical_response"] = True
+                    else:
+                        self._admit_response(
+                            database,
+                            request_id=request_id,
+                            request_hash=request_hash,
+                            response=response,
+                            spec=spec,
+                        )
                     result["_egress_response"] = response
                 database.commit()
                 return result
@@ -884,6 +956,7 @@ class TransportIngress:
         presence_ref: str | None = None,
         fence_ref: str | None = None,
         intake_validator: IntakeValidator | None = None,
+        intake_admission: IntakeAdmission | None = None,
         intake_gate: IntakeGate | None = None,
         carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> None:
@@ -903,7 +976,7 @@ class TransportIngress:
             intake_gate is None
         ):
             raise RouteError("incomplete_intake_gate")
-        if not hub and intake_validator is None:
+        if not hub and intake_validator is None and intake_admission is None:
             raise RouteError("intake_validator_required")
         if presence_ref is not None:
             _text(presence_ref, "invalid_transport_ingress")
@@ -957,6 +1030,7 @@ class TransportIngress:
         self.presence_ref = presence_ref
         self.fence_ref = fence_ref
         self.intake_validator = intake_validator
+        self.intake_admission = intake_admission
         self.intake_gate = intake_gate
         self.carrier_inspector = carrier_inspector
 
@@ -969,6 +1043,15 @@ class TransportIngress:
             return False
 
     def handle(self, raw: bytes) -> bytes:
+        """Existing byte-only API for ordinary synchronous transport adapters."""
+        if self.intake_admission is not None:
+            raise RouteError("transport_owned_reply_required")
+        response = self.handle_deferred(raw)
+        assert isinstance(response, bytes)
+        return response
+
+    def handle_deferred(self, raw: bytes) -> bytes | TransportReply:
+        """Owned adapters write the ACK before consuming technical completion."""
         try:
             request = _decode_canonical(raw, "transport_request_rejected")
             value = _closed(
@@ -1023,6 +1106,7 @@ class TransportIngress:
             if not hmac.compare_digest(presented, expected):
                 raise RouteError("transport_request_rejected")
             request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+            ticket = None
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:
@@ -1051,67 +1135,61 @@ class TransportIngress:
                     assert self.presence_ref is not None
                     assert self.fence_ref is not None
                     self.intake_gate(self.presence_ref, self.fence_ref)
-                if self.intake_validator is not None:
+                if self.intake_admission is not None:
+                    ticket = self.intake_admission(
+                        {
+                            "request": dict(value),
+                            "request_hash": request_hash,
+                            "metadata": dict(metadata),
+                            "binding": self.intake_binding(),
+                        }
+                    )
+                elif self.intake_validator is not None:
                     self.intake_validator(envelope)
 
-                def accepted_response(
+                def response_factory(
                     item: Mapping[str, Any],
                 ) -> tuple[bytes, RouteEgressSpec]:
-                    outcome = "hub-accepted" if self.hub else "recipient-intake"
-                    intake_evidence: dict[str, Any] | None = None
-                    if not self.hub:
-                        intake_evidence = {
-                            "schema": "dm.transport-intake/v1",
-                            "delivery_id": submission["delivery_id"],
-                            "recipient_id": self.recipient_id,
-                            "recipient_body_ref": self.recipient_body_ref,
-                            "envelope_sha256": submission["envelope_sha256"],
-                            "accepted_at_ms": item["received_at_ms"],
-                            "evidence_ref": item["evidence_ref"],
-                            "presence_ref": self.presence_ref,
-                            "fence_ref": self.fence_ref,
-                        }
-                    response = self._response(
+                    return self._accepted_response(value, request_hash, item)
+
+                if ticket is None:
+                    intake = self.inbox.ingest(
                         request_id=request_id,
                         request_hash=request_hash,
-                        status="accepted",
-                        outcome=outcome,
-                        evidence_ref=cast(str, item["evidence_ref"]),
-                        intake=intake_evidence,
+                        recipient_id=self.recipient_id,
+                        envelope=envelope,
+                        response_factory=response_factory,
+                        carrier_inspector=self.carrier_inspector,
                     )
-                    stage = (
-                        "evidence"
-                        if str(submission["leg_id"]).endswith("evidence")
-                        else "message"
+                else:
+                    intake = self.inbox._finalize_retained_intake(
+                        request_id=request_id,
+                        request_hash=request_hash,
+                        recipient_id=self.recipient_id,
+                        envelope=envelope,
+                        metadata=ticket.metadata,
+                        received_at_ms=ticket.received_at_ms,
+                        response_factory=response_factory,
                     )
-                    projection = {
-                        "event_id": submission["message_id"],
-                        "event_digest": submission["envelope_sha256"],
-                        "sender": self.recipient_id,
-                        "recipients": [sender_principal],
-                        "thread_id": submission["leg_id"],
-                        "reply_to": None,
-                        "kind": "transport-result",
-                        "content": {"stage": stage, "outcome": "accepted"},
-                    }
-                    return response, RouteEgressSpec(
-                        controller=self.egress,
-                        catalog_id=self.egress_catalog_id,
-                        path_id=f"messaging-{stage}-result",
-                        deadline_ms=expires,
-                        authority_head=self.egress_authority_head,
-                        projection=projection,
-                    )
-
-                intake = self.inbox.ingest(
-                    request_id=request_id,
-                    request_hash=request_hash,
-                    recipient_id=self.recipient_id,
-                    envelope=envelope,
-                    response_factory=accepted_response,
-                    carrier_inspector=self.carrier_inspector,
-                )
-            except (RouteError, SealedDeliveryError, CanonicalError, ValueError):
+                    ticket.acknowledge(intake["_egress_response"])
+            except (
+                RouteError,
+                SealedDeliveryError,
+                CanonicalError,
+                ValueError,
+                OSError,
+                sqlite3.Error,
+            ) as failure:
+                if ticket is not None:
+                    raise RouteAmbiguous(
+                        "transport_intake_recovery_pending"
+                    ) from failure
+                if isinstance(failure, RouteError) and failure.retryable:
+                    raise
+                if isinstance(failure, (OSError, sqlite3.Error)):
+                    raise RouteAmbiguous(
+                        "transport_intake_storage_unavailable"
+                    ) from failure
                 evidence = _opaque_evidence(
                     {
                         "provider_ref": self.provider_ref,
@@ -1168,10 +1246,17 @@ class TransportIngress:
             stored_response = intake.get("_egress_response")
             if not isinstance(stored_response, bytes):
                 raise RouteError("transport_response_missing")
-            return self.egress.release(
+            response = self.egress.release(
                 self.egress.binding(self.egress_catalog_id, request_id),
                 stored_response,
                 lambda value: value,
+            )
+            return (
+                response
+                if ticket is None
+                else TransportReply(
+                    response=bytes(response), after_response=ticket.after_response
+                )
             )
         except (
             RouteError,
@@ -1182,6 +1267,115 @@ class TransportIngress:
             if isinstance(exception, RouteError):
                 raise
             raise RouteError("transport_request_rejected") from exception
+
+    def intake_binding(self) -> dict[str, Any]:
+        return {
+            "provider_ref": self.provider_ref,
+            "route_ref": self.route_ref,
+            "key_ref": self.key_ref,
+            "secret_sha256": hashlib.sha256(self._secret).hexdigest(),
+            "recipient_id": self.recipient_id,
+            "recipient_body_ref": self.recipient_body_ref,
+            "recipient_embodiment_id": self.recipient_embodiment_id,
+        }
+
+    def finalize_retained_intake(
+        self, context: Mapping[str, Any], ticket: DurableIntakeTicket
+    ) -> bytes:
+        """Finish exact durable ACK only; no expired frame open or socket write."""
+        if context["binding"] != self.intake_binding():
+            raise RouteError("transport_retained_binding_conflict")
+        value = context["request"]
+        unsigned = {key: item for key, item in value.items() if key != "auth"}
+        expected = hmac.digest(self._secret, canonical_bytes(unsigned), "sha256")
+        if (
+            value["auth"]["key_ref"] != self.key_ref
+            or not hmac.compare_digest(
+                expected, unb64url(value["auth"]["value"], length=32)
+            )
+            or hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+            != context["request_hash"]
+        ):
+            raise RouteError("transport_retained_binding_conflict")
+        submission = _submission(value["submission"])
+        envelope = unb64url(submission["envelope"])
+        if (
+            hashlib.sha256(envelope).hexdigest() != submission["envelope_sha256"]
+            or ticket.metadata != context["metadata"]
+            or ticket.metadata["delivery_id"] != submission["delivery_id"]
+            or ticket.metadata["event_id"] != submission["message_id"]
+            or self.recipient_embodiment_id
+            not in ticket.metadata["recipient_embodiment_ids"]
+        ):
+            raise RouteError("transport_retained_binding_conflict")
+        result = self.inbox._finalize_retained_intake(
+            request_id=value["request_id"],
+            request_hash=context["request_hash"],
+            recipient_id=self.recipient_id,
+            envelope=envelope,
+            metadata=ticket.metadata,
+            received_at_ms=ticket.received_at_ms,
+            response_factory=lambda item: self._accepted_response(
+                value, context["request_hash"], item
+            ),
+        )
+        response = result["_egress_response"]
+        ticket.acknowledge(response)
+        return bytes(response)
+
+    def _accepted_response(
+        self,
+        value: Mapping[str, Any],
+        request_hash: str,
+        item: Mapping[str, Any],
+    ) -> tuple[bytes, RouteEgressSpec]:
+        submission = value["submission"]
+        request_id = value["request_id"]
+        sender_principal = value["sender_principal"]
+        expires = value["expires_at_ms"]
+        outcome = "hub-accepted" if self.hub else "recipient-intake"
+        intake_evidence: dict[str, Any] | None = None
+        if not self.hub:
+            intake_evidence = {
+                "schema": "dm.transport-intake/v1",
+                "delivery_id": submission["delivery_id"],
+                "recipient_id": self.recipient_id,
+                "recipient_body_ref": self.recipient_body_ref,
+                "envelope_sha256": submission["envelope_sha256"],
+                "accepted_at_ms": item["received_at_ms"],
+                "evidence_ref": item["evidence_ref"],
+                "presence_ref": self.presence_ref,
+                "fence_ref": self.fence_ref,
+            }
+        response = self._response(
+            request_id=request_id,
+            request_hash=request_hash,
+            status="accepted",
+            outcome=outcome,
+            evidence_ref=cast(str, item["evidence_ref"]),
+            intake=intake_evidence,
+        )
+        stage = (
+            "evidence" if str(submission["leg_id"]).endswith("evidence") else "message"
+        )
+        projection = {
+            "event_id": submission["message_id"],
+            "event_digest": submission["envelope_sha256"],
+            "sender": self.recipient_id,
+            "recipients": [sender_principal],
+            "thread_id": submission["leg_id"],
+            "reply_to": None,
+            "kind": "transport-result",
+            "content": {"stage": stage, "outcome": "accepted"},
+        }
+        return response, RouteEgressSpec(
+            controller=self.egress,
+            catalog_id=self.egress_catalog_id,
+            path_id=f"messaging-{stage}-result",
+            deadline_ms=expires,
+            authority_head=self.egress_authority_head,
+            projection=projection,
+        )
 
     def _response(
         self,
@@ -1340,6 +1534,19 @@ class AuthenticatedProvider:
             "available": self._available,
         }
         return {**evidence, "evidence_ref": _opaque_evidence(evidence)}
+
+    def retained_binding(self) -> dict[str, Any]:
+        """Owner-local exact selection fingerprint; never permission to send."""
+        return {
+            "provider_ref": self.provider_ref,
+            "route_ref": self.route_ref,
+            "route_class": self.route_class,
+            "key_ref": self._key_ref,
+            "secret_sha256": hashlib.sha256(self._secret).hexdigest(),
+            "sender_principal": self._sender_principal,
+            "sender_body_ref": self._sender_body_ref,
+            "endpoint_sha256": getattr(self, "_endpoint_sha256", None),
+        }
 
     def manifest(self) -> Mapping[str, Any]:
         return {
@@ -1746,8 +1953,23 @@ def serve_transport_connection(
     size = int.from_bytes(header, "big")
     if not 1 <= size <= MAX_TRANSPORT_BYTES:
         raise RouteError("invalid_transport_frame")
-    response = ingress.handle(_recv_exact(connection, size))
-    connection.sendall(len(response).to_bytes(4, "big") + response)
+    raw = _recv_exact(connection, size)
+    response = (
+        ingress.handle_deferred(raw)
+        if ingress.intake_admission is not None
+        else ingress.handle(raw)
+    )
+    if isinstance(response, TransportReply):
+        try:
+            raw_response = response.response
+            connection.sendall(len(raw_response).to_bytes(4, "big") + raw_response)
+        finally:
+            # The admitted connection owns one technical completion attempt,
+            # even if the peer did not observe the ACK write.
+            with suppress(Exception):
+                response.after_response()
+    else:
+        connection.sendall(len(response).to_bytes(4, "big") + response)
 
 
 def _http_round_trip(
@@ -1830,6 +2052,7 @@ class DirectHTTPProvider(AuthenticatedProvider):
         response_timeout_seconds: float = 30.0,
         **kwargs: Any,
     ) -> None:
+        self._endpoint_sha256 = hashlib.sha256(endpoint.encode()).hexdigest()
         super().__init__(
             round_trip=_http_round_trip(
                 endpoint,

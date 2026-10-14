@@ -292,7 +292,11 @@ jobs:
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
+          tests.test_native_messaging.NativeMessagingDaemonLifecycleTests.test_shutdown_waits_for_inflight_messaging_intake
           tests.test_group_messaging_runtime
+          tests.test_release_compatibility
+          tests.test_cross_being_semantic_receipts.ForeignReceiptTests.test_deferred_receipt_preserves_observation_before_current_signing_time
+          tests.test_cross_being_semantic_receipts.ForeignReceiptTests.test_signed_payload_mutations_never_terminate
           tests.test_dm051_sealed.TribeConversationLaneTests
           tests.test_dm082_relationships.RelationshipContractTests.test_expired_cards_remove_grants_but_preserve_signed_membership
           tests.test_dm082_relationships.RelationshipContractTests.test_one_sided_consent_and_unaccepted_grant_are_inert

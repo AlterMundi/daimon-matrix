@@ -1753,9 +1753,13 @@ def _compose_group(
             egress_catalog_id=f"messaging-{phase}-responses",
             egress_authority_head=service.origin["body_ref"],
             egress_authorizer=group._authorize,
-            intake_validator=getattr(group, "receive_" + phase),
+            intake_validator=None,
+            intake_admission=group.admit_message
+            if phase == "message"
+            else group.admit_evidence,
             carrier_inspector=group.inspect_carrier,
         )
+    group.intake_ingresses = ingresses
     channel_id = application["tribe"]["channel_id"]
 
     def capability_guard(selected: LocalCapability) -> None:

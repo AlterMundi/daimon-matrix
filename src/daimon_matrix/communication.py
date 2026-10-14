@@ -414,7 +414,7 @@ def _foreign_receipt_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
     _text(payload["message_being_ref"], error)
     _text(payload["recipient_id"], error, maximum=240)
     _uuid(payload["thread_id"], error)
-    if _uint(payload["observed_at_ms"], error) != event["occurred_at_ms"]:
+    if _uint(payload["observed_at_ms"], error) > event["occurred_at_ms"]:
         raise CommunicationError(error)
     return payload
 
