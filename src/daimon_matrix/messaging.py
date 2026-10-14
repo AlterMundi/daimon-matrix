@@ -598,6 +598,7 @@ class MessagingDelivery:
         evidence_provider: AuthenticatedProvider,
         message_provider: AuthenticatedProvider,
         config_digest: str,
+        historical_inspection: Callable[[str], None] | None = None,
     ) -> None:
         if (
             not isinstance(config_digest, str)
@@ -608,6 +609,7 @@ class MessagingDelivery:
         self.sender = sender
         self.providers = (evidence_provider, message_provider)
         self.config_digest = config_digest
+        self.historical_inspection = historical_inspection
 
     def _semantic(self, message_id: str) -> dict[str, Any]:
         event = self.sender.ledger.event(message_id)
@@ -671,6 +673,15 @@ class MessagingDelivery:
         )
         if _parse(envelopes[1])["event_id"] != event["event_id"]:
             raise ValueError("messaging_carrier_conflict")
+        carrier_send_id = self.sender.outbox._carrier_for_envelopes(
+            owner, send_id, envelopes
+        )
+        retained_digest = self.sender.outbox._inspection_config_digest(
+            owner, carrier_send_id
+        )
+        historical = retained_digest != self.config_digest
+        if historical and self.historical_inspection is None:
+            raise ValueError("messaging_transport_conflict")
         response_to = None
         if "response_context" in payload["body"]:
             reference = payload["body"]["response_context"]
@@ -690,8 +701,11 @@ class MessagingDelivery:
             self.sender._bind(now)
             if self.sender.context._policy_hash(now) != policy_hash:
                 raise ValueError("messaging_send_conflict")
+            if historical:
+                assert self.historical_inspection is not None
+                self.historical_inspection(retained_digest)
 
-        return self._run(
+        result = self._run(
             client_id=client_id,
             send_id=send_id,
             thread_id=payload["intent"]["thread_id"],
@@ -699,8 +713,19 @@ class MessagingDelivery:
             transmit=False,
             response_to=response_to,
             retained_envelopes=envelopes,
+            inspection_config_digest=retained_digest,
             authorize=authorize,
         )
+        if historical:
+            # Past intake proof does not authorize a fresh retry under its old
+            # application selection, even while a retained carrier is pending.
+            result["retryable"] = False
+            result["recovery"] = {
+                **result["recovery"],
+                "action": "historical-inspection-only",
+                "not_before_ms": None,
+            }
+        return result
 
     def send(
         self,
@@ -733,7 +758,10 @@ class MessagingDelivery:
         response_to: tuple[MessagingChannel, str] | None = None,
         authorize: Callable[[], None] | None = None,
         retained_envelopes: tuple[bytes, bytes] | None = None,
+        inspection_config_digest: str | None = None,
     ) -> dict[str, Any]:
+        if transmit and inspection_config_digest is not None:
+            raise ValueError("messaging_transport_conflict")
         if authorize is not None:
             authorize()
         # Always authorize the original request before consulting private progress.
@@ -791,7 +819,7 @@ class MessagingDelivery:
                 "deadline_ms": metadata["expires_at_ms"],
             }
             bindings[phase] = {
-                "config_digest": self.config_digest,
+                "config_digest": inspection_config_digest or self.config_digest,
                 "provider_ref": provider.provider_ref,
                 "route_ref": provider.route_ref,
                 "route_class": provider.route_class,

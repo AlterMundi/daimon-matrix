@@ -405,6 +405,34 @@ class MessagingOutboxStore:
             raise ValueError("messaging_transport_missing")
         return bytes(row[0])
 
+    def _inspection_config_digest(self, owner: str, send_id: str) -> str:
+        """Read the frozen two-stage selection; authorization belongs to caller."""
+        with self._database() as database:
+            rows = database.execute(
+                "SELECT phase, binding FROM messaging_transport_stages "
+                "WHERE owner=? AND send_id=?",
+                (owner, send_id),
+            ).fetchall()
+        if {row["phase"] for row in rows} != {"evidence", "message"}:
+            raise ValueError("messaging_transport_missing")
+        try:
+            values = [
+                json.loads(bytes(row["binding"]))["config_digest"] for row in rows
+            ]
+        except (ValueError, KeyError, TypeError):
+            raise ValueError("messaging_transport_conflict") from None
+        if (
+            any(
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+                for value in values
+            )
+            or len(set(values)) != 1
+        ):
+            raise ValueError("messaging_transport_conflict")
+        return str(values[0])
+
     def _transport_stages(
         self,
         owner: str,
