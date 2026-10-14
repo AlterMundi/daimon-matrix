@@ -275,3 +275,37 @@ behaviour, one envelope with one wrapped key per member key, and refusal before
 any private operation for a body that is not in the audience. Clauses that require
 the tribe conversation runtime are marked as depending on it and gain their own
 scenario when that runtime lands.
+
+## 14. Recoverable runtime intake
+
+Recipient validation and opening MUST precede acceptance. The operational group
+profile MUST commit exact authenticated admission, durable readable intake and
+one stable receipt obligation together in its owned store. It MUST NOT claim an
+atomic transaction across unrelated stores. A known committed intake MUST stay
+inspectable if ACK or receipt completion fails; subsequent failure MUST NOT
+assert that readable intake never occurred.
+
+The transport ACK MUST NOT wait for receipt-return network I/O. Its socket write
+attempt and receipt completion remain separate observed facts. A receipt's
+`observed_at_ms` attests the original durable intake and MAY precede its genuine
+`occurred_at_ms`; it MUST NOT precede the original message or exceed signing time.
+Signing and new egress require current authority. Return targets, context,
+logical identities, bytes and sending deadlines MUST NOT silently change during
+retry or recovery. A proved return MUST NOT be transmitted again.
+
+A validated control frame MUST retain its signed proof and projection intent
+before ACK creation; projection failure cannot erase that retained acceptance.
+Technical completion MUST NOT create speech, reciprocal control exchanges,
+model activation or inbox attention. Recovery MUST have explicit owner lifecycle
+and bounded navigation, preserving uncertain effects and deduplication history.
+
+After carrier expiry, recovery MUST use already committed validated intake,
+not reopen the expired carrier. Historical ACK retention MUST NOT admit expired
+egress. Missing original legacy deadline provenance MUST remain blocked rather
+than receiving a fresh lifetime. Receipt-return expiry ends its transmission
+permission; it does not prove the original message was not received.
+
+Receiving selection and rollback MUST qualify the deferred observation and
+unfinished-intake contracts, independently of artifact integrity and live
+readiness. No model lifecycle or global interruption is authorized by this
+runtime contract.

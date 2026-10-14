@@ -346,11 +346,28 @@ def create_messaging_http_server(
                 self._respond(400)
                 return
             try:
-                response = ingress.handle(raw)
-            except RouteError:
-                self._respond(400)
+                if (
+                    isinstance(ingress, TransportIngress)
+                    and ingress.intake_admission is not None
+                ):
+                    response = ingress.handle_deferred(raw)
+                else:
+                    response = ingress.handle(raw)
+            except RouteError as failure:
+                self._respond(503 if failure.retryable else 400)
                 return
-            self._respond(200, response)
+            from .routes import TransportReply
+
+            if isinstance(response, TransportReply):
+                self._respond(200, response.response)
+                with suppress(ConnectionError, OSError):
+                    self.wfile.flush()
+                # One admitted handler owns this technical attempt. No worker,
+                # poller, model activation or shared "last request" state.
+                with suppress(Exception):
+                    response.after_response()
+            else:
+                self._respond(200, response)
 
         def log_message(self, format: str, *args: object) -> None:
             return

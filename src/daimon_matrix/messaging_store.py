@@ -26,6 +26,10 @@ class MessagingInboxError(ValueError):
     """Foreign evidence conflicts or local persistence is unsafe."""
 
 
+class TribeControlCapacityError(ValueError):
+    """Temporary control saturation; no readable intake was committed."""
+
+
 class TribeRecordStore:
     """Owned frozen send plans and received group messages, not foreign ledgers.
 
@@ -69,7 +73,7 @@ class TribeRecordStore:
             database.execute("PRAGMA synchronous=FULL")
             yield database
 
-    def _checked(self, row: sqlite3.Row) -> dict[str, Any]:
+    def _checked(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         raw = bytes(row["document"])
         value = json.loads(raw)
         if (
@@ -106,6 +110,12 @@ class TribeRecordStore:
             "request",
             "result",
             "transport-result",
+            "intake-admission",
+            "receipt-obligation",
+            "intake-ack",
+            "receipt-terminal",
+            "control-proof",
+            "control-terminal",
         }:
             raise ValueError("tribe_record_kind_invalid")
         if str(uuid.UUID(record_id)) != record_id:
@@ -178,6 +188,275 @@ class TribeRecordStore:
         document = {"message": message, "resolution": resolution}
         return self.reserve("inbox", message["event_id"], document, lambda: document)
 
+    def _pending_capacity(self, database: sqlite3.Connection) -> dict[str, int]:
+        """Credit requires a verified signed completion bound to its source hash.
+
+        Source frames are hashed but not decoded into Python objects to count
+        them. Small completions use the existing operator binding as authority.
+        Missing, corrupted or unrelated completion cannot release capacity.
+        """
+        capacity = {
+            "message-ack": 0,
+            "control-ack": 0,
+            "receipt-obligation": 0,
+            "control-proof": 0,
+            "message-bytes": 0,
+            "control-bytes": 0,
+        }
+        for kind, completed, digest_field in (
+            ("intake-admission", "intake-ack", "admission_sha256"),
+            ("receipt-obligation", "receipt-terminal", "obligation_sha256"),
+            ("control-proof", "control-terminal", "control_sha256"),
+        ):
+            rows = database.execute(
+                "SELECT a.record_id,a.document_hash,a.document,"
+                "json_extract(CAST(a.document AS TEXT),'$.phase') AS phase,"
+                "d.kind AS d_kind,d.record_id AS d_record_id,"
+                "d.request_hash AS d_request_hash,d.document AS d_document,"
+                "d.binding AS d_binding,d.document_hash AS d_document_hash,"
+                "d.recorded_at_ms AS d_recorded_at_ms "
+                "FROM tribe_records a LEFT JOIN tribe_records d "
+                "ON d.kind=? AND d.record_id=a.record_id WHERE a.kind=?",
+                (completed, kind),
+            )
+            for row in rows:
+                source = bytes(row["document"])
+                if hashlib.sha256(source).hexdigest() != row["document_hash"]:
+                    raise ValueError("tribe_record_corrupt")
+                done = None
+                if row["d_kind"] is not None:
+                    done = self._checked(
+                        {
+                            name: row["d_" + name]
+                            for name in (
+                                "kind",
+                                "record_id",
+                                "request_hash",
+                                "document",
+                                "binding",
+                                "document_hash",
+                                "recorded_at_ms",
+                            )
+                        }
+                    )
+                    if done.get(digest_field) != row["document_hash"]:
+                        done = None
+                    if done is not None:
+                        if (
+                            kind == "receipt-obligation"
+                            and done.get("state")
+                            not in {
+                                "recipient-intake",
+                                "refused",
+                                "expired",
+                            }
+                        ) or (
+                            kind == "control-proof"
+                            and done.get("state") != "receipt-projected"
+                        ):
+                            done = None
+                        elif kind == "intake-admission":
+                            ack = json.loads(unb64url(done["response"]))
+                            if (
+                                ack.get("status") != "accepted"
+                                or ack.get("outcome") != "recipient-intake"
+                            ):
+                                done = None
+                    if done is not None and kind == "receipt-obligation":
+                        receipt = database.execute(
+                            "SELECT * FROM tribe_records WHERE kind='receipt' "
+                            "AND record_id=?",
+                            (row["record_id"],),
+                        ).fetchone()
+                        if receipt is None:
+                            done = None
+                        else:
+                            self._checked(receipt)
+                            if done.get("receipt_sha256") != receipt["document_hash"]:
+                                done = None
+                if done is None:
+                    control = kind == "control-proof" or (
+                        kind == "intake-admission" and row["phase"] == "evidence"
+                    )
+                    pool = "control" if control else "message"
+                    capacity[pool + "-bytes"] += len(source)
+                    name = pool + "-ack" if kind == "intake-admission" else kind
+                    capacity[name] += 1
+        return capacity
+
+    def commit_intake(
+        self,
+        *,
+        request_id: str,
+        admission: Mapping[str, Any],
+        message: Mapping[str, Any],
+        resolution: Mapping[str, Any],
+        acceptance: Callable[[int], None],
+        obligation: Callable[[int, bool], dict[str, Any]],
+        max_pending: int = 64,
+        max_bytes: int = 32 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        """One signed request/readable intake/receipt obligation commit.
+
+        The owning lane supplies authenticated data and an acceptance guard.
+        Deduplication, first observation and capacity are serialized here, not
+        inferred from handler slots or a stale caller's timestamp.
+        """
+        identifier = message["event_id"]
+        request_hash = hashlib.sha256(canonical_bytes(admission)).hexdigest()
+        inbox = {"message": dict(message), "resolution": dict(resolution)}
+        inbox_hash = hashlib.sha256(canonical_bytes(inbox)).hexdigest()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                existing = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='intake-admission' "
+                    "AND record_id=?",
+                    (request_id,),
+                ).fetchone()
+                received = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='inbox' AND record_id=?",
+                    (identifier,),
+                ).fetchone()
+                retained = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='receipt-obligation' "
+                    "AND record_id=?",
+                    (identifier,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_hash"] != request_hash:
+                        raise ValueError("tribe_record_request_conflict")
+                    checked = self._checked(existing)
+                    if received is None or retained is None:
+                        raise ValueError("tribe_intake_commit_incomplete")
+                    if received["request_hash"] != inbox_hash:
+                        raise ValueError("tribe_record_request_conflict")
+                    self._checked(received)
+                    self._checked(retained)
+                    database.commit()
+                    return checked
+                now = self.clock()
+                acceptance(now)
+                if received is not None:
+                    if received["request_hash"] != inbox_hash:
+                        raise ValueError("tribe_record_request_conflict")
+                    self._checked(received)
+                expected = None
+                if retained is None:
+                    first = now if received is None else int(received["recorded_at_ms"])
+                    expected = obligation(first, received is not None)
+                capacity = self._pending_capacity(database)
+                raw_size = len(
+                    canonical_bytes({**dict(admission), "received_at_ms": now})
+                )
+                if expected is not None:
+                    raw_size += len(canonical_bytes(expected))
+                if (
+                    capacity["message-ack"] >= max_pending
+                    or capacity["message-bytes"] + raw_size > max_bytes
+                    or (
+                        retained is None
+                        and capacity["receipt-obligation"] >= max_pending
+                    )
+                ):
+                    raise TribeControlCapacityError("tribe_control_capacity")
+                if retained is None:
+                    assert expected is not None
+                    self._reserve_in_transaction(
+                        database,
+                        "receipt-obligation",
+                        identifier,
+                        hashlib.sha256(canonical_bytes(expected)).hexdigest(),
+                        lambda: expected,
+                    )
+                else:
+                    self._checked(retained)
+                self._reserve_in_transaction(
+                    database, "inbox", identifier, inbox_hash, lambda: inbox
+                )
+                result = self._reserve_in_transaction(
+                    database,
+                    "intake-admission",
+                    request_id,
+                    request_hash,
+                    lambda: {**dict(admission), "received_at_ms": now},
+                )
+                database.commit()
+                return result
+            except BaseException:
+                if database.in_transaction:
+                    database.rollback()
+                raise
+
+    def commit_control(
+        self,
+        *,
+        request_id: str,
+        admission: Mapping[str, Any],
+        proof: Mapping[str, Any],
+        acceptance: Callable[[int], None],
+        max_pending: int = 64,
+        max_bytes: int = 32 * 1024 * 1024,
+    ) -> dict[str, Any]:
+        """Atomically retain a validated control frame and its projection intent."""
+        digest = hashlib.sha256(canonical_bytes(admission)).hexdigest()
+        proof_digest = hashlib.sha256(canonical_bytes(proof)).hexdigest()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                existing = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='intake-admission' "
+                    "AND record_id=?",
+                    (request_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_hash"] != digest:
+                        raise ValueError("tribe_record_request_conflict")
+                    stored = database.execute(
+                        "SELECT * FROM tribe_records WHERE kind='control-proof' "
+                        "AND record_id=?",
+                        (request_id,),
+                    ).fetchone()
+                    if stored is None or stored["request_hash"] != proof_digest:
+                        raise ValueError("tribe_intake_commit_incomplete")
+                    self._checked(stored)
+                    result = self._checked(existing)
+                else:
+                    now = self.clock()
+                    acceptance(now)
+                    capacity = self._pending_capacity(database)
+                    if (
+                        capacity["control-ack"] >= max_pending
+                        or capacity["control-proof"] >= max_pending
+                        or capacity["control-bytes"]
+                        + len(
+                            canonical_bytes({**dict(admission), "received_at_ms": now})
+                        )
+                        + len(canonical_bytes(proof))
+                        > max_bytes
+                    ):
+                        raise TribeControlCapacityError("tribe_control_capacity")
+                    self._reserve_in_transaction(
+                        database,
+                        "control-proof",
+                        request_id,
+                        proof_digest,
+                        lambda: dict(proof),
+                    )
+                    result = self._reserve_in_transaction(
+                        database,
+                        "intake-admission",
+                        request_id,
+                        digest,
+                        lambda: {**dict(admission), "received_at_ms": now},
+                    )
+                database.commit()
+                return result
+            except BaseException:
+                if database.in_transaction:
+                    database.rollback()
+                raise
+
     def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
         with self._database() as database:
             row = database.execute(
@@ -185,6 +464,54 @@ class TribeRecordStore:
                 (kind, record_id),
             ).fetchone()
         return None if row is None else self._checked(row)
+
+    def intake_page(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 32,
+        max_bytes: int = 32 * 1024 * 1024,
+        deadline_ns: int | None = None,
+    ) -> dict[str, Any]:
+        """Bound signed admission loads before decoding large retained frames."""
+        if (
+            type(after) is not int
+            or after < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 64
+            or type(max_bytes) is not int
+            or not 1 <= max_bytes <= 32 * 1024 * 1024
+        ):
+            raise ValueError("tribe_intake_page_invalid")
+        selected, consumed = [], 0
+        with self._database() as database:
+            headers = database.execute(
+                "SELECT sequence,length(document) AS size FROM tribe_records "
+                "WHERE kind='intake-admission' AND sequence>? "
+                "ORDER BY sequence LIMIT ?",
+                (after, limit + 1),
+            ).fetchall()
+            for header in headers[:limit]:
+                if consumed + header["size"] > max_bytes or (
+                    deadline_ns is not None and time.monotonic_ns() >= deadline_ns
+                ):
+                    break
+                row = database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='intake-admission' "
+                    "AND sequence=? AND length(document)=?",
+                    (header["sequence"], header["size"]),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("tribe_record_corrupt")
+                selected.append(
+                    {"sequence": row["sequence"], "admission": self._checked(row)}
+                )
+                consumed += header["size"]
+        return {
+            "items": selected,
+            "next_after": after if not selected else selected[-1]["sequence"],
+            "has_more": len(headers) > len(selected),
+        }
 
     def transport_result(self, request_id: str) -> dict[str, Any] | None:
         with self._database() as database:

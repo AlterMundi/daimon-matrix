@@ -1965,6 +1965,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "revoke",
             "recover",
             "diagnostics",
+            "reconcile-intake",
             "run",
         ),
     )
@@ -1995,6 +1996,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--ready-fd", type=int)
+    parser.add_argument("--intake-after", type=int, default=0)
+    parser.add_argument("--intake-limit", type=int, default=32)
+    parser.add_argument("--intake-max-bytes", type=int, default=8 * 1024 * 1024)
+    parser.add_argument("--intake-max-elapsed-ms", type=int, default=10_000)
     args = parser.parse_args(argv)
     lock = None
     previous_signals = {}
@@ -2217,6 +2222,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 daemon.serve_forever(runtime, stop=stop, ready_descriptor=args.ready_fd)
                 return 0
             assert runtime.service.messaging is not None
+            if args.command == "reconcile-intake":
+                from .messaging import GroupMessaging
+
+                groups = [
+                    channel
+                    for channel in runtime.service.messaging.channels.values()
+                    if isinstance(channel, GroupMessaging)
+                ]
+                if len(groups) != 1:
+                    raise ValueError("tribe_intake_owner_required")
+                result = groups[0].reconcile_intake(
+                    after=args.intake_after,
+                    limit=args.intake_limit,
+                    max_bytes=args.intake_max_bytes,
+                    max_elapsed_ms=args.intake_max_elapsed_ms,
+                )
+                print(json.dumps(result, sort_keys=True))
+                return 0
             result = {
                 "status": "ready",
                 "application_sha256": config_digest(application),

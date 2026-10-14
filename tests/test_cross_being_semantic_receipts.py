@@ -72,6 +72,17 @@ class ForeignReceiptTests(unittest.TestCase):
     def store(self):
         return self.semantic_store
 
+    def test_deferred_receipt_preserves_observation_before_current_signing_time(self):
+        original_observation = self.pair.now
+        self.pair.now += 1000
+        receipt = self.receipt(payload={"observed_at_ms": original_observation})
+        result = self.store().record_foreign_receipt(
+            receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+        )
+        self.assertTrue(result["terminal"])
+        self.assertEqual(receipt["payload"]["observed_at_ms"], original_observation)
+        self.assertEqual(receipt["occurred_at_ms"], self.pair.now)
+
     def test_original_message_signs_expected_recipient_being(self):
         self.assertEqual(
             self.message["payload"]["body"]["recipient_being_ref"],

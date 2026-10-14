@@ -20,6 +20,7 @@ import hashlib
 import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 from .authority_epochs import RootHistoryAuthority
@@ -299,6 +300,18 @@ which the lane records as one undelivered row and keeps going. Anything else pro
 an unexpected exception is a bug or an attack, not a delivery problem, and must not be
 flattened into "this member is owed a retry".
 """
+
+
+@dataclass(frozen=True)
+class ValidatedTribeIntake:
+    """Internal authenticated plaintext; validation itself has no durable effect."""
+
+    message: Mapping[str, Any]
+    resolution: Mapping[str, Any]
+    membership_ref: str
+    tribe_ref: str
+    validated_at_ms: int
+    expires_at_ms: int
 
 
 class TribeConversation:
@@ -923,8 +936,8 @@ class TribeConversation:
             raise TribeConversationError("tribe_lane_receipt_unverified") from exception
         return receipt
 
-    def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        """Open one delivered tribe message and author this body's own receipt.
+    def validate_intake(self, payload: Mapping[str, Any]) -> ValidatedTribeIntake:
+        """Validate/open a frame without persisting intake or authoring a receipt.
 
         The authorization is re-derived here from this being's own verified snapshot
         and signed membership history, never copied from the wire, so an envelope
@@ -1089,20 +1102,39 @@ class TribeConversation:
             raise TribeConversationError("tribe_lane_origin_invalid")
         if message["payload"]["body"].get("audience") != rows:
             raise TribeConversationError("tribe_lane_audience_mismatch")
-        # Durable readable intake is the effect the following receipt observes.
-        self.records.received(message, resolution)
-        receipt = self._author_receipt(
-            message, resolution, membership_ref=local[0]["membership_ref"], now=now
+        return ValidatedTribeIntake(
+            message=message,
+            resolution=resolution,
+            membership_ref=local[0]["membership_ref"],
+            tribe_ref=tribe,
+            validated_at_ms=now,
+            expires_at_ms=int(envelope["expires_at_ms"]),
         )
+
+    def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Legacy synchronous lane API; group HTTP uses staged durable intake."""
+        validated = self.validate_intake(payload)
+        self.records.received(validated.message, validated.resolution)
+        receipt = self._author_receipt(
+            validated.message,
+            validated.resolution,
+            membership_ref=validated.membership_ref,
+            now=validated.validated_at_ms,
+        )
+        return self.intake_result(validated, receipt)
+
+    def intake_result(
+        self, validated: ValidatedTribeIntake, receipt: Mapping[str, Any]
+    ) -> dict[str, Any]:
         return {
-            "membership_ref": local[0]["membership_ref"],
-            "message_hash": message["content_hash"],
-            "message_id": message["event_id"],
+            "membership_ref": validated.membership_ref,
+            "message_hash": validated.message["content_hash"],
+            "message_id": validated.message["event_id"],
             "receipt": copy.deepcopy(dict(receipt)),
             "receipt_hash": hashlib.sha256(canonical_bytes(receipt)).hexdigest(),
             "recipient_embodiment_id": self.local_embodiment_id,
             "schema": TRIBE_INTAKE_SCHEMA,
-            "tribe_ref": tribe,
+            "tribe_ref": validated.tribe_ref,
         }
 
     def _author_receipt(
@@ -1113,10 +1145,18 @@ class TribeConversation:
         membership_ref: str,
         now: int,
         authored_local: bool = False,
+        observed_at_ms: int | None = None,
     ) -> Event:
         """Sign this body's own receipt for the message it just heard."""
         occurred = _uint(message["occurred_at_ms"], "tribe_lane_message_invalid")
         if now < occurred:
+            raise TribeConversationError("tribe_lane_observation_time_invalid")
+        observed = (
+            now
+            if observed_at_ms is None
+            else _uint(observed_at_ms, "tribe_lane_observation_time_invalid")
+        )
+        if not occurred <= observed <= now:
             raise TribeConversationError("tribe_lane_observation_time_invalid")
         core = tribe_receipt_payload(
             message=message,
@@ -1154,7 +1194,7 @@ class TribeConversation:
                 request_hash=digest,
                 kind="experience.observed",
                 subject=TRIBE_RECEIPT_SUBJECT,
-                payload={**core, "observed_at_ms": now},
+                payload={**core, "observed_at_ms": observed},
                 signer=self.signer,
                 sensitivity=_text(
                     message["sensitivity"], "tribe_lane_message_invalid", maximum=32

@@ -134,6 +134,23 @@ class ReleaseCompatibilityTests(unittest.TestCase):
             ):
                 validate_release(release, expected_digest=digest(release))
 
+    def test_old_reader_cannot_select_deferred_receipts_or_unfinished_intake(self):
+        release = release_fixture()
+        old = describe_reader()
+        for capability in (
+            "durable-group-intake/v1",
+            "deferred-receipt-observation/v1",
+        ):
+            self.assertIn(capability, release["contract"]["capabilities"])
+            old["contract"]["capabilities"].remove(capability)
+        old["contract"]["pending_inspection"].remove(
+            "dm.tribe.intake-reconciliation/v1"
+        )
+        result = assess_reader(release, old, expected_digest=digest(release))
+        self.assertFalse(result["compatible"])
+        self.assertIn("capabilities_unsupported", result["reasons"])
+        self.assertEqual(result["receiving_readiness"], "unobserved")
+
     def test_compatible_code_is_not_loaded_readiness(self):
         release = release_fixture()
         result = assess_reader(

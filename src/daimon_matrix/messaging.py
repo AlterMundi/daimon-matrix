@@ -9,6 +9,8 @@ only canonical DM-051 envelope bytes enter the receive methods.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
@@ -31,10 +33,17 @@ from .messaging_store import (
     MessagingInboxError,
     MessagingInboxStore,
     MessagingOutboxStore,
+    TribeControlCapacityError,
 )
 from .native_egress import MandatoryEgressController, OperationBinding
 from .relationship_store import RelationshipStore, RelationshipView
-from .routes import ROUTE_SUBMISSION_SCHEMA, AuthenticatedProvider, RouteError
+from .routes import (
+    ROUTE_SUBMISSION_SCHEMA,
+    AuthenticatedProvider,
+    DurableIntakeTicket,
+    RouteAmbiguous,
+    RouteError,
+)
 from .sealed import (
     MAX_TTL_MS,
     DeliveryCustody,
@@ -52,7 +61,7 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
-from .tribe_conversation import TribeConversation
+from .tribe_conversation import TribeConversation, ValidatedTribeIntake
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
@@ -1685,6 +1694,9 @@ class GroupMessaging:
         self.inbox = self.records = lane.records
         self.communication, self.providers = communication, dict(providers)
         self.config_digest, self.egress, self.labels = config_digest, egress, labels
+        self.intake_ingresses: dict[str, Any] = {}
+        self._receipt_lock = threading.Lock()
+        self._receipt_inflight: set[str] = set()
         self.records.bind_egress(
             egress,
             catalog_id="tribe-carriers",
@@ -2033,6 +2045,15 @@ class GroupMessaging:
             lambda: {"request": b64url(provider.prepare_submission(submission))},
         )
         raw = unb64url(retained["request"])
+        if receipt:
+            proof = self.records.transport_result(request_id)
+            if proof is not None:
+                result = provider.validate_prepared_response(
+                    raw, unb64url(proof["response"])
+                )
+                if dict(result) != proof["result"]:
+                    raise ValueError("tribe_receipt_return_proof_conflict")
+                return
 
         def retain_response(response: bytes) -> None:
             observed = {
@@ -2093,6 +2114,584 @@ class GroupMessaging:
             }
         raise ValueError("tribe_carrier_invalid")
 
+    def _return_context(self, sender: Mapping[str, Any]) -> dict[str, Any]:
+        routes = self.providers.get((sender["being_ref"], sender["embodiment_id"]))
+        provider = None if routes is None else routes["evidence"]
+        return {
+            "config_digest": self.config_digest,
+            "policy": asdict(self.policy),
+            "provider": None if provider is None else provider.retained_binding(),
+            "local_body_ref": self.ledger.local_origin["body_ref"],
+        }
+
+    def _known_admission(self, request_id: str) -> dict[str, Any] | None:
+        try:
+            return self.records.get("intake-admission", request_id)
+        except (ValueError, OSError, sqlite3.Error) as failure:
+            raise RouteAmbiguous("tribe_intake_state_unavailable") from failure
+
+    def admit_message(self, context: Mapping[str, Any]) -> DurableIntakeTicket:
+        """Authenticated owner callback: atomically retain intake before ACK work."""
+        request = context["request"]
+        request_id = request["request_id"]
+        existing = self._known_admission(request_id)
+        if existing is not None:
+            return self.retained_message_ticket(context)
+        raw = unb64url(request["submission"]["envelope"])
+        validated = self.lane.validate_intake(_parse(raw))
+        message, resolution = validated.message, validated.resolution
+        sender = {
+            "being_ref": message["being_ref"],
+            "embodiment_id": message["origin"]["embodiment_id"],
+        }
+        if (
+            request["sender_principal"] != sender["being_ref"]
+            or request["sender_body_ref"] != message["origin"]["body_ref"]
+            or context["metadata"]["event_id"] != message["event_id"]
+        ):
+            raise ValueError("tribe_intake_sender_conflict")
+        admission = {
+            "schema": "dm.tribe.intake-admission/v1",
+            "phase": "message",
+            "context": dict(context),
+            "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "resolution_hash": resolution["content_hash"],
+        }
+
+        def acceptance(now: int) -> None:
+            if (
+                not validated.validated_at_ms
+                <= now
+                < min(validated.expires_at_ms, request["expires_at_ms"])
+            ):
+                raise ValueError("tribe_intake_time_invalid")
+            self.lane._operational(
+                self.lane.being_ref,
+                self.lane.local_credential_id,
+                self.lane.local_embodiment_id,
+                now,
+            )
+            descriptor = context["metadata"]["sender"]
+            self.lane._operational(
+                sender["being_ref"],
+                descriptor["credential_id"],
+                sender["embodiment_id"],
+                now,
+            )
+
+        def obligation(first: int, legacy: bool) -> dict[str, Any]:
+            observed, deadline = first, first + self.policy.max_ttl_ms
+            if legacy:
+                retained = self.records.get("receipt", message["event_id"])
+                native = (
+                    None
+                    if retained is None
+                    else self.records.get("native", retained["receipt"]["event_id"])
+                )
+                if retained is None or native is None:
+                    raise ValueError("tribe_legacy_deadline_provenance_missing")
+                observed = retained["receipt"]["payload"]["observed_at_ms"]
+                deadline = native["deadline_ms"]
+            return {
+                "schema": "dm.tribe.receipt-obligation/v1",
+                "message_id": message["event_id"],
+                "message_hash": message["content_hash"],
+                "resolution_hash": resolution["content_hash"],
+                "membership_ref": validated.membership_ref,
+                "tribe_ref": validated.tribe_ref,
+                "recipient_embodiment_id": self.lane.local_embodiment_id,
+                "observed_at_ms": observed,
+                "deadline_ms": deadline,
+                "first_request_id": request_id,
+                "request_hash": context["request_hash"],
+                "carrier_sha256": request["submission"]["envelope_sha256"],
+                "return_target": sender,
+                "return_context": self._return_context(sender),
+            }
+
+        try:
+            self.records.commit_intake(
+                request_id=request_id,
+                admission=admission,
+                message=message,
+                resolution=resolution,
+                acceptance=acceptance,
+                obligation=obligation,
+            )
+        except (OSError, sqlite3.Error, ValueError) as failure:
+            # A failed COMMIT observation cannot classify a real committed intake
+            # as absent. Resolve its exact signed row before selecting recovery.
+            try:
+                retained = self.records.get("intake-admission", request_id)
+            except (OSError, sqlite3.Error, ValueError):
+                retained = None
+            if retained is None:
+                code = (
+                    "tribe_control_capacity"
+                    if isinstance(failure, TribeControlCapacityError)
+                    else "tribe_intake_commit_uncertain"
+                )
+                raise RouteAmbiguous(code) from failure
+        return self.retained_message_ticket(context)
+
+    def _retained_intake(
+        self, context: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        admission = self.records.get(
+            "intake-admission", context["request"]["request_id"]
+        )
+        if admission is None or admission["context"] != context:
+            raise RouteAmbiguous("tribe_intake_recovery_binding_conflict")
+        identifier = admission["message_id"]
+        inbox = self.records.get("inbox", identifier)
+        obligation = self.records.get("receipt-obligation", identifier)
+        if inbox is None or obligation is None:
+            raise RouteAmbiguous("tribe_intake_commit_incomplete")
+        message, resolution = inbox["message"], inbox["resolution"]
+        verify_event(
+            message, self.lane._epoch(message["being_ref"], message["manifest_hash"])
+        )
+        verify_event(
+            resolution,
+            self.lane._epoch(resolution["being_ref"], resolution["manifest_hash"]),
+        )
+        expected = {
+            "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "resolution_hash": resolution["content_hash"],
+        }
+        if (
+            any(
+                admission[key] != value or obligation[key] != value
+                for key, value in expected.items()
+            )
+            or obligation["recipient_embodiment_id"] != self.lane.local_embodiment_id
+            or obligation["tribe_ref"] != self.policy.tribe_ref
+            or obligation["return_target"]
+            != {
+                "being_ref": message["being_ref"],
+                "embodiment_id": message["origin"]["embodiment_id"],
+            }
+        ):
+            raise RouteAmbiguous("tribe_intake_recovery_binding_conflict")
+        first = self.records.get("intake-admission", obligation["first_request_id"])
+        if (
+            first is None
+            or first["message_id"] != identifier
+            or first["context"]["request_hash"] != obligation["request_hash"]
+            or first["context"]["request"]["submission"]["envelope_sha256"]
+            != obligation["carrier_sha256"]
+        ):
+            raise RouteAmbiguous("tribe_intake_recovery_binding_conflict")
+        return admission, inbox, obligation
+
+    def retained_message_ticket(
+        self, context: Mapping[str, Any]
+    ) -> DurableIntakeTicket:
+        try:
+            return self._retained_message_ticket(context)
+        except (ValueError, OSError, sqlite3.Error) as failure:
+            raise RouteAmbiguous(
+                "tribe_retained_intake_verification_uncertain"
+            ) from failure
+
+    def _retained_message_ticket(
+        self, context: Mapping[str, Any]
+    ) -> DurableIntakeTicket:
+        admission, inbox, _obligation = self._retained_intake(context)
+        identifier = inbox["message"]["event_id"]
+
+        def after_response() -> None:
+            self.complete_receipt(identifier)
+
+        return DurableIntakeTicket(
+            received_at_ms=admission["received_at_ms"],
+            metadata=context["metadata"],
+            acknowledge=lambda response: self._acknowledge_intake(
+                admission, context, response
+            ),
+            after_response=after_response,
+        )
+
+    def _acknowledge_intake(
+        self, admission: Mapping[str, Any], context: Mapping[str, Any], response: bytes
+    ) -> None:
+        value = _parse(response)
+        if (
+            value["status"] != "accepted"
+            or value["outcome"] != "recipient-intake"
+            or value["request_id"] != context["request"]["request_id"]
+            or value["request_sha256"] != context["request_hash"]
+            or value["intake"]["envelope_sha256"]
+            != context["request"]["submission"]["envelope_sha256"]
+            or not context["metadata"].get("issued_at_ms", 0)
+            <= _uint(value["intake"]["accepted_at_ms"])
+            <= admission["received_at_ms"]
+            or value["intake"]["delivery_id"] != context["metadata"]["delivery_id"]
+            or value["intake"]["recipient_id"] != self.lane.local_embodiment_id
+            or value["intake"]["recipient_body_ref"]
+            != self.ledger.local_origin["body_ref"]
+        ):
+            raise RouteAmbiguous("tribe_intake_ack_conflict")
+        proof = {
+            "admission_sha256": hashlib.sha256(canonical_bytes(admission)).hexdigest(),
+            "response": b64url(response),
+        }
+        self.records.reserve("intake-ack", value["request_id"], proof, lambda: proof)
+
+    def complete_receipt(self, message_id: str) -> dict[str, Any]:
+        """One finite retained technical attempt under the runtime owner."""
+        with self._receipt_lock:
+            if message_id in self._receipt_inflight:
+                return {"state": "in-flight"}
+            self._receipt_inflight.add(message_id)
+        try:
+            return self._complete_receipt(message_id)
+        finally:
+            with self._receipt_lock:
+                self._receipt_inflight.remove(message_id)
+
+    def _retained_return_state(
+        self, result: Mapping[str, Any], obligation: Mapping[str, Any]
+    ) -> str | None:
+        """Read the signed observation of a verified ACK, not today's route."""
+        receipt_id = result["receipt"]["event_id"]
+        target = obligation["return_target"]
+        identifier = str(
+            uuid.uuid5(
+                uuid.UUID(receipt_id),
+                f"tribe-transport/v1:{target['being_ref']}:{target['embodiment_id']}",
+            )
+        )
+        proof = self.records.transport_result(identifier)
+        if proof is None:
+            return None
+        transport = self.records.get("transport", identifier)
+        if transport is None:
+            raise ValueError("tribe_receipt_return_proof_conflict")
+        raw = unb64url(transport["request"])
+        request = _parse(raw)
+        response = _parse(unb64url(proof["response"]))
+        provider = obligation["return_context"]["provider"]
+        if (
+            provider is None
+            or proof["request_sha256"] != hashlib.sha256(raw).hexdigest()
+            or request["submission"]["envelope"] != b64url(canonical_bytes(result))
+            or request["submission"]["recipient_id"] != target["embodiment_id"]
+            or request["expires_at_ms"] != obligation["deadline_ms"]
+            or request["provider_ref"] != provider["provider_ref"]
+            or request["route_ref"] != provider["route_ref"]
+            or request["auth"]["key_ref"] != provider["key_ref"]
+            or response["request_id"] != request["request_id"]
+            or response["request_sha256"]
+            != hashlib.sha256(
+                canonical_bytes(
+                    {key: value for key, value in request.items() if key != "auth"}
+                )
+            ).hexdigest()
+            or response["outcome"] != proof["result"]["outcome"]
+            or response["intake"] != proof["result"]["intake"]
+        ):
+            raise ValueError("tribe_receipt_return_proof_conflict")
+        # Production _checked verifies the owner-signed record that retained the
+        # provider's authenticated result. No new HMAC key, route or I/O is used.
+        return str(proof["result"]["outcome"])
+
+    def _complete_receipt(self, message_id: str) -> dict[str, Any]:
+        obligation = self.records.get("receipt-obligation", message_id)
+        if obligation is None:
+            raise ValueError("tribe_receipt_obligation_missing")
+        first = self.records.get("intake-admission", obligation["first_request_id"])
+        if first is None:
+            raise ValueError("tribe_intake_commit_incomplete")
+        _, inbox, obligation = self._retained_intake(first["context"])
+        terminal = self.records.get("receipt-terminal", message_id)
+        if terminal is not None:
+            retained_receipt = self.records.get("receipt", message_id)
+            if (
+                terminal.get("state") not in {"recipient-intake", "refused", "expired"}
+                or terminal.get("obligation_sha256")
+                != hashlib.sha256(canonical_bytes(obligation)).hexdigest()
+                or retained_receipt is None
+                or terminal.get("receipt_sha256")
+                != hashlib.sha256(canonical_bytes(retained_receipt)).hexdigest()
+            ):
+                raise ValueError("tribe_receipt_completion_conflict")
+            return terminal
+        now = self.lane.clock()
+        if now < obligation["observed_at_ms"]:
+            return {"state": "blocked-clock"}
+        message, resolution = inbox["message"], inbox["resolution"]
+        result = self.records.get("receipt", message_id)
+        if result is None:
+            self.lane._operational(
+                self.lane.being_ref,
+                self.lane.local_credential_id,
+                self.lane.local_embodiment_id,
+                now,
+            )
+            receipt = self.lane._author_receipt(
+                message,
+                resolution,
+                membership_ref=obligation["membership_ref"],
+                now=now,
+                observed_at_ms=obligation["observed_at_ms"],
+            )
+            if receipt["payload"]["observed_at_ms"] != obligation["observed_at_ms"]:
+                raise ValueError("tribe_receipt_observation_conflict")
+            validated = ValidatedTribeIntake(
+                message=message,
+                resolution=resolution,
+                membership_ref=obligation["membership_ref"],
+                tribe_ref=obligation["tribe_ref"],
+                validated_at_ms=obligation["observed_at_ms"],
+                expires_at_ms=first["context"]["request"]["expires_at_ms"],
+            )
+            result = self.lane.intake_result(validated, receipt)
+            self.records.reserve("receipt", message_id, result, lambda: result)
+        native = canonical_bytes(result)
+        known = self._retained_return_state(result, obligation)
+        state = known or ("expired" if now >= obligation["deadline_ms"] else "pending")
+        if state == "pending":
+            if (
+                self._return_context(obligation["return_target"])
+                != obligation["return_context"]
+            ):
+                return {"state": "blocked-selection"}
+            if obligation["return_context"]["provider"] is None:
+                return {"state": "unroutable"}
+            operation_id = result["receipt"]["event_id"]
+            operation = self.records.admit(
+                operation_id,
+                native,
+                path_id="tribe-receipt-request",
+                projection={
+                    "event_id": operation_id,
+                    "event_digest": result["receipt"]["content_hash"],
+                    "sender": self.lane.being_ref,
+                    "recipients": [message["being_ref"]],
+                    "thread_id": message["payload"]["intent"]["thread_id"],
+                    "kind": "authorization-control",
+                    "reply_to": None,
+                    "content": {"stage": "semantic-receipt"},
+                },
+                deadline_ms=obligation["deadline_ms"],
+                authority_head=self.ledger.local_origin["body_ref"],
+            )
+            self._transmit(native, obligation["return_target"], operation, receipt=True)
+            state = self._retained_return_state(result, obligation) or "pending"
+        if state == "pending":
+            return {"state": state}
+        terminal = {
+            "state": state,
+            "obligation_sha256": hashlib.sha256(
+                canonical_bytes(obligation)
+            ).hexdigest(),
+            "receipt_sha256": hashlib.sha256(native).hexdigest(),
+        }
+        return self.records.reserve(
+            "receipt-terminal", message_id, terminal, lambda: terminal
+        )
+
+    def reconcile_intake(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 32,
+        max_bytes: int = 8 * 1024 * 1024,
+        max_elapsed_ms: int = 10_000,
+    ) -> dict[str, Any]:
+        """Finite technical recovery; the caller must own the native runtime lock.
+
+        The elapsed budget stops starting further items. #340 owns the strict
+        in-flight network deadline; this method never abandons an active writer.
+        """
+        import time
+
+        if (
+            type(max_bytes) is not int
+            or not 1 <= max_bytes <= 32 * 1024 * 1024
+            or type(max_elapsed_ms) is not int
+            or not 1 <= max_elapsed_ms <= 60_000
+        ):
+            raise ValueError("tribe_intake_budget_invalid")
+        started = time.monotonic_ns()
+        page = self.records.intake_page(
+            after=after,
+            limit=limit,
+            max_bytes=max_bytes,
+            deadline_ns=started + max_elapsed_ms * 1_000_000,
+        )
+        consumed, cursor = 0, after
+        results = []
+        for item in page["items"]:
+            admission = item["admission"]
+            size = len(canonical_bytes(admission))
+            if (
+                consumed + size > max_bytes
+                or (time.monotonic_ns() - started) // 1_000_000 >= max_elapsed_ms
+            ):
+                break
+            context = admission["context"]
+            identifier = context["request"]["request_id"]
+            try:
+                phase = admission.get("phase", "message")
+                ticket = (
+                    self.retained_message_ticket(context)
+                    if phase == "message"
+                    else self.retained_evidence_ticket(context)
+                )
+                ingress = self.intake_ingresses[phase]
+                ingress.finalize_retained_intake(context, ticket)
+                state = (
+                    self.complete_receipt(admission["message_id"])
+                    if phase == "message"
+                    else self.complete_control(identifier)
+                )
+                results.append({"request_id": identifier, "ack": "retained", **state})
+            except (ValueError, OSError, sqlite3.Error, RouteError) as failure:
+                # Only fixed local codes are exposed, never requests or routes.
+                code = (
+                    failure.code
+                    if isinstance(failure, RouteError)
+                    else "recovery-pending"
+                )
+                results.append(
+                    {"request_id": identifier, "state": "pending", "code": code}
+                )
+            consumed += size
+            cursor = item["sequence"]
+        return {
+            "schema": "dm.tribe.intake-reconciliation/v1",
+            "items": results,
+            "next_after": cursor,
+            "has_more": page["has_more"] or len(results) < len(page["items"]),
+            "inference_started": 0,
+        }
+
+    def admit_evidence(self, context: Mapping[str, Any]) -> DurableIntakeTicket:
+        request = context["request"]
+        request_id = request["request_id"]
+        if self._known_admission(request_id) is not None:
+            return self.retained_evidence_ticket(context)
+        raw = unb64url(request["submission"]["envelope"])
+        verified, being = self._validated_evidence(raw)
+        if (
+            request["sender_principal"] != verified["being_ref"]
+            or request["sender_body_ref"] != verified["origin"]["body_ref"]
+        ):
+            raise ValueError("tribe_intake_sender_conflict")
+        proof = {"wire": _parse(raw), "receipt": verified, "recipient_being_ref": being}
+        admission = {
+            "schema": "dm.tribe.intake-admission/v1",
+            "phase": "evidence",
+            "context": dict(context),
+            "control_sha256": hashlib.sha256(canonical_bytes(proof)).hexdigest(),
+        }
+        validated_at = self.lane.clock()
+
+        def acceptance(now: int) -> None:
+            if not validated_at <= now < request["expires_at_ms"]:
+                raise ValueError("tribe_intake_time_invalid")
+            self.lane._operational(
+                self.lane.being_ref,
+                self.lane.local_credential_id,
+                self.lane.local_embodiment_id,
+                now,
+            )
+
+        try:
+            self.records.commit_control(
+                request_id=request_id,
+                admission=admission,
+                proof=proof,
+                acceptance=acceptance,
+            )
+        except (ValueError, OSError, sqlite3.Error) as failure:
+            try:
+                retained = self.records.get("intake-admission", request_id)
+            except (ValueError, OSError, sqlite3.Error):
+                retained = None
+            if retained is None:
+                raise RouteAmbiguous("tribe_control_commit_uncertain") from failure
+        return self.retained_evidence_ticket(context)
+
+    def retained_evidence_ticket(
+        self, context: Mapping[str, Any]
+    ) -> DurableIntakeTicket:
+        try:
+            return self._retained_evidence_ticket(context)
+        except (ValueError, OSError, sqlite3.Error) as failure:
+            raise RouteAmbiguous(
+                "tribe_retained_intake_verification_uncertain"
+            ) from failure
+
+    def _retained_evidence_ticket(
+        self, context: Mapping[str, Any]
+    ) -> DurableIntakeTicket:
+        request_id = context["request"]["request_id"]
+        admission = self.records.get("intake-admission", request_id)
+        proof = self.records.get("control-proof", request_id)
+        if (
+            admission is None
+            or admission.get("phase") != "evidence"
+            or admission["context"] != context
+            or proof is None
+            or hashlib.sha256(canonical_bytes(proof)).hexdigest()
+            != admission["control_sha256"]
+            or canonical_bytes(proof["wire"])
+            != unb64url(context["request"]["submission"]["envelope"])
+        ):
+            raise RouteAmbiguous("tribe_control_recovery_binding_conflict")
+        receipt, being = self._validated_evidence(canonical_bytes(proof["wire"]))
+        if proof["receipt"] != receipt or proof["recipient_being_ref"] != being:
+            raise RouteAmbiguous("tribe_control_recovery_binding_conflict")
+
+        def after_response() -> None:
+            self.complete_control(request_id)
+
+        return DurableIntakeTicket(
+            received_at_ms=admission["received_at_ms"],
+            metadata=context["metadata"],
+            acknowledge=lambda response: self._acknowledge_intake(
+                admission, context, response
+            ),
+            after_response=after_response,
+        )
+
+    def complete_control(self, request_id: str) -> dict[str, Any]:
+        key = "control:" + request_id
+        with self._receipt_lock:
+            if key in self._receipt_inflight:
+                return {"state": "in-flight"}
+            self._receipt_inflight.add(key)
+        try:
+            admission = self.records.get("intake-admission", request_id)
+            if admission is None:
+                raise ValueError("tribe_control_recovery_missing")
+            self.retained_evidence_ticket(admission["context"])
+            terminal = self.records.get("control-terminal", request_id)
+            if terminal is not None:
+                if terminal["control_sha256"] != admission["control_sha256"]:
+                    raise ValueError("tribe_control_recovery_binding_conflict")
+                return terminal
+            proof = self.records.get("control-proof", request_id)
+            assert proof is not None
+            self.communication.record_foreign_receipt(
+                proof["receipt"], recipient_being_ref=proof["recipient_being_ref"]
+            )
+            terminal = {
+                "state": "receipt-projected",
+                "control_sha256": admission["control_sha256"],
+            }
+            return self.records.reserve(
+                "control-terminal", request_id, terminal, lambda: terminal
+            )
+        finally:
+            with self._receipt_lock:
+                self._receipt_inflight.remove(key)
+
     def receive_message(self, raw: bytes) -> None:
         result = self.lane.intake(_parse(raw))
         self.records.reserve("receipt", result["message_id"], result, lambda: result)
@@ -2107,7 +2706,7 @@ class GroupMessaging:
         deadline = (
             existing["deadline_ms"]
             if existing is not None
-            else self.lane.clock() + self.policy.max_ttl_ms
+            else result["receipt"]["payload"]["observed_at_ms"] + self.policy.max_ttl_ms
         )
         operation = self.records.admit(
             operation_id,
@@ -2128,7 +2727,7 @@ class GroupMessaging:
         )
         self._transmit(native, sender, operation, receipt=True)
 
-    def receive_evidence(self, raw: bytes) -> None:
+    def _validated_evidence(self, raw: bytes) -> tuple[dict[str, Any], str]:
         result = _parse(raw)
         message = self.ledger.event(result["message_id"])
         if message is None:
@@ -2153,6 +2752,9 @@ class GroupMessaging:
             resolution=resolution,
             tribe_ref=self.policy.tribe_ref,
         )
-        self.communication.record_foreign_receipt(
-            verified, recipient_being_ref=row["being_ref"]
-        )
+        _foreign_receipt_payload(verified)
+        return dict(verified), str(row["being_ref"])
+
+    def receive_evidence(self, raw: bytes) -> None:
+        verified, being = self._validated_evidence(raw)
+        self.communication.record_foreign_receipt(verified, recipient_being_ref=being)
