@@ -290,6 +290,79 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_group_mention_and_connected_reply_show_one_logical_destination(self):
+        from daimon_matrix.telegram_mirror import render_readable_parts
+
+        sender, receiver = self.groups
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="hello @member, this is visible to the group",
+        )
+        first = self.send_and_settle(sender, **arguments)
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(native["projection"]["recipients"], ["Tribu"])
+        self.assertTrue(
+            render_readable_parts(native["projection"])[0]
+            .splitlines()[0]
+            .endswith(" → Tribu")
+        )
+        expected = {sender.lane.being_ref, receiver.lane.being_ref}
+        self.assertEqual({row["being_ref"] for row in first["audience"]}, expected)
+        self.assertTrue(first["semantic"]["terminal"])
+        reply_id = str(uuid.uuid4())
+        response = self.send_and_settle(
+            receiver,
+            client_id="test",
+            send_id=reply_id,
+            thread_id=arguments["thread_id"],
+            text="connected group response",
+            response_to=(receiver, first["message_id"]),
+        )
+        reply_projection = receiver.records.get("native", reply_id)["projection"]
+        self.assertEqual(reply_projection["recipients"], ["Tribu"])
+        self.assertEqual(reply_projection["reply_to"]["event_id"], first["message_id"])
+        self.assertEqual({row["being_ref"] for row in response["audience"]}, expected)
+        self.assertTrue(response["semantic"]["terminal"])
+
+    def test_exact_group_retry_preserves_predecessor_projection_and_frozen_audience(
+        self,
+    ):
+        sender = self.groups[0]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retained predecessor group publication",
+        )
+        original_admit = sender.records.admit
+        old_recipients = ["historical founder body", "historical member body"]
+
+        def predecessor_admit(*args, **kwargs):
+            # Owner-local fixture: mint the old producer's projection through
+            # the real native/echo transaction before running the new retry.
+            if kwargs.get("path_id") == "tribe-message-request":
+                kwargs["projection"] = {
+                    **kwargs["projection"],
+                    "recipients": old_recipients,
+                }
+            return original_admit(*args, **kwargs)
+
+        with patch.object(sender.records, "admit", side_effect=predecessor_admit):
+            first = self.send_and_settle(sender, **arguments)
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(native["projection"]["recipients"], old_recipients)
+        pages = [group.page(after=0, limit=10) for group in self.groups]
+        retried = self.send_and_settle(sender, **arguments)
+        self.assertEqual(retried["message_id"], first["message_id"])
+        self.assertEqual(retried["audience"], first["audience"])
+        self.assertTrue(retried["semantic"]["terminal"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertEqual(
+            [group.page(after=0, limit=10) for group in self.groups], pages
+        )
+
     def test_direct_catalog_reopen_and_migration_preserve_native_echo_and_ack(self):
         sender, receiver = self.groups
         sender.direct_reader_ready = lambda row: True

@@ -2081,15 +2081,11 @@ class GroupMessaging:
         sender = _sender_display(
             self.labels, message["origin"], message["being_ref"], body_fallback=True
         )
-        recipients = [
-            _sender_display(
-                self.labels,
-                {"embodiment_id": row["embodiment_id"]},
-                row["being_ref"],
-                body_fallback=True,
-            )
-            for row in prepared["rows"]
-        ]
+        # This producer has already authenticated the membership group and
+        # frozen its full body audience. Present its logical destination, not
+        # its physical fanout; mentions in the text do not narrow that audience.
+        # Retained native projections below preserve historical publication.
+        recipients = ["Tribu"]
         if destination is not None:
             recipients = [
                 "Direct · "
