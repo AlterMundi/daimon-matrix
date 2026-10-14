@@ -76,7 +76,7 @@ from .relationships import (
     relationship_event_subject,
     validate_relationship_event_payload,
 )
-from .routes import RouteCoordinator, RouteError
+from .routes import RouteAmbiguous, RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
 from .sealed import SealedDeliveryError
 from .sources import SourceError, SourceServiceContext
@@ -1165,19 +1165,67 @@ class HostedWeave:
             raise ServiceError("reader_controller_binding_invalid")
         try:
             group.validate(self)
+            command = dict(params)
+            expected_roster = command.pop("expected_roster_sha256", None)
+            if "expected_roster_sha256" in params and (
+                not isinstance(expected_roster, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_roster) is None
+            ):
+                raise ServiceError("reader_selection_invalid")
             return group.egress.select_readers(
-                params,
+                command,
                 request_sha256=request_hash,
                 deadline_ns=time.monotonic_ns() + 2_000_000_000,
+                selection_authorization=(
+                    lambda: group.selection_authorization(expected_roster)
+                )
+                if expected_roster is not None and command.get("phase") == "select"
+                else None,
             )
+        except ServiceError:
+            raise
         except NativeEgressError as exception:
             code = str(exception)
             raise ServiceError(
                 code,
                 retryable=code == "egress_attempt_deadline",
             ) from None
-        except ValueError:
+        except RelationshipStoreError as exception:
+            cause = exception.__cause__
+            retryable = isinstance(cause, sqlite3.Error) and getattr(
+                cause, "sqlite_errorcode", 0
+            ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            raise ServiceError(
+                "reader_roster_unavailable", retryable=retryable
+            ) from None
+        except ValueError as exception:
+            if str(exception) == "reader_roster_conflict":
+                raise ServiceError("reader_roster_conflict") from None
             raise ServiceError("reader_controller_binding_invalid") from None
+
+    @staticmethod
+    def _receiving_roster_status(group: GroupMessaging) -> dict[str, Any]:
+        """An unavailable roster never hides the independent revocation head."""
+        try:
+            return group.receiving_roster()
+        except RelationshipStoreError as exception:
+            cause = exception.__cause__
+            retryable = isinstance(cause, sqlite3.Error) and getattr(
+                cause, "sqlite_errorcode", 0
+            ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            return dict(
+                schema="dm.runtime.tribe-roster-unavailable/v1",
+                error="reader_roster_unavailable",
+                retryable=retryable,
+            )
+        except RouteAmbiguous:
+            raise ServiceError("reader_roster_invalid") from None
+        except ValueError:
+            return dict(
+                schema="dm.runtime.tribe-roster-unavailable/v1",
+                error="reader_roster_invalid",
+                retryable=False,
+            )
 
     def _messaging_response(
         self,
@@ -2456,6 +2504,11 @@ class HostedWeave:
                     result["receiving"] = {
                         "schema": "dm.runtime.reader-status/v1",
                         "contract": "dm.runtime.reader-selection/v1",
+                        "features": ["signed-roster-cas/v1"],
+                        "rosters": {
+                            channel_id: self._receiving_roster_status(group)
+                            for channel_id, group in self.receiving.channels.items()
+                        },
                         "channels": {
                             channel_id: group.egress.reader_snapshot(
                                 channel_id, deadline_ns=deadline
@@ -2465,6 +2518,16 @@ class HostedWeave:
                     }
                 except NativeEgressError as exception:
                     raise ServiceError(str(exception), retryable=True) from None
+                except RelationshipStoreError as exception:
+                    cause = exception.__cause__
+                    retryable = isinstance(cause, sqlite3.Error) and getattr(
+                        cause, "sqlite_errorcode", 0
+                    ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                    raise ServiceError(
+                        "reader_roster_unavailable", retryable=retryable
+                    ) from None
+                except ValueError:
+                    raise ServiceError("reader_roster_invalid") from None
             return result
         if method == "we.heads":
             _closed(params, set())

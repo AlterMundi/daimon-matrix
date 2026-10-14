@@ -51,6 +51,7 @@ _FEATURES = sorted(
         "owned-transport-reply/v1",
         "bounded-group-fanout/v1",
         "membership-direct/v1",
+        "signed-roster-cas/v1",
     }
 )
 _CONTRACT_FIELDS = {

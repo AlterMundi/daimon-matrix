@@ -13,8 +13,9 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1925,13 +1926,16 @@ class GroupMessaging:
         self,
         plan: Mapping[str, Any] | None,
         sender_manifest_hash: str,
+        *,
+        events: list[dict[str, Any]] | None = None,
     ) -> tuple[str, tuple[str, ...]]:
-        # All lookup/verification happens before taking the physical-write fence.
-        # These are the retained plan's facts, not today's Root or model metadata.
+        # Send lookup uses the retained plan before the physical-write fence.
+        # The controller also reuses this proof verification while holding its
+        # local roster authorization view and selection fence (no network I/O).
         if plan is None:
             raise ValueError("tribe_readiness_evidence_missing")
         epochs = {sender_manifest_hash, *plan["epochs"].values()}
-        events = self.lane.relationships.events()
+        events = self.lane.relationships.events() if events is None else events
         for proof in [plan["sender_proof"], *plan["proofs"].values()]:
             matching = [
                 event
@@ -1952,6 +1956,106 @@ class GroupMessaging:
             else "dm.tribe.conversation/v1",
             tuple(sorted(epochs)),
         )
+
+    def _receiving_roster(self, view: RelationshipView, now: int) -> dict[str, Any]:
+        """Derive only public audience/proof facts from the held verified view."""
+        from .tribe_conversation import MembershipAuthorizer
+
+        snapshot = view.snapshot(self.policy.tribe_ref)
+        members = snapshot.value["members"]
+        rows = list(self.lane.audience(snapshot))
+        if not 1 <= len(rows) <= 256:
+            raise ValueError("tribe_readiness_roster_invalid")
+        own = [
+            row
+            for row in members
+            if row["principal_id"] == self.lane.being_ref and row["state"] == "active"
+        ]
+        if len(own) != 1:
+            raise ValueError("tribe_readiness_roster_invalid")
+        authorizer = MembershipAuthorizer(view.all_events)
+        proofs = authorizer.proofs(members=members, tribe_ref=self.policy.tribe_ref)
+        sender = authorizer.proof(
+            membership_ref=own[0]["membership_ref"],
+            tribe_ref=self.policy.tribe_ref,
+            principal_id=self.lane.being_ref,
+        )
+        epochs = {
+            row["being_ref"]: self.lane._active(row["being_ref"]).manifest.digest
+            for row in rows
+        }
+        plan = dict(epochs=epochs, proofs=proofs, sender_proof=sender)
+        _, required = self._reader_requirements(
+            plan, self.lane.authority.manifest.digest, events=view.all_events
+        )
+        if len(required) > 256 or len(proofs) > 256:
+            raise ValueError("tribe_readiness_roster_invalid")
+        proof_rows = []
+        for proof in proofs.values():
+            event = next(
+                event
+                for event in view.all_events
+                if (event["event_id"], event["content_hash"])
+                == (proof["membership_event_id"], proof["membership_event_hash"])
+            )
+            proof_rows.append(
+                {
+                    **proof,
+                    "signer_being_ref": event["being_ref"],
+                    "signer_manifest_hash": event["manifest_hash"],
+                }
+            )
+        body = dict(
+            schema="dm.runtime.tribe-roster/v1",
+            tribe_ref=self.policy.tribe_ref,
+            lineage_head_ref=snapshot.value["lineage_head_ref"],
+            audience=sorted(
+                [
+                    {**row, "authority_manifest_hash": epochs[row["being_ref"]]}
+                    for row in rows
+                ],
+                key=lambda row: (row["being_ref"], row["embodiment_id"]),
+            ),
+            membership_proofs=sorted(proof_rows, key=lambda row: row["membership_ref"]),
+            required_authority_epochs=list(required),
+        )
+        return {
+            **body,
+            "roster_sha256": hashlib.sha256(canonical_bytes(body)).hexdigest(),
+            "evaluated_at_ms": now,
+        }
+
+    def receiving_roster(self) -> dict[str, Any]:
+        """Current verified roster, separate from immutable boot/gate evidence."""
+        self._verify_loaded_stores()
+        now = self.lane.clock()
+        with self.lane.relationships.authorization_view(
+            at_ms=now, card_verifier=self.lane.card_verifier, busy_timeout_ms=0
+        ) as view:
+            roster = self._receiving_roster(view, now)
+            self._verify_loaded_stores()
+            return roster
+
+    @contextmanager
+    def selection_authorization(self, expected_roster_sha256: str) -> Iterator[None]:
+        """Called under physical fence; hold the local roster through selection.
+
+        Lock order is physical fence -> relationship transaction, matching
+        release authorization. Do no network calls or owner RPC in this scope.
+        Contended history fails immediately rather than extending the budget.
+        """
+        self._verify_loaded_stores()
+        now = self.lane.clock()
+        with self.lane.relationships.authorization_view(
+            at_ms=now, card_verifier=self.lane.card_verifier, busy_timeout_ms=0
+        ) as view:
+            if (
+                self._receiving_roster(view, now)["roster_sha256"]
+                != expected_roster_sha256
+            ):
+                raise ValueError("reader_roster_conflict")
+            self._verify_loaded_stores()
+            yield
 
     def _direct_ready(
         self,

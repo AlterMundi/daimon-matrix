@@ -8,13 +8,14 @@ import json
 import os
 import shutil
 import socket
+import sqlite3
 import struct
 import sys
 import threading
 import time
 import unittest
 import uuid
-from contextlib import contextmanager, suppress
+from contextlib import closing, contextmanager, suppress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -375,6 +376,290 @@ class ReceivingOwnerApiTests(unittest.TestCase):
             method=method,
             params=params,
         )
+
+    def test_roster_digest_is_stable_across_clock_and_contains_verified_proof_epochs(
+        self,
+    ):
+        first = self.group.receiving_roster()
+        self.fixture.now += 1
+        later = self.group.receiving_roster()
+        self.assertEqual(first["roster_sha256"], later["roster_sha256"])
+        self.assertNotEqual(first["evaluated_at_ms"], later["evaluated_at_ms"])
+        self.assertEqual(len(first["audience"]), 2)
+        required = set(first["required_authority_epochs"])
+        self.assertTrue(
+            {row["authority_manifest_hash"] for row in first["audience"]} <= required
+        )
+        self.assertTrue(
+            {row["signer_manifest_hash"] for row in first["membership_proofs"]}
+            <= required
+        )
+        self.assertNotIn("grants", first)
+        self.assertNotIn("events", first)
+
+    def test_current_roster_select_and_exact_retry_use_existing_control(self):
+        roster = self.group.receiving_roster()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                expected_roster_sha256=roster["roster_sha256"],
+            )
+        )
+        response = self.service.handle(request)
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(self.service.handle(request), response)
+        status = self.service.handle(
+            self.request({}, method="runtime.status", capability=self.observer)
+        )
+        self.assertEqual(
+            status["result"]["receiving"]["rosters"]["tribe"]["roster_sha256"],
+            roster["roster_sha256"],
+        )
+
+    def test_signed_membership_change_refuses_old_roster_without_enabling_readers(self):
+        from daimon_matrix.relationships import MEMBERSHIP_LEAVE_SCHEMA
+
+        roster = self.group.receiving_roster()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        old_request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                expected_roster_sha256=roster["roster_sha256"],
+            )
+        )
+        member = self.fixture.member.state.being_ref
+        acceptance = next(
+            event
+            for event in self.fixture.events
+            if event["event_id"] == self.fixture._membership_of(member)
+        )
+        self.fixture.journey.append(
+            "member",
+            "matrix/tribe-membership-leave",
+            dict(
+                schema=MEMBERSHIP_LEAVE_SCHEMA,
+                tribe_ref=self.fixture.tribe_ref,
+                founder_epoch=self.group.lane.snapshot(
+                    self.fixture.tribe_ref, self.fixture.now
+                ).value["founder_epoch"],
+                member_being_ref=member,
+                membership_acceptance_ref=dict(
+                    event_id=acceptance["event_id"],
+                    event_hash=acceptance["content_hash"],
+                ),
+                reason="synthetic-roster-CAS",
+                terminated_at_ms=self.fixture.now,
+            ),
+            at_ms=self.fixture.now,
+        )
+        from daimon_matrix.relationship_store import RelationshipStoreError
+
+        with self.assertRaises(RelationshipStoreError):
+            self.group.receiving_roster()
+        rejected = self.service.handle(old_request)
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(rejected["error"]["code"], "reader_roster_unavailable")
+        gate = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        self.assertEqual((gate["phase"], gate["readers"]), ("revoke", []))
+        # Emergency revocation is available even while the roster differs.
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        status = self.service.handle(
+            self.request({}, method="runtime.status", capability=self.observer)
+        )
+        self.assertTrue(status["ok"], status)
+        self.assertEqual(
+            status["result"]["receiving"]["rosters"]["tribe"]["schema"],
+            "dm.runtime.tribe-roster-unavailable/v1",
+        )
+        self.assertEqual(
+            status["result"]["receiving"]["channels"]["tribe"]["phase"], "revoke"
+        )
+
+    def test_roster_transaction_is_held_through_local_select_and_never_waits_for_writer(
+        self,
+    ):
+        roster = self.group.receiving_roster()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        native = self.group.egress._select_readers_locked
+        checked = []
+
+        def locked(*args):
+            self.assertFalse(self.group.egress._fence.acquire(blocking=False))
+            with (
+                closing(
+                    sqlite3.connect(self.group.lane.relationships.path, timeout=0)
+                ) as writer,
+                self.assertRaises(sqlite3.OperationalError),
+            ):
+                writer.execute("BEGIN IMMEDIATE")
+            checked.append(True)
+            return native(*args)
+
+        with patch.object(
+            self.group.egress, "_select_readers_locked", side_effect=locked
+        ):
+            selected = self.service.handle(
+                self.request(
+                    command(
+                        self.group.egress,
+                        phase="select",
+                        readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                        expected_roster_sha256=roster["roster_sha256"],
+                    )
+                )
+            )
+        self.assertTrue(selected["ok"], selected)
+        self.assertEqual(checked, [True, True])
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        with closing(
+            sqlite3.connect(self.group.lane.relationships.path, timeout=0)
+        ) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            refused = self.service.handle(
+                self.request(
+                    command(
+                        self.group.egress,
+                        phase="select",
+                        readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                        expected_roster_sha256=roster["roster_sha256"],
+                    )
+                )
+            )
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertFalse(refused["ok"])
+            self.assertTrue(refused["error"]["retryable"])
+        self.assertEqual(
+            self.group.egress.reader_snapshot("tribe", deadline_ns=budget())["phase"],
+            "revoke",
+        )
+
+    def test_roster_opt_in_rejects_null_and_stale_digest_without_changing_gate(self):
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        before = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        for expected, error in (
+            (None, "reader_selection_invalid"),
+            ("f" * 64, "reader_roster_conflict"),
+        ):
+            rejected = self.service.handle(
+                self.request(
+                    command(
+                        self.group.egress,
+                        phase="select",
+                        readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                        expected_roster_sha256=expected,
+                    )
+                )
+            )
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertEqual(rejected["error"]["code"], error)
+            self.assertEqual(
+                self.group.egress.reader_snapshot("tribe", deadline_ns=budget()), before
+            )
+
+    def test_cached_success_and_first_failure_return_bounded_roster_contention(self):
+        roster = self.group.receiving_roster()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        selected_request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                expected_roster_sha256=roster["roster_sha256"],
+            )
+        )
+        selected = self.service.handle(selected_request)
+        self.assertTrue(selected["ok"], selected)
+        status_request = self.request(
+            {}, method="runtime.status", capability=self.observer
+        )
+        self.assertTrue(self.service.handle(status_request)["ok"])
+        with closing(
+            sqlite3.connect(self.group.lane.relationships.path, timeout=0)
+        ) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            retried = self.service.handle(selected_request)
+            self.assertFalse(retried["ok"], retried)
+            self.assertEqual(
+                retried["error"], dict(code="reader_roster_unavailable", retryable=True)
+            )
+            status = self.service.handle(status_request)
+            self.assertTrue(status["ok"], status)
+            self.assertEqual(
+                status["result"]["receiving"]["rosters"]["tribe"]["schema"],
+                "dm.runtime.tribe-roster-unavailable/v1",
+            )
+            self.assertTrue(
+                status["result"]["receiving"]["rosters"]["tribe"]["retryable"]
+            )
+            self.assertEqual(
+                status["result"]["receiving"]["channels"]["tribe"], selected["result"]
+            )
+        self.assertEqual(self.service.handle(selected_request), selected)
+
+    def test_store_replaced_while_waiting_for_fence_cannot_acknowledge_selection(self):
+        from daimon_matrix.service import LoadedStoreBinding
+
+        path = self.group.lane.relationships.path
+        self.group._loaded_store_bindings = (LoadedStoreBinding.capture(path),)
+        roster = self.group.receiving_roster()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60000)],
+                expected_roster_sha256=roster["roster_sha256"],
+            )
+        )
+        validated = threading.Event()
+        original = self.group.validate
+
+        def before_wait(service):
+            original(service)
+            validated.set()
+
+        results = []
+        self.group.egress._fence.acquire()
+        worker = threading.Thread(
+            target=lambda: results.append(self.service.handle(request))
+        )
+        with patch.object(self.group, "validate", side_effect=before_wait):
+            try:
+                worker.start()
+                self.assertTrue(validated.wait(1))
+                replacement = path.with_name(path.name + ".replacement")
+                shutil.copy2(path, replacement)
+                replacement.replace(path)
+            finally:
+                self.group.egress._fence.release()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["ok"], results)
+        gate = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        self.assertEqual((gate["phase"], gate["readers"]), ("revoke", []))
 
     def test_authenticated_control_current_retry_supersession_and_independent_status(
         self,
