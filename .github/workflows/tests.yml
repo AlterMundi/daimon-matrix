@@ -322,7 +322,8 @@ jobs:
           tests.test_dm079_capability_profiles
           tests.test_operator_runtime_upgrade.CurrentCapabilityUpgradeTests
           tests.test_dm024_runtime.RuntimeBundleTests
-          tests.test_dm024_service.HostedServiceTests -v
+          tests.test_dm024_service.HostedServiceTests
+          tests.test_dm025_client.LocalClientTests -v
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: membership-group-${{ github.sha }}

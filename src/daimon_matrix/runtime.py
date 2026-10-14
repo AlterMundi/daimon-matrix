@@ -8,6 +8,8 @@ import json
 import os
 import re
 import stat
+import sys
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -454,6 +456,7 @@ def load_runtime(
     curator_effect_observer: EffectTruthObserver | None = None,
     relationship_authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
     | None = None,
+    qualified_startup: Mapping[str, Any] | None = None,
 ) -> HostedRuntime:
     """Verify all public/secret bindings before exposing a hosted service.
 
@@ -463,6 +466,84 @@ def load_runtime(
     Existing local/source authorities cannot be replaced through this seam.
     """
     supplied_relationship_authorities = dict(relationship_authorities or {})
+    # This is trusted owner boot evidence, never a bundle or RPC parameter.
+    # Freeze it now so caller mutation cannot rewrite a loaded generation.
+    startup_observation = None
+    if qualified_startup is not None:
+        startup_fields = {
+            "schema",
+            "process_id",
+            "startup_instance_id",
+            "code_digest",
+            "matrix_commit",
+            "sdk_digest",
+            "matrix_wheel_sha256",
+            "import_files_sha256",
+            "import_context_sha256",
+            "isolated",
+            "no_site",
+            "no_bytecode",
+            "interpreter",
+        }
+        try:
+            startup_observation = json.loads(canonical_bytes(qualified_startup))
+            if (
+                set(startup_observation) != startup_fields
+                or startup_observation["schema"]
+                != "cluster-onboarding-loaded-startup/v1"
+                or type(startup_observation["process_id"]) is not int
+                or startup_observation["process_id"] != os.getpid()
+                or str(uuid.UUID(startup_observation["startup_instance_id"]))
+                != startup_observation["startup_instance_id"]
+                or not sys.flags.isolated
+                or not sys.flags.no_site
+                or not sys.flags.dont_write_bytecode
+                or any(
+                    startup_observation[field] is not True
+                    for field in ("isolated", "no_site", "no_bytecode")
+                )
+                or any(
+                    not isinstance(startup_observation[field], str)
+                    or re.fullmatch(r"[0-9a-f]{64}", startup_observation[field]) is None
+                    for field in startup_fields
+                    - {
+                        "schema",
+                        "process_id",
+                        "startup_instance_id",
+                        "matrix_commit",
+                        "isolated",
+                        "no_site",
+                        "no_bytecode",
+                        "interpreter",
+                    }
+                )
+                or not isinstance(startup_observation["matrix_commit"], str)
+                or re.fullmatch(r"[0-9a-f]{40}", startup_observation["matrix_commit"])
+                is None
+                or startup_observation["import_context_sha256"]
+                != hashlib.sha256(
+                    json.dumps(
+                        {
+                            "path": sys.path,
+                            "dont_write_bytecode": sys.dont_write_bytecode,
+                            "pycache_prefix": sys.pycache_prefix,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                or startup_observation["interpreter"]
+                != {
+                    "implementation": sys.implementation.name,
+                    "version": list(sys.version_info[:3]),
+                    "executable_sha256": hashlib.sha256(
+                        Path("/proc/self/exe").read_bytes()
+                    ).hexdigest(),
+                }
+            ):
+                raise ValueError("startup")
+        except (CanonicalError, KeyError, TypeError, ValueError, OSError) as error:
+            raise RuntimeError("qualified_startup_rejected") from error
     if egress is not None and egress_factory is not None:
         raise RuntimeError("runtime_visibility_configuration_conflict")
 
@@ -1575,6 +1656,24 @@ def load_runtime(
         peer_context=peer_context,
         we_lane=we_lane,
         visibility_status=visibility.status,
+        loaded_runtime=canonical_bytes(
+            {
+                "schema": "dm.runtime.loaded-base/v1",
+                "process_id": os.getpid(),
+                "process_instance_id": str(uuid.uuid4()),
+                "runtime_bundle_sha256": hashlib.sha256(
+                    canonical_bytes(raw_bundle)
+                ).hexdigest(),
+                "startup": {
+                    "isolated": bool(sys.flags.isolated),
+                    "no_site": bool(sys.flags.no_site),
+                    "no_bytecode": bool(sys.flags.dont_write_bytecode),
+                },
+                # Flags and loaded values alone never qualify an import tree,
+                # selected SDK or loaded receiving application/store set.
+                "qualified_startup": startup_observation,
+            }
+        ),
     )
     ledger.integrity_check()
     final_root = root.lstat()

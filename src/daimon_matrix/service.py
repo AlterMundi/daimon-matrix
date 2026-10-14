@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import os
 import re
 import time
 import unicodedata
@@ -474,6 +476,7 @@ class HostedWeave:
     labels: LabelIndex | None = None
     messaging: MessagingServiceContext | None = None
     receiving: ReceivingServiceContext | None = None
+    loaded_runtime: bytes | None = None
     visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
     def __post_init__(self) -> None:
@@ -676,9 +679,10 @@ class HostedWeave:
                 method == "runtime.status"
                 and (
                     self.receiving is not None
+                    or self.loaded_runtime is not None
                     or (
                         isinstance(verified.get("result"), Mapping)
-                        and "receiving" in verified["result"]
+                        and {"receiving", "loaded_runtime"} & verified["result"].keys()
                     )
                 )
             ):
@@ -988,9 +992,10 @@ class HostedWeave:
             method == "runtime.status"
             and (
                 self.receiving is not None
+                or self.loaded_runtime is not None
                 or (
                     isinstance(verified.get("result"), Mapping)
-                    and "receiving" in verified["result"]
+                    and {"receiving", "loaded_runtime"} & verified["result"].keys()
                 )
             )
         ):
@@ -2314,6 +2319,11 @@ class HostedWeave:
                     "epoch_count": len(accepted),
                 },
             }
+            if self.loaded_runtime is not None:
+                loaded = json.loads(self.loaded_runtime)
+                if loaded["process_id"] != os.getpid():
+                    raise ServiceError("loaded_runtime_process_changed")
+                result["loaded_runtime"] = loaded
             if self.receiving is not None:
                 deadline = time.monotonic_ns() + 2_000_000_000
                 try:

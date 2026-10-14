@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import os
+import socket
+import struct
+import sys
 import threading
 import time
 import unittest
 import uuid
+from contextlib import contextmanager, suppress
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.client import ClientError
 from daimon_matrix.local_api import (
     LocalApiError,
     create_capability,
@@ -19,12 +28,15 @@ from daimon_matrix.local_api import (
     request_hash,
 )
 from daimon_matrix.native_egress import NativeEgressError, synthetic_visibility
+from daimon_matrix.runtime import RuntimeError as RuntimeLoadError
+from daimon_matrix.runtime import load_runtime
 from daimon_matrix.service import (
     HostedWeave,
     MessagingServiceContext,
     ReceivingServiceContext,
     ServiceError,
 )
+from tests import test_dm025_client as client_fixtures
 from tests import test_group_messaging_runtime as group_fixtures
 
 
@@ -69,6 +81,240 @@ def reader(**changes):
         "authority_epochs": ["b" * 64],
         **changes,
     }
+
+
+class ReceivingOwnerConnectionTests(client_fixtures.ClientFixture):
+    def test_owner_startup_handoff_freezes_evidence_and_rejects_context_drift(self):
+        # Pure loader seam qualification; the actual closed-interpreter
+        # bootstrap is separately exercised by Cluster's subprocess fixture.
+        startup_sys = SimpleNamespace(
+            flags=SimpleNamespace(isolated=1, no_site=1, dont_write_bytecode=1),
+            path=list(sys.path),
+            dont_write_bytecode=True,
+            pycache_prefix="/synthetic-closed-tree/.disabled-bytecode",
+            implementation=sys.implementation,
+            version_info=sys.version_info,
+        )
+        context = {
+            "path": startup_sys.path,
+            "dont_write_bytecode": startup_sys.dont_write_bytecode,
+            "pycache_prefix": startup_sys.pycache_prefix,
+        }
+        observation = {
+            "schema": "cluster-onboarding-loaded-startup/v1",
+            "process_id": os.getpid(),
+            "startup_instance_id": str(uuid.uuid4()),
+            "matrix_commit": "a" * 40,
+            **{
+                field: "a" * 64
+                for field in (
+                    "code_digest",
+                    "sdk_digest",
+                    "matrix_wheel_sha256",
+                    "import_files_sha256",
+                )
+            },
+            "import_context_sha256": hashlib.sha256(
+                json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "interpreter": {
+                "implementation": sys.implementation.name,
+                "version": list(sys.version_info[:3]),
+                "executable_sha256": hashlib.sha256(
+                    Path("/proc/self/exe").read_bytes()
+                ).hexdigest(),
+            },
+            "isolated": True,
+            "no_site": True,
+            "no_bytecode": True,
+        }
+        with patch("daimon_matrix.runtime.sys", startup_sys):
+            hosted = load_runtime(
+                self.state_root,
+                "runtime.json",
+                lambda: bytearray(client_fixtures.PASSWORD),
+                clock=self.client().clock,
+                qualified_startup=observation,
+            )
+            frozen = json.loads(hosted.service.loaded_runtime)["qualified_startup"]
+            observation["sdk_digest"] = "f" * 64
+            self.assertEqual(
+                json.loads(hosted.service.loaded_runtime)["qualified_startup"], frozen
+            )
+            for field, changed in (
+                ("path", [*startup_sys.path, "/unqualified-extra"]),
+                ("dont_write_bytecode", False),
+                ("pycache_prefix", "/unqualified-cache"),
+                ("version_info", (0, 0, 0)),
+            ):
+                with (
+                    self.subTest(field=field),
+                    patch.object(startup_sys, field, changed),
+                    self.assertRaisesRegex(
+                        RuntimeLoadError, "qualified_startup_rejected"
+                    ),
+                ):
+                    load_runtime(
+                        self.state_root,
+                        "runtime.json",
+                        lambda: self.fail("context drift must reject before custody"),
+                        clock=self.client().clock,
+                        qualified_startup=observation,
+                    )
+
+    def test_qualification_from_another_process_is_rejected_before_custody(self):
+        with self.assertRaisesRegex(RuntimeLoadError, "qualified_startup_rejected"):
+            load_runtime(
+                self.state_root,
+                "runtime.json",
+                lambda: self.fail("a parent observation cannot unlock custody"),
+                clock=self.client().clock,
+                qualified_startup={
+                    "schema": "cluster-onboarding-loaded-startup/v1",
+                    "process_id": os.getpid() + 1,
+                    "startup_instance_id": str(uuid.uuid4()),
+                    "matrix_commit": "a" * 40,
+                    **{
+                        field: "a" * 64
+                        for field in (
+                            "code_digest",
+                            "sdk_digest",
+                            "matrix_wheel_sha256",
+                            "import_files_sha256",
+                            "import_context_sha256",
+                        )
+                    },
+                    "isolated": True,
+                    "no_site": True,
+                    "no_bytecode": True,
+                    "interpreter": {},
+                },
+            )
+
+    def test_loaded_runtime_snapshot_ignores_new_disk_selection_and_reconciles_restart(
+        self,
+    ):
+        client = self.client()
+        request, response = client.runtime_status()
+        loaded = response["result"]["loaded_runtime"]
+        self.assertEqual(loaded["process_id"], os.getpid())
+        self.assertIsNone(loaded["qualified_startup"])
+        bundle_path = self.state_root / "runtime.json"
+        bundle = json.loads(bundle_path.read_bytes())
+        self.assertEqual(
+            loaded["runtime_bundle_sha256"],
+            hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
+        )
+        bundle["socket"] = "selected-not-loaded.sock"
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        # The old process must report what it actually loaded, not the selector
+        # now on disk. Mutating a returned snapshot cannot change that fact.
+        loaded["runtime_bundle_sha256"] = "f" * 64
+        old = client.send(request)["result"]["loaded_runtime"]
+        self.assertNotEqual(
+            old["runtime_bundle_sha256"], loaded["runtime_bundle_sha256"]
+        )
+        restarted = load_runtime(
+            self.state_root,
+            "runtime.json",
+            lambda: bytearray(client_fixtures.PASSWORD),
+            clock=client.clock,
+        )
+        current = restarted.service.handle(request)["result"]["loaded_runtime"]
+        self.assertNotEqual(current["process_instance_id"], old["process_instance_id"])
+        self.assertNotEqual(
+            current["runtime_bundle_sha256"], old["runtime_bundle_sha256"]
+        )
+        self.assertEqual(
+            current["runtime_bundle_sha256"],
+            hashlib.sha256(canonical_bytes(bundle)).hexdigest(),
+        )
+
+    @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Linux peer credentials")
+    def test_observer_pins_the_actual_authenticated_status_connection(self):
+        order = []
+        checked = []
+        from daimon_matrix.client import verify_response
+
+        def authenticate(*args, **kwargs):
+            value = verify_response(*args, **kwargs)
+            checked.append(value)
+            order.append("authenticated")
+            return value
+
+        @contextmanager
+        def observe(connection):
+            pid, uid, _gid = struct.unpack(
+                "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            )
+            self.assertEqual((pid, uid), (os.getpid(), os.geteuid()))
+            order.append("connected")
+            yield
+            self.assertGreaterEqual(connection.fileno(), 0)
+            self.assertEqual(len(checked), 1)
+            order.append("verified")
+
+        client = replace(self.client(), connection_observer=observe)
+        with patch("daimon_matrix.client.verify_response", side_effect=authenticate):
+            _, response = client.runtime_status()
+        self.assertTrue(response["ok"])
+        self.assertEqual(order, ["connected", "authenticated", "verified"])
+
+    def mutation(self):
+        return self.client().prepare(
+            "we.observe",
+            {
+                "subject": "connected-owner-observation",
+                "payload": {"summary": "owner observer failure may follow an effect"},
+                "sensitivity": "personal",
+                "causal_parents": [],
+                "occurred_at_ms": self.client().clock(),
+                "event_id": None,
+            },
+        )
+
+    def test_observer_refusal_before_write_does_not_submit_the_request(self):
+        @contextmanager
+        def refuse(_connection):
+            raise RuntimeError("synthetic owner refusal")
+            yield
+
+        with self.assertRaisesRegex(ClientError, "daemon_observation_rejected"):
+            replace(self.client(), connection_observer=refuse).send(self.mutation())
+        self.assertEqual(self.runtime.service.ledger.events(), [])
+        self.assertEqual(self.runtime.service.ledger.status_counts()["pending_rpc"], 0)
+
+    def test_observer_failure_after_effect_preserves_exact_retry_and_history(self):
+        @contextmanager
+        def fail_after_authentication(_connection):
+            yield
+            raise RuntimeError("synthetic process observation lost after effect")
+
+        request = self.mutation()
+        with self.assertRaisesRegex(ClientError, "daemon_observation_rejected"):
+            replace(self.client(), connection_observer=fail_after_authentication).send(
+                request
+            )
+        self.assertEqual(len(self.runtime.service.ledger.events()), 1)
+        current = self.client().send(request)
+        self.assertTrue(current["ok"])
+        self.assertEqual(self.client().send(request), current)
+        self.assertEqual(len(self.runtime.service.ledger.events()), 1)
+
+    def test_observer_cannot_suppress_failed_response_authentication(self):
+        @contextmanager
+        def suppress_failure(_connection):
+            with suppress(ClientError):
+                yield
+
+        client = self.client()
+        client = replace(
+            client,
+            config=replace(client.config, runtime_id="dm:runtime:v1:" + "B" * 43),
+            connection_observer=suppress_failure,
+        )
+        with self.assertRaisesRegex(ClientError, "daemon_response_rejected"):
+            client.runtime_status()
 
 
 class ReceivingOwnerApiTests(unittest.TestCase):
@@ -151,6 +397,7 @@ class ReceivingOwnerApiTests(unittest.TestCase):
         self.assertEqual(
             status["result"]["receiving"]["channels"]["tribe"], selected["result"]
         )
+        self.assertEqual(selected["result"]["process_id"], os.getpid())
         self.assertTrue(
             self.service.handle(self.request(command(self.group.egress)))["ok"]
         )

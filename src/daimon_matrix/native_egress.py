@@ -879,6 +879,7 @@ class MandatoryEgressController:
         return {
             "schema": "dm.receiving.reader-selection/v1",
             "process_instance_id": self._reader_instance_id,
+            "process_id": self._reader_instance_pid,
             "channel_id": channel_id,
             "context_sha256": selected.context_sha256,
             "controlled": selected.controlled,

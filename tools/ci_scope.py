@@ -246,6 +246,7 @@ BOUNDED_GROUP_FILES = frozenset(
 
 RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
     {
+        "src/daimon_matrix/client.py",
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",
         "tests/test_dm079_capability_profiles.py",

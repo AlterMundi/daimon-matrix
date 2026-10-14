@@ -12,7 +12,7 @@ import stat
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from contextlib import suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -37,6 +37,7 @@ DEFAULT_TIMEOUT_SECONDS: Final = 5.0
 Clock = Callable[[], int]
 UUIDFactory = Callable[[], uuid.UUID]
 NonceFactory = Callable[[int], bytes]
+ConnectionObserver = Callable[[socket.socket], AbstractContextManager[None]]
 
 
 class ClientError(RuntimeError):
@@ -297,6 +298,7 @@ class LocalClient:
     clock: Clock = lambda: time.time_ns() // 1_000_000
     uuid_factory: UUIDFactory = uuid.uuid4
     nonce_factory: NonceFactory = secrets.token_bytes
+    connection_observer: ConnectionObserver | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -305,6 +307,10 @@ class LocalClient:
             or not 0.05 <= self.timeout_seconds <= 60.0
         ):
             raise ClientError("invalid_client_timeout")
+        if self.connection_observer is not None and not callable(
+            self.connection_observer
+        ):
+            raise ClientError("invalid_connection_observer")
         object.__setattr__(self, "socket_path", Path(os.path.abspath(self.socket_path)))
 
     def prepare(
@@ -339,38 +345,54 @@ class LocalClient:
         if normalized["method"] not in CLIENT_METHODS:
             raise ClientError("unsupported_client_method")
         _socket_is_owner_only(self.socket_path)
+        verified = None
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
                 connection.settimeout(float(self.timeout_seconds))
                 connection.connect(str(self.socket_path))
-                connection.sendall(encode_frame(request))
-                header = _recv_exact(connection, 4)
-                size = int.from_bytes(header, "big")
-                if not 1 <= size <= MAX_FRAME_BYTES:
-                    raise ClientError("invalid_daemon_response_size")
-                raw = _recv_exact(connection, size)
                 try:
-                    response = decode_document(raw)
-                except LocalApiError as exception:
-                    raise ClientError("daemon_response_rejected") from exception
-                if connection.recv(1):
-                    raise ClientError("trailing_daemon_response")
+                    observation = (
+                        nullcontext()
+                        if self.connection_observer is None
+                        else self.connection_observer(connection)
+                    )
+                    with observation:
+                        connection.sendall(encode_frame(request))
+                        header = _recv_exact(connection, 4)
+                        size = int.from_bytes(header, "big")
+                        if not 1 <= size <= MAX_FRAME_BYTES:
+                            raise ClientError("invalid_daemon_response_size")
+                        raw = _recv_exact(connection, size)
+                        try:
+                            response = decode_document(raw)
+                            if connection.recv(1):
+                                raise ClientError("trailing_daemon_response")
+                            verified = verify_response(
+                                response,
+                                self.config.capability,
+                                expected_request_id=str(normalized["request_id"]),
+                                expected_request_hash=digest,
+                                expected_server=self.config.expected_server,
+                                expected_runtime={
+                                    "runtime_id": self.config.runtime_id,
+                                    "runtime_label": self.config.runtime_label,
+                                },
+                            )
+                        except (KeyError, LocalApiError) as exception:
+                            raise ClientError("daemon_response_rejected") from exception
+                except (ClientError, TimeoutError, OSError):
+                    raise
+                except Exception as exception:
+                    # Observation can fail after a real effect. Preserve the
+                    # exact request for reconciliation; this is not non-delivery.
+                    raise ClientError("daemon_observation_rejected") from exception
         except (TimeoutError, OSError) as exception:
             raise ClientError("daemon_unavailable") from exception
-        try:
-            return verify_response(
-                response,
-                self.config.capability,
-                expected_request_id=str(normalized["request_id"]),
-                expected_request_hash=digest,
-                expected_server=self.config.expected_server,
-                expected_runtime={
-                    "runtime_id": self.config.runtime_id,
-                    "runtime_label": self.config.runtime_label,
-                },
-            )
-        except (KeyError, LocalApiError) as exception:
-            raise ClientError("daemon_response_rejected") from exception
+        if verified is None:
+            # Even a trusted observer suppressing an exception cannot turn an
+            # unauthenticated or incomplete response into an accepted result.
+            raise ClientError("daemon_response_rejected")
+        return verified
 
     def invoke(
         self,
