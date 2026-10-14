@@ -309,3 +309,42 @@ Receiving selection and rollback MUST qualify the deferred observation and
 unfinished-intake contracts, independently of artifact integrity and live
 readiness. No model lifecycle or global interruption is authorized by this
 runtime contract.
+
+## 15. Bounded native transport and owned response release
+
+The selected bounded group profile MUST use numeric destination endpoints,
+without uncancellable resolution inside its native-network attempt. General
+hostname or outbound Unix adapters MUST NOT be advertised as qualifying this
+profile. TLS MUST preserve certificate verification. Explicit endpoint ports
+MUST remain exact; invalid ports MUST fail before any network operation.
+
+Each admitted native-network attempt MUST share an absolute monotonic deadline
+through connection/TLS setup, fence acquisition, whole-request write and all
+response parsing, no later than the immutable carrier's remaining lifetime.
+Partial progress MUST NOT renew it. Connection setup MAY occur before the
+execution fence only without Matrix application bytes. Actual writes MUST
+recheck current authority, already-discharged visibility, exact native bytes and
+expiry, including after an owner authorization callback. A reusable permit
+outside the fence MUST NOT substitute for that actual write boundary.
+
+Accepted ACKs and signed refusals MUST retain their exact binding for the actual
+HTTP/IPC writer. Headers, framing, body and any transmitting flush MUST remain
+inside release. Response construction or returning bytes is not a socket effect.
+Technical completion MUST retain the remaining ownership/obligation budget and
+remain recoverable when response release is blocked or the budget is exhausted.
+
+Runtime-global and per-operation capacity MUST bound started/submitted work and
+preserve independent control progress. Admission MUST precede task submission;
+an executor's worker count alone does not bound its queue. Concurrent exact
+target attempts MUST coalesce. Full frozen audiences and retained unstarted,
+unconfirmed and authenticated outcomes MUST survive saturation, expiry and retry.
+
+Receiving input deadlines MUST start before header parsing. Admitted handlers
+and writers MUST retain runtime ownership until completion, including degraded
+local storage completion. Qualified transport/admission waits MUST NOT be
+represented as a hard real-time bound on filesystem, scheduler or separately
+selected visibility-service behavior. Visibility preparation remains a distinct
+prerequisite; bounded permit issuance MUST NOT advance that service itself.
+
+Technical capacity and retries authorize no model attention, new speech loop,
+identity, group membership, transport topology or global interruption.

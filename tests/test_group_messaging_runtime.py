@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 import uuid
 from contextlib import closing
@@ -17,6 +18,7 @@ from daimon_matrix.messaging import GroupMessaging, MessagingTribePolicy
 from daimon_matrix.native_egress import (
     VISIBILITY_SCHEMA_VERSION,
     MandatoryEgressController,
+    NativeEgressError,
     synthetic_visibility,
 )
 from daimon_matrix.routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
@@ -24,6 +26,311 @@ from tests import test_dm051_sealed as sealing_fixtures
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_owned_ack_and_refusal_recheck_authority_before_actual_http_writer(self):
+        sender, receiver = self.groups
+        ingress = receiver.intake_ingresses["message"]
+        original_reply = ingress._owned_reply
+        original_authorizer = ingress.egress_authorizer
+        handler = self.servers[1].RequestHandlerClass
+        completed = []
+
+        def revoke_after_preparation(*arguments, **keywords):
+            reply = original_reply(*arguments, **keywords)
+            ingress.egress_authorizer = lambda _binding: False
+
+            def completion(deadline):
+                completed.append(True)
+                if reply.after_response_bounded is not None:
+                    reply.after_response_bounded(deadline)
+                else:
+                    reply.after_response()
+
+            return replace(reply, after_response_bounded=completion)
+
+        for refused in (False, True):
+            with self.subTest(refused=refused):
+                before = len(receiver.page(after=0, limit=10))
+                try:
+                    with (
+                        patch.object(ingress, "_owned_reply", revoke_after_preparation),
+                        patch.object(handler, "_write_response") as actual_writer,
+                        patch.object(
+                            ingress,
+                            "intake_admission",
+                            side_effect=ValueError("synthetic pre-effect refusal")
+                            if refused
+                            else None,
+                            wraps=None if refused else ingress.intake_admission,
+                        ),
+                    ):
+                        sender.send(
+                            client_id="test",
+                            send_id=str(uuid.uuid4()),
+                            thread_id=str(uuid.uuid4()),
+                            text="actual owned reply authority boundary",
+                        )
+                        for server in [*self.servers, self.servers[0]]:
+                            server._threads.join()
+                        actual_writer.assert_not_called()
+                finally:
+                    ingress.egress_authorizer = original_authorizer
+                self.assertEqual(
+                    len(receiver.page(after=0, limit=10)),
+                    before + (0 if refused else 1),
+                )
+        self.assertEqual(completed, [True, True])
+
+    def test_authorize_callback_expiry_at_the_fence_emits_no_matrix_bytes(self):
+        sender, receiver = self.groups
+        checked = []
+
+        def authorize():
+            if sender.egress._fence.locked():
+                self.fixture.now += 60_000
+                checked.append(True)
+
+        result = sender.send(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="recheck immutable lifetime after owner authorization",
+            authorize=authorize,
+        )
+        self.assertEqual(checked, [True])
+        self.assertTrue(result["carrier"]["expired"])
+        for server in self.servers:
+            server._threads.join()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
+    def test_expiry_after_connection_setup_emits_no_matrix_request(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        round_trip = provider._round_trip
+        original = round_trip.bounded_open
+        connected = []
+
+        def connect_then_expire(deadline):
+            exchange = original(deadline)
+            connected.append(True)
+            self.fixture.now += 60_000
+            return exchange
+
+        provider._round_trip = replace(round_trip, bounded_open=connect_then_expire)
+        result = sender.send(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="check authority at the actual write after setup",
+        )
+        self.assertEqual(connected, [True])
+        self.assertTrue(result["carrier"]["expired"])
+        for server in self.servers:
+            server._threads.join()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
+    def test_fanout_slow_row_does_not_serialize_healthy_row_and_joins_writers(self):
+        _controller, operation, native = self._bounded_write_operation()
+        group = self.groups[0]
+        rows = [
+            {"being_ref": "synthetic:slow", "embodiment_id": "synthetic:slow-body"},
+            {"being_ref": "synthetic:fast", "embodiment_id": "synthetic:fast-body"},
+        ]
+        for row in rows:
+            group.providers[(row["being_ref"], row["embodiment_id"])] = {}
+        entered, healthy, release, returned = (threading.Event() for _ in range(4))
+        seen, errors = [], []
+
+        def transmit(raw, row, binding, **arguments):
+            self.assertEqual(raw, native)
+            self.assertEqual(binding, operation)
+            self.assertFalse(arguments["receipt"])
+            seen.append(row["embodiment_id"])
+            if row["being_ref"] == "synthetic:slow":
+                entered.set()
+                if not release.wait(5):
+                    raise AssertionError("slow writer release missing")
+            else:
+                healthy.set()
+
+        def fanout():
+            try:
+                group._fanout(native, rows, operation, authorize=None)
+            except BaseException as failure:
+                errors.append(failure)
+            finally:
+                returned.set()
+
+        with patch.object(group, "_transmit", side_effect=transmit):
+            worker = threading.Thread(target=fanout)
+            try:
+                worker.start()
+                self.assertTrue(entered.wait(5))
+                self.assertTrue(healthy.wait(5))
+                self.assertFalse(returned.is_set())
+                # Another exact concurrent call coalesces its active slow row.
+                group._fanout(native, rows[:1], operation, authorize=None)
+                self.assertEqual(seen.count("synthetic:slow-body"), 1)
+            finally:
+                release.set()
+                worker.join(5)
+        self.assertTrue(returned.is_set())
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(group._transport_inflight, set())
+
+    def test_saturated_speech_has_independent_control_admission(self):
+        _, operation, _native = self._bounded_write_operation()
+        group = self.groups[0]
+        rows = [
+            {"being_ref": f"synthetic:{i}", "embodiment_id": f"synthetic:body-{i}"}
+            for i in range(5)
+        ]
+        claimed = []
+        try:
+            for row in rows[:4]:
+                self.assertTrue(group._claim_transport(row, operation, receipt=False))
+                claimed.append(row)
+            self.assertFalse(group._claim_transport(rows[4], operation, receipt=False))
+            self.assertTrue(group._claim_transport(rows[4], operation, receipt=True))
+            group._finish_transport(rows[4], operation, receipt=True)
+        finally:
+            for row in claimed:
+                group._finish_transport(row, operation, receipt=False)
+        self.assertEqual(group._transport_inflight, set())
+
+    def test_expired_completion_budget_preserves_receipt_obligation(self):
+        sender, receiver = self.groups
+        first, _admission = self._fail_ack_after_durable_intake(sender, receiver)
+        before = receiver.records.get("receipt-obligation", first["message_id"])
+        deadline = time.monotonic_ns() - 1
+        with patch.object(
+            receiver, "_transmit", side_effect=AssertionError("late I/O")
+        ):
+            result = receiver.complete_receipt(
+                first["message_id"], deadline_ns=deadline
+            )
+            self.assertEqual(result["state"], "pending")
+        self.assertEqual(
+            receiver.records.get("receipt-obligation", first["message_id"]), before
+        )
+        self.assertIsNone(receiver.records.get("receipt-terminal", first["message_id"]))
+
+    def test_large_echo_is_fully_confirmed_before_bounded_fanout(self):
+        sender, _ = self.groups
+        seen = []
+
+        def transmit(_native, _row, operation, **_arguments):
+            state = sender.egress.inspect(operation)
+            self.assertGreater(state["part_count"], 1)
+            self.assertEqual(state["state"], "confirmed")
+            seen.append(state["confirmed_parts"])
+
+        with patch.object(sender, "_transmit", side_effect=transmit):
+            sender.send(
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="large synthetic full echo " * 500,
+            )
+        self.assertTrue(seen)
+
+    def _bounded_write_operation(self):
+        group = self.groups[0]
+        identifier = str(uuid.uuid4())
+        raw = b"synthetic bounded native writer"
+        projection = {
+            "event_id": identifier,
+            "event_digest": "a" * 64,
+            "sender": group.lane.being_ref,
+            "recipients": [self.groups[1].lane.being_ref],
+            "thread_id": identifier,
+            "kind": "message",
+            "reply_to": None,
+            "content": {"text": "synthetic bounded writer"},
+        }
+        binding = group.records.admit(
+            identifier,
+            raw,
+            path_id="tribe-message-request",
+            projection=projection,
+            deadline_ms=self.fixture.now + 60_000,
+            authority_head=group.ledger.local_origin["body_ref"],
+        )
+        return group.egress, binding, raw
+
+    def test_bounded_release_never_advances_visibility_under_the_fence(self):
+        controller, binding, raw = self._bounded_write_operation()
+        effects = []
+        with (
+            patch.object(
+                controller._transport,
+                "send",
+                side_effect=AssertionError("hidden echo I/O"),
+            ),
+            self.assertRaisesRegex(NativeEgressError, "egress_echo_not_confirmed"),
+        ):
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 1_000_000_000,
+            )
+        self.assertEqual(effects, [])
+        controller.advance_one(binding)
+        controller.release_bounded(
+            binding,
+            raw,
+            effects.append,
+            deadline_ns=time.monotonic_ns() + 1_000_000_000,
+        )
+        self.assertEqual(effects, [raw])
+        self.assertEqual(controller.inspect_retained(binding)["completed_releases"], 1)
+
+    def test_bounded_release_deadline_includes_existing_fence_wait(self):
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        controller._fence.acquire()
+        effects = []
+        try:
+            with self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"):
+                controller.release_bounded(
+                    binding,
+                    raw,
+                    effects.append,
+                    deadline_ns=time.monotonic_ns() + 20_000_000,
+                )
+        finally:
+            controller._fence.release()
+        self.assertEqual(effects, [])
+        self.assertEqual(controller._live_permits, set())
+        self.assertIsNone(controller._attempt_deadline.get())
+
+    def test_bounded_release_rechecks_time_after_local_verification(self):
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        issue = controller._issue_permit_locked
+        effects = []
+
+        def advance_clock(*args, **kwargs):
+            permit = issue(*args, **kwargs)
+            self.fixture.now = binding.deadline_ms
+            return permit
+
+        with (
+            patch.object(controller, "_issue_permit_locked", advance_clock),
+            self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"),
+        ):
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 1_000_000_000,
+            )
+        self.assertEqual(effects, [])
+        self.assertEqual(controller._live_permits, set())
+
     def setUp(self):
         self.fixture = sealing_fixtures.TribeConversationLaneTests()
         self.fixture.setUp()
@@ -119,6 +426,7 @@ class GroupRuntimeTests(unittest.TestCase):
                         sender_body_ref=group.ledger.local_origin["body_ref"],
                         endpoint=f"http://127.0.0.1:{self.servers[index].server_port}"
                         f"/dm-messaging/v1/{phase}",
+                        total_timeout_seconds=12,
                         clock=group.lane.clock,
                         egress=group.egress,
                     )
@@ -211,6 +519,10 @@ class GroupRuntimeTests(unittest.TestCase):
             receiver.records.get("receipt-obligation", first["message_id"]), obligation
         )
         self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        # Receipt ACK proves durable control intake; its foreign projection is
+        # deliberately after the write. Observe completion before semantic view.
+        for server in self.servers:
+            server._threads.join()
         inspected = sender.inspect(client_id="test", send_id=first["send_id"])
         self.assertTrue(inspected["semantic"]["terminal"])
         self.assertEqual(
