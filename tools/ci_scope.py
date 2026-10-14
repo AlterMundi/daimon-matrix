@@ -253,6 +253,7 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
         "tests/test_operator_runtime_upgrade.py",
         "tests/test_receiving_runtime.py",
         "tests/test_dm024_runtime.py",
+        "tests/test_dm025_client.py",
     }
 )
 

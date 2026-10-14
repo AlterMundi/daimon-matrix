@@ -3,11 +3,15 @@ from __future__ import annotations
 import copy
 import json
 import os
+import socket
 import stat
 import threading
 import time
 import unittest
 import uuid
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import (
@@ -82,6 +86,96 @@ class ClientFixture(RuntimeFixture):
 
 
 class LocalClientTests(ClientFixture):
+    def test_optional_absolute_deadline_preserves_authenticated_success(self) -> None:
+        client = replace(self.client(), deadline_ns=time.monotonic_ns() + 2_000_000_000)
+        request = client.prepare("runtime.status", {})
+        before = copy.deepcopy(request)
+        self.assertTrue(client.send(request)["ok"])
+        self.assertEqual(request, before)
+        for invalid in (True, -1, 2**63, 1.0):
+            with self.assertRaisesRegex(ClientError, "invalid_client_deadline"):
+                replace(client, deadline_ns=invalid)  # type: ignore[arg-type]
+
+    def test_expired_deadline_during_setup_never_connects(self) -> None:
+        import daimon_matrix.client as module
+
+        client = replace(self.client(), deadline_ns=time.monotonic_ns() + 1_000_000_000)
+        request = client.prepare("runtime.status", {})
+        actual = module._socket_is_owner_only
+        assert client.deadline_ns is not None
+        expired = client.deadline_ns + 1
+
+        def setup(path: Path) -> None:
+            actual(path)
+            clock.return_value = expired
+
+        with (
+            patch.object(time, "monotonic_ns", return_value=expired - 2) as clock,
+            patch.object(module, "_socket_is_owner_only", side_effect=setup),
+            patch.object(socket.socket, "connect") as connect,
+        ):
+            with self.assertRaisesRegex(ClientError, "daemon_deadline_expired"):
+                client.send(request)
+            connect.assert_not_called()
+
+    def test_absolute_deadline_bounds_fragmented_header_body_and_eof(self) -> None:
+        # These read-only peer fixtures deliberately never provide a valid
+        # authenticated result. The native request remains the same retry token.
+        for phase in ("header", "body", "eof"):
+            with self.subTest(phase=phase):
+                path = self.root_path / ("slow-" + phase + ".sock")
+                listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                listener.bind(str(path))
+                path.chmod(0o600)
+                listener.listen(1)
+                listener.settimeout(2)
+                stop = threading.Event()
+
+                def server(
+                    listener: socket.socket = listener,
+                    phase: str = phase,
+                    stop: threading.Event = stop,
+                ) -> None:
+                    try:
+                        with listener.accept()[0] as connection:
+                            connection.settimeout(1)
+                            connection.recv(65536)
+                            if phase == "body":
+                                connection.sendall((1024).to_bytes(4, "big"))
+                            elif phase == "eof":
+                                connection.sendall((2).to_bytes(4, "big") + b"{}")
+                                stop.wait(1)
+                                return
+                            while not stop.wait(0.03):
+                                connection.sendall(b"\0" if phase == "header" else b" ")
+                    except OSError:
+                        pass  # Deadline closes the client connection.
+
+                worker = threading.Thread(target=server)
+                worker.start()
+                try:
+                    start = time.monotonic()
+                    client = replace(
+                        self.client(),
+                        socket_path=path,
+                        timeout_seconds=1,
+                        deadline_ns=time.monotonic_ns() + 90_000_000,
+                    )
+                    request = client.prepare("runtime.status", {})
+                    before = copy.deepcopy(request)
+                    with self.assertRaisesRegex(
+                        ClientError, "daemon_unavailable|daemon_deadline_expired"
+                    ):
+                        client.send(request)
+                    self.assertLess(time.monotonic() - start, 0.7)
+                    self.assertEqual(request, before)
+                finally:
+                    stop.set()
+                    worker.join(2)
+                    listener.close()
+                    path.unlink()
+                self.assertFalse(worker.is_alive())
+
     def test_v3_binds_operator_client_to_one_runtime_identity(self) -> None:
         self.config_path.write_bytes(
             canonical_bytes(

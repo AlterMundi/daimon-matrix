@@ -276,10 +276,27 @@ def _socket_is_owner_only(path: Path) -> None:
         raise ClientError("daemon_socket_untrusted")
 
 
-def _recv_exact(connection: socket.socket, size: int) -> bytes:
+def _deadline_timeout(
+    connection: socket.socket, deadline_ns: int | None, timeout_seconds: float
+) -> None:
+    if deadline_ns is not None:
+        remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        if remaining <= 0:
+            raise ClientError("daemon_deadline_expired")
+        connection.settimeout(min(timeout_seconds, remaining))
+
+
+def _recv_exact(
+    connection: socket.socket,
+    size: int,
+    *,
+    deadline_ns: int | None = None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> bytes:
     chunks: list[bytes] = []
     remaining = size
     while remaining:
+        _deadline_timeout(connection, deadline_ns, timeout_seconds)
         chunk = connection.recv(remaining)
         if not chunk:
             raise ClientError("daemon_response_truncated")
@@ -299,6 +316,9 @@ class LocalClient:
     uuid_factory: UUIDFactory = uuid.uuid4
     nonce_factory: NonceFactory = secrets.token_bytes
     connection_observer: ConnectionObserver | None = None
+    # Trusted owner-local monotonic budget; never a wire/request authority field.
+    # None preserves the existing per-operation timeout contract.
+    deadline_ns: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -311,6 +331,10 @@ class LocalClient:
             self.connection_observer
         ):
             raise ClientError("invalid_connection_observer")
+        if self.deadline_ns is not None and (
+            type(self.deadline_ns) is not int or not 0 <= self.deadline_ns < 2**63
+        ):
+            raise ClientError("invalid_client_deadline")
         object.__setattr__(self, "socket_path", Path(os.path.abspath(self.socket_path)))
 
     def prepare(
@@ -349,6 +373,7 @@ class LocalClient:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
                 connection.settimeout(float(self.timeout_seconds))
+                _deadline_timeout(connection, self.deadline_ns, self.timeout_seconds)
                 connection.connect(str(self.socket_path))
                 try:
                     observation = (
@@ -357,14 +382,31 @@ class LocalClient:
                         else self.connection_observer(connection)
                     )
                     with observation:
-                        connection.sendall(encode_frame(request))
-                        header = _recv_exact(connection, 4)
+                        frame = encode_frame(request)
+                        _deadline_timeout(
+                            connection, self.deadline_ns, self.timeout_seconds
+                        )
+                        connection.sendall(frame)
+                        header = _recv_exact(
+                            connection,
+                            4,
+                            deadline_ns=self.deadline_ns,
+                            timeout_seconds=self.timeout_seconds,
+                        )
                         size = int.from_bytes(header, "big")
                         if not 1 <= size <= MAX_FRAME_BYTES:
                             raise ClientError("invalid_daemon_response_size")
-                        raw = _recv_exact(connection, size)
+                        raw = _recv_exact(
+                            connection,
+                            size,
+                            deadline_ns=self.deadline_ns,
+                            timeout_seconds=self.timeout_seconds,
+                        )
                         try:
                             response = decode_document(raw)
+                            _deadline_timeout(
+                                connection, self.deadline_ns, self.timeout_seconds
+                            )
                             if connection.recv(1):
                                 raise ClientError("trailing_daemon_response")
                             verified = verify_response(
@@ -392,6 +434,8 @@ class LocalClient:
             # Even a trusted observer suppressing an exception cannot turn an
             # unauthenticated or incomplete response into an accepted result.
             raise ClientError("daemon_response_rejected")
+        if self.deadline_ns is not None and time.monotonic_ns() >= self.deadline_ns:
+            raise ClientError("daemon_deadline_expired")
         return verified
 
     def invoke(

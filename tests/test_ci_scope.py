@@ -29,6 +29,7 @@ class CIScopeTests(unittest.TestCase):
         group = workflow.split("  tribe-group:", 1)[1].split("  human-tribu:", 1)[0]
         for contract in (
             "tests.test_receiving_runtime",
+            "tests.test_dm025_client.LocalClientTests",
             "tests.test_dm079_capability_profiles",
             "tests.test_operator_runtime_upgrade.CurrentCapabilityUpgradeTests",
             "tests.test_dm024_runtime.RuntimeBundleTests",
