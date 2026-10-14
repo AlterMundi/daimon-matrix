@@ -36,6 +36,20 @@ class CIScopeTests(unittest.TestCase):
         ):
             self.assertIn(contract, group)
         self.assertIn("needs.scope.outputs.group_receiving_checks == 'true'", group)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "scope-output"
+            with (
+                patch("tools.ci_scope.select", return_value="receiving-control"),
+                patch.object(sys, "argv", ["ci_scope.py", "--base", "base"]),
+                patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            ):
+                main()
+            selected = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            self.assertEqual(selected["profile"], "tribe-group")
+            self.assertEqual(selected["group_receiving_checks"], "true")
+            self.assertNotEqual(selected.get("group_receipt_checks"), "false")
 
     def test_bounded_group_checks_omit_only_unchanged_receipt_membership_code(self):
         from tools.ci_scope import BOUNDED_GROUP_FILES

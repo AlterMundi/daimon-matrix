@@ -28,6 +28,7 @@ from .messaging_config import (
     read_publication,
 )
 from .native_egress import closed_visibility
+from .operator_capabilities import STATUS_OBSERVER_METHODS
 from .operator_messaging import (
     _runtime_authorities,
     _visibility_factory,
@@ -70,6 +71,7 @@ def application_view(
         document, visibility, clock=base.service.clock, catalog_mode=catalog_mode
     )(visibility_context(base))
     view = load_application(replace(base, egress=controller), app)
+    receiving = view.service.receiving
     return replace(
         view,
         peer_dispatcher=None,
@@ -84,6 +86,17 @@ def application_view(
                 key: capability
                 for key, capability in view.service.capabilities.items()
                 if set(capability.methods) <= MESSAGING_METHODS
+                or (
+                    receiving is not None
+                    and (
+                        key == receiving.capability_id
+                        or (
+                            capability.client_id
+                            == f"client:host:{view.service.runtime_label}:status"
+                            and set(capability.methods) <= STATUS_OBSERVER_METHODS
+                        )
+                    )
+                )
             },
             visibility_status=controller.status,
         ),

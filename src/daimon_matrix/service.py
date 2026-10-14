@@ -673,7 +673,14 @@ class HostedWeave:
                 expected_runtime=self.runtime_identity,
             )
             if method == "runtime.reader-selection" or (
-                method == "runtime.status" and self.receiving is not None
+                method == "runtime.status"
+                and (
+                    self.receiving is not None
+                    or (
+                        isinstance(verified.get("result"), Mapping)
+                        and "receiving" in verified["result"]
+                    )
+                )
             ):
                 return self._receiving_response(verified, request, capability)
             if method == "messaging.inbox":
@@ -978,7 +985,14 @@ class HostedWeave:
             # finish_rpc can select a concurrent finisher's earlier response.
             return self._messaging_response(verified, request, capability)
         if method == "runtime.reader-selection" or (
-            method == "runtime.status" and self.receiving is not None
+            method == "runtime.status"
+            and (
+                self.receiving is not None
+                or (
+                    isinstance(verified.get("result"), Mapping)
+                    and "receiving" in verified["result"]
+                )
+            )
         ):
             return self._receiving_response(verified, request, capability)
         return verified

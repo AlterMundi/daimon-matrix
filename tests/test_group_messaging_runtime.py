@@ -1737,6 +1737,31 @@ class GroupRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(state["phase"], "unselected")
             self.assertEqual(state["readers"], [])
+            from daimon_matrix.chat_host import application_view
+            from daimon_matrix.operator_capabilities import STATUS_OBSERVER_METHODS
+            from daimon_matrix.service import MESSAGING_METHODS
+
+            with patch(
+                "daimon_matrix.chat_host._visibility_factory",
+                return_value=lambda _context: runtime.egress,
+            ):
+                hosted = application_view(runtime, app, directory / "visibility.json")
+            self.assertTrue(
+                hosted.service.messaging.channels["tribe"].controlled_readers
+            )
+            self.assertEqual(
+                hosted.service.receiving.capability_id, controller.capability_id
+            )
+            for key, selected in hosted.service.capabilities.items():
+                if key == controller.capability_id:
+                    continue
+                if (
+                    selected.client_id
+                    == f"client:host:{runtime.service.runtime_label}:status"
+                ):
+                    self.assertLessEqual(set(selected.methods), STATUS_OBSERVER_METHODS)
+                else:
+                    self.assertLessEqual(set(selected.methods), MESSAGING_METHODS)
         else:
             self.assertIsNone(view.service.receiving)
         request_id, moved_id = str(uuid.uuid4()), str(uuid.uuid4())

@@ -264,6 +264,17 @@ class ReceivingOwnerApiTests(unittest.TestCase):
         self.assertEqual(state["phase"], "unselected")
         self.assertEqual(state["readers"], [])
 
+    def test_status_cached_in_controlled_view_never_claims_a_missing_current_context(
+        self,
+    ):
+        request = self.request({}, method="runtime.status", capability=self.observer)
+        previous = self.service.handle(request)
+        self.assertIn("receiving", previous["result"])
+        base_only = replace(self.service, receiving=None)
+        current = base_only.handle(request)
+        self.assertTrue(current["ok"], current)
+        self.assertNotIn("receiving", current["result"])
+
     def test_owner_context_cannot_enable_an_ordinary_or_rebound_group(self):
         with self.assertRaisesRegex(ServiceError, "reader_controller_binding_invalid"):
             replace(
@@ -608,6 +619,45 @@ class ControlledGroupTests(unittest.TestCase):
     controlled_readers = True
     setUp = ReaderHTTPTests.setUp
     arguments = ReaderHTTPTests.arguments
+
+    def test_changed_stored_membership_epoch_refuses_before_provider_preparation(self):
+        import sqlite3
+        from contextlib import ExitStack, closing
+
+        f = self.fixture
+        sender, receiver = f.groups
+        arguments = self.arguments(sender, receiver)
+        initial = f.send_and_settle(sender, **arguments)
+        plan = sender.records.get("send", initial["send_id"])
+        proof = plan["sender_proof"]
+        event = next(
+            event
+            for event in sender.lane.relationships.events()
+            if event["event_id"] == proof["membership_event_id"]
+        )
+        corrupted = {**event, "manifest_hash": "f" * 64}
+        self.assertEqual(corrupted["content_hash"], event["content_hash"])
+        with (
+            closing(sqlite3.connect(sender.lane.relationships.path)) as database,
+            database,
+        ):
+            updated = database.execute(
+                "UPDATE events SET event_json=? WHERE event_id=?",
+                (canonical_bytes(corrupted), event["event_id"]),
+            )
+            self.assertEqual(updated.rowcount, 1)
+        self.assertIn(corrupted, sender.lane.relationships.events())
+        with ExitStack() as stack:
+            preparations = [
+                stack.enter_context(
+                    patch.object(provider["message"], "prepare_submission")
+                )
+                for provider in sender.providers.values()
+            ]
+            with self.assertRaises(ValueError):
+                sender.send(**arguments)
+            for preparation in preparations:
+                preparation.assert_not_called()
 
     def test_revoke_waits_for_actual_group_write(self):
         ReaderHTTPTests.test_revoke_waits_for_actual_http_write_and_blocks_subsequent_direct(

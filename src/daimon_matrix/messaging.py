@@ -38,7 +38,11 @@ from .messaging_store import (
     TribeControlCapacityError,
 )
 from .native_egress import MandatoryEgressController, OperationBinding
-from .relationship_store import RelationshipStore, RelationshipView
+from .relationship_store import (
+    RelationshipStore,
+    RelationshipStoreError,
+    RelationshipView,
+)
 from .routes import (
     ROUTE_SUBMISSION_SCHEMA,
     AuthenticatedProvider,
@@ -1910,13 +1914,20 @@ class GroupMessaging:
         if plan is None:
             raise ValueError("tribe_readiness_evidence_missing")
         epochs = {sender_manifest_hash, *plan["epochs"].values()}
-        events = {
-            event["event_id"]: event for event in self.lane.relationships.events()
-        }
+        events = self.lane.relationships.events()
         for proof in [plan["sender_proof"], *plan["proofs"].values()]:
-            event = events.get(proof["membership_event_id"])
-            if event is None or event["content_hash"] != proof["membership_event_hash"]:
+            matching = [
+                event
+                for event in events
+                if (event["event_id"], event["content_hash"])
+                == (proof["membership_event_id"], proof["membership_event_hash"])
+            ]
+            if len(matching) != 1:
                 raise ValueError("tribe_readiness_evidence_missing")
+            try:
+                event = self.lane.relationships._validated_event(matching[0])
+            except RelationshipStoreError:
+                raise ValueError("tribe_readiness_evidence_invalid") from None
             epochs.add(event["manifest_hash"])
         return (
             "dm.tribe.direct-conversation/v1"
