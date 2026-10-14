@@ -1872,9 +1872,12 @@ class AuthenticatedProvider:
         carrier_binding: OperationBinding | None = None,
         attempt_deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
+        require_bounded_write: bool = False,
     ) -> Mapping[str, Any]:
         """Transmit exact bytes; optionally retain the authenticated response."""
         started_ns = time.monotonic_ns()
+        if type(require_bounded_write) is not bool:
+            raise RouteError("route_bounded_transport_required")
         if attempt_deadline_ns is not None and (
             type(attempt_deadline_ns) is not int or attempt_deadline_ns <= started_ns
         ):
@@ -1895,7 +1898,10 @@ class AuthenticatedProvider:
                     "dm.tribe.direct-conversation/v1",
                 }:
                     raise RouteError("route_group_carrier_mismatch")
-                if group["schema"] == "dm.tribe.direct-conversation/v1" and (
+                if (
+                    require_bounded_write
+                    or group["schema"] == "dm.tribe.direct-conversation/v1"
+                ) and (
                     type(self._round_trip) is not _SplitRoundTrip
                     or self._round_trip.bounded_open is None
                 ):

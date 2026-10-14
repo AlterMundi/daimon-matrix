@@ -745,6 +745,7 @@ def _valid_text(value: str, *, maximum: int = 256) -> bool:
 class _ReaderSelection:
     context_sha256: str
     head: str
+    controlled: bool = False
     phase: str = "unselected"
     operation_id: str | None = None
     release_digest: str | None = None
@@ -836,27 +837,39 @@ class MandatoryEgressController:
     def policy_digest(self) -> str:
         return _digest(canonical_bytes(self._policy))
 
-    def register_reader_channel(self, channel_id: str, context_sha256: str) -> None:
+    def register_reader_channel(
+        self, channel_id: str, context_sha256: str, *, controlled: bool = False
+    ) -> None:
         """Bind a loaded group once; reconstruction cannot replace its context."""
         if (
             not _valid_text(channel_id, maximum=128)
             or not isinstance(context_sha256, str)
             or _SHA256.fullmatch(context_sha256) is None
+            or type(controlled) is not bool
         ):
             raise NativeEgressError("reader_context_invalid")
         with self._fence:
             previous = self._reader_selections.get(channel_id)
             if previous is not None:
-                if previous.context_sha256 != context_sha256:
+                if (
+                    previous.context_sha256 != context_sha256
+                    or previous.controlled != controlled
+                ):
                     raise NativeEgressError("reader_context_conflict")
                 return
             self._reader_selections[channel_id] = _ReaderSelection(
                 context_sha256,
                 _digest(
                     canonical_bytes(
-                        [self._reader_instance_id, channel_id, context_sha256]
+                        [
+                            self._reader_instance_id,
+                            channel_id,
+                            context_sha256,
+                            controlled,
+                        ]
                     )
                 ),
+                controlled=controlled,
             )
 
     def _reader_snapshot(self, channel_id: str) -> dict[str, Any]:
@@ -868,6 +881,7 @@ class MandatoryEgressController:
             "process_instance_id": self._reader_instance_id,
             "channel_id": channel_id,
             "context_sha256": selected.context_sha256,
+            "controlled": selected.controlled,
             "head": selected.head,
             "phase": selected.phase,
             "operation_id": selected.operation_id,
@@ -1046,6 +1060,7 @@ class MandatoryEgressController:
                 raise NativeEgressError("reader_selection_expired")
             self._reader_selections[value["channel_id"]] = _ReaderSelection(
                 context_sha256=previous.context_sha256,
+                controlled=previous.controlled,
                 head=_digest(
                     canonical_bytes([previous.head, request_sha256, command_sha256])
                 ),

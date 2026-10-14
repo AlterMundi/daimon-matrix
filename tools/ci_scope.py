@@ -244,8 +244,28 @@ BOUNDED_GROUP_FILES = frozenset(
 )
 
 
+RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
+    {
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+        "tests/test_dm024_runtime.py",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if changed <= RECEIVING_CONTROL_FILES and changed & {
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+    }:
+        return "receiving-control"
     if (
         changed <= BOUNDED_GROUP_FILES
         and {
@@ -375,7 +395,7 @@ def main() -> None:
             "visibility"
             if selected == "mirror"
             else "tribe-group"
-            if selected == "bounded-group-transport"
+            if selected in {"bounded-group-transport", "receiving-control"}
             else selected
         )
         + "\nnative_checks="
@@ -383,6 +403,8 @@ def main() -> None:
     )
     if selected == "bounded-group-transport":
         value += "\ngroup_receipt_checks=false"
+    if selected == "receiving-control":
+        value += "\ngroup_receiving_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

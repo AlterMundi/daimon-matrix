@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -405,6 +406,94 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
                 original["descriptor"]["not_after_ms"],
                 successor["descriptor"]["not_after_ms"],
             )
+
+    def test_explicit_controller_successor_preserves_keys_and_loads_independent_role(
+        self,
+    ):
+        from daimon_matrix.local_api import LocalCapability, create_request
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.runtime import load_runtime
+
+        old = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        ready = self.stage(add_methods={}, provision_receiving_controller=True)
+        self.assertTrue(ready["provision_receiving_controller"])
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        published = self.publish()
+        self.assertEqual(published, self.publish())
+        after = upgrade._snapshot(self.source)
+        upgrade._capability_successor(
+            self.before, after, {}, provision_receiving_controller=True
+        )
+        current = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        self.assertEqual(
+            dict(old.secrets), {name: current.secrets[name] for name in old.secrets}
+        )
+        self.assertEqual(len(current.secrets), len(old.secrets) + 1)
+        self.assertEqual(current.counter, old.counter + 1)
+        bundle = json.loads(after["runtime.json"])
+        self.assertEqual(bundle["capabilities"][:-1], self.bundle["capabilities"])
+
+        def clock():
+            return time.time_ns() // 1_000_000
+
+        runtime = load_runtime(
+            self.source,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=clock,
+            egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+        )
+        directory = self.source / "host-clients/receiving-controller"
+        config = json.loads((directory / "client.json").read_bytes())
+        controller = LocalCapability.from_value(
+            config["capability"], (directory / "capability.key").read_bytes()
+        )
+        self.assertEqual(set(controller.methods), {"runtime.reader-selection"})
+        response = runtime.service.handle(
+            create_request(
+                controller,
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=clock(),
+                method="runtime.reader-selection",
+                params={},
+            )
+        )
+        # Issuance alone supplies no composed receiving controller or grant.
+        self.assertEqual(response["error"]["code"], "reader_controller_unavailable")
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_unrelated_profile_changed"
+        ):
+            upgrade._capability_successor(self.before, after, self.args["add_methods"])
+
+    def test_controller_request_field_is_explicit_and_strict(self):
+        request = {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in self.args.items()
+            if key not in {"password", "externally_quiesced"}
+        }
+        request["add_methods"] = {}
+        request["provision_receiving_controller"] = True
+        path = self.parent / "controller-request.json"
+
+        def read():
+            path.write_text(json.dumps(request))
+            path.chmod(0o600)
+            return upgrade._read_request(
+                path,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+                capability_upgrade=True,
+            )
+
+        self.assertTrue(read()["provision_receiving_controller"])
+        request["provision_receiving_controller"] = 1
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_invalid_controller_selection"
+        ):
+            read()
 
     def test_current_v8_bundle_is_supported_without_rebirth(self):
         from daimon_matrix.canonical import canonical_bytes

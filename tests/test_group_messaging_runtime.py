@@ -844,6 +844,7 @@ class GroupRuntimeTests(unittest.TestCase):
                 providers={},
                 config_digest="0" * 64,
                 egress=controller,
+                controlled_readers=getattr(self, "controlled_readers", False),
             )
             ingresses = {}
             origin_body = lane.ledger.local_origin["body_ref"]
@@ -1618,6 +1619,28 @@ class GroupRuntimeTests(unittest.TestCase):
         _runtime_fixture, runtime, _reads = loaded(
             self, fixture.founder, clock=lambda: fixture.now
         )
+        if getattr(self, "with_receiving_controller", False):
+            from daimon_matrix.local_api import create_capability
+
+            controller = create_capability(
+                b"o" * 32,
+                client_id=f"client:host:{runtime.service.runtime_label}:receiving-controller",
+                methods=["runtime.reader-selection"],
+                not_before_ms=fixture.now - 1,
+                not_after_ms=fixture.now + 60_000,
+            )
+            # Explicit trusted owner composition. Signed optional-role issuance
+            # and loader validation are qualified by the successor fixtures.
+            runtime = replace(
+                runtime,
+                service=replace(
+                    runtime.service,
+                    capabilities={
+                        **runtime.service.capabilities,
+                        controller.capability_id: controller,
+                    },
+                ),
+            )
         relationships = RelationshipStore(
             runtime.state_root / "relationships.sqlite",
             authority_resolver=fixture.sender_lane.authority_resolver,
@@ -1703,6 +1726,19 @@ class GroupRuntimeTests(unittest.TestCase):
         import sqlite3
 
         group = view.service.messaging.channels["tribe"]
+        self.assertEqual(
+            group.controlled_readers,
+            bool(getattr(self, "with_receiving_controller", False)),
+        )
+        if group.controlled_readers:
+            self.assertIs(view.service.receiving.channels["tribe"], group)
+            state = group.egress.reader_snapshot(
+                "tribe", deadline_ns=time.monotonic_ns() + 1_000_000_000
+            )
+            self.assertEqual(state["phase"], "unselected")
+            self.assertEqual(state["readers"], [])
+        else:
+            self.assertIsNone(view.service.receiving)
         request_id, moved_id = str(uuid.uuid4()), str(uuid.uuid4())
         document = {"client_id": "test", "text": "signed record"}
         group.records.reserve("request", request_id, document, lambda: document)

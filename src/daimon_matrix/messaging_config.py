@@ -1577,7 +1577,12 @@ def _compose_group(
     from .routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
     from .runtime import MessagingHTTPContext
     from .sealed import EnvelopeStore
-    from .service import MESSAGING_METHODS, MessagingServiceContext
+    from .service import (
+        MESSAGING_METHODS,
+        RECEIVING_CONTROL_METHODS,
+        MessagingServiceContext,
+        ReceivingServiceContext,
+    )
     from .tribe_conversation import TribeConversation
 
     service, ordinary = runtime.service, runtime.service.relationships
@@ -1732,6 +1737,15 @@ def _compose_group(
                 if member["status"] == "active"
             ]
         )
+    controllers = [
+        selected
+        for selected in service.capabilities.values()
+        if selected.client_id
+        == f"client:host:{service.runtime_label}:receiving-controller"
+        and set(selected.methods) == RECEIVING_CONTROL_METHODS
+    ]
+    if len(controllers) > 1:
+        raise MessagingConfigError("messaging_reader_controller_binding_rejected")
     group = GroupMessaging(
         lane=lane,
         policy=MessagingTribePolicy(**application["tribe"]["policy"]),
@@ -1742,6 +1756,7 @@ def _compose_group(
         ),
         egress=runtime.egress,
         labels=labels,
+        controlled_readers=bool(controllers),
     )
     group.validate(service)
     ingresses = {}
@@ -1785,6 +1800,11 @@ def _compose_group(
         service=replace(
             service,
             messaging=messaging,
+            receiving=ReceivingServiceContext(
+                controllers[0].capability_id, {channel_id: group}
+            )
+            if controllers
+            else None,
             capabilities={**service.capabilities, capability.capability_id: capability},
         ),
         messaging_http=MessagingHTTPContext(

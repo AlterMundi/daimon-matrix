@@ -716,7 +716,12 @@ def load_runtime(
         try:
             if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
                 expected_profile = host_capability_profile(role)
-                expected_methods = HOST_CAPABILITY_PROFILES[role]
+                from .operator_capabilities import OPTIONAL_HOST_CAPABILITY_PROFILES
+
+                expected_methods = {
+                    **HOST_CAPABILITY_PROFILES,
+                    **OPTIONAL_HOST_CAPABILITY_PROFILES,
+                }[role]
                 expected_client_id = f"client:host:{runtime_label}:{role}"
                 expected_slot = host_capability_slot(runtime_label, role)
                 clients = host_clients
@@ -757,9 +762,10 @@ def load_runtime(
     }
     if (
         set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
-        or set(host_clients) != set(HOST_PROFILE_NAMES)
+        or not set(HOST_PROFILE_NAMES) <= set(host_clients)
+        or not set(host_clients) <= set(HOST_PROFILE_NAMES) | {"receiving-controller"}
         or len({capability.key_id for capability, _, _ in all_clients.values()})
-        != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+        != len(all_clients)
     ):
         raise RuntimeError("invalid_operator_capability_profile")
     for role, (capability, key, profile_value) in all_clients.items():

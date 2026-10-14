@@ -533,10 +533,20 @@ def _additions(value: Any) -> dict[str, list[str]]:
 
 
 def _capability_successor(
-    before: dict[str, bytes], after: dict[str, bytes], additions: Any
+    before: dict[str, bytes],
+    after: dict[str, bytes],
+    additions: Any,
+    *,
+    provision_receiving_controller: bool = False,
 ) -> None:
     """Allow exactly the requested profile additions and custody counter advance."""
-    additions = _additions(additions)
+    if type(provision_receiving_controller) is not bool:
+        raise UpgradeError("upgrade_invalid_controller_selection")
+    additions = (
+        {}
+        if additions == {} and provision_receiving_controller
+        else _additions(additions)
+    )
     old = json.loads(before["runtime.json"])
     new = json.loads(after["runtime.json"])
     changed = {"capabilities", "operator_capability_binding", "keystore"}
@@ -547,12 +557,16 @@ def _capability_successor(
     expected_keystore = {**old["keystore"], "counter": old["keystore"]["counter"] + 1}
     if new["keystore"] != expected_keystore:
         raise UpgradeError("upgrade_custody_revision_conflict")
-    if len(old["capabilities"]) != len(new["capabilities"]):
+    if len(new["capabilities"]) != len(old["capabilities"]) + int(
+        provision_receiving_controller
+    ):
         raise UpgradeError("upgrade_unrelated_profile_changed")
     allowed_files = {"runtime.json", "custody.json", ".custody.json.highwater"}
     found = set()
     for original, successor in zip(
-        old["capabilities"], new["capabilities"], strict=True
+        old["capabilities"],
+        new["capabilities"][: len(old["capabilities"])],
+        strict=True,
     ):
         role = original["profile"]["role"]
         if original["profile"]["schema"] != profiles.OPERATOR_CAPABILITY_PROFILE_SCHEMA:
@@ -592,9 +606,48 @@ def _capability_successor(
         expected_config["capability"] = updated
         if json.loads(after[filename]) != expected_config:
             raise UpgradeError("upgrade_client_binding_changed")
+    added_files = set()
+    if provision_receiving_controller:
+        profile = profiles.host_capability_profile("receiving-controller")
+        if any(row["profile"] == profile for row in old["capabilities"]):
+            raise UpgradeError("upgrade_controller_already_issued")
+        row = new["capabilities"][-1]
+        slot = profiles.host_capability_slot(
+            old["runtime_label"], "receiving-controller"
+        )
+        directory = profile["client_directory"]
+        filename = directory + "/" + profile["client_config_filename"]
+        key_filename = directory + "/" + profile["client_key_filename"]
+        key = after.get(key_filename)
+        if not isinstance(key, bytes) or len(key) != 32:
+            raise UpgradeError("upgrade_controller_binding_changed")
+        descriptor = row["descriptor"]
+        expected = create_capability(
+            key,
+            client_id=f"client:host:{old['runtime_label']}:receiving-controller",
+            methods=sorted(
+                profiles.OPTIONAL_HOST_CAPABILITY_PROFILES["receiving-controller"]
+            ),
+            not_before_ms=descriptor["not_before_ms"],
+            not_after_ms=descriptor["not_after_ms"],
+        )
+        if row != dict(
+            descriptor=expected.descriptor,
+            profile=profile,
+            runtime_id=old["runtime_id"],
+            secret_slot=slot,
+        ) or json.loads(after[filename]) != dict(
+            schema="dm.local.client-config/v3",
+            capability=expected.descriptor,
+            expected_server=old["local_origin"],
+            runtime_id=old["runtime_id"],
+            runtime_label=old["runtime_label"],
+        ):
+            raise UpgradeError("upgrade_controller_binding_changed")
+        added_files = {directory + "/", filename, key_filename}
     if (
         found != set(additions)
-        or set(before) != set(after)
+        or set(before) | added_files != set(after)
         or any(
             before[name] != after[name] for name in before if name not in allowed_files
         )
@@ -615,6 +668,7 @@ def stage_capabilities(
     expires_at_ms: int,
     password: bytes,
     externally_quiesced: bool,
+    provision_receiving_controller: bool = False,
 ) -> dict[str, Any]:
     """Issue only owner-requested missing methods, retaining all keys and identity.
 
@@ -625,7 +679,13 @@ def stage_capabilities(
         raise UpgradeError("upgrade_quiescence_and_password_required")
     if transaction.parent != source.parent or transaction == source:
         raise UpgradeError("upgrade_sibling_transaction_required")
-    additions = _additions(add_methods)
+    if type(provision_receiving_controller) is not bool:
+        raise UpgradeError("upgrade_invalid_controller_selection")
+    additions = (
+        {}
+        if add_methods == {} and provision_receiving_controller
+        else _additions(add_methods)
+    )
     code = Path(__file__).resolve().parent.parent
     with _locks(source):
         snapshot = _snapshot(source)
@@ -646,6 +706,11 @@ def stage_capabilities(
             raise UpgradeError("upgrade_identity_or_revision_conflict")
         _forward_authorization(bundle, expires_at_ms)
         _validate(source, code, password)
+        controller_profile = profiles.host_capability_profile("receiving-controller")
+        if provision_receiving_controller and any(
+            row["profile"] == controller_profile for row in bundle["capabilities"]
+        ):
+            raise UpgradeError("upgrade_controller_already_issued")
         selected = {
             row["profile"]["role"]: row
             for row in bundle["capabilities"]
@@ -671,6 +736,7 @@ def stage_capabilities(
         if current.counter != expected_counter:
             raise UpgradeError("upgrade_custody_revision_conflict")
         changes = {}
+        successor_secrets = dict(current.secrets)
         for role, row in selected.items():
             previous = row["descriptor"]
             capability = create_capability(
@@ -697,12 +763,60 @@ def stage_capabilities(
                 "previous_capability_id": previous["capability_id"],
                 "capability_id": capability.capability_id,
             }
+        if provision_receiving_controller:
+            label = bundle["runtime_label"]
+            slot = profiles.host_capability_slot(label, "receiving-controller")
+            if slot in successor_secrets:
+                raise UpgradeError("upgrade_controller_slot_conflict")
+            key = os.urandom(32)
+            if key in successor_secrets.values():
+                raise UpgradeError("upgrade_controller_key_conflict")
+            now = time.time_ns() // 1_000_000
+            if now >= expires_at_ms:
+                raise UpgradeError("upgrade_authorization_expired")
+            capability = create_capability(
+                key,
+                client_id=f"client:host:{label}:receiving-controller",
+                methods=sorted(
+                    profiles.OPTIONAL_HOST_CAPABILITY_PROFILES["receiving-controller"]
+                ),
+                not_before_ms=now,
+                not_after_ms=expires_at_ms,
+            )
+            successor_secrets[slot] = key
+            bundle["capabilities"].append(
+                dict(
+                    descriptor=capability.descriptor,
+                    profile=controller_profile,
+                    runtime_id=bundle["runtime_id"],
+                    secret_slot=slot,
+                )
+            )
+            directory = candidate / controller_profile["client_directory"]
+            directory.mkdir(mode=0o700)
+            _sync(directory.parent)
+            _write(directory / controller_profile["client_key_filename"], key)
+            _write(
+                directory / controller_profile["client_config_filename"],
+                canonical_bytes(
+                    dict(
+                        schema="dm.local.client-config/v3",
+                        capability=capability.descriptor,
+                        expected_server=bundle["local_origin"],
+                        runtime_id=bundle["runtime_id"],
+                        runtime_label=label,
+                    )
+                ),
+            )
+            changes["host:receiving-controller"] = dict(
+                provisioned=True, capability_id=capability.capability_id
+            )
         updated = store.rotate(
             lambda: bytearray(password),
             lambda: bytearray(password),
             expected_counter=current.counter,
             control_head=current.control_head,
-            secrets=current.secrets,
+            secrets=successor_secrets,
         )
         bundle["keystore"]["counter"] = updated.counter
         bundle["operator_capability_binding"] = (
@@ -719,7 +833,12 @@ def stage_capabilities(
         _write(candidate / "runtime.json", canonical_bytes(bundle))
         _validate(candidate, code, password)
         after = _snapshot(candidate)
-        _capability_successor(snapshot, after, additions)
+        _capability_successor(
+            snapshot,
+            after,
+            additions,
+            provision_receiving_controller=provision_receiving_controller,
+        )
         if inventory_digest(source) != expected_source_sha256:
             raise UpgradeError("upgrade_source_conflict")
         _forward_authorization(json.loads(snapshot["runtime.json"]), expires_at_ms)
@@ -739,6 +858,8 @@ def stage_capabilities(
             "add_methods": additions,
             "changes": changes,
         }
+        if provision_receiving_controller:
+            receipt["provision_receiving_controller"] = True
         _write(transaction / "ready.json", canonical_bytes(receipt))
         return receipt
 
@@ -801,7 +922,12 @@ def publish(
             _forward_authorization(legacy_bundle, receipt["expires_at_ms"])
             if capability_upgrade:
                 _capability_successor(
-                    _snapshot(source), _snapshot(successor), receipt["add_methods"]
+                    _snapshot(source),
+                    _snapshot(successor),
+                    receipt["add_methods"],
+                    provision_receiving_controller=receipt.get(
+                        "provision_receiving_controller", False
+                    ),
                 )
             _validate(successor, Path(__file__).resolve().parent.parent, password)
             if (inventory_digest(source), inventory_digest(successor)) != (old, new):
@@ -1125,6 +1251,10 @@ def _read_request(
     if capability_upgrade:
         fields -= {"legacy_source", "legacy_sha256"}
         fields.add("add_methods")
+        if isinstance(request, dict) and "provision_receiving_controller" in request:
+            if type(request["provision_receiving_controller"]) is not bool:
+                raise UpgradeError("upgrade_invalid_controller_selection")
+            fields.add("provision_receiving_controller")
     if not isinstance(request, dict) or set(request) != fields:
         raise UpgradeError("upgrade_invalid_request")
     for key in {"source", "transaction", "legacy_source"} & fields:

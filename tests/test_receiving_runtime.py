@@ -9,9 +9,22 @@ import time
 import unittest
 import uuid
 from dataclasses import replace
+from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.local_api import (
+    LocalApiError,
+    create_capability,
+    create_request,
+    request_hash,
+)
 from daimon_matrix.native_egress import NativeEgressError, synthetic_visibility
+from daimon_matrix.service import (
+    HostedWeave,
+    MessagingServiceContext,
+    ReceivingServiceContext,
+    ServiceError,
+)
 from tests import test_group_messaging_runtime as group_fixtures
 
 
@@ -56,6 +69,229 @@ def reader(**changes):
         "authority_epochs": ["b" * 64],
         **changes,
     }
+
+
+class ReceivingOwnerApiTests(unittest.TestCase):
+    controlled_readers = True
+
+    def setUp(self):
+        group_fixtures.GroupRuntimeTests.setUp(self)
+        self.group = self.groups[0]
+        self.controller = create_capability(
+            b"c" * 32,
+            client_id="client:host:synthetic:receiving-controller",
+            methods=["runtime.reader-selection"],
+            not_before_ms=0,
+            not_after_ms=2**53 - 1,
+        )
+        self.observer = create_capability(
+            b"s" * 32,
+            client_id="client:host:synthetic:status",
+            methods=["runtime.status"],
+            not_before_ms=0,
+            not_after_ms=2**53 - 1,
+        )
+        self.messaging = MessagingServiceContext(
+            channels={"tribe": self.group},
+            deliveries={"tribe": self.group},
+            client_channels={},
+        )
+        self.service = self.build(self.group)
+
+    def build(self, group):
+        return HostedWeave(
+            group.ledger,
+            group.signer,
+            {cap.capability_id: cap for cap in (self.controller, self.observer)},
+            group.lane.clock,
+            "dm:runtime:v1:" + "A" * 43,
+            "synthetic",
+            communication=group.communication,
+            messaging=replace(
+                self.messaging,
+                channels={"tribe": group},
+                deliveries={"tribe": group},
+            ),
+            receiving=ReceivingServiceContext(
+                self.controller.capability_id, {"tribe": group}
+            ),
+        )
+
+    def request(self, params, *, method="runtime.reader-selection", capability=None):
+        return create_request(
+            capability or self.controller,
+            request_id=str(uuid.uuid4()),
+            issued_at_ms=self.fixture.now,
+            method=method,
+            params=params,
+        )
+
+    def test_authenticated_control_current_retry_supersession_and_independent_status(
+        self,
+    ):
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            self.request(command(self.group.egress), capability=self.observer)
+        revoke = self.request(command(self.group.egress))
+        response = self.service.handle(revoke)
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(self.service.handle(revoke), response)
+        selected_request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60_000)],
+            )
+        )
+        selected = self.service.handle(selected_request)
+        self.assertTrue(selected["ok"], selected)
+        self.assertEqual(self.service.handle(selected_request), selected)
+        status = self.service.handle(
+            self.request({}, method="runtime.status", capability=self.observer)
+        )
+        self.assertEqual(
+            status["result"]["receiving"]["channels"]["tribe"], selected["result"]
+        )
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        rejected = self.service.handle(selected_request)
+        self.assertEqual(rejected["error"]["code"], "reader_selection_conflict")
+        self.assertEqual(
+            self.group.egress.reader_snapshot("tribe", deadline_ns=budget())["readers"],
+            [],
+        )
+
+    def test_pending_control_reconciles_applied_change_after_lost_rpc_completion(self):
+        revoke = self.request(command(self.group.egress))
+        self.assertTrue(self.service.handle(revoke)["ok"])
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60_000)],
+            )
+        )
+        digest = request_hash(request)
+        self.service.ledger.begin_rpc(
+            client_id=self.controller.client_id,
+            request_id=request["request_id"],
+            request_hash=digest,
+            method=request["method"],
+        )
+        applied = self.service._dispatch(
+            request["method"],
+            request["params"],
+            client_id=self.controller.client_id,
+            request_id=request["request_id"],
+            request_hash=digest,
+        )
+        response = self.service.handle(request)
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["result"], applied)
+        self.assertEqual(self.service.handle(request), response)
+
+    def test_concurrent_revocation_before_rpc_completion_cannot_return_stale_enable(
+        self,
+    ):
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60_000)],
+            )
+        )
+        finish = self.service.ledger.finish_rpc
+
+        def revoke_before_completion(**arguments):
+            select(self.group.egress, command(self.group.egress))
+            return finish(**arguments)
+
+        with patch.object(
+            self.service.ledger, "finish_rpc", side_effect=revoke_before_completion
+        ):
+            response = self.service.handle(request)
+        self.assertEqual(response["error"]["code"], "reader_selection_conflict")
+        self.assertEqual(
+            self.group.egress.reader_snapshot("tribe", deadline_ns=budget())["readers"],
+            [],
+        )
+
+    def test_restart_never_reuses_completed_revoke_or_enable_as_current_control(self):
+        revoke = self.request(command(self.group.egress))
+        self.assertTrue(self.service.handle(revoke)["ok"])
+        enabled = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[reader(expires_at_ms=self.fixture.now + 60_000)],
+            )
+        )
+        self.assertTrue(self.service.handle(enabled)["ok"])
+        status_request = self.request(
+            {}, method="runtime.status", capability=self.observer
+        )
+        previous_status = self.service.handle(status_request)
+        group = self.group
+        fresh = type(group.egress)(
+            policy=group.egress._policy,
+            proof_key=group.egress._proof_key,
+            transport=group.egress._transport,
+            clock=group.lane.clock,
+            catalog_mode="migrate",
+        )
+        restarted = group_fixtures.GroupMessaging(
+            lane=group.lane,
+            policy=group.policy,
+            communication=group.communication,
+            providers=group.providers,
+            config_digest=group.config_digest,
+            egress=fresh,
+            controlled_readers=True,
+        )
+        service = self.build(restarted)
+        current_status = service.handle(status_request)
+        self.assertNotEqual(
+            previous_status["result"]["receiving"],
+            current_status["result"]["receiving"],
+        )
+        for retained in (revoke, enabled):
+            response = service.handle(retained)
+            self.assertEqual(response["error"]["code"], "reader_process_conflict")
+        state = fresh.reader_snapshot("tribe", deadline_ns=budget())
+        self.assertEqual(state["phase"], "unselected")
+        self.assertEqual(state["readers"], [])
+
+    def test_owner_context_cannot_enable_an_ordinary_or_rebound_group(self):
+        with self.assertRaisesRegex(ServiceError, "reader_controller_binding_invalid"):
+            replace(
+                self.service,
+                receiving=ReceivingServiceContext(
+                    self.observer.capability_id, {"tribe": self.group}
+                ),
+            )
+        with self.assertRaises(TypeError):
+            self.service.receiving.channels["tribe"] = self.groups[1]
+        # A trusted compositor must bind the exact loaded group, not just its ID.
+        with self.assertRaisesRegex(ServiceError, "reader_controller_binding_invalid"):
+            replace(
+                self.service,
+                receiving=ReceivingServiceContext(
+                    self.controller.capability_id, {"tribe": self.groups[1]}
+                ),
+            )
+
+
+class ReceivingCompositionTests(unittest.TestCase):
+    with_receiving_controller = True
+    setUp = group_fixtures.GroupRuntimeTests.setUp
+
+    def test_signed_application_composes_explicit_controlled_group(self):
+        group_fixtures.GroupRuntimeTests.test_group_only_application_uses_supported_signed_provisioning(
+            self
+        )
 
 
 class ReaderSelectionTests(unittest.TestCase):
@@ -203,8 +439,15 @@ class ReaderSelectionTests(unittest.TestCase):
 class ReaderHTTPTests(unittest.TestCase):
     def setUp(self):
         self.fixture = group_fixtures.GroupRuntimeTests()
+        self.fixture.controlled_readers = getattr(self, "controlled_readers", False)
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
+
+    def arguments(self, sender, receiver):
+        value = self.fixture.direct_arguments(sender, receiver)
+        if getattr(self, "controlled_readers", False):
+            value.pop("destination")
+        return value
 
     def test_root_advance_with_same_recipient_key_stays_unattempted(self):
         from tests.test_group_messaging_runtime import DirectLaneTests
@@ -302,7 +545,7 @@ class ReaderHTTPTests(unittest.TestCase):
 
         def send():
             try:
-                outcomes.append(sender.send(**f.direct_arguments(sender, receiver)))
+                outcomes.append(sender.send(**self.arguments(sender, receiver)))
             except BaseException as failure:
                 failures.append(failure)
 
@@ -340,12 +583,138 @@ class ReaderHTTPTests(unittest.TestCase):
         previous = sender.inspect(client_id="test", send_id=outcomes[0]["send_id"])
         self.assertTrue(previous["semantic"]["terminal"])
         native = copy.deepcopy(sender.records.get("native", outcomes[0]["send_id"]))
-        self.assertEqual(previous["transport"][0]["attempt_state"], "recipient-intake")
-        self.assertFalse(previous["transport"][0]["reader_readiness"])
-        denied = f.send_and_settle(sender, **f.direct_arguments(sender, receiver))
-        self.assertEqual(denied["transport"][0]["attempt_state"], "not-attempted")
+        previous_remote = next(
+            item
+            for item in previous["transport"]
+            if item["embodiment_id"] == receiver.lane.local_embodiment_id
+        )
+        self.assertEqual(previous_remote["attempt_state"], "recipient-intake")
+        self.assertFalse(previous_remote["reader_readiness"])
+        denied = f.send_and_settle(sender, **self.arguments(sender, receiver))
+        remote = next(
+            item
+            for item in denied["transport"]
+            if item["embodiment_id"] == receiver.lane.local_embodiment_id
+        )
+        self.assertEqual(remote["attempt_state"], "not-attempted")
         self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
         self.assertEqual(
             canonical_bytes(sender.records.get("native", outcomes[0]["send_id"])),
             canonical_bytes(native),
         )
+
+
+class ControlledGroupTests(unittest.TestCase):
+    controlled_readers = True
+    setUp = ReaderHTTPTests.setUp
+    arguments = ReaderHTTPTests.arguments
+
+    def test_revoke_waits_for_actual_group_write(self):
+        ReaderHTTPTests.test_revoke_waits_for_actual_http_write_and_blocks_subsequent_direct(
+            self
+        )
+
+    def install_baseline(self):
+        sender, receiver = self.fixture.groups
+        select(sender.egress, command(sender.egress))
+        value = reader(
+            being_ref=receiver.lane.being_ref,
+            embodiment_id=receiver.lane.local_embodiment_id,
+            credential_id=receiver.lane.local_credential_id,
+            incarnation_id=receiver.ledger.local_origin["incarnation_id"],
+            authority_manifest_hash=receiver.ledger.authority.manifest.digest,
+            expires_at_ms=receiver.lane.clock() + 60_000,
+            authority_epochs=sorted(
+                {
+                    receiver.ledger.authority.manifest.digest,
+                    sender.ledger.authority.manifest.digest,
+                    *(
+                        event["manifest_hash"]
+                        for event in sender.lane.relationships.events()
+                    ),
+                }
+            ),
+        )
+        select(sender.egress, command(sender.egress, phase="select", readers=[value]))
+        return value
+
+    def remote(self, result):
+        receiver = self.fixture.groups[1]
+        return next(
+            row
+            for row in result["transport"]
+            if row["embodiment_id"] == receiver.lane.local_embodiment_id
+        )
+
+    def test_unselected_group_and_direct_retain_audiences_then_exact_group_retry(self):
+        f = self.fixture
+        sender, receiver = f.groups
+        arguments = self.arguments(sender, receiver)
+        first = f.send_and_settle(sender, **arguments)
+        self.assertEqual(first["schema"], "dm.tribe.delivery/v1")
+        self.assertEqual(len(first["audience"]), 2)
+        self.assertEqual(self.remote(first)["attempt_state"], "not-attempted")
+        direct = f.send_and_settle(sender, **f.direct_arguments(sender, receiver))
+        self.assertEqual(len(direct["audience"]), 1)
+        self.assertEqual(self.remote(direct)["attempt_state"], "not-attempted")
+        retained = sender.records.get("native", first["send_id"])
+        self.install_baseline()
+        second = f.send_and_settle(sender, **arguments)
+        self.assertTrue(second["semantic"]["terminal"])
+        self.assertEqual(second["message_id"], first["message_id"])
+        self.assertEqual(second["audience"], first["audience"])
+        self.assertEqual(sender.records.get("native", first["send_id"]), retained)
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        self.assertEqual(
+            receiver.egress.reader_snapshot("tribe", deadline_ns=budget())["phase"],
+            "unselected",
+        )
+        # Signed return dispatch and the author's control intake need no positive
+        # data projection. Their actual authority/visibility fences still run.
+        self.assertEqual(self.remote(second)["attempt_state"], "recipient-intake")
+
+    def test_controlled_group_rejects_opaque_and_unbounded_transport(self):
+        from unittest.mock import Mock
+
+        f = self.fixture
+        sender, receiver = f.groups
+        self.install_baseline()
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        original = provider._round_trip
+        for value in (Mock(), replace(original, bounded_open=None)):
+            with self.subTest(opaque=type(value).__name__):
+                provider._round_trip = value
+                result = f.send_and_settle(sender, **self.arguments(sender, receiver))
+                self.assertEqual(self.remote(result)["attempt_state"], "unconfirmed")
+                self.assertEqual(receiver.page(after=0, limit=10), [])
+                if isinstance(value, Mock):
+                    value.assert_not_called()
+        provider._round_trip = original
+
+    def test_expired_selection_and_callback_override_cannot_restore_legacy_mode(self):
+        f = self.fixture
+        sender, receiver = f.groups
+        value = self.install_baseline()
+        f.fixture.now = value["expires_at_ms"]
+        sender.direct_reader_ready = lambda row: True
+        result = f.send_and_settle(sender, **self.arguments(sender, receiver))
+        self.assertEqual(self.remote(result)["attempt_state"], "not-attempted")
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertTrue(sender.controlled_readers)
+        with self.assertRaisesRegex(NativeEgressError, "reader_context_conflict"):
+            sender.egress.register_reader_channel("tribe", sender.config_digest)
+
+    def test_group_reader_does_not_cover_new_epoch_with_unchanged_key(self):
+        f = self.fixture
+        sender, receiver = f.groups
+        value = self.install_baseline()
+        helper = group_fixtures.DirectLaneTests()
+        helper.fixture = f.fixture
+        current, _ = helper.enroll_second_member_body()
+        self.assertNotIn(current.manifest.digest, value["authority_epochs"])
+        result = f.send_and_settle(sender, **self.arguments(sender, receiver))
+        self.assertEqual(len(result["audience"]), 3)
+        self.assertEqual(self.remote(result)["attempt_state"], "not-attempted")
+        self.assertEqual(receiver.page(after=0, limit=10), [])

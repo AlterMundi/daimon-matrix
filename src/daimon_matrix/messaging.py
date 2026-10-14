@@ -1696,13 +1696,21 @@ class GroupMessaging:
         egress: MandatoryEgressController,
         labels: LabelIndex | None = None,
         direct_reader_ready: Callable[[Mapping[str, Any]], bool] | None = None,
+        controlled_readers: bool = False,
     ) -> None:
+        if type(controlled_readers) is not bool or (
+            controlled_readers and direct_reader_ready is not None
+        ):
+            raise ValueError("tribe_reader_composition_invalid")
+        self._controlled_readers = controlled_readers
         self.lane, self.policy = lane, policy
         self.ledger, self.signer = lane.ledger, lane.signer
         self.inbox = self.records = lane.records
         self.communication, self.providers = communication, dict(providers)
         self.config_digest, self.egress, self.labels = config_digest, egress, labels
-        egress.register_reader_channel("tribe", config_digest)
+        egress.register_reader_channel(
+            "tribe", config_digest, controlled=controlled_readers
+        )
         self._default_reader_guard = lambda row: egress.reader_ready("tribe", row)
         self.direct_reader_ready = (
             self._default_reader_guard
@@ -1722,6 +1730,11 @@ class GroupMessaging:
             catalog_id="tribe-carriers",
             authorize=self._authorize,
         )
+
+    @property
+    def controlled_readers(self) -> bool:
+        """Verified owner startup selects this mode; requests cannot change it."""
+        return self._controlled_readers
 
     def validate(self, service: Any) -> None:
         if self.ledger is not service.ledger or self.signer is not service.signer:
@@ -1876,14 +1889,14 @@ class GroupMessaging:
                     "state": "authored-local",
                 },
             )
+        if destination is not None or self.controlled_readers:
+            requirements = self._reader_requirements(plan, message["manifest_hash"])
             for row, outcome in zip(
                 message["payload"]["body"]["audience"], transport, strict=True
             ):
                 outcome["reader_readiness"] = self._direct_ready(
                     row,
-                    requirements=self._reader_requirements(
-                        plan, message["manifest_hash"]
-                    ),
+                    requirements=requirements,
                 )
         return result
 
@@ -1922,7 +1935,10 @@ class GroupMessaging:
         # This owner-local guard is supplied by the receiving cohort controller;
         # refreshable evidence is not part of immutable retry/config bindings.
         try:
-            if self.direct_reader_ready is self._default_reader_guard:
+            if (
+                self.controlled_readers
+                or self.direct_reader_ready is self._default_reader_guard
+            ):
                 return requirements is not None and self.egress.reader_ready(
                     "tribe",
                     row,
@@ -2110,13 +2126,13 @@ class GroupMessaging:
             self._reader_requirements(
                 self.records.get("send", send_id), message["manifest_hash"]
             )
-            if destination is not None
+            if destination is not None or self.controlled_readers
             else None
         )
         for row in prepared["rows"]:
-            if destination is not None and not self._direct_ready(
-                row, requirements=requirements
-            ):
+            if (
+                destination is not None or self.controlled_readers
+            ) and not self._direct_ready(row, requirements=requirements):
                 continue
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
@@ -2278,15 +2294,16 @@ class GroupMessaging:
         directed = (
             not receipt and document.get("schema") == "dm.tribe.direct-conversation/v1"
         )
+        controlled_data = directed or (self.controlled_readers and not receipt)
         requirements = (
             self._reader_requirements(
                 self.records.get("send", operation.operation_id),
                 document["resolution"]["manifest_hash"],
             )
-            if directed
+            if controlled_data
             else None
         )
-        if directed and not self._direct_ready(row, requirements=requirements):
+        if controlled_data and not self._direct_ready(row, requirements=requirements):
             return
         if receipt:
             identifier = document["receipt"]["event_id"]
@@ -2353,8 +2370,10 @@ class GroupMessaging:
         def authorize_write() -> None:
             if authorize is not None:
                 authorize()
-            if directed and not self._direct_ready(row, requirements=requirements):
-                raise RouteError("tribe_direct_reader_unconfirmed")
+            if controlled_data and not self._direct_ready(
+                row, requirements=requirements
+            ):
+                raise RouteError("tribe_reader_unconfirmed")
 
         try:
             provider.send_prepared(
@@ -2363,6 +2382,7 @@ class GroupMessaging:
                 response_sink=retain_response,
                 attempt_deadline_ns=deadline_ns,
                 authorize=authorize_write,
+                require_bounded_write=controlled_data,
             )
         except RouteError:
             # An unknown outcome stays pending. Retrying uses the same bytes and
