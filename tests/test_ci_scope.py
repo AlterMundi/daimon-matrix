@@ -19,6 +19,7 @@ class CIScopeTests(unittest.TestCase):
             "src/daimon_matrix/release_compatibility.py",
             "tests/test_group_messaging_runtime.py",
             "tests/test_release_compatibility.py",
+            "tests/test_cross_being_semantic_receipts.py",
         ]
         self.assertEqual(profile(paths), "tribe-group")
         workflow = (
@@ -26,10 +27,7 @@ class CIScopeTests(unittest.TestCase):
         ).read_text()
         group = workflow.split("  tribe-group:", 1)[1]
         self.assertIn("tests.test_release_compatibility", group)
-        self.assertIn(
-            "test_deferred_receipt_preserves_observation_before_current_signing_time",
-            group,
-        )
+        self.assertIn("tests.test_cross_being_semantic_receipts", group)
 
     def test_release_contract_qualifies_installed_codec_without_unchanged_transport(
         self,

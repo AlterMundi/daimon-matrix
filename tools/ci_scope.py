@@ -163,6 +163,7 @@ TRIBE_GROUP_FILES = (
             "src/daimon_matrix/service.py",
             "src/daimon_matrix/tribe_conversation.py",
             "tests/test_group_messaging_runtime.py",
+            "tests/test_cross_being_semantic_receipts.py",
             "src/daimon_matrix/release_compatibility.py",
             "tests/test_release_compatibility.py",
             "tests/test_dm051_sealed.py",
