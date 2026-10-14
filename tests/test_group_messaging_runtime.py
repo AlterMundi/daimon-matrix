@@ -1602,7 +1602,9 @@ class GroupRuntimeTests(unittest.TestCase):
     def test_group_only_application_uses_supported_signed_provisioning(self):
         GroupRuntimeTests._signed_group_application(self)
 
-    def _signed_group_application(self, *, record_key_check=True):
+    def _signed_group_application(
+        self, *, record_key_check=True, application_directory=None
+    ):
         import hashlib
 
         from daimon_matrix.messaging_config import (
@@ -1716,7 +1718,7 @@ class GroupRuntimeTests(unittest.TestCase):
             "stores": {name: name + ".sqlite" for name in GROUP_STORE_NAMES},
         }
         validate_shape(spec, specification=True)
-        app = directory / "group-application"
+        app = application_directory or directory / "group-application"
         prepare(runtime, app, spec, secret_sources=sources)
         view = load_application(runtime, app)
         self.assertEqual(set(view.service.messaging.channels), {"tribe"})
@@ -1733,6 +1735,22 @@ class GroupRuntimeTests(unittest.TestCase):
             group.controlled_readers,
             bool(getattr(self, "with_receiving_controller", False)),
         )
+        from daimon_matrix.chat_host import application_view
+        from daimon_matrix.operator_capabilities import STATUS_OBSERVER_METHODS
+        from daimon_matrix.service import MESSAGING_METHODS
+
+        with patch(
+            "daimon_matrix.chat_host._visibility_factory",
+            return_value=lambda _context: runtime.egress,
+        ):
+            hosted = application_view(runtime, app, directory / "visibility.json")
+        status = [
+            cap
+            for cap in hosted.service.capabilities.values()
+            if cap.client_id == f"client:host:{runtime.service.runtime_label}:status"
+        ]
+        self.assertEqual(len(status), 1)
+        self.assertEqual(set(status[0].methods), STATUS_OBSERVER_METHODS)
         if group.controlled_readers:
             self.assertIs(view.service.receiving.channels["tribe"], group)
             state = group.egress.reader_snapshot(
@@ -1740,15 +1758,6 @@ class GroupRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(state["phase"], "unselected")
             self.assertEqual(state["readers"], [])
-            from daimon_matrix.chat_host import application_view
-            from daimon_matrix.operator_capabilities import STATUS_OBSERVER_METHODS
-            from daimon_matrix.service import MESSAGING_METHODS
-
-            with patch(
-                "daimon_matrix.chat_host._visibility_factory",
-                return_value=lambda _context: runtime.egress,
-            ):
-                hosted = application_view(runtime, app, directory / "visibility.json")
             self.assertTrue(
                 hosted.service.messaging.channels["tribe"].controlled_readers
             )
@@ -1767,6 +1776,10 @@ class GroupRuntimeTests(unittest.TestCase):
                     self.assertLessEqual(set(selected.methods), MESSAGING_METHODS)
         else:
             self.assertIsNone(view.service.receiving)
+            self.assertIsNone(hosted.service.receiving)
+            for cap in hosted.service.capabilities.values():
+                if cap is not status[0]:
+                    self.assertLessEqual(set(cap.methods), MESSAGING_METHODS)
         if not record_key_check:
             return runtime, app, view
         request_id, moved_id = str(uuid.uuid4()), str(uuid.uuid4())

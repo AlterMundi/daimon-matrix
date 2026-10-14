@@ -1337,15 +1337,20 @@ class MandatoryEgressController:
             self._validate_catalog(catalog.path, catalog_id)
 
     def observe_loaded_binding(self) -> dict[str, Any]:
-        """Actual boot binding after catalog validation, without peer I/O."""
-        self.validate_registered_catalogs()
+        """Actual boot binding, separating pending preparation from validation."""
+        validated = self.catalog_mode != "migrate"
+        if validated:
+            self.validate_registered_catalogs()
+        # Supported owner preparation composes stores before its explicit
+        # catalog migration. Preserve that stage as pending, never readiness.
         return {
             "schema": "dm.visibility.loaded-binding/v1",
             "catalog_mode": self.catalog_mode,
             "release_enabled": self.release_enabled,
             "installation_sha256": self._installation_digest,
             "policy_sha256": _digest(canonical_bytes(self._policy)),
-            "catalog_schema_version": VISIBILITY_SCHEMA_VERSION,
+            "catalog_schema_version": VISIBILITY_SCHEMA_VERSION if validated else None,
+            "catalog_validation": "validated" if validated else "pending",
             "catalogs": {
                 catalog_id: _digest(canonical_bytes(str(catalog.path)))
                 for catalog_id, catalog in sorted(self._catalogs.items())

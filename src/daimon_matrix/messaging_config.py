@@ -2169,6 +2169,42 @@ def load_application(
             # Bare synthetic/legacy services retain absent base qualification.
             return replace(view, service=replace(view.service, loaded_stores=bindings))
         visibility = view.egress.observe_loaded_binding()
+        authorities = None
+        if application["schema"] == APPLICATION_SCHEMA_V3:
+            from .messaging import GroupMessaging
+
+            messaging = view.service.messaging
+            if messaging is None:
+                raise MessagingConfigError("messaging_group_composition_rejected")
+            loaded_group = messaging.channels[application["tribe"]["channel_id"]]
+            if not isinstance(loaded_group, GroupMessaging):
+                raise MessagingConfigError("messaging_group_composition_rejected")
+            authorities = {}
+            for approved in application["authorities"]:
+                ref = approved["manifest"]["being_ref"]
+                verified = loaded_group.lane.authority_resolver(ref)
+                if not isinstance(verified, (RootAuthority, RootHistoryAuthority)):
+                    raise MessagingConfigError(
+                        "messaging_relationship_authority_mismatch"
+                    )
+                active = (
+                    verified.active
+                    if isinstance(verified, RootHistoryAuthority)
+                    else verified
+                )
+                if active.manifest.digest != config_digest(approved["manifest"]):
+                    raise MessagingConfigError(
+                        "messaging_relationship_authority_mismatch"
+                    )
+                authorities[ref] = {
+                    "active_manifest_hash": active.manifest.digest,
+                    "active_control_head": active.state.head,
+                    "accepted_manifest_hashes": list(
+                        verified.accepted_manifest_hashes
+                        if isinstance(verified, RootHistoryAuthority)
+                        else (active.manifest.digest,)
+                    ),
+                }
         document = {
             "schema": "dm.runtime.loaded-application/v1",
             "loaded_base_sha256": hashlib.sha256(
@@ -2192,6 +2228,7 @@ def load_application(
             "communication_store_role": "ledger",
             "tribe": application.get("tribe"),
             "visibility": visibility,
+            "authorities": authorities,
         }
         document["loaded_view_sha256"] = config_digest(document)
         if view.service.receiving is not None:

@@ -685,6 +685,38 @@ class ReceivingCompositionTests(unittest.TestCase):
             for store_access in (read, write, intake, control, page):
                 store_access.assert_not_called()
 
+    def test_loaded_group_authorities_include_verified_foreign_historical_epochs(self):
+        old = self.fixture.member.authority
+        current, _origin = group_fixtures.DirectLaneTests.enroll_second_member_body(
+            self
+        )
+        self.fixture.member = replace(self.fixture.member, authority=current)
+        _base, _app, view = group_fixtures.GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False
+        )
+        observed = json.loads(view.service.loaded_application)["authorities"]
+        ref = current.manifest.being_ref
+        self.assertEqual(
+            observed[ref],
+            {
+                "active_manifest_hash": current.manifest.digest,
+                "active_control_head": current.state.head,
+                "accepted_manifest_hashes": sorted(
+                    [old.manifest.digest, current.manifest.digest]
+                ),
+            },
+        )
+        self.assertEqual(
+            set(observed),
+            {self.fixture.founder.state.being_ref, self.fixture.member.state.being_ref},
+        )
+        # The boot observation cannot silently follow a later resolver change.
+        loaded_group = view.service.messaging.channels["tribe"]
+        loaded_group.lane.authority_resolver = lambda _ref: current
+        self.assertEqual(
+            json.loads(view.service.loaded_application)["authorities"], observed
+        )
+
     def test_authenticated_invalid_intake_cannot_persist_into_replaced_opaque_store(
         self,
     ):

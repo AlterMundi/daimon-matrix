@@ -95,16 +95,11 @@ def application_view(
                 for key, capability in view.service.capabilities.items()
                 if set(capability.methods) <= MESSAGING_METHODS
                 or (
-                    receiving is not None
-                    and (
-                        key == receiving.capability_id
-                        or (
-                            capability.client_id
-                            == f"client:host:{view.service.runtime_label}:status"
-                            and set(capability.methods) <= STATUS_OBSERVER_METHODS
-                        )
-                    )
+                    capability.client_id
+                    == f"client:host:{view.service.runtime_label}:status"
+                    and set(capability.methods) <= STATUS_OBSERVER_METHODS
                 )
+                or (receiving is not None and key == receiving.capability_id)
             },
             visibility_status=controller.status,
         ),
