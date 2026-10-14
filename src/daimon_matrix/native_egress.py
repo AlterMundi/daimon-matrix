@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, TypeVar
 
 from .canonical import canonical_bytes
@@ -740,6 +741,18 @@ def _valid_text(value: str, *, maximum: int = 256) -> bool:
     return isinstance(value, str) and 0 < len(value.encode("utf-8")) <= maximum
 
 
+@dataclass(frozen=True)
+class _ReaderSelection:
+    context_sha256: str
+    head: str
+    phase: str = "unselected"
+    operation_id: str | None = None
+    release_digest: str | None = None
+    request_sha256: str | None = None
+    control_sha256: str | None = None
+    readers: tuple[Mapping[str, Any], ...] = ()
+
+
 class MandatoryEgressController:
     """One shared mandatory-visibility controller and one process-wide fence."""
 
@@ -793,6 +806,11 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_catalog_mode_invalid")
         self._catalog_mode: Literal["validate", "migrate", "synthetic"] = catalog_mode
         self._fence = threading.Lock()
+        # Owner control and physical writes share this exact fence. A restarted
+        # compositor never inherits a positive selection from retained evidence.
+        self._reader_instance_id = str(uuid.uuid4())
+        self._reader_instance_pid = os.getpid()
+        self._reader_selections: dict[str, _ReaderSelection] = {}
         # Runtime-global group transport capacity, shared even if owner-local
         # composition reconstructs an application object over the same catalog.
         # These are admission bounds, never publication/authority permissions.
@@ -817,6 +835,265 @@ class MandatoryEgressController:
     @property
     def policy_digest(self) -> str:
         return _digest(canonical_bytes(self._policy))
+
+    def register_reader_channel(self, channel_id: str, context_sha256: str) -> None:
+        """Bind a loaded group once; reconstruction cannot replace its context."""
+        if (
+            not _valid_text(channel_id, maximum=128)
+            or not isinstance(context_sha256, str)
+            or _SHA256.fullmatch(context_sha256) is None
+        ):
+            raise NativeEgressError("reader_context_invalid")
+        with self._fence:
+            previous = self._reader_selections.get(channel_id)
+            if previous is not None:
+                if previous.context_sha256 != context_sha256:
+                    raise NativeEgressError("reader_context_conflict")
+                return
+            self._reader_selections[channel_id] = _ReaderSelection(
+                context_sha256,
+                _digest(
+                    canonical_bytes(
+                        [self._reader_instance_id, channel_id, context_sha256]
+                    )
+                ),
+            )
+
+    def _reader_snapshot(self, channel_id: str) -> dict[str, Any]:
+        selected = self._reader_selections.get(channel_id)
+        if selected is None or self._reader_instance_pid != os.getpid():
+            raise NativeEgressError("reader_context_unavailable")
+        return {
+            "schema": "dm.receiving.reader-selection/v1",
+            "process_instance_id": self._reader_instance_id,
+            "channel_id": channel_id,
+            "context_sha256": selected.context_sha256,
+            "head": selected.head,
+            "phase": selected.phase,
+            "operation_id": selected.operation_id,
+            "release_digest": selected.release_digest,
+            "request_sha256": selected.request_sha256,
+            "readers": [
+                {
+                    key: list(item) if isinstance(item, tuple) else item
+                    for key, item in row.items()
+                }
+                for row in selected.readers
+            ],
+        }
+
+    def reader_snapshot(self, channel_id: str, *, deadline_ns: int) -> dict[str, Any]:
+        """Observe one immutable loaded view without waiting beyond its budget."""
+        if not self._fence.acquire(
+            timeout=self._remaining_attempt_seconds(deadline_ns)
+        ):
+            raise NativeEgressError("egress_attempt_deadline")
+        try:
+            self._remaining_attempt_seconds(deadline_ns)
+            return self._reader_snapshot(channel_id)
+        finally:
+            self._fence.release()
+
+    def select_readers(
+        self,
+        value: Mapping[str, Any],
+        *,
+        request_sha256: str,
+        deadline_ns: int,
+    ) -> dict[str, Any]:
+        """CAS controller observations under the actual physical-write fence.
+
+        The authenticated owner service supplies the request digest; this is
+        neither a peer API nor a claim to have performed remote qualification.
+        Revocation reserves this operation until selection, preventing another
+        operation from enabling an old generation between revoke and mutation.
+        """
+        fields = {
+            "process_instance_id",
+            "channel_id",
+            "expected_head",
+            "operation_id",
+            "release_digest",
+            "phase",
+            "readers",
+        }
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise NativeEgressError("reader_selection_invalid")
+        if not _valid_text(value["channel_id"], maximum=128) or not isinstance(
+            value["process_instance_id"], str
+        ):
+            raise NativeEgressError("reader_selection_invalid")
+        for field in ("expected_head", "release_digest"):
+            if (
+                not isinstance(value[field], str)
+                or _SHA256.fullmatch(value[field]) is None
+            ):
+                raise NativeEgressError("reader_selection_invalid")
+        if (
+            not isinstance(request_sha256, str)
+            or _SHA256.fullmatch(request_sha256) is None
+        ):
+            raise NativeEgressError("reader_selection_invalid")
+        try:
+            if str(uuid.UUID(value["operation_id"])) != value["operation_id"]:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            raise NativeEgressError("reader_selection_invalid") from None
+        if (
+            value["phase"] not in ("revoke", "select")
+            or not isinstance(value["readers"], list)
+            or len(value["readers"]) > 256
+        ):
+            raise NativeEgressError("reader_selection_invalid")
+        if value["phase"] == "revoke" and value["readers"]:
+            raise NativeEgressError("reader_selection_invalid")
+        reader_fields = {
+            "being_ref",
+            "embodiment_id",
+            "credential_id",
+            "incarnation_id",
+            "authority_manifest_hash",
+            "receiving_selection_sha256",
+            "loaded_view_sha256",
+            "expires_at_ms",
+            "wire_read",
+            "authority_epochs",
+        }
+        readers = []
+        for row in value["readers"]:
+            if not isinstance(row, Mapping) or set(row) != reader_fields:
+                raise NativeEgressError("reader_selection_invalid")
+            if any(
+                not _valid_text(row[key], maximum=256)
+                for key in (
+                    "being_ref",
+                    "embodiment_id",
+                    "credential_id",
+                    "incarnation_id",
+                )
+            ) or any(
+                not isinstance(row[key], str) or _SHA256.fullmatch(row[key]) is None
+                for key in (
+                    "authority_manifest_hash",
+                    "receiving_selection_sha256",
+                    "loaded_view_sha256",
+                )
+            ):
+                raise NativeEgressError("reader_selection_invalid")
+            if (
+                type(row["expires_at_ms"]) is not int
+                or not 0 < row["expires_at_ms"] < 2**53
+            ):
+                raise NativeEgressError("reader_selection_invalid")
+            for key in ("wire_read", "authority_epochs"):
+                entries = row[key]
+                if (
+                    not isinstance(entries, list)
+                    or not 1 <= len(entries) <= 256
+                    or any(not isinstance(item, str) for item in entries)
+                    or entries != sorted(set(entries))
+                ):
+                    raise NativeEgressError("reader_selection_invalid")
+            if not set(row["wire_read"]) <= {
+                "dm.tribe.conversation/v1",
+                "dm.tribe.direct-conversation/v1",
+            } or any(
+                _SHA256.fullmatch(item) is None for item in row["authority_epochs"]
+            ):
+                raise NativeEgressError("reader_selection_invalid")
+            if row["authority_manifest_hash"] not in row["authority_epochs"]:
+                raise NativeEgressError("reader_selection_invalid")
+            readers.append(
+                {
+                    **row,
+                    "wire_read": list(row["wire_read"]),
+                    "authority_epochs": list(row["authority_epochs"]),
+                }
+            )
+        identities = [(row["being_ref"], row["embodiment_id"]) for row in readers]
+        if identities != sorted(set(identities)):
+            raise NativeEgressError("reader_selection_invalid")
+        # Freeze the validated command before waiting for a physical writer.
+        value = {**value, "readers": readers}
+        command_sha256 = _digest(canonical_bytes(value))
+        if not self._fence.acquire(
+            timeout=self._remaining_attempt_seconds(deadline_ns)
+        ):
+            raise NativeEgressError("egress_attempt_deadline")
+        try:
+            self._remaining_attempt_seconds(deadline_ns)
+            current = self._reader_snapshot(value["channel_id"])
+            previous = self._reader_selections[value["channel_id"]]
+            if value["process_instance_id"] != self._reader_instance_id:
+                raise NativeEgressError("reader_process_conflict")
+            if request_sha256 == previous.request_sha256:
+                if command_sha256 != previous.control_sha256:
+                    raise NativeEgressError("reader_request_conflict")
+                return current
+            if value["expected_head"] != previous.head:
+                raise NativeEgressError("reader_selection_conflict")
+            same_operation = (value["operation_id"], value["release_digest"]) == (
+                previous.operation_id,
+                previous.release_digest,
+            )
+            if previous.phase == "revoke" and not same_operation:
+                raise NativeEgressError("reader_operation_conflict")
+            if value["phase"] == "select" and (
+                previous.phase != "revoke" or not same_operation
+            ):
+                raise NativeEgressError("reader_revocation_required")
+            if any(row["expires_at_ms"] <= self._clock() for row in readers):
+                raise NativeEgressError("reader_selection_expired")
+            self._reader_selections[value["channel_id"]] = _ReaderSelection(
+                context_sha256=previous.context_sha256,
+                head=_digest(
+                    canonical_bytes([previous.head, request_sha256, command_sha256])
+                ),
+                phase=value["phase"],
+                operation_id=value["operation_id"],
+                release_digest=value["release_digest"],
+                request_sha256=request_sha256,
+                control_sha256=command_sha256,
+                readers=tuple(
+                    MappingProxyType(
+                        {
+                            **row,
+                            "wire_read": tuple(row["wire_read"]),
+                            "authority_epochs": tuple(row["authority_epochs"]),
+                        }
+                    )
+                    for row in readers
+                ),
+            )
+            return self._reader_snapshot(value["channel_id"])
+        finally:
+            self._fence.release()
+
+    def reader_ready(
+        self,
+        channel_id: str,
+        row: Mapping[str, Any],
+        *,
+        required_wire: str | None = None,
+        required_authority_epochs: tuple[str, ...] = (),
+    ) -> bool:
+        """Read an immutable projection; actual writes already hold the fence."""
+        selected = self._reader_selections.get(channel_id)
+        if selected is None or self._reader_instance_pid != os.getpid():
+            return False
+        return selected.phase == "select" and any(
+            all(
+                reader[key] == row.get(key)
+                for key in ("being_ref", "embodiment_id", "credential_id")
+            )
+            and self._clock() < reader["expires_at_ms"]
+            and (required_wire is None or required_wire in reader["wire_read"])
+            and all(
+                epoch in reader["authority_epochs"]
+                for epoch in required_authority_epochs
+            )
+            for reader in selected.readers
+        )
 
     @property
     def installation_digest(self) -> str:

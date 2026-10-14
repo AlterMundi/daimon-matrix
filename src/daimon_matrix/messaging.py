@@ -1702,7 +1702,13 @@ class GroupMessaging:
         self.inbox = self.records = lane.records
         self.communication, self.providers = communication, dict(providers)
         self.config_digest, self.egress, self.labels = config_digest, egress, labels
-        self.direct_reader_ready = direct_reader_ready
+        egress.register_reader_channel("tribe", config_digest)
+        self._default_reader_guard = lambda row: egress.reader_ready("tribe", row)
+        self.direct_reader_ready = (
+            self._default_reader_guard
+            if direct_reader_ready is None
+            else direct_reader_ready
+        )
         self.intake_ingresses: dict[str, Any] = {}
         self._receipt_lock = threading.Lock()
         self._receipt_inflight: set[str] = set()
@@ -1873,14 +1879,56 @@ class GroupMessaging:
             for row, outcome in zip(
                 message["payload"]["body"]["audience"], transport, strict=True
             ):
-                outcome["reader_readiness"] = self._direct_ready(row)
+                outcome["reader_readiness"] = self._direct_ready(
+                    row,
+                    requirements=self._reader_requirements(
+                        plan, message["manifest_hash"]
+                    ),
+                )
         return result
 
-    def _direct_ready(self, row: Mapping[str, Any]) -> bool:
+    def _reader_requirements(
+        self,
+        plan: Mapping[str, Any] | None,
+        sender_manifest_hash: str,
+    ) -> tuple[str, tuple[str, ...]]:
+        # All lookup/verification happens before taking the physical-write fence.
+        # These are the retained plan's facts, not today's Root or model metadata.
+        if plan is None:
+            raise ValueError("tribe_readiness_evidence_missing")
+        epochs = {sender_manifest_hash, *plan["epochs"].values()}
+        events = {
+            event["event_id"]: event for event in self.lane.relationships.events()
+        }
+        for proof in [plan["sender_proof"], *plan["proofs"].values()]:
+            event = events.get(proof["membership_event_id"])
+            if event is None or event["content_hash"] != proof["membership_event_hash"]:
+                raise ValueError("tribe_readiness_evidence_missing")
+            epochs.add(event["manifest_hash"])
+        return (
+            "dm.tribe.direct-conversation/v1"
+            if "destination" in plan
+            else "dm.tribe.conversation/v1",
+            tuple(sorted(epochs)),
+        )
+
+    def _direct_ready(
+        self,
+        row: Mapping[str, Any],
+        *,
+        requirements: tuple[str, tuple[str, ...]] | None = None,
+    ) -> bool:
         # A route or prepared wheel never establishes a loaded compatible reader.
         # This owner-local guard is supplied by the receiving cohort controller;
         # refreshable evidence is not part of immutable retry/config bindings.
         try:
+            if self.direct_reader_ready is self._default_reader_guard:
+                return requirements is not None and self.egress.reader_ready(
+                    "tribe",
+                    row,
+                    required_wire=requirements[0],
+                    required_authority_epochs=requirements[1],
+                )
             return (
                 self.direct_reader_ready is not None
                 and self.direct_reader_ready(row) is True
@@ -2058,8 +2106,17 @@ class GroupMessaging:
             if leg["state"] == "delivered"
         }
         eligible = []
+        requirements = (
+            self._reader_requirements(
+                self.records.get("send", send_id), message["manifest_hash"]
+            )
+            if destination is not None
+            else None
+        )
         for row in prepared["rows"]:
-            if destination is not None and not self._direct_ready(row):
+            if destination is not None and not self._direct_ready(
+                row, requirements=requirements
+            ):
                 continue
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
@@ -2221,7 +2278,15 @@ class GroupMessaging:
         directed = (
             not receipt and document.get("schema") == "dm.tribe.direct-conversation/v1"
         )
-        if directed and not self._direct_ready(row):
+        requirements = (
+            self._reader_requirements(
+                self.records.get("send", operation.operation_id),
+                document["resolution"]["manifest_hash"],
+            )
+            if directed
+            else None
+        )
+        if directed and not self._direct_ready(row, requirements=requirements):
             return
         if receipt:
             identifier = document["receipt"]["event_id"]
@@ -2288,7 +2353,7 @@ class GroupMessaging:
         def authorize_write() -> None:
             if authorize is not None:
                 authorize()
-            if directed and not self._direct_ready(row):
+            if directed and not self._direct_ready(row, requirements=requirements):
                 raise RouteError("tribe_direct_reader_unconfirmed")
 
         try:
