@@ -3,7 +3,9 @@ from __future__ import annotations
 import contextlib
 import copy
 import hashlib
+import http.client
 import json
+import select
 import socket
 import sqlite3
 import threading
@@ -14,12 +16,14 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 from jsonschema import (  # type: ignore[import-untyped]
     Draft202012Validator,
     FormatChecker,
 )
 
+from daimon_matrix import daemon as owner_http
 from daimon_matrix.canonical import b64url, canonical_bytes, unb64url
 from daimon_matrix.communication import (
     MESSAGE_PAYLOAD_SCHEMA,
@@ -53,6 +57,9 @@ from daimon_matrix.routes import (
     RouteError,
     RouteProfile,
     TransportIngress,
+    _AttemptDeadline,
+    _DeadlineSocket,
+    _http_round_trip,
     gateway_proposal,
     render_gateway,
     serve_transport_connection,
@@ -2106,6 +2113,372 @@ class GatewayBoundaryTests(unittest.TestCase):
         self.assertEqual(proposal["authority"], "external-source-only")
         self.assertNotIn("origin", proposal)
         self.assertNotIn("signature", proposal)
+
+
+class BoundedTransportTests(unittest.TestCase):
+    def test_tls_setup_stall_cannot_escape_the_connect_or_total_deadline(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        stop, accepted = threading.Event(), threading.Event()
+
+        def serve():
+            connection, _ = listener.accept()
+            with connection:
+                accepted.set()
+                stop.wait(5)  # Accept TCP, never complete a TLS handshake.
+
+        worker = threading.Thread(target=serve)
+        worker.start()
+        try:
+            profile = _http_round_trip(
+                f"https://127.0.0.1:{listener.getsockname()[1]}/dm-route",
+                timeout_seconds=0.05,
+                response_timeout_seconds=1,
+                total_timeout_seconds=0.1,
+            )
+            with self.assertRaises(TimeoutError):
+                profile.bounded_open(
+                    _AttemptDeadline(time.monotonic_ns() + 100_000_000)
+                )
+            self.assertTrue(accepted.is_set())
+        finally:
+            stop.set()
+            listener.close()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_server_deadline_starts_before_drip_headers_and_body(self):
+        for phase in ("headers", "body"):
+            with self.subTest(phase=phase):
+                calls = []
+
+                class Adapter:
+                    def handle(self, raw, record=calls):
+                        record.append(raw)
+                        return b"{}"
+
+                with patch.object(owner_http, "MESSAGING_HANDLER_SECONDS", 0.08):
+                    server = owner_http.create_messaging_http_server(
+                        ("127.0.0.1", 0),
+                        evidence_ingress=Adapter(),
+                        message_ingress=Adapter(),
+                    )
+                    worker = threading.Thread(target=server.serve_forever)
+                    worker.start()
+                    connection = socket.create_connection(
+                        server.server_address, timeout=2
+                    )
+                    try:
+                        prefix = b"POST /dm-messaging/v1/message HTTP/1.1\r\n"
+                        if phase == "body":
+                            prefix += (
+                                b"Content-Type: application/daimon+jcs\r\n"
+                                b"Content-Length: 1000\r\n\r\n"
+                            )
+                        connection.sendall(prefix)
+                        observed_close = False
+                        client_deadline = time.monotonic() + 2
+                        while time.monotonic() < client_deadline:
+                            try:
+                                connection.sendall(b"x")
+                                readable, _, _ = select.select(
+                                    [connection], [], [], 0.01
+                                )
+                                if readable and connection.recv(1024) == b"":
+                                    observed_close = True
+                                    break
+                            except OSError:
+                                observed_close = True
+                                break
+                    finally:
+                        connection.close()
+                        server.shutdown()
+                        server.server_close()
+                        worker.join(5)
+                    self.assertFalse(worker.is_alive())
+                    self.assertTrue(observed_close)
+                    self.assertEqual(calls, [])
+
+    def test_message_handlers_preserve_an_independent_evidence_share(self):
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+        lock = threading.Lock()
+        errors = []
+
+        class MessageAdapter:
+            def handle(self, raw):
+                with lock:
+                    calls.append(raw)
+                    if len(calls) == 2:
+                        entered.set()
+                if not release.wait(5):
+                    raise AssertionError("message handler release missing")
+                return b"{}"
+
+        class EvidenceAdapter:
+            def handle(self, raw):
+                return b'{"proof":true}'
+
+        with patch.object(owner_http, "MAX_IN_FLIGHT", 4):
+            server = owner_http.create_messaging_http_server(
+                ("127.0.0.1", 0),
+                evidence_ingress=EvidenceAdapter(),
+                message_ingress=MessageAdapter(),
+            )
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+
+            def request(path):
+                connection = http.client.HTTPConnection(
+                    *server.server_address, timeout=3
+                )
+                try:
+                    connection.request(
+                        "POST", path, b"{}", {"Content-Type": "application/daimon+jcs"}
+                    )
+                    response = connection.getresponse()
+                    return response.status, response.read()
+                finally:
+                    connection.close()
+
+            def message():
+                try:
+                    self.assertEqual(request("/dm-messaging/v1/message")[0], 200)
+                except BaseException as failure:
+                    errors.append(failure)
+
+            messages = [threading.Thread(target=message) for _ in range(2)]
+            try:
+                for thread in messages:
+                    thread.start()
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(request("/dm-messaging/v1/message")[0], 503)
+                self.assertEqual(
+                    request("/dm-messaging/v1/evidence"), (200, b'{"proof":true}')
+                )
+            finally:
+                release.set()
+                for thread in messages:
+                    thread.join(5)
+                server.shutdown()
+                server.server_close()
+                worker.join(5)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(errors, [])
+            self.assertFalse(worker.is_alive())
+
+    def test_http_connection_close_preserves_owned_large_response_reader(self):
+        expected = b"synthetic response" * 2048
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        errors = []
+
+        def serve():
+            try:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(5)
+                    request = bytearray()
+                    while b"\r\n\r\n" not in request:
+                        request.extend(connection.recv(4096))
+                    header, body = request.split(b"\r\n\r\n", 1)
+                    size = int(
+                        next(
+                            line.split(b":", 1)[1]
+                            for line in header.split(b"\r\n")
+                            if line.lower().startswith(b"content-length:")
+                        )
+                    )
+                    while len(body) < size:
+                        body.extend(connection.recv(size - len(body)))
+                    connection.sendall(
+                        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
+                        + str(len(expected)).encode()
+                        + b"\r\n\r\n"
+                        + expected
+                    )
+            except BaseException as failure:
+                errors.append(failure)
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        exchange = None
+        try:
+            profile = _http_round_trip(
+                f"http://127.0.0.1:{listener.getsockname()[1]}/dm-route",
+                timeout_seconds=1,
+                response_timeout_seconds=1,
+                total_timeout_seconds=1,
+            )
+            exchange = profile.bounded_open(
+                _AttemptDeadline(time.monotonic_ns() + 1_000_000_000)
+            )
+            exchange.write(b"synthetic")
+            self.assertEqual(exchange.read(), expected)
+        finally:
+            if exchange is not None:
+                exchange.close()
+            listener.close()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_numeric_profile_never_hides_hostname_resolution_in_a_timeout(self):
+        with self.assertRaisesRegex(
+            RouteError, "bounded_transport_numeric_endpoint_required"
+        ):
+            _http_round_trip(
+                "https://example.invalid/dm-route",
+                timeout_seconds=1,
+                response_timeout_seconds=1,
+                total_timeout_seconds=1,
+            )
+        for endpoint in ("http://127.0.0.1/dm-route", "https://[::1]/dm-route"):
+            profile = _http_round_trip(
+                endpoint,
+                timeout_seconds=1,
+                response_timeout_seconds=1,
+                total_timeout_seconds=1,
+            )
+            self.assertIsNotNone(profile.bounded_open)
+        with self.assertRaisesRegex(RouteError, "invalid_provider_endpoint"):
+            _http_round_trip(
+                "http://127.0.0.1:0/dm-route",
+                timeout_seconds=1,
+                response_timeout_seconds=1,
+                total_timeout_seconds=1,
+            )
+
+    def test_child_deadline_cannot_renew_a_carrier_or_total_budget(self):
+        original = _AttemptDeadline.start(
+            30,
+            deadline_ms=1005,
+            clock=lambda: 1000,
+            started_ns=time.monotonic_ns(),
+        )
+        self.assertLessEqual(original.child(60).deadline_ns, original.deadline_ns)
+        with self.assertRaises(TimeoutError):
+            _AttemptDeadline.start(
+                1,
+                deadline_ms=1000,
+                clock=lambda: 1000,
+                started_ns=time.monotonic_ns(),
+            ).remaining()
+
+    def test_buffered_reader_drip_cannot_refresh_the_total_deadline(self):
+        writer, reader = socket.socketpair()
+        stop = threading.Event()
+
+        def drip():
+            with writer:
+                while not stop.wait(0.005):
+                    with contextlib.suppress(OSError):
+                        writer.sendall(b"x")
+
+        thread = threading.Thread(target=drip)
+        thread.start()
+        try:
+            wrapped = _DeadlineSocket(
+                reader, _AttemptDeadline(time.monotonic_ns() + 60_000_000)
+            )
+            with (
+                wrapped.makefile("rb") as buffered,
+                self.assertRaises(TimeoutError),
+            ):
+                buffered.read(1000)
+        finally:
+            stop.set()
+            reader.close()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+
+    def test_blocked_complete_write_finishes_ownership_before_returning_timeout(self):
+        writer, receiver = socket.socketpair()
+        try:
+            writer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+            wrapped = _DeadlineSocket(
+                writer, _AttemptDeadline(time.monotonic_ns() + 40_000_000)
+            )
+            with self.assertRaises(TimeoutError):
+                wrapped.sendall(b"x" * (1024 * 1024))
+            wrapped.close()
+            receiver.settimeout(1)
+            received = bytearray()
+            while chunk := receiver.recv(8192):
+                received.extend(chunk)
+            self.assertGreater(len(received), 0)
+            self.assertLess(len(received), 1024 * 1024)
+        finally:
+            writer.close()
+            receiver.close()
+
+    def test_http_drip_headers_and_body_share_one_attempt_deadline(self):
+        for phase in ("status", "headers", "body", "interim"):
+            with self.subTest(phase=phase):
+                self._drip_http(phase)
+
+    def _drip_http(self, phase):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        stop = threading.Event()
+        errors = []
+
+        def serve():
+            try:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(5)
+                    request = bytearray()
+                    while b"\r\n\r\n" not in request:
+                        request.extend(connection.recv(4096))
+                    prefixes = {
+                        "status": b"",
+                        "headers": b"HTTP/1.1 200 OK\r\n",
+                        "body": b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n",
+                        "interim": b"",
+                    }
+                    connection.sendall(prefixes[phase])
+                    drip = (
+                        b"HTTP/1.1 100 Continue\r\n\r\n" if phase == "interim" else b"x"
+                    )
+                    while not stop.wait(0.005):
+                        connection.sendall(drip)
+            except OSError:
+                pass  # The bounded client closes its stream on timeout.
+            except BaseException as failure:
+                errors.append(failure)
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+        exchange = None
+        try:
+            port = listener.getsockname()[1]
+            profile = _http_round_trip(
+                f"http://127.0.0.1:{port}/dm-route",
+                timeout_seconds=1,
+                response_timeout_seconds=1,
+                total_timeout_seconds=0.1,
+            )
+            deadline = _AttemptDeadline(time.monotonic_ns() + 100_000_000)
+            exchange = profile.bounded_open(deadline)
+            exchange.write(b"synthetic")
+            with self.assertRaises(TimeoutError):
+                exchange.read()
+        finally:
+            stop.set()
+            if exchange is not None:
+                exchange.close()
+            listener.close()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

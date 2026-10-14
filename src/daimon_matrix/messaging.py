@@ -11,8 +11,10 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Callable, Mapping
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
@@ -65,6 +67,7 @@ from .tribe_conversation import TribeConversation, ValidatedTribeIntake
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
+GROUP_OPERATION_WORKERS = 2
 
 
 def _display_identity(being_ref: str, labels: LabelIndex | None) -> str:
@@ -1697,6 +1700,11 @@ class GroupMessaging:
         self.intake_ingresses: dict[str, Any] = {}
         self._receipt_lock = threading.Lock()
         self._receipt_inflight: set[str] = set()
+        self._speech_slots = egress._group_speech_slots
+        self._control_slots = egress._group_control_slots
+        self._send_slots = egress._group_send_slots
+        self._transport_lock = egress._group_transport_lock
+        self._transport_inflight = egress._group_transport_inflight
         self.records.bind_egress(
             egress,
             catalog_id="tribe-carriers",
@@ -1970,12 +1978,13 @@ class GroupMessaging:
         )
         # Even an unreachable first route must not let later copies bypass the
         # one logical message's mandatory confirmed visibility.
-        self.egress.advance_one(operation)
+        self.egress.prepare_visibility(operation)
         completed = {
             (leg["recipient_id"], leg["receipt_origin_embodiment_id"])
             for leg in self.communication.result(message["event_id"])["legs"]
             if leg["state"] == "delivered"
         }
+        eligible = []
         for row in prepared["rows"]:
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
@@ -1984,10 +1993,98 @@ class GroupMessaging:
                 continue
             if (row["membership_ref"], row["embodiment_id"]) in completed:
                 continue
-            if authorize is not None:
-                authorize()
-            self._transmit(native, row, operation, receipt=False)
+            eligible.append(row)
+        self._fanout(native, eligible, operation, authorize=authorize)
         return self._result(message, send_id)
+
+    def _claim_transport(
+        self, row: Mapping[str, Any], operation: OperationBinding, *, receipt: bool
+    ) -> bool:
+        marker = (operation.operation_id, row["being_ref"], row["embodiment_id"])
+        slots = self._control_slots if receipt else self._speech_slots
+        with self._transport_lock:
+            if marker in self._transport_inflight or not slots.acquire(blocking=False):
+                return False
+            self._transport_inflight.add(marker)
+            return True
+
+    def _finish_transport(
+        self, row: Mapping[str, Any], operation: OperationBinding, *, receipt: bool
+    ) -> None:
+        marker = (operation.operation_id, row["being_ref"], row["embodiment_id"])
+        with self._transport_lock:
+            self._transport_inflight.remove(marker)
+            (self._control_slots if receipt else self._speech_slots).release()
+
+    def _fanout(
+        self,
+        native: bytes,
+        rows: list[Mapping[str, Any]],
+        operation: OperationBinding,
+        *,
+        authorize: Callable[[], None] | None,
+    ) -> None:
+        """One owned rolling window; no task exists before global admission."""
+        if not self._send_slots.acquire(blocking=False):
+            return  # Full audience remains inspectable, with unstarted rows.
+        deadline_ns = (
+            time.monotonic_ns()
+            + max(0, operation.deadline_ms - self.lane.clock()) * 1_000_000
+        )
+        futures: set[Future[None]] = set()
+        failures: list[BaseException] = []
+
+        def run(row: Mapping[str, Any]) -> None:
+            try:
+                if authorize is not None:
+                    authorize()
+                self._transmit(
+                    native,
+                    row,
+                    operation,
+                    receipt=False,
+                    deadline_ns=deadline_ns,
+                    authorize=authorize,
+                )
+            finally:
+                self._finish_transport(row, operation, receipt=False)
+
+        def collect(done: set[Future[None]]) -> None:
+            for future in done:
+                try:
+                    future.result()
+                except BaseException as failure:
+                    failures.append(failure)
+
+        try:
+            with ThreadPoolExecutor(max_workers=GROUP_OPERATION_WORKERS) as workers:
+                for row in rows:
+                    if self.lane.clock() >= operation.deadline_ms:
+                        break
+                    if time.monotonic_ns() >= deadline_ns:
+                        break
+                    if (row["being_ref"], row["embodiment_id"]) not in self.providers:
+                        continue
+                    if len(futures) >= GROUP_OPERATION_WORKERS:
+                        done, futures = wait(futures, return_when=FIRST_COMPLETED)
+                        collect(done)
+                    if failures or time.monotonic_ns() >= deadline_ns:
+                        break
+                    if not self._claim_transport(row, operation, receipt=False):
+                        continue
+                    try:
+                        futures.add(workers.submit(run, row))
+                    except BaseException:
+                        self._finish_transport(row, operation, receipt=False)
+                        raise
+                # Every submitted writer stays owned until completion. A stuck
+                # local storage operation is degraded ownership, not permission
+                # to abandon a writer and release the runtime lock.
+                collect(futures)
+            if failures:
+                raise failures[0]
+        finally:
+            self._send_slots.release()
 
     def _transmit(
         self,
@@ -1996,6 +2093,45 @@ class GroupMessaging:
         operation: OperationBinding,
         *,
         receipt: bool,
+        deadline_ns: int | None = None,
+        authorize: Callable[[], None] | None = None,
+    ) -> None:
+        if receipt:
+            if not self._claim_transport(row, operation, receipt=True):
+                return
+            try:
+                if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+                    return
+                self.egress.prepare_visibility(operation)
+                self._transmit_one(
+                    native,
+                    row,
+                    operation,
+                    receipt=receipt,
+                    deadline_ns=deadline_ns,
+                    authorize=authorize,
+                )
+            finally:
+                self._finish_transport(row, operation, receipt=True)
+        else:
+            self._transmit_one(
+                native,
+                row,
+                operation,
+                receipt=receipt,
+                deadline_ns=deadline_ns,
+                authorize=authorize,
+            )
+
+    def _transmit_one(
+        self,
+        native: bytes,
+        row: Mapping[str, Any],
+        operation: OperationBinding,
+        *,
+        receipt: bool,
+        deadline_ns: int | None,
+        authorize: Callable[[], None] | None,
     ) -> None:
         from .routes import RouteError
         from .sealed import inspect_delivery
@@ -2071,7 +2207,11 @@ class GroupMessaging:
 
         try:
             provider.send_prepared(
-                raw, carrier_binding=operation, response_sink=retain_response
+                raw,
+                carrier_binding=operation,
+                response_sink=retain_response,
+                attempt_deadline_ns=deadline_ns,
+                authorize=authorize,
             )
         except RouteError:
             # An unknown outcome stays pending. Retrying uses the same bytes and
@@ -2305,6 +2445,9 @@ class GroupMessaging:
         def after_response() -> None:
             self.complete_receipt(identifier)
 
+        def after_response_bounded(deadline: int) -> None:
+            self.complete_receipt(identifier, deadline_ns=deadline)
+
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
             metadata=context["metadata"],
@@ -2312,6 +2455,7 @@ class GroupMessaging:
                 admission, context, response
             ),
             after_response=after_response,
+            after_response_bounded=after_response_bounded,
         )
 
     def _acknowledge_intake(
@@ -2340,14 +2484,18 @@ class GroupMessaging:
         }
         self.records.reserve("intake-ack", value["request_id"], proof, lambda: proof)
 
-    def complete_receipt(self, message_id: str) -> dict[str, Any]:
+    def complete_receipt(
+        self, message_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any]:
         """One finite retained technical attempt under the runtime owner."""
+        if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+            return {"state": "pending", "code": "attempt_budget_exhausted"}
         with self._receipt_lock:
             if message_id in self._receipt_inflight:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(message_id)
         try:
-            return self._complete_receipt(message_id)
+            return self._complete_receipt(message_id, deadline_ns=deadline_ns)
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(message_id)
@@ -2398,7 +2546,9 @@ class GroupMessaging:
         # provider's authenticated result. No new HMAC key, route or I/O is used.
         return str(proof["result"]["outcome"])
 
-    def _complete_receipt(self, message_id: str) -> dict[str, Any]:
+    def _complete_receipt(
+        self, message_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any]:
         obligation = self.records.get("receipt-obligation", message_id)
         if obligation is None:
             raise ValueError("tribe_receipt_obligation_missing")
@@ -2479,7 +2629,13 @@ class GroupMessaging:
                 deadline_ms=obligation["deadline_ms"],
                 authority_head=self.ledger.local_origin["body_ref"],
             )
-            self._transmit(native, obligation["return_target"], operation, receipt=True)
+            self._transmit(
+                native,
+                obligation["return_target"],
+                operation,
+                receipt=True,
+                deadline_ns=deadline_ns,
+            )
             state = self._retained_return_state(result, obligation) or "pending"
         if state == "pending":
             return {"state": state}
@@ -2504,11 +2660,10 @@ class GroupMessaging:
     ) -> dict[str, Any]:
         """Finite technical recovery; the caller must own the native runtime lock.
 
-        The elapsed budget stops starting further items. #340 owns the strict
-        in-flight network deadline; this method never abandons an active writer.
+        The same elapsed budget limits in-flight network attempts and stops
+        starting further items. Local storage completion retains ownership;
+        this method never abandons an active writer.
         """
-        import time
-
         if (
             type(max_bytes) is not int
             or not 1 <= max_bytes <= 32 * 1024 * 1024
@@ -2517,11 +2672,12 @@ class GroupMessaging:
         ):
             raise ValueError("tribe_intake_budget_invalid")
         started = time.monotonic_ns()
+        deadline_ns = started + max_elapsed_ms * 1_000_000
         page = self.records.intake_page(
             after=after,
             limit=limit,
             max_bytes=max_bytes,
-            deadline_ns=started + max_elapsed_ms * 1_000_000,
+            deadline_ns=deadline_ns,
         )
         consumed, cursor = 0, after
         results = []
@@ -2545,9 +2701,11 @@ class GroupMessaging:
                 ingress = self.intake_ingresses[phase]
                 ingress.finalize_retained_intake(context, ticket)
                 state = (
-                    self.complete_receipt(admission["message_id"])
+                    self.complete_receipt(
+                        admission["message_id"], deadline_ns=deadline_ns
+                    )
                     if phase == "message"
-                    else self.complete_control(identifier)
+                    else self.complete_control(identifier, deadline_ns=deadline_ns)
                 )
                 results.append({"request_id": identifier, "ack": "retained", **state})
             except (ValueError, OSError, sqlite3.Error, RouteError) as failure:
@@ -2651,6 +2809,9 @@ class GroupMessaging:
         def after_response() -> None:
             self.complete_control(request_id)
 
+        def after_response_bounded(deadline: int) -> None:
+            self.complete_control(request_id, deadline_ns=deadline)
+
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
             metadata=context["metadata"],
@@ -2658,9 +2819,14 @@ class GroupMessaging:
                 admission, context, response
             ),
             after_response=after_response,
+            after_response_bounded=after_response_bounded,
         )
 
-    def complete_control(self, request_id: str) -> dict[str, Any]:
+    def complete_control(
+        self, request_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any]:
+        if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+            return {"state": "pending", "code": "attempt_budget_exhausted"}
         key = "control:" + request_id
         with self._receipt_lock:
             if key in self._receipt_inflight:

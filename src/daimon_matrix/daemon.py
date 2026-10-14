@@ -37,7 +37,13 @@ from .native_egress import (
     load_owner_visibility_file,
 )
 from .peer_transport import MAX_ENVELOPE_BYTES, PeerTransportBusy, PeerTransportError
-from .routes import MAX_TRANSPORT_BYTES, RouteError, TransportIngress
+from .routes import (
+    MAX_TRANSPORT_BYTES,
+    RouteError,
+    TransportIngress,
+    _AttemptDeadline,
+    _DeadlineSocket,
+)
 from .runtime import (
     HostedRuntime,
     RuntimeError,
@@ -50,6 +56,7 @@ DEFAULT_TIMEOUT_SECONDS: Final = 5.0
 MAX_WORKERS: Final = 8
 MAX_IN_FLIGHT: Final = 16
 EGRESS_SCAN_SECONDS: Final = 0.25
+MESSAGING_HANDLER_SECONDS: Final = 30.0
 FaultHook = Callable[[str], None]
 
 
@@ -286,6 +293,14 @@ class _BoundedMessagingHTTPServer(_BoundedPeerHTTPServer):
     daemon_threads = False
     block_on_close = True
 
+    def get_request(self) -> tuple[socket.socket, Any]:
+        connection, address = super().get_request()
+        # Start at acceptance, before allocating a handler or parsing headers.
+        deadline = _AttemptDeadline(
+            time.monotonic_ns() + int(MESSAGING_HANDLER_SECONDS * 1_000_000_000)
+        )
+        return cast(socket.socket, _DeadlineSocket(connection, deadline)), address
+
 
 def create_messaging_http_server(
     listen: tuple[str, int],
@@ -294,26 +309,36 @@ def create_messaging_http_server(
     message_ingress: TransportIngress,
 ) -> http.server.ThreadingHTTPServer:
     """Serve explicitly supplied owner-bound ingresses; never infer enrollment."""
-    ingresses = {
+    # Preserve byte-only local adapters; real TransportIngress owns the writer.
+    ingresses: dict[str, Any] = {
         "/dm-messaging/v1/evidence": evidence_ingress,
         "/dm-messaging/v1/message": message_ingress,
     }
+    message_slots = threading.BoundedSemaphore(MAX_IN_FLIGHT // 2)
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        wbufsize = 0
+
         def setup(self) -> None:
             super().setup()
+            self.owned_socket = cast(_DeadlineSocket, self.connection)
+            self.ownership_deadline = self.owned_socket.deadline
             self.connection.settimeout(DEFAULT_TIMEOUT_SECONDS)
 
         def _respond(self, status: int, body: bytes = b"") -> None:
-            self.close_connection = True
             with suppress(ConnectionError, OSError):
-                self.send_response_only(status)
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Connection", "close")
-                if body:
-                    self.send_header("Content-Type", "application/daimon+jcs")
-                self.end_headers()
-                self.wfile.write(body)
+                self._write_response(status, body)
+
+        def _write_response(self, status: int, body: bytes = b"") -> None:
+            self.close_connection = True
+            self.send_response_only(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            if body:
+                self.send_header("Content-Type", "application/daimon+jcs")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
 
         def do_POST(self) -> None:
             self.close_connection = True
@@ -321,6 +346,17 @@ def create_messaging_http_server(
             if ingress is None:
                 self._respond(404)
                 return
+            message = self.path == "/dm-messaging/v1/message"
+            if message and not message_slots.acquire(blocking=False):
+                self._respond(503)
+                return
+            try:
+                self._handle_post(ingress)
+            finally:
+                if message:
+                    message_slots.release()
+
+        def _handle_post(self, ingress: Any) -> None:
             lengths = self.headers.get_all("Content-Length", failobj=[])
             types = self.headers.get_all("Content-Type", failobj=[])
             if (
@@ -346,11 +382,8 @@ def create_messaging_http_server(
                 self._respond(400)
                 return
             try:
-                if (
-                    isinstance(ingress, TransportIngress)
-                    and ingress.intake_admission is not None
-                ):
-                    response = ingress.handle_deferred(raw)
+                if isinstance(ingress, TransportIngress):
+                    response = ingress.handle_deferred(raw, socket_writer=True)
                 else:
                     response = ingress.handle(raw)
             except RouteError as failure:
@@ -359,13 +392,22 @@ def create_messaging_http_server(
             from .routes import TransportReply
 
             if isinstance(response, TransportReply):
-                self._respond(200, response.response)
-                with suppress(ConnectionError, OSError):
-                    self.wfile.flush()
-                # One admitted handler owns this technical attempt. No worker,
-                # poller, model activation or shared "last request" state.
-                with suppress(Exception):
-                    response.after_response()
+                write_deadline = self.ownership_deadline.child(DEFAULT_TIMEOUT_SECONDS)
+                self.owned_socket.deadline = write_deadline
+                try:
+                    response.write_to(
+                        lambda value: self._write_response(200, value),
+                        deadline_ns=write_deadline.deadline_ns,
+                    )
+                except (ConnectionError, OSError, NativeEgressError):
+                    pass  # A partial or blocked write is not a remote observation.
+                finally:
+                    # One admitted handler retains its technical work even when
+                    # expiry/authority/socket failure blocks the actual ACK write.
+                    with suppress(Exception):
+                        response.complete(
+                            deadline_ns=self.ownership_deadline.deadline_ns
+                        )
             else:
                 self._respond(200, response)
 

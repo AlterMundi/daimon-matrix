@@ -12,6 +12,23 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_bounded_group_checks_omit_only_unchanged_receipt_membership_code(self):
+        from tools.ci_scope import BOUNDED_GROUP_FILES
+
+        paths = list(BOUNDED_GROUP_FILES)
+        self.assertEqual(profile(paths), "bounded-group-transport")
+        for changed in (
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/tribe_conversation.py",
+            "tests/test_cross_being_semantic_receipts.py",
+        ):
+            self.assertEqual(profile([*paths, changed]), "tribe-group")
+        self.assertEqual(profile([*paths, "src/daimon_matrix/identity.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn("needs.scope.outputs.group_receipt_checks != 'false'", workflow)
+
     def test_group_scope_includes_durable_intake_reader_qualification(self):
         paths = [
             "src/daimon_matrix/messaging.py",
@@ -28,6 +45,8 @@ class CIScopeTests(unittest.TestCase):
         group = workflow.split("  tribe-group:", 1)[1]
         self.assertIn("tests.test_release_compatibility", group)
         self.assertIn("tests.test_cross_being_semantic_receipts", group)
+        self.assertIn("tests.test_dm053_routes.BoundedTransportTests", group)
+        self.assertIn("tests.test_dm053_routes.InboxAndProtocolTests", group)
 
     def test_release_contract_qualifies_installed_codec_without_unchanged_transport(
         self,

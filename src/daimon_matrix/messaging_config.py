@@ -692,6 +692,11 @@ def _validate_group_shape(application: Any, *, specification: bool) -> None:
             or endpoint.path != "/dm-messaging/v1/message"
         ):
             raise ValueError()
+        # The selected group profile bounds network attempts without DNS/NSS
+        # work. Legacy directed hostname adapters remain a separate profile.
+        ipaddress.ip_address(endpoint.hostname)
+        if "%" in endpoint.hostname:
+            raise ValueError()
     for row in application["roster"]:
         key = (row["being_ref"], row["embodiment_id"])
         if key in seen:
@@ -1709,6 +1714,7 @@ def _compose_group(
                 egress=runtime.egress,
                 timeout_seconds=2,
                 response_timeout_seconds=10,
+                total_timeout_seconds=12,
             )
             for phase in ("message", "evidence")
         }

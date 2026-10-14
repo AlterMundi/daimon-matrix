@@ -219,8 +219,43 @@ RELEASE_COMPATIBILITY_FILES = frozenset(
 )
 
 
+BOUNDED_GROUP_FILES = frozenset(
+    {
+        ".github/workflows/tests.yml",
+        "docs/tribe-group-runtime.md",
+        "specs/tribe-conversation.md",
+        "src/daimon_matrix/daemon.py",
+        "src/daimon_matrix/messaging.py",
+        "src/daimon_matrix/messaging_config.py",
+        "src/daimon_matrix/native_egress.py",
+        "src/daimon_matrix/routes.py",
+        "src/daimon_matrix/release_compatibility.py",
+        "tests/test_ci_scope.py",
+        "tests/test_dm053_routes.py",
+        "tests/test_group_messaging_runtime.py",
+        "tests/test_native_messaging.py",
+        "tests/test_release_compatibility.py",
+        "tools/ci_scope.py",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed <= BOUNDED_GROUP_FILES
+        and {
+            "src/daimon_matrix/routes.py",
+            "src/daimon_matrix/native_egress.py",
+            "tests/test_dm053_routes.py",
+        }
+        <= changed
+    ):
+        return "bounded-group-transport"
     if (
         "src/daimon_matrix/release_compatibility.py" in changed
         and changed <= RELEASE_COMPATIBILITY_FILES
@@ -336,10 +371,18 @@ def main() -> None:
     # unchanged native suite is omitted for the closed mirror-only allowlist.
     value = (
         "profile="
-        + ("visibility" if selected == "mirror" else selected)
+        + (
+            "visibility"
+            if selected == "mirror"
+            else "tribe-group"
+            if selected == "bounded-group-transport"
+            else selected
+        )
         + "\nnative_checks="
         + ("false" if selected == "mirror" else "true")
     )
+    if selected == "bounded-group-transport":
+        value += "\ngroup_receipt_checks=false"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

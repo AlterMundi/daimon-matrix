@@ -103,8 +103,9 @@ exclusive runtime lock as the daemon. It accepts bounded `--intake-after`,
 `--intake-limit`, `--intake-max-bytes` and `--intake-max-elapsed-ms` navigation
 budgets and reports pending work without exposing request contents. It cannot
 load another writer beside a running owner. The elapsed budget stops starting
-more items; strict in-flight network deadlines and actual socket fencing remain
-#340. No timed-out writer is detached.
+more items and also limits each in-flight numeric HTTP attempt to its remaining
+budget. No timed-out writer is detached. Local storage completion retains runtime
+ownership rather than pretending that a timed-out commit stopped.
 
 Recovery after a message carrier expires uses the signed admission, readable
 inbox and receipt obligation; it never opens the expired frame again. It can
@@ -125,3 +126,58 @@ The receiving release descriptor advertises `durable-group-intake/v1`,
 An older reader that lacks them is not a compatible selection or rollback for
 that release. These source contracts require installed qualification and actual
 receiver-compatible selection; they do not assert a production rollout.
+
+## Bounded transport and owned responses
+
+The selected group compositor uses numeric IPv4/IPv6 destination endpoints and
+one native-network attempt budget: at most twelve seconds, no later than the
+original immutable carrier deadline. Connect/TLS and whole-request writes each
+have a two-second phase cap; response reading has a ten-second phase cap. All
+caps share one absolute monotonic deadline. Partial reads, interim responses,
+headers, body chunks and partial writes cannot renew it. Explicit port zero is
+rejected, never changed to a default port. TLS retains certificate verification.
+Legacy directed hostname and outbound Unix adapters remain available, but do
+not inherit this numeric HTTP guarantee. No resolver thread is abandoned.
+
+TCP/TLS setup sends no Matrix application bytes and happens before the execution
+fence. After setup, bounded release acquires the existing fence within the
+remaining budget, checks exact bytes/current authority/expiry and already
+discharged visibility, then consumes its permit around the actual request write.
+The owner callback and wall-clock expiry are checked again at that boundary.
+Response reading happens outside the fence. A partial write or lost response is
+uncertain; exact retry uses the same retained identity and bytes.
+
+Visibility preparation remains a separate prerequisite. It completes the
+retained multipart echo before fanout, or stops on ambiguous publication or
+backoff. Check-only permit issuance does not call Telegram or return a reusable
+permit. Controller SQLite busy waits fail immediately in bounded release;
+arbitrary owner callbacks, other stores, filesystem completion and the selected
+visibility service retain their own qualified availability assumptions. These
+transport limits are not a hard real-time promise for the entire Python process.
+
+One runtime controller shares four speech attempts, two independent control
+attempts and two sending operations. Each operation submits at most two tasks
+in a rolling window, acquiring global capacity before submission. Active exact
+recipient attempts coalesce. Every started writer is joined before the call
+returns; no unbounded task queue or background retry service exists. Saturated
+unstarted rows remain in the full frozen audience, distinct from retained
+unconfirmed attempts and authenticated responses in the existing delivery view.
+This qualifies the current small cohort; it does not guarantee every destination
+under arbitrary load. Historical retained records are not deleted to fake capacity.
+
+The receiving HTTP socket gets a thirty-second ownership deadline at acceptance,
+before request-line/header parsing, plus a five-second per-I/O cap. At most eight
+message handlers occupy the sixteen admitted connections, preserving an evidence
+share under the qualified load. Unlimited pre-header flooding is outside that
+assumption. Accepted ACKs and signed refusals retain their exact binding until
+the HTTP/IPC writer: response headers/framing/body/flush execute inside release,
+using unbuffered writes, rather than releasing a bytes-returning placeholder.
+Technical completion runs in `finally` within the remaining handler/obligation
+budget, even if authority or a failed ACK write blocks the response. Exhausted
+budgets leave recoverable intent. HTTP handlers and workers drain under runtime
+ownership; a stalled local completion cannot be abandoned to claim clean shutdown.
+
+The release descriptor includes `bounded-numeric-http/v1`,
+`owned-transport-reply/v1` and `bounded-group-fanout/v1`. Source/installed
+qualification does not establish actual receiving readiness or compatible
+rollback. Those selections remain the receiver-compatible rollout's work.

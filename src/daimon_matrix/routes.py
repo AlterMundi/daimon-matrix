@@ -13,12 +13,17 @@ import hashlib
 import hmac
 import html
 import http.client
+import io
+import ipaddress
 import json
+import math
 import os
 import socket
 import sqlite3
+import ssl
 import stat
 import struct
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -66,6 +71,130 @@ RoundTrip = Callable[[bytes], bytes]
 
 
 @dataclass(frozen=True)
+class _AttemptDeadline:
+    """One monotonic budget; successful partial I/O never renews it."""
+
+    deadline_ns: int
+
+    @classmethod
+    def start(
+        cls, seconds: float, *, deadline_ms: int, clock: Clock, started_ns: int
+    ) -> _AttemptDeadline:
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, (int, float))
+            or not math.isfinite(seconds)
+            or not 0 < seconds <= 60
+        ):
+            raise RouteError("invalid_transport_deadline")
+        remaining = (deadline_ms - clock()) / 1000
+        return cls(started_ns + int(min(seconds, remaining) * 1_000_000_000))
+
+    def remaining(self) -> float:
+        seconds = (self.deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        if seconds <= 0:
+            raise TimeoutError("transport attempt deadline")
+        return seconds
+
+    def child(self, seconds: float) -> _AttemptDeadline:
+        return _AttemptDeadline(
+            min(self.deadline_ns, time.monotonic_ns() + int(seconds * 1_000_000_000))
+        )
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Keep http.client's status/header/chunk loops inside the same budget."""
+
+    def __init__(self, connection: _DeadlineSocket) -> None:
+        self._connection = connection
+        connection._reader_count += 1
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        raw = self._connection.recv(len(buffer))
+        buffer[: len(raw)] = raw
+        return len(raw)
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                super().close()
+            finally:
+                self._connection._reader_count -= 1
+                self._connection._close_if_unused()
+
+
+class _DeadlineSocket:
+    """Owned socket with deadline-aware raw reads and complete offset writes."""
+
+    def __init__(self, connection: socket.socket, deadline: _AttemptDeadline) -> None:
+        self.connection = connection
+        self.deadline = deadline
+        self._reader_count = 0
+        self._close_requested = False
+        self._timeout_cap: float | None = None
+
+    def _io_timeout(self) -> float:
+        remaining = self.deadline.remaining()
+        return (
+            remaining
+            if self._timeout_cap is None
+            else min(remaining, self._timeout_cap)
+        )
+
+    def settimeout(self, seconds: float | None) -> None:
+        self._timeout_cap = seconds
+
+    def gettimeout(self) -> float | None:
+        return self._timeout_cap
+
+    def fileno(self) -> int:
+        return self.connection.fileno()
+
+    def shutdown(self, how: int) -> None:
+        self.connection.shutdown(how)
+
+    def setsockopt(self, level: int, option: int, value: Any) -> None:
+        self.connection.setsockopt(level, option, value)
+
+    def recv(self, size: int) -> bytes:
+        self.connection.settimeout(self._io_timeout())
+        raw = self.connection.recv(size)
+        self.deadline.remaining()
+        return raw
+
+    def sendall(self, raw: bytes) -> None:
+        remaining = memoryview(raw)
+        while remaining:
+            self.connection.settimeout(self._io_timeout())
+            size = self.connection.send(remaining)
+            self.deadline.remaining()
+            if size <= 0:
+                raise ConnectionError("transport write incomplete")
+            remaining = remaining[size:]
+
+    def makefile(self, mode: str = "r", buffering: int | None = None) -> Any:
+        if mode != "rb":
+            raise RouteError("unsupported_transport_stream")
+        if self._close_requested:
+            raise ConnectionError("transport stream closed")
+        # Retain socket.makefile's ownership rule: http.client can close its
+        # connection after headers while its response reader still owns the body.
+        # Raw reads still go through the same deadline rather than socket.makefile.
+        return io.BufferedReader(_DeadlineReader(self), buffer_size=8192)
+
+    def close(self) -> None:
+        self._close_requested = True
+        self._close_if_unused()
+
+    def _close_if_unused(self) -> None:
+        if self._close_requested and self._reader_count == 0:
+            self.connection.close()
+
+
+@dataclass(frozen=True)
 class _TransportExchange:
     write: Callable[[bytes], None]
     read: Callable[[], bytes]
@@ -77,9 +206,20 @@ class _SplitRoundTrip:
     """Maintained adapters release bytes under the fence, then wait outside it."""
 
     open: Callable[[], _TransportExchange]
+    bounded_open: Callable[[_AttemptDeadline], _TransportExchange] | None = None
+    total_timeout_seconds: float | None = None
 
     def __call__(self, raw: bytes) -> bytes:
-        exchange = self.open()
+        exchange = (
+            self.open()
+            if self.bounded_open is None
+            else self.bounded_open(
+                _AttemptDeadline(
+                    time.monotonic_ns()
+                    + int(cast(float, self.total_timeout_seconds) * 1_000_000_000)
+                )
+            )
+        )
         try:
             exchange.write(raw)
             return exchange.read()
@@ -108,6 +248,7 @@ class DurableIntakeTicket:
     metadata: Mapping[str, Any]
     acknowledge: Callable[[bytes], None]
     after_response: Callable[[], None]
+    after_response_bounded: Callable[[int], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +257,21 @@ class TransportReply:
 
     response: bytes
     after_response: Callable[[], None]
+    release_writer: Callable[[Callable[[bytes], None], int], None] | None = None
+    after_response_bounded: Callable[[int], None] | None = None
+
+    def write_to(self, writer: Callable[[bytes], None], *, deadline_ns: int) -> None:
+        if self.release_writer is None:
+            raise RouteError("transport_owned_reply_required")
+        self.release_writer(writer, deadline_ns)
+
+    def complete(self, *, deadline_ns: int) -> None:
+        if time.monotonic_ns() >= deadline_ns:
+            return  # Durable intent remains pending; no new work is started.
+        if self.after_response_bounded is not None:
+            self.after_response_bounded(deadline_ns)
+        else:
+            self.after_response()
 
 
 IntakeAdmission = Callable[[Mapping[str, Any]], DurableIntakeTicket]
@@ -1050,8 +1206,11 @@ class TransportIngress:
         assert isinstance(response, bytes)
         return response
 
-    def handle_deferred(self, raw: bytes) -> bytes | TransportReply:
+    def handle_deferred(
+        self, raw: bytes, *, socket_writer: bool = False
+    ) -> bytes | TransportReply:
         """Owned adapters write the ACK before consuming technical completion."""
+        ticket = None
         try:
             request = _decode_canonical(raw, "transport_request_rejected")
             value = _closed(
@@ -1106,7 +1265,6 @@ class TransportIngress:
             if not hmac.compare_digest(presented, expected):
                 raise RouteError("transport_request_rejected")
             request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
-            ticket = None
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:
@@ -1238,6 +1396,10 @@ class TransportIngress:
                         projection=projection,
                     ),
                 )
+                if socket_writer:
+                    return self._owned_reply(
+                        request_id, response, after_response=lambda: None
+                    )
                 return self.egress.release(
                     self.egress.binding(self.egress_catalog_id, request_id),
                     response,
@@ -1246,17 +1408,21 @@ class TransportIngress:
             stored_response = intake.get("_egress_response")
             if not isinstance(stored_response, bytes):
                 raise RouteError("transport_response_missing")
-            response = self.egress.release(
+            if socket_writer or ticket is not None:
+                return self._owned_reply(
+                    request_id,
+                    stored_response,
+                    after_response=(
+                        (lambda: None) if ticket is None else ticket.after_response
+                    ),
+                    after_response_bounded=(
+                        None if ticket is None else ticket.after_response_bounded
+                    ),
+                )
+            return self.egress.release(
                 self.egress.binding(self.egress_catalog_id, request_id),
                 stored_response,
                 lambda value: value,
-            )
-            return (
-                response
-                if ticket is None
-                else TransportReply(
-                    response=bytes(response), after_response=ticket.after_response
-                )
             )
         except (
             RouteError,
@@ -1266,7 +1432,32 @@ class TransportIngress:
         ) as exception:
             if isinstance(exception, RouteError):
                 raise
+            if ticket is not None:
+                raise RouteAmbiguous("transport_intake_recovery_pending") from exception
             raise RouteError("transport_request_rejected") from exception
+
+    def _owned_reply(
+        self,
+        request_id: str,
+        response: bytes,
+        *,
+        after_response: Callable[[], None],
+        after_response_bounded: Callable[[int], None] | None = None,
+    ) -> TransportReply:
+        binding = self.egress.binding(self.egress_catalog_id, request_id)
+        # Preserve the selected visibility prerequisite, including legacy
+        # profiles that publish control results. This preparation is separate
+        # from the check-only socket release; it never grants a reusable permit.
+        self.egress.prepare_visibility(binding)
+
+        def release(writer: Callable[[bytes], None], deadline_ns: int) -> None:
+            self.egress.release_bounded(
+                binding, response, writer, deadline_ns=deadline_ns
+            )
+
+        return TransportReply(
+            bytes(response), after_response, release, after_response_bounded
+        )
 
     def intake_binding(self) -> dict[str, Any]:
         return {
@@ -1549,6 +1740,11 @@ class AuthenticatedProvider:
         }
 
     def manifest(self) -> Mapping[str, Any]:
+        total = (
+            self._round_trip.total_timeout_seconds
+            if isinstance(self._round_trip, _SplitRoundTrip)
+            else None
+        )
         return {
             "schema": PROVIDER_MANIFEST_SCHEMA,
             "provider_ref": self.provider_ref,
@@ -1559,7 +1755,7 @@ class AuthenticatedProvider:
             "limits": {
                 "max_input_bytes": MAX_TRANSPORT_BYTES,
                 "max_output_bytes": MAX_TRANSPORT_BYTES,
-                "max_runtime_ms": 30_000,
+                "max_runtime_ms": 30_000 if total is None else math.ceil(total * 1000),
             },
             "authority": {
                 "matrix_authority": False,
@@ -1674,8 +1870,15 @@ class AuthenticatedProvider:
         *,
         response_sink: Callable[[bytes], None] | None = None,
         carrier_binding: OperationBinding | None = None,
+        attempt_deadline_ns: int | None = None,
+        authorize: Callable[[], None] | None = None,
     ) -> Mapping[str, Any]:
         """Transmit exact bytes; optionally retain the authenticated response."""
+        started_ns = time.monotonic_ns()
+        if attempt_deadline_ns is not None and (
+            type(attempt_deadline_ns) is not int or attempt_deadline_ns <= started_ns
+        ):
+            raise RouteAmbiguous("route_timeout", fallback_allowed=False)
         value, _, _ = self._prepared_submission(request)
         carrier = unb64url(cast(str, value["envelope"]))
         if carrier_binding is not None and (
@@ -1724,22 +1927,70 @@ class AuthenticatedProvider:
                 }
             )
             if type(self._round_trip) is _SplitRoundTrip:
-                exchange = self._round_trip.open()
+                deadline = (
+                    None
+                    if self._round_trip.bounded_open is None
+                    else _AttemptDeadline.start(
+                        cast(float, self._round_trip.total_timeout_seconds),
+                        deadline_ms=cast(int, value["deadline_ms"]),
+                        clock=self._clock,
+                        started_ns=started_ns,
+                    )
+                )
+                if attempt_deadline_ns is not None:
+                    if deadline is None:
+                        raise RouteError("route_bounded_transport_required")
+                    deadline = _AttemptDeadline(
+                        min(deadline.deadline_ns, attempt_deadline_ns)
+                    )
+                exchange = (
+                    self._round_trip.open()
+                    if deadline is None
+                    else self._round_trip.bounded_open(deadline)  # type: ignore[misc]
+                )
                 try:
+
+                    def write(checked: bytes) -> None:
+                        if authorize is not None:
+                            authorize()
+                        if deadline is not None:
+                            deadline.remaining()
+                        if self._clock() >= value["deadline_ms"]:
+                            raise NativeEgressError("egress_authority_blocked")
+                        exchange.write(checked)
+
                     if carrier_binding is None:
-                        self._egress.release_registered(
-                            request, allowed_paths=paths, effect=exchange.write
-                        )
+                        if deadline is None:
+                            self._egress.release_registered(
+                                request, allowed_paths=paths, effect=write
+                            )
+                        else:
+                            self._egress.release_registered_bounded(
+                                request,
+                                allowed_paths=paths,
+                                effect=write,
+                                deadline_ns=deadline.deadline_ns,
+                            )
                     else:
-                        self._egress.release(
-                            carrier_binding,
-                            carrier,
-                            lambda _carrier: exchange.write(request),
-                        )
+                        if deadline is None:
+                            self._egress.release(
+                                carrier_binding,
+                                carrier,
+                                lambda _carrier: write(request),
+                            )
+                        else:
+                            self._egress.release_bounded(
+                                carrier_binding,
+                                carrier,
+                                lambda _carrier: write(request),
+                                deadline_ns=deadline.deadline_ns,
+                            )
                     raw_response = exchange.read()
                 finally:
                     exchange.close()
             else:
+                if attempt_deadline_ns is not None:
+                    raise RouteError("route_bounded_transport_required")
                 # Opaque callbacks have no separate write boundary. Preserve
                 # their existing atomic authorization/execution semantics.
                 if carrier_binding is None:
@@ -1766,6 +2017,7 @@ class AuthenticatedProvider:
                 "egress_echo_not_confirmed": "route_echo_unconfirmed",
                 "egress_authority_blocked": "route_authority_blocked",
                 "echo_authorization_blocked": "route_authority_blocked",
+                "egress_attempt_deadline": "route_timeout",
             }.get(str(exception), "route_egress_blocked")
             raise RouteAmbiguous(code, fallback_allowed=False) from exception
         except TimeoutError as exception:
@@ -1948,32 +2200,38 @@ def serve_transport_connection(
 ) -> None:
     """Serve one bounded authenticated transport frame over an existing socket."""
 
-    connection.settimeout(timeout_seconds)
-    header = _recv_exact(connection, 4)
+    deadline = _AttemptDeadline(
+        time.monotonic_ns() + int(timeout_seconds * 1_000_000_000)
+    )
+    wrapped = _DeadlineSocket(connection, deadline)
+    header = _recv_exact(cast(socket.socket, wrapped), 4)
     size = int.from_bytes(header, "big")
     if not 1 <= size <= MAX_TRANSPORT_BYTES:
         raise RouteError("invalid_transport_frame")
-    raw = _recv_exact(connection, size)
-    response = (
-        ingress.handle_deferred(raw)
-        if ingress.intake_admission is not None
-        else ingress.handle(raw)
-    )
+    raw = _recv_exact(cast(socket.socket, wrapped), size)
+    response = ingress.handle_deferred(raw, socket_writer=True)
     if isinstance(response, TransportReply):
         try:
-            raw_response = response.response
-            connection.sendall(len(raw_response).to_bytes(4, "big") + raw_response)
+
+            def write(raw_response: bytes) -> None:
+                wrapped.sendall(len(raw_response).to_bytes(4, "big") + raw_response)
+
+            response.write_to(write, deadline_ns=deadline.deadline_ns)
         finally:
             # The admitted connection owns one technical completion attempt,
             # even if the peer did not observe the ACK write.
             with suppress(Exception):
-                response.after_response()
+                response.complete(deadline_ns=deadline.deadline_ns)
     else:
-        connection.sendall(len(response).to_bytes(4, "big") + response)
+        wrapped.sendall(len(response).to_bytes(4, "big") + response)
 
 
 def _http_round_trip(
-    url: str, *, timeout_seconds: float, response_timeout_seconds: float
+    url: str,
+    *,
+    timeout_seconds: float,
+    response_timeout_seconds: float,
+    total_timeout_seconds: float | None = None,
 ) -> RoundTrip:
     parsed = urlsplit(url)
     if (
@@ -2021,7 +2279,86 @@ def _http_round_trip(
 
         return _TransportExchange(write, read, connection.close)
 
-    return _SplitRoundTrip(open_exchange)
+    if total_timeout_seconds is None:
+        return _SplitRoundTrip(open_exchange)
+    if port is not None and not 1 <= port <= 65535:
+        raise RouteError("invalid_provider_endpoint")
+    for limit in (timeout_seconds, response_timeout_seconds, total_timeout_seconds):
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, (int, float))
+            or not math.isfinite(limit)
+            or not 0 < limit <= 60
+        ):
+            raise RouteError("invalid_transport_deadline")
+    try:
+        address = ipaddress.ip_address(hostname)
+        if "%" in hostname:
+            raise ValueError("scoped address")
+    except ValueError:
+        # A socket timeout does not bound getaddrinfo/NSS. Legacy hostname
+        # adapters remain available, but cannot select this bounded profile.
+        raise RouteError("bounded_transport_numeric_endpoint_required") from None
+    context = ssl.create_default_context() if parsed.scheme == "https" else None
+    selected_port = port if port is not None else (443 if context is not None else 80)
+
+    def bounded_open(deadline: _AttemptDeadline) -> _TransportExchange:
+        connect_deadline = deadline.child(timeout_seconds)
+        family = socket.AF_INET if address.version == 4 else socket.AF_INET6
+        owned = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            owned.settimeout(connect_deadline.remaining())
+            target_address: Any = (
+                (str(address), selected_port)
+                if address.version == 4
+                else (str(address), selected_port, 0, 0)
+            )
+            owned.connect(target_address)
+            connect_deadline.remaining()
+            if context is not None:
+                owned = context.wrap_socket(
+                    owned, server_hostname=hostname, do_handshake_on_connect=False
+                )
+                owned.settimeout(connect_deadline.remaining())
+                owned.do_handshake()
+                connect_deadline.remaining()
+            wrapped = _DeadlineSocket(owned, deadline)
+            connection = http.client.HTTPConnection(hostname, port=selected_port)
+            connection.auto_open = 0  # Never reconnect outside the selected setup.
+            connection.sock = cast(socket.socket, wrapped)
+
+            def write(raw: bytes) -> None:
+                wrapped.deadline = deadline.child(timeout_seconds)
+                wrapped.deadline.remaining()
+                connection.request(
+                    "POST",
+                    target,
+                    body=raw,
+                    headers={
+                        "Content-Type": "application/daimon+jcs",
+                        "Content-Length": str(len(raw)),
+                    },
+                )
+                wrapped.deadline.remaining()
+
+            def read() -> bytes:
+                wrapped.deadline = deadline.child(response_timeout_seconds)
+                response = connection.getresponse()
+                try:
+                    body = response.read(MAX_TRANSPORT_BYTES + 1)
+                    wrapped.deadline.remaining()
+                    if response.status != 200 or len(body) > MAX_TRANSPORT_BYTES:
+                        raise RouteAmbiguous("route_http_response_invalid")
+                    return body
+                finally:
+                    response.close()
+
+            return _TransportExchange(write, read, connection.close)
+        except BaseException:
+            owned.close()
+            raise
+
+    return _SplitRoundTrip(open_exchange, bounded_open, total_timeout_seconds)
 
 
 class LocalIPCProvider(AuthenticatedProvider):
@@ -2050,6 +2387,7 @@ class DirectHTTPProvider(AuthenticatedProvider):
         endpoint: str,
         timeout_seconds: float = 5.0,
         response_timeout_seconds: float = 30.0,
+        total_timeout_seconds: float | None = None,
         **kwargs: Any,
     ) -> None:
         self._endpoint_sha256 = hashlib.sha256(endpoint.encode()).hexdigest()
@@ -2058,6 +2396,7 @@ class DirectHTTPProvider(AuthenticatedProvider):
                 endpoint,
                 timeout_seconds=timeout_seconds,
                 response_timeout_seconds=response_timeout_seconds,
+                total_timeout_seconds=total_timeout_seconds,
             ),
             **kwargs,
         )

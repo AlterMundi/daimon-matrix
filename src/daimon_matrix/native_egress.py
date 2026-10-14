@@ -19,6 +19,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, Protocol, TypeVar
@@ -792,6 +793,17 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_catalog_mode_invalid")
         self._catalog_mode: Literal["validate", "migrate", "synthetic"] = catalog_mode
         self._fence = threading.Lock()
+        # Runtime-global group transport capacity, shared even if owner-local
+        # composition reconstructs an application object over the same catalog.
+        # These are admission bounds, never publication/authority permissions.
+        self._group_speech_slots = threading.BoundedSemaphore(4)
+        self._group_control_slots = threading.BoundedSemaphore(2)
+        self._group_send_slots = threading.BoundedSemaphore(2)
+        self._group_transport_lock = threading.Lock()
+        self._group_transport_inflight: set[tuple[str, str, str]] = set()
+        self._attempt_deadline: ContextVar[int | None] = ContextVar(
+            "native_egress_attempt_deadline", default=None
+        )
         self._catalogs: dict[str, _Catalog] = {}
         self._paths: dict[str, set[str]] = {}
         self._registry_closed = False
@@ -1090,7 +1102,15 @@ class MandatoryEgressController:
     def _database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
         database: sqlite3.Connection | None = None
         try:
-            database = sqlite3.connect(catalog.path, isolation_level=None, timeout=30)
+            deadline = self._attempt_deadline.get()
+            if deadline is not None:
+                self._remaining_attempt_seconds(deadline)
+            # SQLite's timeout is per statement, not an aggregate deadline.
+            # Bounded release never waits on this controller's busy databases.
+            timeout = 30.0 if deadline is None else 0.0
+            database = sqlite3.connect(
+                catalog.path, isolation_level=None, timeout=timeout
+            )
             database.row_factory = sqlite3.Row
             mode = database.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
             database.execute("PRAGMA synchronous=FULL")
@@ -1940,8 +1960,32 @@ class MandatoryEgressController:
             except EchoError as exception:
                 raise NativeEgressError(str(exception)) from None
 
+    def prepare_visibility(self, binding: OperationBinding) -> dict[str, Any]:
+        """Prepare all retained parts before a check-only transport attempt.
+
+        Preserve the existing finite preparation behavior, including an exact
+        stop on ambiguous publication. This is the selected echo prerequisite,
+        separate from the bounded native-network attempt and its socket fence.
+        """
+        state = self.inspect(binding)
+        for _ in range(state["part_count"] + 1):
+            if state.get("state") in {"confirmed", "suppressed", "ambiguous"}:
+                break
+            previous = state
+            state = self.advance_one(binding)
+            if (
+                state["state"] == "queued"
+                and state["confirmed_parts"] == previous["confirmed_parts"]
+            ):
+                break  # No progress; preserve the existing retry/backoff policy.
+        return state
+
     def _issue_permit_locked(
-        self, binding: OperationBinding, native_bytes: bytes
+        self,
+        binding: OperationBinding,
+        native_bytes: bytes,
+        *,
+        advance_visibility: bool = True,
     ) -> ReleasePermit:
         catalog = self._catalogs.get(binding.catalog_id)
         if catalog is None or binding.path_id not in PEER_EGRESS_PATHS:
@@ -1963,7 +2007,7 @@ class MandatoryEgressController:
                 state = echo.inspect(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
-                for _ in range(len(state.get("parts", [])) + 1):
+                for _ in range(state["part_count"] + 1 if advance_visibility else 0):
                     if state.get("state") in {
                         "confirmed",
                         "ambiguous",
@@ -2022,6 +2066,89 @@ class MandatoryEgressController:
         with self._fence:
             permit = self._issue_permit_locked(binding, native_bytes)
             return self._consume_permit_locked(permit, native_bytes, effect)
+
+    @staticmethod
+    def _remaining_attempt_seconds(deadline_ns: int) -> float:
+        remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        if remaining <= 0:
+            raise NativeEgressError("egress_attempt_deadline")
+        return remaining
+
+    def release_bounded(
+        self,
+        binding: OperationBinding,
+        native_bytes: bytes,
+        effect: Callable[[bytes], _Result],
+        *,
+        deadline_ns: int,
+    ) -> _Result:
+        """Check already-discharged visibility at the actual bounded writer.
+
+        Connect/setup and visibility preparation belong to the caller. This
+        path never advances Telegram, returns a reusable permit, or abandons
+        a writer. The effect must enforce this same deadline on socket I/O.
+        Fence waits use the remaining budget; controller SQLite busy waits fail
+        immediately. Owner callbacks, other stores and filesystem completion
+        retain runtime ownership and their qualified local-storage assumptions.
+        """
+        if (
+            not isinstance(deadline_ns, int)
+            or isinstance(deadline_ns, bool)
+            or deadline_ns <= 0
+        ):
+            raise NativeEgressError("egress_attempt_deadline")
+        inherited = self._attempt_deadline.get()
+        if inherited is not None:
+            deadline_ns = min(deadline_ns, inherited)
+        token = self._attempt_deadline.set(deadline_ns)
+        acquired = False
+        try:
+            acquired = self._fence.acquire(
+                timeout=self._remaining_attempt_seconds(deadline_ns)
+            )
+            if not acquired:
+                raise NativeEgressError("egress_attempt_deadline")
+            self._remaining_attempt_seconds(deadline_ns)
+            permit = self._issue_permit_locked(
+                binding, native_bytes, advance_visibility=False
+            )
+
+            def write(checked: bytes) -> _Result:
+                # Validation may consume time. Never begin I/O after that time
+                # expires, even if the wall-clock carrier is still active.
+                self._remaining_attempt_seconds(deadline_ns)
+                if self._clock() >= binding.deadline_ms:
+                    raise NativeEgressError("egress_authority_blocked")
+                return effect(checked)
+
+            return self._consume_permit_locked(permit, native_bytes, write)
+        finally:
+            if acquired:
+                self._fence.release()
+            self._attempt_deadline.reset(token)
+
+    def release_registered_bounded(
+        self,
+        native_bytes: bytes,
+        *,
+        allowed_paths: frozenset[str],
+        effect: Callable[[bytes], _Result],
+        deadline_ns: int,
+    ) -> _Result:
+        if not isinstance(deadline_ns, int) or isinstance(deadline_ns, bool):
+            raise NativeEgressError("egress_attempt_deadline")
+        inherited = self._attempt_deadline.get()
+        if inherited is not None:
+            deadline_ns = min(inherited, deadline_ns)
+        self._remaining_attempt_seconds(deadline_ns)
+        token = self._attempt_deadline.set(deadline_ns)
+        try:
+            binding = self.binding_for_native(native_bytes, allowed_paths=allowed_paths)
+            return self.release_bounded(
+                binding, native_bytes, effect, deadline_ns=deadline_ns
+            )
+        finally:
+            self._attempt_deadline.reset(token)
 
     def release_all(
         self,

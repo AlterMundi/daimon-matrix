@@ -46,6 +46,9 @@ _FEATURES = sorted(
         "per-receiver-artifacts/v1",
         "durable-group-intake/v1",
         "deferred-receipt-observation/v1",
+        "bounded-numeric-http/v1",
+        "owned-transport-reply/v1",
+        "bounded-group-fanout/v1",
     }
 )
 _CONTRACT_FIELDS = {
