@@ -364,7 +364,7 @@ def _codex_candidate(
             home,
             command,
             **({"startup_timeout_seconds": 60} if startup_default else {}),
-            **({} if timeout_seconds is None else {"timeout_seconds": timeout_seconds}),
+            timeout_seconds=30 if timeout_seconds is None else timeout_seconds,
         )
         candidate = protected_read(config)
     if tomllib.loads(candidate.decode()) != expected:
