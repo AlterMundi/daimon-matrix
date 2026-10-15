@@ -113,6 +113,10 @@ For local source regressions, run `PYTHONPATH=src <existing-python> -m unittest
 tests.test_agent_chat`. A reused runtime venv may contain an older installed SDK;
 do not overwrite that live environment to test checkout changes. Installed-wheel
 CI separately verifies the packaged candidate rather than the source overlay.
+The pre-push invariant hook also needs that qualified interpreter. When it is
+not selected by the shell, use the existing `FROZEN_CHECK_PYTHON` override, for
+example `FROZEN_CHECK_PYTHON=.venv/bin/python git push`. Do not install dependencies
+into the system or live runtime merely to satisfy an unqualified hook default.
 
 Tests cover no-I/O installation/registration, identical installation, modified
 file and symlink refusal, messaging-only capability, wrong-channel rejection,
@@ -121,9 +125,11 @@ Existing messaging tests cover authenticated stdio/UDS transport and daemon
 contracts. Live participant readiness additionally requires actual peer enrollment
 and a human-requested conversation; tool registration alone does not prove that.
 
-## File-based peer connection
+## Explicit separate peer connection
 
-If both agents have identities but no signed peer application yet, use
+Only for a deliberately separate peer application outside the configured Tribe
+group, use
 [file-peer-enrollment.md](file-peer-enrollment.md). It avoids SSH and exchanges
 only an encrypted offer and a signed public response; private identity keys stay
-on their original hosts.
+on their original hosts. Same-Tribe members use the shared membership registration
+above and do not need per-pair enrollment, including for membership-directed sends.
