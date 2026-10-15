@@ -2511,6 +2511,136 @@ class RetainedVisibilityAcceptanceTests(unittest.TestCase):
         daemon_visibility_check(advanced, target, installation)
 
 
+class PublicAuthorityHistoryTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_dm022_ledger import RootLedgerFixture
+
+        self.fixture = RootLedgerFixture()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.tearDown)
+
+    def restart(self):
+        from daimon_matrix.authority_epochs import create_authority_epoch
+        from daimon_matrix.identity import create_incarnation_authorization
+        from tests.test_dm022_ledger import NOW
+
+        fixture = self.fixture
+        credential = next(
+            value
+            for value in fixture.credentials.values()
+            if value["body"]["embodiment_id"] == "embodiment:legion"
+        )
+        incarnation = create_incarnation_authorization(
+            credential,
+            fixture.signing_seeds["legion"],
+            incarnation_id="incarnation:legion:1",
+            incarnation_sequence=1,
+            started_at_ms=NOW + 1,
+        )
+        manifest = copy.deepcopy(dict(fixture.manifest.value))
+        manifest["revision"] += 1
+        for row in manifest["embodiments"]:
+            if row["embodiment_id"] == "embodiment:legion":
+                row["status"] = "retired"
+                manifest["embodiments"].append(
+                    {
+                        **row,
+                        "status": "active",
+                        "incarnation_id": "incarnation:legion:1",
+                        "incarnation_authorization_id": incarnation["artifact_id"],
+                    }
+                )
+                break
+        manifest["embodiments"].sort(
+            key=lambda row: (row["embodiment_id"], row["incarnation_id"])
+        )
+        from daimon_matrix.weave import BeingManifest
+
+        successor = create_authority_epoch(
+            fixture.manifest,
+            BeingManifest.from_value(manifest),
+            embodiment_id="embodiment:legion",
+            previous_incarnation_id="incarnation:legion:0",
+            successor_authorization=incarnation,
+            signing_seed=fixture.signing_seeds["legion"],
+            issued_at_ms=NOW + 1,
+        )
+        previous = {
+            "schema": "dm.operator.authority/v1",
+            "control_artifacts": [fixture.genesis],
+            "control_head": fixture.state.head,
+            "manifest": fixture.manifest.value,
+            "credentials": list(fixture.credentials.values()),
+            "incarnations": list(fixture.incarnations.values()),
+        }
+        current = {
+            **previous,
+            "manifest": manifest,
+            "incarnations": [*previous["incarnations"], incarnation],
+        }
+        history = [
+            {
+                **{key: value for key, value in previous.items() if key != "schema"},
+                "successor": successor,
+            }
+        ]
+        return previous, current, history
+
+    def test_public_history_verifies_historical_event_without_foreign_ledger(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+        from daimon_matrix.weave import verify_event
+
+        _, current, history = self.restart()
+        event = self.fixture.append(self.fixture.ledger_a, "legion", "old-proof")
+        inputs = copy.deepcopy((current, history))
+        authority = public_authority_history(current, history)
+        self.assertEqual(authority.historical[0], self.fixture.authority)
+        verify_event(event, authority)
+        self.assertEqual((current, history), inputs)
+        self.assertEqual(authority.active.manifest.value, current["manifest"])
+
+    def test_compact_native_restart_history_uses_the_same_validator(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+        from daimon_matrix.weave import verify_event
+
+        _, current, history = self.restart()
+        compact = [
+            {"manifest": row["manifest"], "successor": row["successor"]}
+            for row in history
+        ]
+        authority = public_authority_history(current, compact)
+        event = self.fixture.append(self.fixture.ledger_a, "legion", "old-proof")
+        verify_event(event, authority)
+
+    def test_public_history_rejects_forged_reordered_and_substituted_epochs(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+
+        previous, current, history = self.restart()
+        forged = copy.deepcopy(history)
+        forged[0]["successor"]["signature"]["value"] = b64url(bytes(64))
+        for document, epochs in (
+            (current, forged),
+            (previous, history),
+            (current, history * 2),
+            (current, history * 257),
+            (current, [{**history[0], "unexpected": True}]),
+            (current, [None]),
+            (current, "not-a-history"),
+        ):
+            with self.subTest(epochs=str(epochs)[:50]), self.assertRaises(ValueError):
+                public_authority_history(document, epochs)
+
+    def test_empty_history_does_not_invent_an_older_epoch(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+
+        _, current, _ = self.restart()
+        authority = public_authority_history(current, [])
+        self.assertEqual(authority.historical, [])
+        self.assertEqual(
+            authority.accepted_manifest_hashes, (authority.manifest.digest,)
+        )
+
+
 class ForeignAuthorityAdoptionTests(unittest.TestCase):
     def test_real_foreign_ledger_and_current_local_keys_survive_signed_retirement(self):
         from daimon_matrix.authority_epochs import create_embodiment_retirement

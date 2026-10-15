@@ -166,14 +166,25 @@ def _runtime_authorities(
     return result
 
 
-def known_peer_successor(
-    previous: Mapping[str, Any],
+def public_authority_history(
     document: Mapping[str, Any],
     history: Sequence[Mapping[str, Any]],
-) -> tuple[dict[str, Any], RootHistoryAuthority]:
-    """Derive one existing peer's exact descendant; never enroll an unknown peer."""
+) -> RootHistoryAuthority:
+    """Verify bounded public epochs ending at one explicitly selected Root.
+
+    The caller must authenticate ``document`` as its intended current authority;
+    a valid chain alone never approves a peer or a group admission. This pure
+    reader opens no custody, ledger or conversation store. Full epoch snapshots
+    retain their own control state; compact restart epochs share the following
+    epoch's unchanged control/credential inventory, as in native runtime bundles.
+    """
     active = authority_from_document(document)
-    if len(history) > 256:
+    if (
+        not isinstance(history, Sequence)
+        or isinstance(history, (str, bytes, bytearray))
+        or len(history) > 256
+        or any(not isinstance(entry, Mapping) for entry in history)
+    ):
         raise MessagingConfigError("messaging_republish_peer_conflict")
     historical: list[RootAuthority] = []
     following = active
@@ -205,9 +216,18 @@ def known_peer_successor(
             raise MessagingConfigError("messaging_republish_peer_conflict")
         historical.append(epoch)
         following = epoch
-    verified = RootHistoryAuthority(
+    return RootHistoryAuthority(
         active, list(reversed(historical)), [entry["successor"] for entry in history]
     )
+
+
+def known_peer_successor(
+    previous: Mapping[str, Any],
+    document: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], RootHistoryAuthority]:
+    """Derive one existing peer's exact descendant; never enroll an unknown peer."""
+    verified = public_authority_history(document, history)
     known = {
         key: copy.deepcopy(value) for key, value in document.items() if key != "schema"
     }
