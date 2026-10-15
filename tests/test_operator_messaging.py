@@ -3068,6 +3068,114 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual(installation.read_bytes(), before)
         self.assertEqual(json.loads(before)["document"]["generation"], 2)
 
+    def test_visibility_parent_sync_precedes_selection_and_retry_recovers(self):
+        from daimon_matrix.operator_messaging import _sync, publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        original = installation.read_bytes()
+
+        def lost_parent_sync(directory):
+            _sync(directory)
+            if directory == installation.parent:
+                self.assertEqual(installation.read_bytes(), original)
+                raise OSError("lost parent directory sync acknowledgment")
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging._sync", side_effect=lost_parent_sync
+            ),
+            self.assertRaises(OSError),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), original)
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+        self.assertEqual(
+            json.loads(installation.read_bytes())["document"]["generation"], 2
+        )
+
+    def test_visibility_rejected_predecessor_does_not_poison_exact_retry(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        original = installation.read_bytes()
+        damaged = json.loads(original)
+        damaged["binding"]["signature"] = "tampered"
+        installation.write_bytes(canonical_bytes(damaged))
+        operations = set(installation.parent.glob(".group-visibility-*"))
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(
+            set(installation.parent.glob(".group-visibility-*")), operations
+        )
+        installation.write_bytes(original)
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+
+    def test_visibility_rejected_initial_config_does_not_poison_exact_retry(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        damaged = copy.deepcopy(configuration)
+        damaged["secrets"]["telegram_token_sha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=None,
+                initial_configuration=damaged,
+            )
+        self.assertFalse(installation.exists())
+        self.assertEqual(list(installation.parent.glob(".group-visibility-*")), [])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+
     def test_visibility_missing_acceptance_preserves_the_selected_predecessor(self):
         from daimon_matrix.operator_messaging import publish_group_visibility
 

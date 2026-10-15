@@ -2262,9 +2262,9 @@ def publish_group_visibility(
                 raise MessagingConfigError("messaging_relationship_authority_mismatch")
             authorities[ref] = authority
 
-        def validate(path: Path, expected_app: str) -> None:
+        def validate(envelope: Mapping[str, Any], expected_app: str) -> None:
             load_owner_visibility(
-                read_document(path),
+                envelope,
                 directory=root,
                 expected_application_sha256=expected_app,
                 verify_owner_binding=lambda document, binding: verify_binding(
@@ -2321,6 +2321,13 @@ def publish_group_visibility(
                 or disclosure["issued_at_ms"] < old_shape["issued_at_ms"]
             ):
                 raise MessagingConfigError("messaging_group_visibility_conflict")
+            allowed_previous = {app_digest}
+            predecessor = publication["body"]["predecessor_sha256"]
+            if predecessor is not None:
+                allowed_previous.add(predecessor)
+            if prior["document"]["application_sha256"] not in allowed_previous:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            validate(prior, prior["document"]["application_sha256"])
         document = {
             **base,
             "generation": generation,
@@ -2336,6 +2343,7 @@ def publish_group_visibility(
         envelope = {"document": document, "binding": create_binding(runtime, document)}
         if selected not in (prior, envelope):
             raise MessagingConfigError("messaging_group_visibility_conflict")
+        validate(envelope, app_digest)
         operation.mkdir(mode=0o700, exist_ok=True)
         _directory(operation)
         if prior is not None:
@@ -2347,15 +2355,6 @@ def publish_group_visibility(
                 canonical_bytes(prior),
                 error_code="messaging_group_visibility_conflict",
             )
-            allowed_previous = {app_digest}
-            predecessor = publication["body"]["predecessor_sha256"]
-            if predecessor is not None:
-                allowed_previous.add(predecessor)
-            if prior["document"]["application_sha256"] not in allowed_previous:
-                raise MessagingConfigError("messaging_group_visibility_conflict")
-            validate(
-                operation / "predecessor.json", prior["document"]["application_sha256"]
-            )
         candidate = operation / "candidate.json"
         _publish_retained_entry(
             operation,
@@ -2363,7 +2362,6 @@ def publish_group_visibility(
             canonical_bytes(envelope),
             error_code="messaging_group_visibility_conflict",
         )
-        validate(candidate, app_digest)
         staged = operation / "selection.json"
         if selected != envelope:
             _publish_retained_entry(
@@ -2372,6 +2370,10 @@ def publish_group_visibility(
                 canonical_bytes(envelope),
                 error_code="messaging_group_visibility_conflict",
             )
+        # Make the retained recovery directory durable before exposing its
+        # successor. A rejected input never becomes an immutable candidate.
+        _sync(operation)
+        _sync(root)
         latest_app, _ = read_publication(runtime, _directory(app_directory))
         current = (
             read_document(installation)
