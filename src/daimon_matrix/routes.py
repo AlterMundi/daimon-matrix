@@ -2255,7 +2255,7 @@ def _http_round_trip(
     timeout_seconds: float,
     response_timeout_seconds: float,
     total_timeout_seconds: float | None = None,
-) -> RoundTrip:
+) -> _SplitRoundTrip:
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
