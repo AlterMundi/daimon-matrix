@@ -2706,6 +2706,36 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual((self.app / collision).read_bytes(), before)
         self.assertEqual((self.app / "route.key").read_bytes(), b"n" * 32)
 
+    def test_lost_key_rename_reply_resyncs_both_directories_on_exact_retry(self):
+        from daimon_matrix.operator_messaging import _publish, _sync
+
+        self.accept()
+
+        def interrupted(source, destination):
+            _publish(source, destination)
+            if Path(destination) == self.app / "admitted-body.key":
+                raise OSError("lost key rename reply")
+
+        with (
+            patch("daimon_matrix.operator_messaging._publish", side_effect=interrupted),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        self.assertEqual((self.app / "admitted-body.key").read_bytes(), b"n" * 32)
+        synced = []
+
+        def sync(directory):
+            _sync(directory)
+            synced.append(directory)
+
+        with patch("daimon_matrix.operator_messaging._sync", side_effect=sync):
+            result = self.publish()
+        generation = self.app / result["generation"]
+        self.assertIn(generation / "transport-staging", synced)
+        self.assertIn(generation, synced)
+        self.assertIn(self.app, synced)
+
     def test_unaccepted_member_is_rejected_before_candidate_files_are_written(self):
         files = sorted(self.app.iterdir())
         with self.assertRaisesRegex(ValueError, "messaging_group_admission_conflict"):

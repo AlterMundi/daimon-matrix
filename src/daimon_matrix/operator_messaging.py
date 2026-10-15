@@ -1924,7 +1924,9 @@ def admit_group_application(
                 stage_name = hashlib.sha256(name.encode()).hexdigest() + ".key"
                 retained_write(key_stage, stage_name, raw)
                 _publish(key_stage / stage_name, target)
-                _sync(key_stage)
+        # Reconcile both sides of a cross-directory rename even when its target
+        # was already visible after a lost reply or interrupted first attempt.
+        _sync(key_stage)
         _sync(destination)
         _sync(root)
         composed = _compose(runtime, root, application, metadata_root=destination)
