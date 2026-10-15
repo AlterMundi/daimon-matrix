@@ -323,8 +323,55 @@ class GroupRuntimeTests(unittest.TestCase):
         reply_projection = receiver.records.get("native", reply_id)["projection"]
         self.assertEqual(reply_projection["recipients"], ["Tribu"])
         self.assertEqual(reply_projection["reply_to"]["event_id"], first["message_id"])
+        self.assertEqual(reply_projection["reply_to"]["text"], arguments["text"])
         self.assertEqual({row["being_ref"] for row in response["audience"]}, expected)
         self.assertTrue(response["semantic"]["terminal"])
+
+    def test_expanded_group_reply_omits_automatic_old_quote_and_keeps_exact_retry(self):
+        from daimon_matrix.telegram_mirror import render_readable_parts
+
+        sender = self.groups[0]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="original audience only",
+        )
+        first = self.send_and_settle(self.groups[1], **arguments)
+        # Extend the real signed Root inventory, without new real identities or
+        # extra transport setup. The additional body remains honestly offline.
+        _, origin = DirectLaneTests.enroll_second_member_body(self)
+        self.fixture.now += 1
+        reply_arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=arguments["thread_id"],
+            text="new speech to the current group",
+            response_to=(sender, first["message_id"]),
+        )
+        reply = self.send_and_settle(sender, **reply_arguments)
+        self.assertIn(
+            origin["embodiment_id"], {row["embodiment_id"] for row in reply["audience"]}
+        )
+        self.assertNotIn(
+            origin["embodiment_id"], {row["embodiment_id"] for row in first["audience"]}
+        )
+        native = sender.records.get("native", reply_arguments["send_id"])
+        parent = native["projection"]["reply_to"]
+        self.assertEqual(parent["event_id"], first["message_id"])
+        self.assertNotIn("text", parent)
+        self.assertNotIn("sender", parent)
+        self.assertNotIn(
+            arguments["text"], "".join(render_readable_parts(native["projection"]))
+        )
+        speech_count = len(sender.egress._transport.requests)
+        retry = self.send_and_settle(sender, **reply_arguments)
+        self.assertEqual(retry["message_id"], reply["message_id"])
+        self.assertEqual(retry["audience"], reply["audience"])
+        self.assertEqual(
+            sender.records.get("native", reply_arguments["send_id"]), native
+        )
+        self.assertEqual(len(sender.egress._transport.requests), speech_count)
 
     def test_exact_group_retry_preserves_predecessor_projection_and_frozen_audience(
         self,
