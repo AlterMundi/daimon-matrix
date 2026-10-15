@@ -1,8 +1,8 @@
 """Trusted operator provisioning of an external signed messaging application.
 
-Never expose prepare(), renew(), republish(), or the password descriptor to an
-autonomous/model tool. The daemon only verifies; it cannot renew, re-publish or sign
-application enrollment.
+Never expose prepare(), renew(), republish(), admit_group_application(), or the
+password descriptor to an autonomous/model tool. The daemon only verifies; it
+cannot renew, re-publish or sign application enrollment.
 
 Publication is a mandatory signed metadata pointer. Renewal changes that pointer
 atomically while all stores and keys remain at their original paths. Run the CLI
@@ -1833,6 +1833,8 @@ def admit_group_application(
             ]
             != previous["relationship_events"]
             or application["roster"][: len(previous["roster"])] != previous["roster"]
+            or application["authorities"][: len(previous["authorities"])]
+            != previous["authorities"]
         ):
             raise MessagingConfigError("messaging_group_admission_conflict")
         old = _application_authorities(previous)
@@ -1908,8 +1910,21 @@ def admit_group_application(
             "successor.json",
             _publication(runtime, application, generation, expected_application_sha256),
         )
+        key_stage = destination / "transport-staging"
+        key_stage.mkdir(mode=0o700, exist_ok=True)
+        _directory(key_stage)
         for name, raw in key_bytes.items():
-            retained_write(root, name, raw)
+            target = root / name
+            if target.exists() or target.is_symlink():
+                if protected_read(target, size=32) != raw:
+                    raise MessagingConfigError("messaging_group_admission_conflict")
+            else:
+                # Caller-chosen route names must never define a cleanup prefix
+                # in the root that also contains preserved historical keys.
+                stage_name = hashlib.sha256(name.encode()).hexdigest() + ".key"
+                retained_write(key_stage, stage_name, raw)
+                _publish(key_stage / stage_name, target)
+                _sync(key_stage)
         _sync(destination)
         _sync(root)
         composed = _compose(runtime, root, application, metadata_root=destination)

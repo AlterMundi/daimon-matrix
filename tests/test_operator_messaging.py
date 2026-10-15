@@ -2651,7 +2651,7 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         from daimon_matrix.operator_messaging import _write
 
         def interrupted(directory, name, raw):
-            if name.startswith("admitted-body.key.stage-"):
+            if directory.name == "transport-staging" and ".stage-" in name:
                 _write(directory, name, raw[:8])
                 raise OSError("interrupted staging write")
             return _write(directory, name, raw)
@@ -2664,8 +2664,47 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
         result = self.publish()
         self.assertEqual(result["status"], "group-application-published")
-        self.assertEqual(list(self.app.glob("admitted-body.key.stage-*")), [])
+        self.assertEqual(list(self.app.rglob("*.stage-*")), [])
         self.assertEqual((self.app / "admitted-body.key").read_bytes(), b"n" * 32)
+
+    def test_new_key_staging_never_deletes_an_old_key_with_a_stage_shaped_name(self):
+        from daimon_matrix.native_egress import closed_visibility
+
+        collision = "route.key.stage-" + "a" * 32
+        original_key = self.app / self.previous["intake"]["secret_file"]
+        specification = copy.deepcopy(self.previous)
+        del specification["client"]
+        for route in (
+            specification["intake"],
+            *[row["route"] for row in specification["roster"]],
+        ):
+            route["secret_file"] = collision
+        other_app = self.app.parent / "collision-application"
+        prepare(
+            self.runtime,
+            other_app,
+            specification,
+            secret_sources={collision: original_key},
+        )
+        self.runtime = replace(
+            self.runtime,
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        self.app = other_app
+        self.previous, _ = read_publication(self.runtime, self.app)
+        self.expected = config_digest(self.previous)
+        self.candidate["client"] = self.previous["client"]
+        self.candidate["intake"] = self.previous["intake"]
+        self.candidate["roster"][0] = self.previous["roster"][0]
+        self.candidate["roster"][1]["route"]["secret_file"] = "route.key"
+        self.sources = {"route.key": next(iter(self.sources.values()))}
+        before = (self.app / collision).read_bytes()
+        self.accept()
+        self.publish()
+        self.assertEqual((self.app / collision).read_bytes(), before)
+        self.assertEqual((self.app / "route.key").read_bytes(), b"n" * 32)
 
     def test_unaccepted_member_is_rejected_before_candidate_files_are_written(self):
         files = sorted(self.app.iterdir())
@@ -2678,6 +2717,7 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.accept()
         original = copy.deepcopy(self.candidate)
         cases = (
+            ("authorities", list(reversed(self.candidate["authorities"]))),
             ("roster", [self.candidate["roster"][1]]),
             ("stores", {**self.candidate["stores"], "records": "other.sqlite"}),
             ("client", {**self.candidate["client"], "secret_sha256": "0" * 64}),
