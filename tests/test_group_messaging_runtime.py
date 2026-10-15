@@ -1685,6 +1685,17 @@ class GroupRuntimeTests(unittest.TestCase):
             self, record_key_check=False, founder_only=True
         )
         document, _ = read_publication(runtime, app)
+        import json
+
+        import jsonschema
+
+        public_schema = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "schemas/messaging/v3/application.schema.json"
+            ).read_text()
+        )
+        jsonschema.Draft202012Validator(public_schema).validate(document)
         self.assertEqual(len(document["authorities"]), 1)
         self.assertEqual(len(document["roster"]), 1)
         self.assertEqual(
