@@ -12,6 +12,19 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_published_runtime_contract_corrections_keep_installed_native_checks(self):
+        paths = [
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/messaging_config.py",
+            "schemas/hosted/v1/local-api.schema.json",
+            "docs/verification/dm025-invariants.json",
+            "tests/test_operator_messaging.py",
+            "tests/test_dm025_cli_mcp.py",
+            "tests/test_closed_visibility_provisioning.py",
+        ]
+        self.assertEqual(profile(paths), "visibility")
+        self.assertEqual(profile([*paths, "src/daimon_matrix/identity.py"]), "full")
+
     def test_group_admission_uses_existing_installed_visibility_contracts(self):
         changed = [
             "src/daimon_matrix/operator_messaging.py",

@@ -52,6 +52,8 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
         "docs/runbooks/group-admission.md",
+        "docs/verification/dm025-invariants.json",
+        "schemas/hosted/v1/local-api.schema.json",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",
@@ -76,6 +78,8 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "tests/test_mandatory_echo.py",
         "tests/test_messaging_runtime.py",
         "tests/test_operator_messaging.py",
+        "tests/test_dm025_cli_mcp.py",
+        "tests/test_closed_visibility_provisioning.py",
         "tests/test_telegram_mirror.py",
         "tools/install_agent_chat.py",
     }

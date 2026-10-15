@@ -169,6 +169,8 @@ class ClosedVisibilityProvisioningTests(RuntimeFixture):
         )
         being = runtime.service.ledger.authority.manifest.being_ref
         disclosure = document["disclosure"]
+        disclosure["issued_at_ms"] = runtime.service.clock()
+        document["telegram_qualification"]["qualified_at_ms"] = runtime.service.clock()
         disclosure["participants"] = [being]
         for channel in disclosure["scope"]["channels"]:
             channel["local_being_ref"] = being

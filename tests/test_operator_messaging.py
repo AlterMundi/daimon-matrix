@@ -1701,12 +1701,14 @@ class ProvisioningTests(unittest.TestCase):
                 path = target / name
                 saved = target / (name + ".saved")
                 path.rename(saved)
-                with self.assertRaisesRegex(
-                    ValueError, "messaging_required_store_missing"
-                ):
-                    load_application(runtime, target)
-                self.assertFalse(path.exists())
-                saved.rename(path)
+                try:
+                    with self.assertRaisesRegex(
+                        ValueError, "messaging_required_store_missing"
+                    ):
+                        load_application(runtime, target)
+                    self.assertFalse(path.exists())
+                finally:
+                    saved.rename(path)
         self.assertIn(revocation, channel.relationships.events())
 
     def test_empty_published_replay_store_fails_closed(self):
