@@ -446,7 +446,10 @@ GROUP_SPECIFICATION_SCHEMA = _object(
     {
         "schema": {"const": APPLICATION_SCHEMA_V3},
         "listen": SPECIFICATION_SCHEMA["properties"]["listen"],
-        "authorities": SPECIFICATION_SCHEMA["properties"]["authorities"],
+        "authorities": {
+            **SPECIFICATION_SCHEMA["properties"]["authorities"],
+            "minItems": 1,
+        },
         "relationship_events": SPECIFICATION_SCHEMA["properties"][
             "relationship_events"
         ],

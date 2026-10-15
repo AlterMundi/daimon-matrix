@@ -1672,11 +1672,40 @@ class GroupRuntimeTests(unittest.TestCase):
                 canonical_bytes(restarted.prepare(**params)), canonical_bytes(original)
             )
 
+    def test_group_can_be_provisioned_from_its_founder_before_any_invitation(self):
+        import copy
+
+        from daimon_matrix.messaging_config import (
+            MessagingConfigError,
+            read_publication,
+            validate_shape,
+        )
+
+        runtime, app, view = GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False, founder_only=True
+        )
+        document, _ = read_publication(runtime, app)
+        self.assertEqual(len(document["authorities"]), 1)
+        self.assertEqual(len(document["roster"]), 1)
+        self.assertEqual(
+            document["roster"][0]["being_ref"], self.fixture.founder.state.being_ref
+        )
+        self.assertEqual(
+            [e["kind"] for e in document["relationship_events"]],
+            ["matrix/tribe-declaration"],
+        )
+        self.assertEqual(set(view.service.messaging.channels), {"tribe"})
+        for field in ("authorities", "roster"):
+            invalid = copy.deepcopy(document)
+            invalid[field] = []
+            with self.assertRaises(MessagingConfigError):
+                validate_shape(invalid)
+
     def test_group_only_application_uses_supported_signed_provisioning(self):
         GroupRuntimeTests._signed_group_application(self)
 
     def _signed_group_application(
-        self, *, record_key_check=True, application_directory=None
+        self, *, record_key_check=True, application_directory=None, founder_only=False
     ):
         import hashlib
 
@@ -1723,7 +1752,8 @@ class GroupRuntimeTests(unittest.TestCase):
             runtime.state_root / "relationships.sqlite",
             authority_resolver=fixture.sender_lane.authority_resolver,
         )
-        for event in fixture.events:
+        selected_events = [fixture.declaration] if founder_only else fixture.events
+        for event in selected_events:
             relationships.ingest(event)
         runtime.service.communication.upgrade_receipts_v2()
         runtime.service.communication.upgrade_legs_v3()
@@ -1741,7 +1771,10 @@ class GroupRuntimeTests(unittest.TestCase):
         port = 48765
         sources, roster = {}, []
         directory = runtime.state_root.parent
-        for index, identity in enumerate((fixture.founder, fixture.member)):
+        identities = (
+            (fixture.founder,) if founder_only else (fixture.founder, fixture.member)
+        )
+        for index, identity in enumerate(identities):
             path = directory / f"group-body-{index}.key"
             path.write_bytes(bytes([index + 1]) * 32)
             path.chmod(0o600)
@@ -1767,10 +1800,10 @@ class GroupRuntimeTests(unittest.TestCase):
             "schema": APPLICATION_SCHEMA_V3,
             "listen": {"host": "127.0.0.1", "port": port},
             "authorities": [
-                public_document(fixture.founder, "founder"),
-                public_document(fixture.member, "member"),
+                public_document(identity, "founder" if index == 0 else "member")
+                for index, identity in enumerate(identities)
             ],
-            "relationship_events": fixture.events,
+            "relationship_events": selected_events,
             "relationship_mode": {
                 "mode": "shared",
                 "runtime_id": runtime.service.runtime_id,

@@ -40,6 +40,7 @@ _WIRES = sorted(
 _FEATURES = sorted(
     {
         "membership-group/v1",
+        "single-authority-group/v1",
         "root-history/v1",
         "semantic-body-legs/v3",
         "confirmed-visibility-before-egress/v1",
