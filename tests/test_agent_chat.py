@@ -7,6 +7,8 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -25,20 +27,84 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_native_writer_bounds_stalled_input_and_reaps_after_close_failure(self):
+        from tools.install_agent_chat import _write_codex_role
+
+        real_popen = subprocess.Popen
+        for fault in ("stdin-stall", "close-failure"):
+            with self.subTest(fault=fault):
+                home = self.root / fault
+                home.mkdir(mode=0o700)
+                stub = home / "codex"
+                stub.write_text(
+                    f"#!{sys.executable}\n"
+                    "import json,os,sys,time\n"
+                    "from pathlib import Path\n"
+                    "for raw in sys.stdin:\n"
+                    " value=json.loads(raw)\n"
+                    " if 'id' not in value:continue\n"
+                    " method=value['method'];result={}\n"
+                    " if method=='config/read':\n"
+                    "  result={'layers':[{'name':{'type':'user','file':"
+                    "str(Path(os.environ['CODEX_HOME'])/'config.toml')},'version':'one'}]}\n"
+                    " print(json.dumps({'id':value['id'],'result':result}),"
+                    "flush=True)\n"
+                    + (
+                        " if method=='config/read':time.sleep(60)\n"
+                        if fault == "stdin-stall"
+                        else " if method=='config/batchWrite':break\n"
+                    )
+                )
+                stub.chmod(0o700)
+                processes = []
+
+                def start(*args, selected_fault=fault, started=processes, **kwargs):
+                    process = real_popen(*args, **kwargs)
+                    started.append(process)
+                    if selected_fault == "close-failure":
+                        from types import SimpleNamespace
+
+                        stream = process.stdin
+
+                        def close():
+                            stream.close()
+                            raise BrokenPipeError("synthetic close failure")
+
+                        process.stdin = SimpleNamespace(
+                            fileno=stream.fileno, close=close
+                        )
+                    return process
+
+                with patch(
+                    "tools.install_agent_chat.subprocess.Popen", side_effect=start
+                ):
+                    before = time.monotonic()
+                    if fault == "stdin-stall":
+                        with self.assertRaisesRegex(ValueError, "registration_failed"):
+                            _write_codex_role(
+                                str(stub),
+                                home,
+                                ["x" * 1024 * 1024],
+                                timeout_seconds=0.5,
+                            )
+                    else:
+                        _write_codex_role(str(stub), home, ["/synthetic/python"])
+                    self.assertLess(time.monotonic() - before, 5)
+                self.assertEqual(len(processes), 1)
+                self.assertIsNotNone(processes[0].poll())
+
     def test_codex_candidate_refusal_never_changes_real_config_on_retry(self):
         from tools.install_agent_chat import register_codex_mcp
 
         home = self.root / "codex-home"
         home.mkdir(mode=0o700)
         config = home / "config.toml"
-        original = (
-            '[mcp_servers.memory]\ncommand = "memory"\nenabled = true\n'
-        )
+        original = '[mcp_servers.memory]\ncommand = "memory"\nenabled = true\n'
         config.write_text(original)
         config.chmod(0o600)
 
-        def writer(argv, **options):
-            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+        def writer(codex, candidate_home, selected_command):
+            staged = candidate_home / "config.toml"
             self.assertEqual(staged.read_text(), original)
             self.assertNotEqual(staged, config)
             staged.write_text(
@@ -50,7 +116,9 @@ class AgentChatTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"CODEX_HOME": str(home)}),
             patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
-            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
         ):
             for _ in range(2):
                 with self.assertRaisesRegex(ValueError, "configuration_conflict"):
@@ -67,7 +135,7 @@ class AgentChatTests(unittest.TestCase):
         link.symlink_to(real, target_is_directory=True)
         with (
             patch.dict(os.environ, {"CODEX_HOME": str(link / "missing")}),
-            patch("tools.install_agent_chat.subprocess.run") as run,
+            patch("tools.install_agent_chat._write_codex_role") as run,
             self.assertRaises(ValueError),
         ):
             register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
@@ -87,8 +155,8 @@ class AgentChatTests(unittest.TestCase):
             original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
         )
 
-        def writer(argv, **options):
-            (Path(options["env"]["CODEX_HOME"]) / "config.toml").write_text(candidate)
+        def writer(codex, candidate_home, selected_command):
+            (candidate_home / "config.toml").write_text(candidate)
             return Mock(returncode=0)
 
         replace = os.replace
@@ -100,7 +168,9 @@ class AgentChatTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"CODEX_HOME": str(home)}),
             patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
-            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
         ):
             with (
                 patch("tools.install_agent_chat.os.replace", side_effect=lost_reply),
@@ -134,8 +204,8 @@ class AgentChatTests(unittest.TestCase):
         config.write_text(original)
         config.chmod(0o600)
 
-        def writer(argv, **options):
-            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+        def writer(codex, candidate_home, selected_command):
+            staged = candidate_home / "config.toml"
             staged.write_text(
                 original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
             )
@@ -145,7 +215,7 @@ class AgentChatTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"CODEX_HOME": str(home)}),
             patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
-            patch("tools.install_agent_chat.subprocess.run", side_effect=writer),
+            patch("tools.install_agent_chat._write_codex_role", side_effect=writer),
             self.assertRaisesRegex(ValueError, "configuration_changed"),
         ):
             register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
@@ -164,8 +234,8 @@ class AgentChatTests(unittest.TestCase):
             canonical_bytes({"command": "/old/python", "args": ["mcp"]})
         ).hexdigest()
 
-        def writer(argv, **options):
-            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+        def writer(codex, candidate_home, selected_command):
+            staged = candidate_home / "config.toml"
             staged.write_text(original.replace("/old/python", "/new/python"))
             return Mock(returncode=0)
 
@@ -174,7 +244,9 @@ class AgentChatTests(unittest.TestCase):
             patch(
                 "tools.install_agent_chat.shutil.which", return_value="/existing/codex"
             ),
-            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
         ):
             result = register_codex_mcp(
                 self.root / "attachment",
@@ -203,12 +275,10 @@ class AgentChatTests(unittest.TestCase):
         config.chmod(0o600)
         command = ["/qualified/python", "-I", "-m", "daimon_matrix.agent_chat", "mcp"]
 
-        def writer(argv, **options):
-            self.assertEqual(
-                argv, ["/existing/codex", "mcp", "add", "matrix", "--", *command]
-            )
-            self.assertNotIn("shell", options)
-            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+        def writer(codex, candidate_home, selected_command):
+            self.assertEqual(codex, "/existing/codex")
+            self.assertEqual(selected_command, command)
+            staged = candidate_home / "config.toml"
             staged.write_text(
                 original + '\n[mcp_servers.matrix]\ncommand = "/qualified/python"\n'
                 'args = ["-I", "-m", "daimon_matrix.agent_chat", "mcp"]\n'
@@ -220,7 +290,9 @@ class AgentChatTests(unittest.TestCase):
             patch(
                 "tools.install_agent_chat.shutil.which", return_value="/existing/codex"
             ),
-            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
         ):
             installed = register_codex_mcp(self.root / "attachment", command)
             self.assertEqual(installed["status"], "configured")
@@ -238,6 +310,57 @@ class AgentChatTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "codex_mcp_conflict"):
                 register_codex_mcp(self.root / "attachment", ["/another/python", "mcp"])
             self.assertEqual(config.read_bytes(), before_conflict)
+            self.assertEqual(run.call_count, 1)
+
+    def test_codex_successor_preserves_optional_settings_and_disabled_intent(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = (
+            'model = "existing"\n[mcp_servers.matrix]\n'
+            'command = "/old/python"\nargs = ["mcp"]\n'
+            'env = { KEEP = "synthetic" }\nstartup_timeout_sec = 31.0\n'
+            'tool_timeout_sec = 53.0\nenabled_tools = ["messaging_channels"]\n'
+        )
+        config.write_text(original)
+        config.chmod(0o600)
+        previous = hashlib.sha256(
+            canonical_bytes({"command": "/old/python", "args": ["mcp"]})
+        ).hexdigest()
+
+        def writer(codex, candidate_home, command):
+            self.assertNotEqual(candidate_home, home)
+            self.assertEqual(command, ["/new/python", "mcp"])
+            (candidate_home / "config.toml").write_text(
+                original.replace("/old/python", "/new/python")
+            )
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            register_codex_mcp(
+                self.root / "attachment",
+                ["/new/python", "mcp"],
+                previous_sha256=previous,
+            )
+            self.assertEqual(
+                config.read_text(), original.replace("/old/python", "/new/python")
+            )
+            config.write_text(config.read_text() + "enabled = false\n")
+            disabled = config.read_bytes()
+            with self.assertRaisesRegex(ValueError, "codex_mcp_disabled"):
+                register_codex_mcp(
+                    self.root / "attachment",
+                    ["/other/python", "mcp"],
+                    previous_sha256=previous,
+                )
+            self.assertEqual(config.read_bytes(), disabled)
             self.assertEqual(run.call_count, 1)
 
     def test_native_catalog_has_bound_channels_and_one_logical_send_id(self):

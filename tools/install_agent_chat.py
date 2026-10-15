@@ -11,10 +11,12 @@ import fcntl
 import hashlib
 import json
 import os
+import select
 import shutil
 import stat
 import subprocess
 import sys
+import time
 import tomllib
 import uuid
 from pathlib import Path
@@ -98,6 +100,133 @@ def _sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _write_codex_role(
+    codex: str, home: Path, command: list[str], *, timeout_seconds: float = 30
+) -> None:
+    """Edit only command/args with Codex's versioned native config writer.
+
+    The caller supplies a private candidate home, never the active home.
+    This config-only process receives no thread, turn or discovery request.
+    """
+    if not 0 < timeout_seconds <= 30:
+        raise ValueError("agent_chat_codex_mcp_registration_failed")
+    config = home / "config.toml"
+    process = subprocess.Popen(
+        [codex, "app-server", "--listen", "stdio://"],
+        env={**os.environ, "CODEX_HOME": str(home)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    pending = b""
+    identifier = 0
+    deadline = time.monotonic() + timeout_seconds
+    completed = False
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ValueError("agent_chat_codex_mcp_registration_failed")
+        return value
+
+    def send(raw: bytes) -> None:
+        assert process.stdin is not None
+        descriptor = process.stdin.fileno()
+        offset = 0
+        while offset < len(raw):
+            if not select.select([], [descriptor], [], remaining())[1]:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            remaining()
+            try:
+                offset += os.write(descriptor, raw[offset : offset + 65536])
+            except BlockingIOError:
+                continue
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        nonlocal pending, identifier
+        identifier += 1
+        assert process.stdin is not None and process.stdout is not None
+        send(
+            canonical_bytes({"id": identifier, "method": method, "params": params})
+            + b"\n"
+        )
+        while True:
+            remaining()
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                message = json.loads(raw)
+                if message.get("id") == identifier:
+                    if "error" in message or "result" not in message:
+                        raise ValueError("agent_chat_codex_mcp_registration_failed")
+                    remaining()
+                    return message["result"]
+            if process.poll() is not None:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            if not select.select([process.stdout], [], [], remaining())[0]:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk or len(pending) + len(chunk) > 1024 * 1024:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            pending += chunk
+
+    try:
+        assert process.stdin is not None
+        os.set_blocking(process.stdin.fileno(), False)
+        call(
+            "initialize",
+            {"clientInfo": {"name": "matrix-config-writer", "version": "1"}},
+        )
+        assert process.stdin is not None
+        send(b'{"method":"initialized"}\n')
+        observed = call("config/read", {"includeLayers": True})
+        layers = [
+            row
+            for row in observed["layers"]
+            if row["name"].get("type") == "user"
+            and row["name"].get("file") == str(config)
+        ]
+        if len(layers) != 1:
+            raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+        call(
+            "config/batchWrite",
+            {
+                "filePath": str(config),
+                "expectedVersion": layers[0]["version"],
+                "reloadUserConfig": False,
+                "edits": [
+                    {
+                        "keyPath": "mcp_servers.matrix.command",
+                        "value": command[0],
+                        "mergeStrategy": "replace",
+                    },
+                    {
+                        "keyPath": "mcp_servers.matrix.args",
+                        "value": command[1:],
+                        "mergeStrategy": "replace",
+                    },
+                ],
+            },
+        )
+        completed = True
+    finally:
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        finally:
+            if not completed and process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            finally:
+                if process.stdout is not None:
+                    process.stdout.close()
+
+
 def _register_codex_mcp_locked(
     home: Path, attachment: Path, command: list[str], previous_sha256: str | None
 ) -> dict[str, Any]:
@@ -112,18 +241,14 @@ def _register_codex_mcp_locked(
     existing = servers.get("matrix")
     wanted = {"command": command[0], "args": command[1:]}
     if existing is not None:
+        if existing.get("enabled", True) is not True:
+            raise ValueError("agent_chat_codex_mcp_disabled")
         current = {key: existing.get(key) for key in wanted}
         if current == wanted:
-            if existing.get("enabled", True) is not True:
-                raise ValueError("agent_chat_codex_mcp_disabled")
             _sync_directory(home)
             return {"status": "configured", "catalog_acceptance": "unobserved"}
         if previous_sha256 != hashlib.sha256(canonical_bytes(current)).hexdigest():
             raise ValueError("agent_chat_codex_mcp_conflict")
-        # The native add command can replace a role; preserve optional owner
-        # selections rather than assuming how it rewrites them.
-        if set(existing) != set(wanted):
-            raise ValueError("agent_chat_codex_mcp_settings_require_reconciliation")
     codex = shutil.which("codex")
     if codex is None:
         raise ValueError("agent_chat_codex_cli_unavailable")
@@ -132,15 +257,7 @@ def _register_codex_mcp_locked(
     candidate_home = history / "candidate-home"
     candidate_config = candidate_home / "config.toml"
     _put(candidate_config, before)
-    result = subprocess.run(
-        [codex, "mcp", "add", "matrix", "--", *command],
-        env={**os.environ, "CODEX_HOME": str(candidate_home)},
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    if result.returncode:
-        raise ValueError("agent_chat_codex_mcp_registration_failed")
+    _write_codex_role(codex, candidate_home, command)
     candidate = protected_read(candidate_config)
     new = tomllib.loads(candidate.decode())
     if (
@@ -152,7 +269,7 @@ def _register_codex_mcp_locked(
             if key != "matrix"
         }
         != {key: value for key, value in servers.items() if key != "matrix"}
-        or new.get("mcp_servers", {}).get("matrix") != wanted
+        or new.get("mcp_servers", {}).get("matrix") != {**(existing or {}), **wanted}
     ):
         raise ValueError("agent_chat_codex_mcp_configuration_conflict")
     _put(history / "config.candidate.toml", candidate)
