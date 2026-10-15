@@ -2270,14 +2270,14 @@ def publish_group_visibility(
                 verify_owner_binding=lambda document, binding: verify_binding(
                     runtime, document, binding
                 ),
-                verify_participant_binding=lambda actor,
-                document,
-                binding: _verify_visibility_participant(
-                    authorities,
-                    actor,
-                    document,
-                    binding,
-                    at_ms=runtime.service.clock(),
+                verify_participant_binding=lambda actor, document, binding: (
+                    _verify_visibility_participant(
+                        authorities,
+                        actor,
+                        document,
+                        binding,
+                        at_ms=runtime.service.clock(),
+                    )
                 ),
                 clock=runtime.service.clock,
                 catalog_mode="validate",
