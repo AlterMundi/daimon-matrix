@@ -252,6 +252,8 @@ BOUNDED_GROUP_FILES = frozenset(
 
 RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
     {
+        "docs/runbooks/operator-bootstrap.md",
+        "docs/runbooks/operator-capability-upgrade.md",
         "src/daimon_matrix/client.py",
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",

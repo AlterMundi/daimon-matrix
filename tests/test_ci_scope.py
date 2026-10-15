@@ -37,6 +37,17 @@ class CIScopeTests(unittest.TestCase):
         from tools.ci_scope import RECEIVING_CONTROL_FILES
 
         self.assertEqual(profile(list(RECEIVING_CONTROL_FILES)), "receiving-control")
+        self.assertEqual(
+            profile(
+                [
+                    "src/daimon_matrix/operator_runtime_upgrade.py",
+                    "tests/test_operator_runtime_upgrade.py",
+                    "docs/runbooks/operator-bootstrap.md",
+                    "docs/runbooks/operator-capability-upgrade.md",
+                ]
+            ),
+            "receiving-control",
+        )
         for unrelated in (
             "src/daimon_matrix/identity.py",
             "src/daimon_matrix/keystore.py",

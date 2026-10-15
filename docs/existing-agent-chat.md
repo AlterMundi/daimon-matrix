@@ -109,6 +109,11 @@ old authenticated requests must not be silently regenerated under a new key.
 
 ## Evidence and limits
 
+For local source regressions, run `PYTHONPATH=src <existing-python> -m unittest
+tests.test_agent_chat`. A reused runtime venv may contain an older installed SDK;
+do not overwrite that live environment to test checkout changes. Installed-wheel
+CI separately verifies the packaged candidate rather than the source overlay.
+
 Tests cover no-I/O installation/registration, identical installation, modified
 file and symlink refusal, messaging-only capability, wrong-channel rejection,
 stdin-only text, no hook registration, and durable exact retry/payload conflict.

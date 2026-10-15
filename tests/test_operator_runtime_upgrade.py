@@ -419,6 +419,9 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
         )
         ready = self.stage(add_methods={}, provision_receiving_controller=True)
         self.assertTrue(ready["provision_receiving_controller"])
+        self.assertEqual(
+            ready["receiving_controller_lifetime"], upgrade.CONTROLLER_LIFETIME
+        )
         self.assertEqual(upgrade._snapshot(self.source), self.before)
         published = self.publish()
         self.assertEqual(published, self.publish())
@@ -436,6 +439,16 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
         self.assertEqual(current.counter, old.counter + 1)
         bundle = json.loads(after["runtime.json"])
         self.assertEqual(bundle["capabilities"][:-1], self.bundle["capabilities"])
+        self.assertEqual(
+            bundle["capabilities"][-1]["descriptor"]["not_after_ms"],
+            min(
+                row["descriptor"]["not_after_ms"] for row in self.bundle["capabilities"]
+            ),
+        )
+        self.assertGreater(
+            bundle["capabilities"][-1]["descriptor"]["not_after_ms"],
+            ready["expires_at_ms"],
+        )
 
         def clock():
             return time.time_ns() // 1_000_000
@@ -494,6 +507,53 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             upgrade.UpgradeError, "upgrade_invalid_controller_selection"
         ):
             read()
+        del request["provision_receiving_controller"]
+        request["renew_receiving_controller"] = True
+        self.assertTrue(read()["renew_receiving_controller"])
+        request["renew_receiving_controller"] = 1
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_invalid_controller_selection"
+        ):
+            read()
+
+    def test_retained_controller_publication_preserves_its_legacy_lifetime(self):
+        """A signed old-format candidate stays publishable under its own deadline."""
+        from daimon_matrix.canonical import canonical_bytes
+
+        ready = self.stage(add_methods={}, provision_receiving_controller=True)
+        source, bundle = self.source, self.bundle
+        try:
+            self.source = self.transaction / "successor"
+            self.bundle = json.loads((self.source / "runtime.json").read_bytes())
+            # The old producer used the transaction expiry as this descriptor's
+            # end. Build that authenticated input through native key/bind APIs.
+            self.rebind_capability(
+                "receiving-controller", not_after_ms=ready["expires_at_ms"]
+            )
+            controller = next(
+                row
+                for row in self.bundle["capabilities"]
+                if row["profile"]["role"] == "receiving-controller"
+            )
+            ready["changes"]["host:receiving-controller"]["capability_id"] = controller[
+                "descriptor"
+            ]["capability_id"]
+            ready["successor_sha256"] = upgrade.inventory_digest(self.source)
+        finally:
+            self.source, self.bundle = source, bundle
+        del ready["receiving_controller_lifetime"]
+        (self.transaction / "ready.json").write_bytes(canonical_bytes(ready))
+        published = self.publish()
+        self.assertEqual(self.publish(), published)
+        current = json.loads((self.source / "runtime.json").read_bytes())
+        controller = next(
+            row
+            for row in current["capabilities"]
+            if row["profile"]["role"] == "receiving-controller"
+        )
+        self.assertEqual(
+            controller["descriptor"]["not_after_ms"], ready["expires_at_ms"]
+        )
 
     def test_current_v8_bundle_is_supported_without_rebirth(self):
         from daimon_matrix.canonical import canonical_bytes
@@ -507,6 +567,234 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
         updated = json.loads((self.source / "runtime.json").read_bytes())
         self.assertEqual(updated["schema"], "dm.runtime.bundle/v8")
         self.assertEqual(updated["local_origin"], self.bundle["local_origin"])
+
+    def expired_controller(self):
+        """Signed synthetic V8 input; never wait for a real grant to expire."""
+        self.stage(add_methods={}, provision_receiving_controller=True)
+        self.publish()
+        self.bundle = json.loads((self.source / "runtime.json").read_bytes())
+        self.bundle["schema"] = "dm.runtime.bundle/v8"
+        now = time.time_ns() // 1_000_000
+        self.rebind_capability(
+            "receiving-controller", not_before_ms=now - 20_000, not_after_ms=now - 1_000
+        )
+        self.transaction = self.parent / "renewal"
+        self.args.update(
+            transaction=self.transaction,
+            add_methods={},
+            expected_counter=self.bundle["keystore"]["counter"],
+        )
+        self.before = upgrade._snapshot(self.source)
+        self.args["expected_source_sha256"] = upgrade._inventory(self.before)
+
+    def rebind_capability(self, role, **changes):
+        from daimon_matrix.canonical import canonical_bytes
+        from daimon_matrix.local_api import create_capability
+        from daimon_matrix.operator_capabilities import (
+            create_operator_capability_binding,
+        )
+
+        custody = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        row = next(
+            row for row in self.bundle["capabilities"] if row["profile"]["role"] == role
+        )
+        old = row["descriptor"]
+        arguments = {
+            key: old[key]
+            for key in (
+                "client_id",
+                "methods",
+                "not_before_ms",
+                "not_after_ms",
+                "status",
+            )
+        }
+        capability = create_capability(
+            custody.secrets[row["secret_slot"]], **{**arguments, **changes}
+        )
+        row["descriptor"] = capability.descriptor
+        path = (
+            self.source
+            / row["profile"]["client_directory"]
+            / row["profile"]["client_config_filename"]
+        )
+        config = json.loads(path.read_bytes())
+        config["capability"] = capability.descriptor
+        path.write_bytes(canonical_bytes(config))
+        self.bundle["operator_capability_binding"] = create_operator_capability_binding(
+            runtime_id=self.bundle["runtime_id"],
+            runtime_label=self.bundle["runtime_label"],
+            being_ref=self.bundle["manifest"]["being_ref"],
+            origin=self.bundle["local_origin"],
+            signing_seed=custody.secrets[self.bundle["keystore"]["signing_slot"]],
+            capability_rows=self.bundle["capabilities"],
+        )
+        (self.source / "runtime.json").write_bytes(canonical_bytes(self.bundle))
+
+    def test_expired_controller_renewal_keeps_identity_keys_history_and_old_requests(
+        self,
+    ):
+        from unittest.mock import patch
+
+        from daimon_matrix.canonical import canonical_bytes
+        from daimon_matrix.local_api import (
+            LocalApiError,
+            LocalCapability,
+            create_request,
+        )
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.runtime import load_runtime
+
+        self.expired_controller()
+        directory = self.source / "host-clients/receiving-controller"
+        old_capability = LocalCapability.from_value(
+            json.loads((directory / "client.json").read_bytes())["capability"],
+            (directory / "capability.key").read_bytes(),
+        )
+        request = create_request(
+            old_capability,
+            request_id=str(uuid.uuid4()),
+            issued_at_ms=old_capability.descriptor["not_after_ms"] - 1,
+            method="runtime.reader-selection",
+            params={},
+        )
+        upgrade._write(
+            self.source / "pending-controller.json", canonical_bytes(request)
+        )
+        self.before = upgrade._snapshot(self.source)
+        self.args["expected_source_sha256"] = upgrade._inventory(self.before)
+        old = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        ready = self.stage(renew_receiving_controller=True)
+        self.assertTrue(ready["renew_receiving_controller"])
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        exchange = upgrade._exchange
+
+        def lost_reply(*args):
+            exchange(*args)
+            raise OSError("synthetic lost return after exchange")
+
+        with (
+            patch.object(upgrade, "_exchange", side_effect=lost_reply),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        published = self.publish()
+        after = upgrade._snapshot(self.source)
+        with patch.object(
+            upgrade.time,
+            "time_ns",
+            return_value=(ready["expires_at_ms"] + 1) * 1_000_000,
+        ):
+            self.assertEqual(self.publish(), published)
+        current = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        self.assertEqual(current.counter, old.counter + 1)
+        self.assertEqual(dict(current.secrets), dict(old.secrets))
+        self.assertEqual(
+            after["pending-controller.json"], self.before["pending-controller.json"]
+        )
+        upgrade._capability_successor(
+            self.before,
+            after,
+            {},
+            renew_receiving_controller=True,
+            receiving_controller_lifetime=upgrade.CONTROLLER_LIFETIME,
+        )
+        runtime = load_runtime(
+            self.source,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: time.time_ns() // 1_000_000,
+            egress=closed_visibility(
+                clock=lambda: time.time_ns() // 1_000_000, catalog_mode="migrate"
+            ),
+        )
+        # The old authenticated request is retained, not re-signed under the new
+        # descriptor. Its expired capability cannot gain the renewed authority.
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            runtime.service.handle(request)
+        renewed = LocalCapability.from_value(
+            json.loads((directory / "client.json").read_bytes())["capability"],
+            (directory / "capability.key").read_bytes(),
+        )
+        response = runtime.service.handle(
+            create_request(
+                renewed,
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=time.time_ns() // 1_000_000,
+                method="runtime.reader-selection",
+                params={},
+            )
+        )
+        self.assertEqual(response["error"]["code"], "reader_controller_unavailable")
+        self.assertEqual(
+            json.loads(after["runtime.json"])["local_origin"],
+            self.bundle["local_origin"],
+        )
+        self.assertEqual(
+            after[self.bundle["ledger"]], self.before[self.bundle["ledger"]]
+        )
+
+    def test_controller_renewal_cannot_add_methods_or_reissue_a_live_role(self):
+        self.expired_controller()
+        for arguments in (
+            {"renew_receiving_controller": 1},
+            {
+                "renew_receiving_controller": True,
+                "provision_receiving_controller": True,
+            },
+            {
+                "renew_receiving_controller": True,
+                "add_methods": {"weave": ["we.converse"]},
+            },
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                self.assertRaises(upgrade.UpgradeError),
+            ):
+                self.stage(**arguments)
+            self.assertFalse(self.transaction.exists())
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "runtime_validation_rejected"
+        ):
+            self.stage(
+                renew_receiving_controller=True, password=b"wrong-custody-password"
+            )
+        self.assertFalse(self.transaction.exists())
+        now = time.time_ns() // 1_000_000
+        self.rebind_capability(
+            "receiving-controller", not_before_ms=now - 1000, not_after_ms=now + 600_000
+        )
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "expired_controller_required"
+        ):
+            self.stage(renew_receiving_controller=True)
+        self.assertFalse(self.transaction.exists())
+
+    def test_controller_renewal_never_ignores_revocation_or_an_expired_original_role(
+        self,
+    ):
+        self.expired_controller()
+        self.rebind_capability("receiving-controller", status="revoked")
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        with self.assertRaisesRegex(upgrade.UpgradeError, "authorization_inactive"):
+            self.stage(renew_receiving_controller=True)
+        self.assertFalse(self.transaction.exists())
+        self.rebind_capability("receiving-controller", status="active")
+        now = time.time_ns() // 1_000_000
+        self.rebind_capability(
+            "observe", not_before_ms=now - 20_000, not_after_ms=now - 1_000
+        )
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        with self.assertRaisesRegex(upgrade.UpgradeError, "authorization_expired"):
+            self.stage(renew_receiving_controller=True)
+        self.assertFalse(self.transaction.exists())
 
     def test_cli_uses_exact_request_and_ready_pins_and_password_fd(self):
         import io

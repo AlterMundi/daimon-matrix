@@ -7,8 +7,9 @@ do not prove `we.conversation.page` or sealed `we.converse` is available.
 
 Use the native owner-local offline transaction below to issue explicitly
 requested missing methods without changing the being, embodiment, incarnation,
-operational keys or original capability expiry. This is separate from rebirth
-and from the pinned legacy converter. It is not a model-facing tool or an
+operational keys or original capability expiry. The explicit optional-controller
+expiry repair below is the only renewal supplied here. Both use the existing
+owner transaction, separately from rebirth and the pinned legacy converter. It is not a model-facing tool or an
 automatic startup migration.
 
 ## Prepare the exact request
@@ -145,3 +146,49 @@ Acceptance requires actual intake, appropriate required visibility and receipts
 in both directions, not only green tests or healthy daemons. New onboarding uses
 current issuance and this same acceptance procedure, rather than declaring
 conversation ready after sync alone.
+
+
+## Expired optional receiving controller
+
+An update authorization deadline is not a grant lifetime. New receiving-controller
+issuance records `receiving_controller_lifetime: owner-profile-horizon/v1` in its
+private ready receipt. Its descriptor ends at the earliest existing original
+operator/host grant expiry, bounded by the30-day operator policy. A short update
+therefore does not accidentally disable the controller when that task ends.
+Previously staged receipts without this marker retain their original contract;
+a new SDK does not rewrite an older transaction or its grant lifetime.
+
+For an already expired optional controller in a V8 runtime, reuse the same
+`stage-capabilities` / `publish-capabilities` commands, exact inventory/counter/
+identity pins, fenced receiving owner and password descriptor. The request uses
+`add_methods: {}` and `renew_receiving_controller: true`; omit or set false
+`provision_receiving_controller`. The caller must select a new, finite transaction
+authorization deadline inside the remaining original-owner grant horizon.
+
+This operation requires exactly one existing canonical receiving-controller
+profile. It renews only an expired descriptor whose status remains active.
+Revocation, a live/unexpired target, expired original roles, wrong custody,
+invalid current Root/body authority, additional methods or changed source bytes
+refuse. The expired role does not authorize its own renewal: the receiving owner
+authenticates the unchanged currently valid original roles and signed custody.
+V7 expiry and other expired roles are not repaired by this narrow operation.
+
+The existing controller key, methods, identity and all unrelated profiles stay
+unchanged. Its client receives the renewed signed descriptor; the encrypted store
+advances its counter exactly once. Native validation runs on disposable copies,
+and the original is untouched until the existing atomic publication. Ready
+receipts retain the renewal selection and exact old/new inventories. A lost
+publication return is reconciled by the original transaction, including after its
+authorization deadline, without another grant or counter change.
+
+Old authenticated requests remain bound to their original capability ID. Keep
+request journals and expired/uncertain outcomes intact; do not re-sign an old
+request and call it an exact retry. Receiving controllers must retain the old
+loaded-process receipt and link the separately observed renewed load through a
+new exact lifecycle operation. Compatible software rollback preserves the renewed
+current authority and counter; restoring the expired bundle is not rollback.
+
+This is an owner-local maintenance capability, not a model tool, automatic
+startup mutation or general role renewal service. Runtime validation, authentic
+serving-process load, selected readers and actual communication remain separate
+observed outcomes under the receiving update workflow.
