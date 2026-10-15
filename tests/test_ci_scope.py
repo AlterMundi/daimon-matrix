@@ -12,6 +12,54 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_combined_group_and_admission_keeps_both_contract_sets(self):
+        changed = [
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+        ]
+        self.assertEqual(profile(changed), "tribe-group")
+        for admission in (
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/messaging_config.py",
+            "tests/test_operator_messaging.py",
+            "tests/test_closed_visibility_provisioning.py",
+            "tests/test_dm025_cli_mcp.py",
+            "schemas/hosted/v1/local-api.schema.json",
+        ):
+            self.assertEqual(profile([*changed, admission]), "group-admission")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/identity.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        group = workflow.split("  tribe-group:", 1)[1].split("  human-tribu:", 1)[0]
+        step = group.split(
+            "- name: Changed group admission, visibility and native API contracts", 1
+        )[1]
+        step = step.split("- name:", 1)[0]
+        self.assertIn("needs.scope.outputs.group_admission_checks == 'true'", step)
+        for module in (
+            "tests.test_operator_messaging",
+            "tests.test_closed_visibility_provisioning",
+            "tests.test_dm025_cli_mcp",
+        ):
+            self.assertIn(module, step)
+
+    def test_combined_admission_uses_one_existing_installed_group_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "scope-output"
+            with (
+                patch("tools.ci_scope.select", return_value="group-admission"),
+                patch.object(sys, "argv", ["ci_scope.py", "--base", "base"]),
+                patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            ):
+                main()
+            selected = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            self.assertEqual(selected["profile"], "tribe-group")
+            self.assertEqual(selected["group_admission_checks"], "true")
+            self.assertNotEqual(selected.get("group_receipt_checks"), "false")
+
     def test_published_runtime_contract_corrections_keep_installed_native_checks(self):
         paths = [
             "src/daimon_matrix/operator_messaging.py",
@@ -127,7 +175,10 @@ class CIScopeTests(unittest.TestCase):
             "src/daimon_matrix/tribe_conversation.py",
             "tests/test_cross_being_semantic_receipts.py",
         ):
-            self.assertEqual(profile([*paths, changed]), "tribe-group")
+            # This vector also changes messaging_config; once the narrow
+            # bounded-transport profile no longer applies, keep its native
+            # configuration/admission contracts alongside group and receipts.
+            self.assertEqual(profile([*paths, changed]), "group-admission")
         self.assertEqual(profile([*paths, "src/daimon_matrix/identity.py"]), "full")
         workflow = (
             Path(__file__).parents[1] / ".github/workflows/tests.yml"
@@ -198,7 +249,7 @@ class CIScopeTests(unittest.TestCase):
     def test_membership_group_qualifies_affected_contracts_once(self):
         from tools.ci_scope import TRIBE_GROUP_FILES
 
-        self.assertEqual(profile(list(TRIBE_GROUP_FILES)), "tribe-group")
+        self.assertEqual(profile(list(TRIBE_GROUP_FILES)), "group-admission")
         for other in (
             "src/daimon_matrix/identity.py",
             "src/daimon_matrix/keystore.py",

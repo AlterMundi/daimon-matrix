@@ -306,6 +306,16 @@ def profile(paths: list[str]) -> str:
         }
         and changed <= TRIBE_GROUP_FILES
     ):
+        if changed & {
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/messaging_config.py",
+            "tests/test_operator_messaging.py",
+            "tests/test_closed_visibility_provisioning.py",
+            "tests/test_dm025_cli_mcp.py",
+            "schemas/hosted/v1/local-api.schema.json",
+            "docs/verification/dm025-invariants.json",
+        }:
+            return "group-admission"
         return "tribe-group"
     if (
         changed <= AUTHORITY_ADOPTION_FILES
@@ -411,7 +421,8 @@ def main() -> None:
             "visibility"
             if selected == "mirror"
             else "tribe-group"
-            if selected in {"bounded-group-transport", "receiving-control"}
+            if selected
+            in {"bounded-group-transport", "receiving-control", "group-admission"}
             else selected
         )
         + "\nnative_checks="
@@ -421,6 +432,8 @@ def main() -> None:
         value += "\ngroup_receipt_checks=false"
     if selected == "receiving-control":
         value += "\ngroup_receiving_checks=true"
+    if selected == "group-admission":
+        value += "\ngroup_admission_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:
