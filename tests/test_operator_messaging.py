@@ -9,6 +9,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -2509,6 +2510,189 @@ class RetainedVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(read_publication(advanced, target)[1], selected)
         self.assertEqual(sorted(path.name for path in target.iterdir()), before)
         daemon_visibility_check(advanced, target, installation)
+
+
+class GroupApplicationAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        from daimon_matrix.native_egress import closed_visibility
+        from tests.test_dm051_sealed import TribeConversationLaneTests
+        from tests.test_group_messaging_runtime import GroupRuntimeTests
+        from tests.test_messaging_runtime import public_document
+
+        self.fixture = TribeConversationLaneTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.runtime, self.app, self.view = GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False, founder_only=True
+        )
+        # The admission owner starts after the predecessor writer is quiesced.
+        # Its closed controller has no already-bound predecessor reader context.
+        self.runtime = replace(
+            self.runtime,
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        self.previous, _ = read_publication(self.runtime, self.app)
+        self.expected = config_digest(self.previous)
+        self.candidate = copy.deepcopy(self.previous)
+        member = self.fixture.member
+        self.admitted = [member.state.being_ref]
+        self.candidate["authorities"].append(public_document(member, "member"))
+        self.candidate["relationship_events"] = [
+            *self.previous["relationship_events"],
+            *[
+                event
+                for event in self.fixture.events
+                if event not in self.previous["relationship_events"]
+            ],
+        ]
+        key = self.app.parent / "admitted-body.key"
+        key.write_bytes(b"n" * 32)
+        key.chmod(0o600)
+        self.sources = {key.name: key}
+        route = {
+            "provider_ref": "admitted-body",
+            "route_ref": "admitted-body",
+            "key_ref": "admitted-body",
+            "endpoint": "http://127.0.0.1:48766/dm-messaging/v1/message",
+            "secret_file": key.name,
+            "secret_sha256": hashlib.sha256(key.read_bytes()).hexdigest(),
+        }
+        self.candidate["roster"].append(
+            {
+                "being_ref": member.state.being_ref,
+                "embodiment_id": member.origin["embodiment_id"],
+                "body_ref": member.origin["body_ref"],
+                "route": route,
+            }
+        )
+
+    def accept(self):
+        for event in self.fixture.events:
+            self.runtime.service.relationships.store.ingest(event)
+
+    def publish(self, **changes):
+        from daimon_matrix.operator_messaging import admit_group_application
+
+        options = {
+            "expected_application_sha256": self.expected,
+            "admitted_being_refs": self.admitted,
+            "secret_sources": self.sources,
+        }
+        options.update(changes)
+        return admit_group_application(
+            self.runtime, self.app, self.candidate, **options
+        )
+
+    def test_publication_preserves_client_keys_stores_and_exact_retry(self):
+        self.accept()
+        client = (self.app / "client.key").read_bytes()
+        old_key = self.app / self.previous["intake"]["secret_file"]
+        key_bytes = old_key.read_bytes()
+        stores = {
+            filename: (self.app / filename).stat().st_ino
+            for filename in self.previous["stores"].values()
+        }
+        record = {"summary": "retained before admission"}
+        record_id = str(uuid.uuid4())
+        self.view.service.messaging.channels["tribe"].records.reserve(
+            "request", record_id, record, lambda: record
+        )
+        first = self.publish()
+        self.assertEqual(first["status"], "group-application-published")
+        selected, metadata = read_publication(self.runtime, self.app)
+        self.assertEqual(selected, self.candidate)
+        self.assertEqual(selected["client"], self.previous["client"])
+        self.assertEqual((self.app / "client.key").read_bytes(), client)
+        self.assertEqual(old_key.read_bytes(), key_bytes)
+        self.assertEqual(
+            {name: (self.app / name).stat().st_ino for name in stores}, stores
+        )
+        group = load_application(self.runtime, self.app).service.messaging.channels[
+            "tribe"
+        ]
+        self.assertEqual(group.records.get("request", record_id), record)
+        self.assertEqual(len(group.receiving_roster()["audience"]), 2)
+        files = sorted(self.app.iterdir())
+        publication = (self.app / "publication.json").read_bytes()
+        again = self.publish()
+        self.assertEqual(again, {**first, "status": "current"})
+        self.assertEqual(sorted(self.app.iterdir()), files)
+        self.assertEqual((self.app / "publication.json").read_bytes(), publication)
+        self.assertEqual(metadata.name, first["generation"])
+
+    def test_lost_reply_recovers_without_reminting_client_or_generation(self):
+        self.accept()
+        replace_file = os.replace
+
+        def lost_reply(source, destination):
+            result = replace_file(source, destination)
+            if Path(destination) == self.app / "publication.json":
+                raise OSError("lost reply after publication")
+            return result
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.os.replace", side_effect=lost_reply
+            ),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        before, metadata = read_publication(self.runtime, self.app)
+        client = (self.app / "client.key").read_bytes()
+        result = self.publish()
+        self.assertEqual(result["status"], "current")
+        self.assertEqual(read_publication(self.runtime, self.app), (before, metadata))
+        self.assertEqual((self.app / "client.key").read_bytes(), client)
+
+    def test_torn_staging_key_recovers_before_selecting_the_same_generation(self):
+        self.accept()
+        from daimon_matrix.operator_messaging import _write
+
+        def interrupted(directory, name, raw):
+            if name.startswith("admitted-body.key.stage-"):
+                _write(directory, name, raw[:8])
+                raise OSError("interrupted staging write")
+            return _write(directory, name, raw)
+
+        with (
+            patch("daimon_matrix.operator_messaging._write", side_effect=interrupted),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        result = self.publish()
+        self.assertEqual(result["status"], "group-application-published")
+        self.assertEqual(list(self.app.glob("admitted-body.key.stage-*")), [])
+        self.assertEqual((self.app / "admitted-body.key").read_bytes(), b"n" * 32)
+
+    def test_unaccepted_member_is_rejected_before_candidate_files_are_written(self):
+        files = sorted(self.app.iterdir())
+        with self.assertRaisesRegex(ValueError, "messaging_group_admission_conflict"):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        self.assertEqual(sorted(self.app.iterdir()), files)
+
+    def test_admission_cannot_replace_routes_client_stores_or_approved_addition(self):
+        self.accept()
+        original = copy.deepcopy(self.candidate)
+        cases = (
+            ("roster", [self.candidate["roster"][1]]),
+            ("stores", {**self.candidate["stores"], "records": "other.sqlite"}),
+            ("client", {**self.candidate["client"], "secret_sha256": "0" * 64}),
+            ("relationship_events", self.candidate["relationship_events"][1:]),
+        )
+        for name, value in cases:
+            self.candidate = {**original, name: value}
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.publish()
+        self.candidate = original
+        with self.assertRaises(ValueError):
+            self.publish(admitted_being_refs=[self.fixture.founder.state.being_ref])
+        with self.assertRaises(ValueError):
+            self.publish(expected_application_sha256="0" * 64)
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
 
 
 class PublicAuthorityHistoryTests(unittest.TestCase):

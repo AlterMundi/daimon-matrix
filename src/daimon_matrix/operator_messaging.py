@@ -168,7 +168,7 @@ def _runtime_authorities(
 
 def public_authority_history(
     document: Mapping[str, Any],
-    history: Sequence[Mapping[str, Any]],
+    history: Sequence[Any],
 ) -> RootHistoryAuthority:
     """Verify bounded public epochs ending at one explicitly selected Root.
 
@@ -553,7 +553,9 @@ _CAPABILITY_ENTRY_STAGE_LIMIT = 8
 _CAPABILITY_ENTRY_MAX_BYTES = 4 * 1024 * 1024
 
 
-def _cleanup_capability_entry_staging(root: Path, final_name: str) -> None:
+def _cleanup_retained_entry_staging(
+    root: Path, final_name: str, *, error_code: str
+) -> None:
     """Remove only bounded, private residue for one exact journal entry."""
     prefix = final_name + ".stage-"
     pattern = re.compile(re.escape(prefix) + r"[0-9a-f]{32}$")
@@ -563,17 +565,15 @@ def _cleanup_capability_entry_staging(root: Path, final_name: str) -> None:
             continue
         candidates.append(path)
         if len(candidates) > _CAPABILITY_ENTRY_STAGE_LIMIT:
-            raise MessagingConfigError("messaging_capability_state_rejected")
+            raise MessagingConfigError(error_code)
     removed = False
     for path in candidates:
         if pattern.fullmatch(path.name) is None:
-            raise MessagingConfigError("messaging_capability_state_rejected")
+            raise MessagingConfigError(error_code)
         try:
             info = path.lstat()
         except OSError as exception:
-            raise MessagingConfigError(
-                "messaging_capability_state_rejected"
-            ) from exception
+            raise MessagingConfigError(error_code) from exception
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.geteuid()
@@ -581,14 +581,16 @@ def _cleanup_capability_entry_staging(root: Path, final_name: str) -> None:
             or info.st_nlink != 1
             or info.st_size > _CAPABILITY_ENTRY_MAX_BYTES
         ):
-            raise MessagingConfigError("messaging_capability_state_rejected")
+            raise MessagingConfigError(error_code)
         path.unlink()
         removed = True
     if removed:
         _sync(root)
 
 
-def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
+def _publish_retained_entry(
+    root: Path, final_name: str, raw: bytes, *, error_code: str
+) -> None:
     """Install complete fsynced journal bytes atomically and without replacement."""
     final_path = root / final_name
     try:
@@ -596,19 +598,25 @@ def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
     except FileNotFoundError:
         pass
     except OSError as exception:
-        raise MessagingConfigError("messaging_capability_state_rejected") from exception
+        raise MessagingConfigError(error_code) from exception
     else:
         if protected_read(final_path) != raw:
-            raise MessagingConfigError("messaging_capability_state_rejected")
-        _cleanup_capability_entry_staging(root, final_name)
+            raise MessagingConfigError(error_code)
+        _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
         _sync(root)
         return
 
-    _cleanup_capability_entry_staging(root, final_name)
+    _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
     staging_name = final_name + ".stage-" + secrets.token_hex(16)
     _write(root, staging_name, raw)
     _publish(root / staging_name, final_path)
     _sync(root)
+
+
+def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
+    _publish_retained_entry(
+        root, final_name, raw, error_code="messaging_capability_state_rejected"
+    )
 
 
 def _initialize_capability_state(
@@ -1738,6 +1746,210 @@ def republish(
         raise MessagingConfigError("messaging_republish_rejected") from None
     finally:
         os.close(descriptor)
+
+
+def admit_group_application(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    specification: Mapping[str, Any],
+    *,
+    expected_application_sha256: str,
+    admitted_being_refs: Sequence[str],
+    secret_sources: Mapping[str, Path | str],
+) -> dict[str, Any]:
+    """Publish an exact additive group generation without replacing its client.
+
+    Trusted owner only, under the existing runtime writer and Cluster's revoked
+    old-sender barrier. Use a freshly loaded offline owner context, not the
+    predecessor's already registered egress controller. Membership and public
+    authorities must already be loaded
+    and verified; this operation neither authors nor ingests governance. It does
+    not publish visibility, select a Cluster application, enable egress or claim
+    completed admission. Resume those separately retained effects before start.
+    """
+    import fcntl
+
+    from .messaging import GroupMessaging
+    from .messaging_config import APPLICATION_SCHEMA_V3
+
+    root = _directory(app_directory)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        validate_shape(specification)
+        if (
+            specification["schema"] != APPLICATION_SCHEMA_V3
+            or re.fullmatch(r"[0-9a-f]{64}", expected_application_sha256) is None
+            or not admitted_being_refs
+            or len(set(admitted_being_refs)) != len(admitted_being_refs)
+        ):
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        application = copy.deepcopy(dict(specification))
+        digest = config_digest(application)
+        generation = (
+            "generation-"
+            + config_digest(
+                {
+                    "predecessor": expected_application_sha256,
+                    "successor": digest,
+                    "admitted": sorted(admitted_being_refs),
+                }
+            )[:32]
+        )
+        destination = root / generation
+        selected, metadata = read_publication(runtime, root)
+        publication = read_document(root / "publication.json")
+        already_selected = config_digest(selected) == digest
+        if already_selected:
+            if (
+                metadata != destination
+                or publication["body"]["predecessor_sha256"]
+                != expected_application_sha256
+            ):
+                raise MessagingConfigError("messaging_group_admission_conflict")
+            previous = read_document(destination / "predecessor.json")
+            verify_binding(
+                runtime,
+                previous,
+                read_document(destination / "predecessor-binding.json"),
+            )
+            client_bytes = protected_read(metadata / "client.json")
+        else:
+            if config_digest(selected) != expected_application_sha256:
+                raise MessagingConfigError("messaging_group_admission_conflict")
+            previous = selected
+            client_bytes = protected_read(metadata / "client.json")
+        if (
+            previous["schema"] != APPLICATION_SCHEMA_V3
+            or config_digest(previous) != expected_application_sha256
+            or set(previous) != set(application)
+            or any(
+                previous[key] != application[key]
+                for key in previous
+                if key not in {"authorities", "relationship_events", "roster"}
+            )
+            or application["relationship_events"][
+                : len(previous["relationship_events"])
+            ]
+            != previous["relationship_events"]
+            or application["roster"][: len(previous["roster"])] != previous["roster"]
+        ):
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        old = _application_authorities(previous)
+        current = _application_authorities(application)
+        admitted = set(admitted_being_refs)
+        if set(current) - set(old) != admitted or any(
+            current.get(ref) != authority for ref, authority in old.items()
+        ):
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        added_rows = application["roster"][len(previous["roster"]) :]
+        required = {
+            (ref, row["embodiment_id"], row["body_ref"])
+            for ref in admitted
+            for row in current[ref].manifest.value["embodiments"]
+            if row["status"] == "active"
+        }
+        if {
+            (row["being_ref"], row["embodiment_id"], row["body_ref"])
+            for row in added_rows
+        } != required:
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        old_keys = {row["secret_file"] for row in application_routes(previous)}
+        new_keys = {row["route"]["secret_file"] for row in added_rows}
+        if old_keys & new_keys or set(secret_sources) != new_keys:
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        # Resolve current signed membership before writing any candidate keys.
+        relationships = runtime.service.relationships
+        if relationships is None or relationships.authority_resolver is None:
+            raise MessagingConfigError("messaging_relationship_composition_rejected")
+        with relationships.store.authorization_view(
+            at_ms=runtime.service.clock(), card_verifier=relationships.card_verifier
+        ) as view:
+            snapshot = view.snapshot(application["tribe"]["policy"]["tribe_ref"])
+            if {
+                row["principal_id"]
+                for row in snapshot.value["members"]
+                if row["state"] == "active"
+            } != set(current):
+                raise MessagingConfigError("messaging_group_admission_conflict")
+        for ref, authority in current.items():
+            if _current_epoch(relationships.authority_resolver(ref)) != authority:
+                raise MessagingConfigError("messaging_relationship_authority_mismatch")
+        key_bytes = {}
+        for row in added_rows:
+            route = row["route"]
+            raw = protected_read(secret_sources[route["secret_file"]], size=32)
+            if hashlib.sha256(raw).hexdigest() != route["secret_sha256"]:
+                raise MessagingConfigError("messaging_key_rejected")
+            key_bytes[route["secret_file"]] = raw
+
+        def retained_write(directory: Path, name: str, raw: bytes) -> None:
+            _publish_retained_entry(
+                directory, name, raw, error_code="messaging_group_admission_conflict"
+            )
+
+        destination.mkdir(mode=0o700, exist_ok=True)
+        _directory(destination)
+        retained_write(destination, "predecessor.json", canonical_bytes(previous))
+        retained_write(
+            destination,
+            "predecessor-binding.json",
+            canonical_bytes(create_binding(runtime, previous)),
+        )
+        retained_write(destination, "application.json", canonical_bytes(application))
+        retained_write(
+            destination,
+            "binding.json",
+            canonical_bytes(create_binding(runtime, application)),
+        )
+        retained_write(destination, "client.json", client_bytes)
+        retained_write(
+            destination,
+            "successor.json",
+            _publication(runtime, application, generation, expected_application_sha256),
+        )
+        for name, raw in key_bytes.items():
+            retained_write(root, name, raw)
+        _sync(destination)
+        _sync(root)
+        composed = _compose(runtime, root, application, metadata_root=destination)
+        messaging = composed.service.messaging
+        if messaging is None:
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        group = messaging.channels[application["tribe"]["channel_id"]]
+        if not isinstance(group, GroupMessaging):
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        roster = group.receiving_roster()
+        if {(row["being_ref"], row["embodiment_id"]) for row in roster["audience"]} != {
+            (row["being_ref"], row["embodiment_id"]) for row in application["roster"]
+        }:
+            raise MessagingConfigError("messaging_group_admission_conflict")
+        if not already_selected:
+            temporary = "select-" + generation + ".json"
+            retained_write(
+                root, temporary, protected_read(destination / "successor.json")
+            )
+            _sync(root)
+            latest, _ = read_publication(runtime, root)
+            if config_digest(latest) != expected_application_sha256:
+                raise MessagingConfigError("messaging_group_admission_conflict")
+            os.replace(root / temporary, root / "publication.json")
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        load_application(runtime, root)
+        return {
+            "status": "current" if already_selected else "group-application-published",
+            "application_sha256": digest,
+            "predecessor_sha256": expected_application_sha256,
+            "generation": generation,
+            "admitted_being_refs": sorted(admitted),
+        }
+    finally:
+        os.close(fd)
 
 
 def visibility_presentation(

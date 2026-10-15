@@ -24,8 +24,32 @@ The reader opens no foreign ledger, custody or conversation store. Existing
 `known_peer_successor` reuses this validation and retains its additional anchored
 prefix checks; `adopt_peer_authority` still cannot enroll an unknown peer.
 
-Additive application publication, expanded-participant disclosure acceptance and
-the before/after receiving transaction remain unfinished. Do not substitute
-`republish`, the same-audience `visibility_presentation`, or an archived pair
-installation for those operations. Keep the already prepared VPS software update
-independent of this future-admission increment.
+## Additive application publication
+
+`operator_messaging.admit_group_application` accepts an exact predecessor digest,
+the reviewed successor application, the explicit added being references and only
+their new per-body transport key sources. Existing clients, intake, routes,
+stores, channel policy and authority snapshots stay unchanged. Governance and
+body registrations append to the original application. Every new registration
+must belong to an approved active Root body; the resulting roster must cover the
+actual complete signed membership.
+
+Call it under the existing runtime writer after Cluster has fenced the old
+senders. Load a fresh offline base runtime with the approved public authority
+closure and a closed controller in catalog migration mode. Do not reuse a
+controller already composed for the predecessor application. Ingest the actual
+verified membership acceptance before publication; this operation cannot author
+or substitute it. An own/known Root update is a separate existing successor
+operation, not an unrelated delta to hide in an admission.
+
+The operation retains one deterministic existing-format generation, signed
+predecessor and successor bytes, and uses exclusive durable file publication.
+Retry verifies existing bytes and resumes missing writes, including torn staging
+files or a lost reply after pointer publication. It never remints a client or
+replaces stores. A `current` or `group-application-published` result proves only
+the application selection, not visibility acceptance or completed admission.
+
+Expanded-participant disclosure acceptance and the before/after receiving
+transaction remain unfinished. Do not substitute `republish`, the same-audience
+`visibility_presentation`, or an archived pair installation for those operations.
+Keep the already prepared VPS software update independent of this increment.
