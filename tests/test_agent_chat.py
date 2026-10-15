@@ -122,6 +122,41 @@ class AgentChatTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
         self.assertEqual({p: p.read_bytes() for p in preserved}, preserved)
 
+    def test_tooling_slow_temporary_write_cannot_publish_after_deadline(self):
+        from tools import install_agent_chat as installer
+
+        home, config, mirror, _command, preserved, writer, reconcile = (
+            self.tooling_fixture()
+        )
+        connection = self.args.attachment / "connection.json"
+        before = {p: p.read_bytes() for p in (connection, mirror, config)}
+        clock = [1]
+        put = installer._put
+
+        def late_put(path, raw):
+            put(path, raw)
+            if path.name.startswith(".matrix-tooling-"):
+                clock[0] = 101
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch(
+                "tools.install_agent_chat.time.monotonic_ns",
+                side_effect=lambda: clock[0],
+            ),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+            patch("tools.install_agent_chat._put", side_effect=late_put),
+        ):
+            with self.assertRaisesRegex(ValueError, "tooling_deadline_expired"):
+                reconcile(deadline_ns=100)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+            self.assertEqual(reconcile(deadline_ns=200)["status"], "configured")
+            self.assertEqual(run.call_count, 1)
+        self.assertEqual({p: p.read_bytes() for p in preserved}, preserved)
+
     def test_tooling_adoption_reconciles_each_lost_file_reply_without_repreparation(
         self,
     ):

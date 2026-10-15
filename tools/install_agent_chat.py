@@ -343,7 +343,9 @@ def _codex_candidate(
     return candidate
 
 
-def _publish_exact(path: Path, before: bytes, after: bytes) -> None:
+def _publish_exact(
+    path: Path, before: bytes, after: bytes, *, deadline_ns: int | None = None
+) -> None:
     """Complete an original-or-intended file replacement and its durability."""
     from daimon_matrix.messaging_config import protected_read
 
@@ -356,6 +358,8 @@ def _publish_exact(path: Path, before: bytes, after: bytes) -> None:
             _put(temporary, after)
             if protected_read(path) != before:
                 raise ValueError("agent_chat_tooling_conflict")
+            if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+                raise ValueError("agent_chat_tooling_deadline_expired")
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -539,11 +543,16 @@ def reconcile_tooling(
             remaining()
             if _binding_fingerprint(attachment)[1] != binding_sha:
                 raise ValueError("agent_chat_tooling_conflict")
-            _publish_exact(path, before, after)
+            _publish_exact(
+                path,
+                before,
+                after,
+                **({} if deadline_ns is None else {"deadline_ns": deadline_ns}),
+            )
         remaining()
         role = tomllib.loads(updates[-1][2].decode())["mcp_servers"]["matrix"]
         client = bridge(binding).client.config
-        return dict(
+        result = dict(
             status="configured" if role.get("enabled", True) is True else "disabled",
             operation_id=operation_id,
             binding_sha256=binding_sha,
@@ -556,6 +565,8 @@ def reconcile_tooling(
             outgoing_channels=binding["outgoing_channels"],
             catalog_acceptance="unobserved",
         )
+        remaining()
+        return result
 
 
 def _tools() -> list[dict[str, Any]]:
