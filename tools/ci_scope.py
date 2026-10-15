@@ -51,6 +51,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",
+        "src/daimon_matrix/agent_chat.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/labels.py",
         "src/daimon_matrix/mandatory_echo.py",
@@ -337,6 +338,7 @@ def profile(paths: list[str]) -> str:
         <= changed
         or changed
         & {
+            "src/daimon_matrix/agent_chat.py",
             "src/daimon_matrix/operator_messaging.py",
             "src/daimon_matrix/native_egress.py",
             "src/daimon_matrix/routes.py",

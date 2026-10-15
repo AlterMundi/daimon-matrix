@@ -12,6 +12,26 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_native_chat_uses_installed_chat_and_receiving_contracts(self):
+        from tools.ci_scope import RECEIVING_CONTROL_FILES
+
+        chat = ["src/daimon_matrix/agent_chat.py", "tests/test_agent_chat.py"]
+        self.assertEqual(profile(chat), "visibility")
+        self.assertEqual(
+            profile([*RECEIVING_CONTROL_FILES, *chat]), "receiving-control"
+        )
+        self.assertEqual(profile([*chat, "src/daimon_matrix/identity.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        for section, end in (
+            ("  visibility:", "  authority-adoption:"),
+            ("  tribe-group:", "  human-tribu:"),
+        ):
+            job = workflow.split(section, 1)[1].split(end, 1)[0]
+            self.assertIn("tests.test_agent_chat", job)
+            self.assertIn("dist/*.whl", job)
+
     def test_receiving_control_requires_installed_role_and_replay_contracts(self):
         from tools.ci_scope import RECEIVING_CONTROL_FILES
 
