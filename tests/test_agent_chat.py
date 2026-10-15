@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import importlib.util
+import io
 import json
 import tempfile
 import time
@@ -23,6 +24,148 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_native_catalog_has_bound_channels_and_one_logical_send_id(self):
+        from daimon_matrix.mcp_server import MESSAGING_TOOL_CONTRACTS
+
+        binding = self.setup_binding()
+        adapter = AgentChatMcp(Mock(), binding)
+        tools = {
+            tool.name: tool
+            for tool in asyncio.run(adapter.list_tools(None, None)).tools
+        }
+        for name in ("messaging_send", "messaging_reply"):
+            properties = tools[name].input_schema["properties"]
+            self.assertNotIn("operation_id", properties)
+            self.assertEqual(
+                properties["channel_id"]["enum"], binding["outgoing_channels"]
+            )
+            self.assertIn("exact arguments", properties["send_id"]["description"])
+        self.assertEqual(
+            tools["messaging_inbox"].input_schema["properties"]["channel_id"]["enum"],
+            binding["incoming_channels"],
+        )
+        self.assertIn("parent and thread", tools["messaging_reply"].description)
+        self.assertIn(
+            "without sending it again", tools["messaging_delivery"].description
+        )
+        # The low-level wire/legacy caller contract is unchanged.
+        self.assertIn(
+            "operation_id", MESSAGING_TOOL_CONTRACTS["messaging_reply"][1]["properties"]
+        )
+
+    def test_cli_argument_errors_are_precise_and_never_construct_a_client(self):
+        from types import SimpleNamespace
+
+        from daimon_matrix import agent_chat
+
+        self.setup_binding()
+        original = dict(
+            channel_id="out",
+            received_channel_id="in",
+            message_id=str(uuid.uuid4()),
+            send_id=str(uuid.uuid4()),
+            text="explicit synthetic reply",
+        )
+        cases = [
+            (
+                {**original, "operation_id": str(uuid.uuid4())},
+                "agent_chat_operation_id_must_match_send_id",
+            ),
+            ({**original, "send_id": "not-a-uuid"}, "agent_chat_arguments_invalid"),
+            ({**original, "text": "e\u0301"}, "invalid_json_document"),
+        ]
+        for arguments, expected in cases:
+            with (
+                self.subTest(error=expected),
+                patch.object(
+                    agent_chat,
+                    "bridge",
+                    side_effect=AssertionError(
+                        "invalid arguments reached native client"
+                    ),
+                ),
+                patch.object(
+                    agent_chat.sys,
+                    "stdin",
+                    SimpleNamespace(buffer=io.BytesIO(json.dumps(arguments).encode())),
+                ),
+                patch.object(agent_chat.sys, "stdout", io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    agent_chat.main(
+                        [
+                            "--binding",
+                            str(self.args.attachment / "binding.json"),
+                            "call",
+                            "messaging_reply",
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    json.loads(output.getvalue()), {"ok": False, "error": expected}
+                )
+        # Direct Python callers bypass the CLI's canonical JSON loader.
+        with (
+            patch.object(agent_chat, "bridge", side_effect=AssertionError("no client")),
+            self.assertRaisesRegex(ValueError, "agent_chat_arguments_invalid"),
+        ):
+            asyncio.run(
+                agent_chat.call(
+                    load_binding(self.args.attachment / "binding.json"),
+                    "messaging_reply",
+                    {**original, "text": "e\u0301"},
+                )
+            )
+
+    def test_cli_preserves_multi_aliases_and_rejects_cross_link_before_client(self):
+        from unittest.mock import AsyncMock
+
+        from daimon_matrix import agent_chat
+
+        child = self.setup_binding()
+        binding = {
+            "schema": agent_chat.MULTI_SCHEMA,
+            "links": {"oliva": child, "codex": child},
+            "incoming_channels": ["oliva/in", "codex/in"],
+            "outgoing_channels": ["oliva/out", "codex/out"],
+        }
+        adapter = Mock()
+        adapter.call_tool = AsyncMock(
+            return_value=types.CallToolResult(
+                content=[], structured_content={"ok": True}
+            )
+        )
+        reply = dict(
+            channel_id="oliva/out",
+            received_channel_id="oliva/in",
+            message_id=str(uuid.uuid4()),
+            send_id=str(uuid.uuid4()),
+            text="synthetic retained reply",
+        )
+        with patch.object(agent_chat, "bridge", return_value=adapter) as make_client:
+            for name, arguments in (
+                ("messaging_inbox", {"channel_id": "oliva/in"}),
+                ("messaging_reply", reply),
+            ):
+                original = dict(arguments)
+                self.assertEqual(
+                    asyncio.run(agent_chat.call(binding, name, arguments)), {"ok": True}
+                )
+                dispatched = adapter.call_tool.call_args.args[1].arguments
+                self.assertEqual(dispatched["channel_id"], original["channel_id"])
+                self.assertEqual(arguments, original)
+            self.assertEqual(make_client.call_count, 2)
+            with self.assertRaisesRegex(ValueError, "cross_link_reply_rejected"):
+                asyncio.run(
+                    agent_chat.call(
+                        binding,
+                        "messaging_reply",
+                        {**reply, "received_channel_id": "codex/in"},
+                    )
+                )
+            self.assertEqual(make_client.call_count, 2)
+
     def test_messaging_selector_is_closed_typed_and_never_a_telegram_alias(self):
         from mcp.shared.exceptions import MCPError
 
