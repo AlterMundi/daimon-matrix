@@ -155,6 +155,7 @@ def _register_codex_mcp_locked(
         or new.get("mcp_servers", {}).get("matrix") != wanted
     ):
         raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+    _put(history / "config.candidate.toml", candidate)
     _put(
         history / "selection.json",
         canonical_bytes(

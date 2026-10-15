@@ -113,7 +113,7 @@ class AgentChatTests(unittest.TestCase):
             self.assertEqual(len(saved), 1)
             self.assertEqual((saved[0] / "config.before.toml").read_text(), original)
             self.assertEqual(
-                (saved[0] / "candidate-home/config.toml").read_text(), candidate
+                (saved[0] / "config.candidate.toml").read_text(), candidate
             )
             self.assertEqual(
                 register_codex_mcp(self.root / "attachment", ["/python", "mcp"])[
