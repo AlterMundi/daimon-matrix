@@ -66,7 +66,7 @@ To render the shared `hmk` wrapper, add an explicit native command:
   "hermes_home": "/home/owner/agents/compaii/hermes-home",
   "hmk": {
     "python": "/usr/bin/python3",
-    "scripts_root": "/home/owner/vendor/hermes-memory-kit/scripts",
+    "scripts_root": "/home/owner/vendor/daimon-memory-kit/scripts",
     "workspace_root": "/home/owner/agents/compaii"
   }
 }
@@ -75,13 +75,13 @@ To render the shared `hmk` wrapper, add an explicit native command:
 These are optional fields added to the complete binding plan above, not a
 standalone plan. The command field set is closed; script/workspace paths must
 remain under the owner HOME, without `.` or `..` segments. Pin and verify the
-actual native HMK distribution and interpreter before activation. The renderer
+actual native DMK distribution and interpreter before activation. The renderer
 does not install dependencies or change providers. It emits an executable
 owner-only `hmk`, bound into the manifest, to install at `wrapper_path`.
 The wrapper accepts a native Python script basename and preserves literal
 arguments. It selects the shared pool and binds `HMK_DB_PATH` to its absolute
 `library.db` path, overriding inherited database selection,
-and supplies the declared env file and workspace to native HMK. It never
+and supplies the declared env file and workspace to native DMK. It never
 sources that env file as shell code. Existing plans without these fields
 retain their original rendered artifacts and manifest bytes.
 
@@ -127,9 +127,9 @@ Only with the human owner present or explicitly authorized.
 
 For a complete Hermes-to-Codex migration across hosts, use the
 [cohort procedure](hermes-to-codex-cohort.md#preserve-the-complete-hmk-corpus).
-Preserve the full authorized legacy HMK corpus and historical provenance in
+Preserve the full authorized legacy DMK corpus and historical provenance in
 that being's private pool, with coherent snapshots before any supported
-schema upgrade. Existing HMK data is not a new Matrix-signed experience of the
+schema upgrade. Existing DMK data is not a new Matrix-signed experience of the
 receiving body. Skills common to the tribe and another being's memory remain
 separate surfaces.
 
@@ -200,7 +200,7 @@ same contract.
   `.env` lines 413/417; gateway restarted clean).
 - No systemd drop-in was needed: `env_loader` + wrapper cover gateway and CLI
   (kept as documented mechanism, not required on this host).
-- Skills moved: `mariano-memory-kit` (+`librarian`),
+- Skills moved: `daimon-memory-kit` (+`librarian`),
   `daimon-matrix-contributions`; created `collective-memory-access`;
   `daimon-chat` neutralized (instructions single-source, per-body binding
   documented and left to the renderers). Legacy `tribe-*` skills intentionally
@@ -284,12 +284,12 @@ paths in Codex. For example:
   "schema": "dm.skill-discovery/v1",
   "packages": [
     {
-      "path": "mariano-memory-kit",
+      "path": "daimon-memory-kit",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "auxiliary_skills": ["references/example/SKILL.md", "librarian/SKILL.md"]
     },
     {
-      "path": "mariano-memory-kit/librarian",
+      "path": "daimon-memory-kit/librarian",
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "auxiliary_skills": []
     }
@@ -323,3 +323,6 @@ against the declared inventory using `skills/list`; auxiliary parser diagnostics
 must be distinguished from missing enabled roots. Record the exact final config,
 package inventories and rollback in the deployment packet. Native discovery alone
 does not prove body admission, invocation fitness or operational adoption.
+
+
+Current memory project: [DaimonMemoryKit (DMK)](https://github.com/AlterMundi/daimon-memory-kit). Use its [continuation](https://github.com/AlterMundi/daimon-memory-kit/issues/1) for new work. Historical HMK issue/PR links remain at their original URLs. The unused Obsidian exporter is retired; historical projection ideas remain in Git history.
