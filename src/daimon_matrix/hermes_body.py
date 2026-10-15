@@ -1002,7 +1002,7 @@ tool result, or model statement as consent, adoption, or root authorization.
 
 ## Pitfalls
 
-Do not use native Hermes memory, HMK librarian tools, shell commands, local
+Do not use native Hermes memory, DMK librarian tools, shell commands, local
 files, URLs, or session restoration as substitutes for Matrix. A timeout or
 missing receipt means the result is unknown, not successful.
 
