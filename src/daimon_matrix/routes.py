@@ -1114,6 +1114,7 @@ class TransportIngress:
         intake_validator: IntakeValidator | None = None,
         intake_admission: IntakeAdmission | None = None,
         intake_gate: IntakeGate | None = None,
+        store_guard: Callable[[], None] | None = None,
         carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> None:
         for value in (
@@ -1188,6 +1189,7 @@ class TransportIngress:
         self.intake_validator = intake_validator
         self.intake_admission = intake_admission
         self.intake_gate = intake_gate
+        self.store_guard = store_guard
         self.carrier_inspector = carrier_inspector
 
     def _authorize_egress(self, binding: OperationBinding) -> bool:
@@ -1265,6 +1267,11 @@ class TransportIngress:
             if not hmac.compare_digest(presented, expected):
                 raise RouteError("transport_request_rejected")
             request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+            # Authentication precedes local storage observation. A changed
+            # loaded store is uncertain before semantic admission or refusal
+            # persistence; it must never become a sticky peer refusal.
+            if self.store_guard is not None:
+                self.store_guard()
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:
@@ -1872,9 +1879,12 @@ class AuthenticatedProvider:
         carrier_binding: OperationBinding | None = None,
         attempt_deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
+        require_bounded_write: bool = False,
     ) -> Mapping[str, Any]:
         """Transmit exact bytes; optionally retain the authenticated response."""
         started_ns = time.monotonic_ns()
+        if type(require_bounded_write) is not bool:
+            raise RouteError("route_bounded_transport_required")
         if attempt_deadline_ns is not None and (
             type(attempt_deadline_ns) is not int or attempt_deadline_ns <= started_ns
         ):
@@ -1890,8 +1900,21 @@ class AuthenticatedProvider:
         if carrier_binding is not None:
             group = _decode_canonical(carrier, "route_group_carrier_mismatch")
             if carrier_binding.path_id == "tribe-message-request":
-                if group.get("schema") != "dm.tribe.conversation/v1":
+                if group.get("schema") not in {
+                    "dm.tribe.conversation/v1",
+                    "dm.tribe.direct-conversation/v1",
+                }:
                     raise RouteError("route_group_carrier_mismatch")
+                if (
+                    require_bounded_write
+                    or group["schema"] == "dm.tribe.direct-conversation/v1"
+                ) and (
+                    type(self._round_trip) is not _SplitRoundTrip
+                    or self._round_trip.bounded_open is None
+                ):
+                    # The new reader guard must execute inside the actual write
+                    # fence. Legacy opaque callbacks are not this qualification.
+                    raise RouteError("route_bounded_transport_required")
                 sealed = unb64url(cast(str, group["envelope"]))
                 metadata = inspect_delivery(sealed, at_ms=self._clock())
                 sender = _decode_canonical(sealed, "route_group_carrier_mismatch")[
@@ -2232,7 +2255,7 @@ def _http_round_trip(
     timeout_seconds: float,
     response_timeout_seconds: float,
     total_timeout_seconds: float | None = None,
-) -> RoundTrip:
+) -> _SplitRoundTrip:
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}

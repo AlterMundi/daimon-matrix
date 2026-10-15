@@ -1,6 +1,8 @@
 # Tribe-scoped conversation
 
-Status: normative V0 specification for DM-016, DM-052, DM-054 and DM-082.
+Status: normative V0 group specification for DM-016, DM-052, DM-054 and DM-082,
+with the additive member-direct contract in §16. Source support is not receiving
+selection; #337 / Cluster #232 and #344 / #342 own deployment and acceptance.
 Runtime implementation is tracked separately and depends on this document.
 
 Tribe chat is group communication in the sense its authors intended: one message
@@ -33,6 +35,11 @@ Nothing else is a basis for conversation. In particular a contact, directory row
 route, endpoint, hostname, transport ACK, successful decryption, message receipt,
 shared room, Cluster lease, observed effect, cached projection, model output or
 legacy Tribe Bridge audience MUST NOT authorize participation.
+
+An explicit direct between members of the same Tribe uses this same membership
+authority and shared body registration, as specified in §16. It does not require
+a bilateral relationship, pair application, grant or proxy. Existing deliberately
+selected bilateral lanes remain independent, including outside a shared Tribe.
 
 ## 2. Participation authority
 
@@ -348,3 +355,72 @@ prerequisite; bounded permit issuance MUST NOT advance that service itself.
 
 Technical capacity and retries authorize no model attention, new speech loop,
 identity, group membership, transport topology or global interruption.
+
+## 16. Explicit member-directed conversation
+
+An explicit direct MUST reuse the signed membership, verified Root inventory and
+shared body registration of the existing Tribe. It MUST NOT create a bilateral
+relationship, pair application, grant, Tribe or transport proxy. Same-being
+conversation remains `/we`. Group speech and mentions inside the group MUST
+continue to use the complete V0 group audience; a mention is not a direct.
+
+`dm.tribe.direct-conversation/v1` is an additive outer carrier around the existing
+sealed message, signed resolution and Tribe reference. Its signed message body
+MUST bind a closed destination: `kind=being`, `being_ref`, and the selected
+`authority_manifest_hash`, or `kind=body` with the additional `embodiment_id`.
+Callers supply the explicit being/body selector; they MUST NOT supply its Root
+pin. The sender MUST resolve one verified active Root and derive both the hash
+and recipient rows from that same object. Being-direct selects all active bodies
+of that member; body-direct selects exactly its named active body. Routes and
+current availability MUST NOT shrink or expand this frozen set.
+
+Only those recipient keys are wrapped into the direct envelope. The author
+retains its own plaintext, ledger event and send operation separately; author
+retention MUST NOT create a receiving semantic leg, send copy to its siblings,
+or claim recipient uptake. `intent.operation` remains `tribe.converse`, so the
+existing membership-bound signed receipt validation applies. The sender proof
+is separate from the exact recipient-membership proof map used by sealing.
+
+Intake MUST independently validate the exact accepted Root epoch and destination
+rows against the send-time signed membership, preserving current operational
+credential checks. Directs MUST carry their signed destination and MUST NOT be
+relabeled as the group format. The V0 group validator MUST retain its complete
+active-membership proof check; introducing direct support MUST NOT make a subset
+acceptable as a group. Frozen rows, Root pins, IDs, ciphertext and transmission
+deadlines survive exact retry, restart, later body enrollment and expiry.
+
+The receiving controller MUST establish actual selected-and-loaded direct-reader
+readiness, tied to receiver identity/incarnation and registration/selection
+generation, before direct egress. Artifact preparation, a route or static feature
+flag is insufficient. Missing, expired or mismatched readiness MUST leave the
+frozen body leg visible and blocked, with no group or pair fallback. The guard
+MUST run before transport preparation and inside the actual write fence. It uses
+bounded receiving-local evidence, not a network probe or model turn under the
+fence. Refreshable readiness evidence MUST remain outside immutable message,
+request and application transport fingerprints. The controller MUST invalidate
+readiness before incompatible replacement or reassignment and preserve reader
+compatibility for pending carriers. Source support defaults to denying direct
+emission until that controller adapter is installed. The new wire uses the
+qualified bounded split provider; opaque legacy callbacks do not qualify it.
+
+A reply MUST derive its destination from its verified parent: being-direct to
+the parent's author being, body-direct to its exact author body. It MUST preserve
+thread and parent ID/hash and reject conflicting selectors, without broadcasting.
+Parent correlation alone MUST NOT authorize quoting parent plaintext; absent
+separate disclosure provenance, use the ID/hash-only visible reply reference.
+
+Complete confirmed human echo in Tribu remains mandatory before native egress.
+The echo MUST show the logical direct recipient, clearly directed, independently
+of its transport body vector. This selected observation profile MUST NOT promise
+secrecy for directs. Current readiness MUST remain separate from retained ACKs,
+uncertain attempts and signed semantic delivery. Losing readiness MUST NOT erase
+or relabel historical transport evidence as never attempted. A direct result
+uses `dm.tribe.direct-delivery/v1`, reports its frozen destination and author
+retention separately, and retains every intended body leg.
+
+Service/MCP selection is optional and closed. Omission MUST preserve the old
+group request bytes rather than add `destination:null`; nongroup lanes MUST
+reject the selector. Qualified releases MUST declare the new carrier, direct
+semantics and retained inspection/recovery. This contract creates no new human
+permissions, model wakeup, peer attention or router behavior. Actual receiving
+selection and group/direct acceptance remain #337/#344/#342 and Cluster #232.

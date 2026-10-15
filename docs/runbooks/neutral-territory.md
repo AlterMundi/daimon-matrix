@@ -267,7 +267,8 @@ The installed wheel ships `neutral_skill_assets/daimon-chat/`. Render with
 `<out>/skills/daimon-chat/`; copy that directory to
 `<home>/.agents/skills/daimon-chat` only during an approved adoption.
 It contains one shared body and interface/policy-only `agents/openai.yaml` and
-`agents/hermes.yaml` adapters. Both declare `allow_implicit_invocation: false`.
+`agents/hermes.yaml` adapters. The Codex adapter enables normal skill discovery; the Hermes adapter retains
+its own invocation metadata. Discovery never grants autonomous Matrix effects.
 A harness must support the adapter policy to enforce it natively; Hermes's
 existing tool/request gate remains the operational boundary when it does not
 consume that file. Installing a package creates no hooks, timers or listeners.

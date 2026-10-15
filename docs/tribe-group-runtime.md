@@ -13,11 +13,33 @@ Unavailable registrations leave explicit pending legs; they cannot shrink the
 audience. Admission and receiving deployment must distribute the updated trusted
 Root inventory and group roster through the maintained cohort procedure.
 
-`messaging.send`, `messaging.inbox`, `messaging.reply` and `messaging.delivery`
-keep their existing argument shapes. The same channel ID is incoming and outgoing
+`messaging.inbox`, `messaging.reply` and `messaging.delivery` keep their existing
+argument shapes. `messaging.send` adds an optional explicit `destination` for
+member/body directs; omission keeps the old group request bytes. This is source
+support, not proof of a selected readiness adapter or live direct. The same
+channel ID is incoming and outgoing
 for the group. Replies retain verified parent identity and the original thread.
 Presentation derives sender and audience labels; message prose need not repeat
-identifiers. The explicit directed applications remain separate from the group.
+identifiers. A same-Tribe direct uses this same membership application and shared
+registration. Deliberately selected bilateral applications remain independent.
+
+The additive `dm.tribe.direct-conversation/v1` carrier binds its logical recipient
+and frozen verified Root epoch into the signed message. Recipient bodies alone
+receive wrapped keys and semantic legs; author-local ledger retention is separate.
+Direct replies derive their destination from the verified parent and preserve
+ID/hash-only visibility correlation without automatically copying parent plaintext.
+The complete confirmed Tribu echo names the logical direct recipient; this profile
+does not promise secrecy. Details retain all selected body legs and their proofs.
+
+The owner-local direct-reader guard defaults to denying emission. A route,
+prepared SDK or selected host file is insufficient; Cluster #232 must supply its
+actual selected-and-loaded receiving evidence and invalidate it before incompatible
+replacement/reassignment. Readiness is checked before transport preparation and
+inside the bounded provider's actual write fence. Its refreshable evidence never
+changes frozen frames or transport fingerprints. Unknown/offline readers remain
+visible without group/pair fallback. Historical attempts and receipts survive a
+later readiness loss. The ordinary compositor has not installed this controller
+adapter yet; #344 remains open through receiving integration and #342 acceptance.
 
 Before any effect, the sender retains its operator-bound request, send-time
 membership, Root epochs, signed message and resolution, and exact sealed envelope.

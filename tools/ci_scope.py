@@ -47,10 +47,14 @@ MIRROR_FILES = frozenset(
 VISIBILITY_FILES = MESSAGING_FILES | frozenset(
     {
         "docs/mandatory-telegram-visibility.md",
+        "docs/existing-agent-chat.md",
+        "docs/multi-agent-chat.md",
+        "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",
+        "src/daimon_matrix/agent_chat.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/labels.py",
         "src/daimon_matrix/mandatory_echo.py",
@@ -60,10 +64,12 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "src/daimon_matrix/native_egress.py",
         "src/daimon_matrix/routes.py",
         "src/daimon_matrix/neutral_skill_assets/daimon-chat/SKILL.md",
+        "src/daimon_matrix/neutral_skill_assets/daimon-chat/agents/openai.yaml",
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/telegram_mirror.py",
         "tests/test_agent_chat.py",
+        "tests/test_neutral_binding.py",
         "tests/test_dm053_routes.py",
         "tests/test_labels.py",
         "tests/test_mandatory_echo.py",
@@ -244,8 +250,32 @@ BOUNDED_GROUP_FILES = frozenset(
 )
 
 
+RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
+    {
+        "docs/runbooks/operator-bootstrap.md",
+        "docs/runbooks/operator-capability-upgrade.md",
+        "src/daimon_matrix/client.py",
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+        "tests/test_dm024_runtime.py",
+        "tests/test_dm025_client.py",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if changed <= RECEIVING_CONTROL_FILES and changed & {
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+    }:
+        return "receiving-control"
     if (
         changed <= BOUNDED_GROUP_FILES
         and {
@@ -315,6 +345,7 @@ def profile(paths: list[str]) -> str:
         <= changed
         or changed
         & {
+            "src/daimon_matrix/agent_chat.py",
             "src/daimon_matrix/operator_messaging.py",
             "src/daimon_matrix/native_egress.py",
             "src/daimon_matrix/routes.py",
@@ -375,7 +406,7 @@ def main() -> None:
             "visibility"
             if selected == "mirror"
             else "tribe-group"
-            if selected == "bounded-group-transport"
+            if selected in {"bounded-group-transport", "receiving-control"}
             else selected
         )
         + "\nnative_checks="
@@ -383,6 +414,8 @@ def main() -> None:
     )
     if selected == "bounded-group-transport":
         value += "\ngroup_receipt_checks=false"
+    if selected == "receiving-control":
+        value += "\ngroup_receiving_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

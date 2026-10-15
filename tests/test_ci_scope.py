@@ -12,6 +12,78 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_native_chat_uses_installed_chat_and_receiving_contracts(self):
+        from tools.ci_scope import RECEIVING_CONTROL_FILES
+
+        chat = ["src/daimon_matrix/agent_chat.py", "tests/test_agent_chat.py"]
+        self.assertEqual(profile(chat), "visibility")
+        self.assertEqual(
+            profile([*RECEIVING_CONTROL_FILES, *chat]), "receiving-control"
+        )
+        self.assertEqual(profile([*chat, "src/daimon_matrix/identity.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        for section, end in (
+            ("  visibility:", "  authority-adoption:"),
+            ("  tribe-group:", "  human-tribu:"),
+        ):
+            job = workflow.split(section, 1)[1].split(end, 1)[0]
+            self.assertIn("tests.test_agent_chat", job)
+            self.assertIn("tests.test_neutral_binding.SkillDiscoveryTests", job)
+            self.assertIn("dist/*.whl", job)
+
+    def test_receiving_control_requires_installed_role_and_replay_contracts(self):
+        from tools.ci_scope import RECEIVING_CONTROL_FILES
+
+        self.assertEqual(profile(list(RECEIVING_CONTROL_FILES)), "receiving-control")
+        self.assertEqual(
+            profile(
+                [
+                    "src/daimon_matrix/operator_runtime_upgrade.py",
+                    "tests/test_operator_runtime_upgrade.py",
+                    "docs/runbooks/operator-bootstrap.md",
+                    "docs/runbooks/operator-capability-upgrade.md",
+                ]
+            ),
+            "receiving-control",
+        )
+        for unrelated in (
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/keystore.py",
+            "pyproject.toml",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*RECEIVING_CONTROL_FILES, unrelated]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        group = workflow.split("  tribe-group:", 1)[1].split("  human-tribu:", 1)[0]
+        for contract in (
+            "tests.test_receiving_runtime",
+            "tests.test_dm025_client.LocalClientTests",
+            "tests.test_dm079_capability_profiles",
+            "tests.test_operator_runtime_upgrade.CurrentCapabilityUpgradeTests",
+            "tests.test_dm024_runtime.RuntimeBundleTests",
+            "tests.test_dm024_service.HostedServiceTests",
+        ):
+            self.assertIn(contract, group)
+        self.assertIn("needs.scope.outputs.group_receiving_checks == 'true'", group)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "scope-output"
+            with (
+                patch("tools.ci_scope.select", return_value="receiving-control"),
+                patch.object(sys, "argv", ["ci_scope.py", "--base", "base"]),
+                patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            ):
+                main()
+            selected = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            self.assertEqual(selected["profile"], "tribe-group")
+            self.assertEqual(selected["group_receiving_checks"], "true")
+            self.assertNotEqual(selected.get("group_receipt_checks"), "false")
+
     def test_bounded_group_checks_omit_only_unchanged_receipt_membership_code(self):
         from tools.ci_scope import BOUNDED_GROUP_FILES
 

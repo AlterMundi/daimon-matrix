@@ -116,6 +116,15 @@ class ReleaseCompatibilityTests(unittest.TestCase):
         ):
             validate_release(release, expected_digest=digest(release))
 
+    def test_single_authority_group_requires_explicit_receiver_support(self):
+        release = release_fixture()
+        old = describe_reader()
+        old["contract"]["capabilities"].remove("single-authority-group/v1")
+        result = assess_reader(release, old, expected_digest=digest(release))
+        self.assertFalse(result["compatible"])
+        self.assertEqual(result["reasons"], ["capabilities_unsupported"])
+        self.assertEqual(result["receiving_readiness"], "unobserved")
+
     def test_receiver_cannot_override_shared_sdk_or_reset_unselected_components(self):
         for artifacts in (
             {"matrix_sdk": "7" * 64},

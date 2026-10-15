@@ -37,6 +37,7 @@ LEGACY_SOURCE_SHA256 = (
 )
 LOCK = ".daimon-matrixd.lock"
 MAX_FILE = 512 * 1024 * 1024
+CONTROLLER_LIFETIME = "owner-profile-horizon/v1"
 
 
 class UpgradeError(ValueError):
@@ -231,8 +232,13 @@ with tempfile.TemporaryDirectory(prefix='dm-runtime-validate-') as scratch:
             os.close(write)
 
 
-def _forward_authorization(bundle: dict[str, Any], expires_at_ms: int) -> int:
-    """Legacy bindings are not admission: both required rows must be usable now."""
+def _forward_authorization(
+    bundle: dict[str, Any],
+    expires_at_ms: int,
+    *,
+    renew_receiving_controller: bool = False,
+) -> int:
+    """Require current owner grants; never treat a revoked role as renewable."""
     now = time.time_ns() // 1000000
     for row in bundle["capabilities"]:
         descriptor = row["descriptor"]
@@ -240,11 +246,30 @@ def _forward_authorization(bundle: dict[str, Any], expires_at_ms: int) -> int:
             raise UpgradeError("upgrade_legacy_authorization_inactive")
         if now < descriptor["not_before_ms"]:
             raise UpgradeError("upgrade_legacy_authorization_not_yet_valid")
-        if now >= descriptor["not_after_ms"]:
+        if now >= descriptor["not_after_ms"] and not (
+            renew_receiving_controller
+            and bundle["schema"] == "dm.runtime.bundle/v8"
+            and row["profile"]
+            == profiles.host_capability_profile("receiving-controller")
+        ):
             raise UpgradeError("upgrade_legacy_authorization_expired")
     if now >= expires_at_ms:
         raise UpgradeError("upgrade_authorization_expired")
     return now
+
+
+def _controller_grant_expiry(bundle: dict[str, Any], issued_at_ms: int) -> int:
+    """Bound this local role by existing owner grants, not the update deadline."""
+    profile = profiles.host_capability_profile("receiving-controller")
+    horizons = [issued_at_ms + profiles.OPERATOR_CAPABILITY_TTL_MS]
+    for row in bundle["capabilities"]:
+        if row["profile"] == profile:
+            continue
+        expiry = row["descriptor"]["not_after_ms"]
+        if type(expiry) is not int:
+            raise UpgradeError("upgrade_controller_authorization_horizon")
+        horizons.append(expiry)
+    return min(horizons)
 
 
 def stage(
@@ -533,10 +558,37 @@ def _additions(value: Any) -> dict[str, list[str]]:
 
 
 def _capability_successor(
-    before: dict[str, bytes], after: dict[str, bytes], additions: Any
+    before: dict[str, bytes],
+    after: dict[str, bytes],
+    additions: Any,
+    *,
+    provision_receiving_controller: bool = False,
+    renew_receiving_controller: bool = False,
+    receiving_controller_lifetime: str | None = None,
 ) -> None:
     """Allow exactly the requested profile additions and custody counter advance."""
-    additions = _additions(additions)
+    if (
+        type(provision_receiving_controller) is not bool
+        or type(renew_receiving_controller) is not bool
+        or (provision_receiving_controller and renew_receiving_controller)
+        or (renew_receiving_controller and additions != {})
+        or receiving_controller_lifetime not in {None, CONTROLLER_LIFETIME}
+        or (
+            renew_receiving_controller
+            and receiving_controller_lifetime != CONTROLLER_LIFETIME
+        )
+        or (
+            receiving_controller_lifetime is not None
+            and not (provision_receiving_controller or renew_receiving_controller)
+        )
+    ):
+        raise UpgradeError("upgrade_invalid_controller_selection")
+    additions = (
+        {}
+        if additions == {}
+        and (provision_receiving_controller or renew_receiving_controller)
+        else _additions(additions)
+    )
     old = json.loads(before["runtime.json"])
     new = json.loads(after["runtime.json"])
     changed = {"capabilities", "operator_capability_binding", "keystore"}
@@ -547,14 +599,50 @@ def _capability_successor(
     expected_keystore = {**old["keystore"], "counter": old["keystore"]["counter"] + 1}
     if new["keystore"] != expected_keystore:
         raise UpgradeError("upgrade_custody_revision_conflict")
-    if len(old["capabilities"]) != len(new["capabilities"]):
+    if len(new["capabilities"]) != len(old["capabilities"]) + int(
+        provision_receiving_controller
+    ):
         raise UpgradeError("upgrade_unrelated_profile_changed")
     allowed_files = {"runtime.json", "custody.json", ".custody.json.highwater"}
     found = set()
+    renewed = False
     for original, successor in zip(
-        old["capabilities"], new["capabilities"], strict=True
+        old["capabilities"],
+        new["capabilities"][: len(old["capabilities"])],
+        strict=True,
     ):
         role = original["profile"]["role"]
+        if renew_receiving_controller and original[
+            "profile"
+        ] == profiles.host_capability_profile("receiving-controller"):
+            descriptor, updated = original["descriptor"], successor["descriptor"]
+            changing = {"not_before_ms", "not_after_ms", "capability_id"}
+            if (
+                renewed
+                or old["schema"] != "dm.runtime.bundle/v8"
+                or descriptor["status"] != "active"
+                or {k: v for k, v in original.items() if k != "descriptor"}
+                != {k: v for k, v in successor.items() if k != "descriptor"}
+                or {k: v for k, v in descriptor.items() if k not in changing}
+                != {k: v for k, v in updated.items() if k not in changing}
+                or not descriptor["not_after_ms"]
+                <= updated["not_before_ms"]
+                < updated["not_after_ms"]
+                or updated["not_after_ms"]
+                != _controller_grant_expiry(old, updated["not_before_ms"])
+            ):
+                raise UpgradeError("upgrade_controller_renewal_conflict")
+            filename = str(
+                Path(original["profile"]["client_directory"])
+                / original["profile"]["client_config_filename"]
+            )
+            allowed_files.add(filename)
+            expected_config = json.loads(before[filename])
+            expected_config["capability"] = updated
+            if json.loads(after[filename]) != expected_config:
+                raise UpgradeError("upgrade_client_binding_changed")
+            renewed = True
+            continue
         if original["profile"]["schema"] != profiles.OPERATOR_CAPABILITY_PROFILE_SCHEMA:
             if original != successor:
                 raise UpgradeError("upgrade_unrelated_profile_changed")
@@ -592,9 +680,53 @@ def _capability_successor(
         expected_config["capability"] = updated
         if json.loads(after[filename]) != expected_config:
             raise UpgradeError("upgrade_client_binding_changed")
+    added_files = set()
+    if provision_receiving_controller:
+        profile = profiles.host_capability_profile("receiving-controller")
+        if any(row["profile"] == profile for row in old["capabilities"]):
+            raise UpgradeError("upgrade_controller_already_issued")
+        row = new["capabilities"][-1]
+        slot = profiles.host_capability_slot(
+            old["runtime_label"], "receiving-controller"
+        )
+        directory = profile["client_directory"]
+        filename = directory + "/" + profile["client_config_filename"]
+        key_filename = directory + "/" + profile["client_key_filename"]
+        key = after.get(key_filename)
+        if not isinstance(key, bytes) or len(key) != 32:
+            raise UpgradeError("upgrade_controller_binding_changed")
+        descriptor = row["descriptor"]
+        if receiving_controller_lifetime == CONTROLLER_LIFETIME and descriptor[
+            "not_after_ms"
+        ] != _controller_grant_expiry(old, descriptor["not_before_ms"]):
+            raise UpgradeError("upgrade_controller_lifetime_conflict")
+        expected = create_capability(
+            key,
+            client_id=f"client:host:{old['runtime_label']}:receiving-controller",
+            methods=sorted(
+                profiles.OPTIONAL_HOST_CAPABILITY_PROFILES["receiving-controller"]
+            ),
+            not_before_ms=descriptor["not_before_ms"],
+            not_after_ms=descriptor["not_after_ms"],
+        )
+        if row != dict(
+            descriptor=expected.descriptor,
+            profile=profile,
+            runtime_id=old["runtime_id"],
+            secret_slot=slot,
+        ) or json.loads(after[filename]) != dict(
+            schema="dm.local.client-config/v3",
+            capability=expected.descriptor,
+            expected_server=old["local_origin"],
+            runtime_id=old["runtime_id"],
+            runtime_label=old["runtime_label"],
+        ):
+            raise UpgradeError("upgrade_controller_binding_changed")
+        added_files = {directory + "/", filename, key_filename}
     if (
         found != set(additions)
-        or set(before) != set(after)
+        or renewed != renew_receiving_controller
+        or set(before) | added_files != set(after)
         or any(
             before[name] != after[name] for name in before if name not in allowed_files
         )
@@ -615,17 +747,33 @@ def stage_capabilities(
     expires_at_ms: int,
     password: bytes,
     externally_quiesced: bool,
+    provision_receiving_controller: bool = False,
+    renew_receiving_controller: bool = False,
 ) -> dict[str, Any]:
     """Issue only owner-requested missing methods, retaining all keys and identity.
 
-    This is a new signed bundle successor, not a capability-file edit or expiry
-    renewal. The original stays untouched until exact atomic publication.
+    This is a signed bundle successor, never a capability-file edit. Explicit
+    renewal repairs only an expired optional V8 receiving controller, using the
+    still-valid original owner roles and custody. It adds no methods or keys.
+    The original stays untouched until exact atomic publication.
     """
     if not externally_quiesced or not 1 <= len(password) <= 4096:
         raise UpgradeError("upgrade_quiescence_and_password_required")
     if transaction.parent != source.parent or transaction == source:
         raise UpgradeError("upgrade_sibling_transaction_required")
-    additions = _additions(add_methods)
+    if (
+        type(provision_receiving_controller) is not bool
+        or type(renew_receiving_controller) is not bool
+        or (provision_receiving_controller and renew_receiving_controller)
+        or (renew_receiving_controller and add_methods != {})
+    ):
+        raise UpgradeError("upgrade_invalid_controller_selection")
+    additions = (
+        {}
+        if add_methods == {}
+        and (provision_receiving_controller or renew_receiving_controller)
+        else _additions(add_methods)
+    )
     code = Path(__file__).resolve().parent.parent
     with _locks(source):
         snapshot = _snapshot(source)
@@ -644,8 +792,34 @@ def stage_capabilities(
             or bundle["local_origin"] != expected_origin
         ):
             raise UpgradeError("upgrade_identity_or_revision_conflict")
-        _forward_authorization(bundle, expires_at_ms)
+        _forward_authorization(
+            bundle, expires_at_ms, renew_receiving_controller=renew_receiving_controller
+        )
         _validate(source, code, password)
+        controller_profile = profiles.host_capability_profile("receiving-controller")
+        if provision_receiving_controller and any(
+            row["profile"] == controller_profile for row in bundle["capabilities"]
+        ):
+            raise UpgradeError("upgrade_controller_already_issued")
+        controller_rows = [
+            row
+            for row in bundle["capabilities"]
+            if row["profile"] == controller_profile
+        ]
+        if renew_receiving_controller and (
+            bundle["schema"] != "dm.runtime.bundle/v8"
+            or len(controller_rows) != 1
+            or controller_rows[0]["descriptor"]["not_after_ms"]
+            > time.time_ns() // 1_000_000
+        ):
+            raise UpgradeError("upgrade_expired_controller_required")
+        now = _forward_authorization(
+            bundle, expires_at_ms, renew_receiving_controller=renew_receiving_controller
+        )
+        if (
+            provision_receiving_controller or renew_receiving_controller
+        ) and expires_at_ms > _controller_grant_expiry(bundle, now):
+            raise UpgradeError("upgrade_controller_authorization_horizon")
         selected = {
             row["profile"]["role"]: row
             for row in bundle["capabilities"]
@@ -671,6 +845,7 @@ def stage_capabilities(
         if current.counter != expected_counter:
             raise UpgradeError("upgrade_custody_revision_conflict")
         changes = {}
+        successor_secrets = dict(current.secrets)
         for role, row in selected.items():
             previous = row["descriptor"]
             capability = create_capability(
@@ -697,12 +872,88 @@ def stage_capabilities(
                 "previous_capability_id": previous["capability_id"],
                 "capability_id": capability.capability_id,
             }
+        if provision_receiving_controller:
+            label = bundle["runtime_label"]
+            slot = profiles.host_capability_slot(label, "receiving-controller")
+            if slot in successor_secrets:
+                raise UpgradeError("upgrade_controller_slot_conflict")
+            key = os.urandom(32)
+            if key in successor_secrets.values():
+                raise UpgradeError("upgrade_controller_key_conflict")
+            now = time.time_ns() // 1_000_000
+            if now >= expires_at_ms:
+                raise UpgradeError("upgrade_authorization_expired")
+            capability = create_capability(
+                key,
+                client_id=f"client:host:{label}:receiving-controller",
+                methods=sorted(
+                    profiles.OPTIONAL_HOST_CAPABILITY_PROFILES["receiving-controller"]
+                ),
+                not_before_ms=now,
+                not_after_ms=_controller_grant_expiry(bundle, now),
+            )
+            successor_secrets[slot] = key
+            bundle["capabilities"].append(
+                dict(
+                    descriptor=capability.descriptor,
+                    profile=controller_profile,
+                    runtime_id=bundle["runtime_id"],
+                    secret_slot=slot,
+                )
+            )
+            directory = candidate / controller_profile["client_directory"]
+            directory.mkdir(mode=0o700)
+            _sync(directory.parent)
+            _write(directory / controller_profile["client_key_filename"], key)
+            _write(
+                directory / controller_profile["client_config_filename"],
+                canonical_bytes(
+                    dict(
+                        schema="dm.local.client-config/v3",
+                        capability=capability.descriptor,
+                        expected_server=bundle["local_origin"],
+                        runtime_id=bundle["runtime_id"],
+                        runtime_label=label,
+                    )
+                ),
+            )
+            changes["host:receiving-controller"] = dict(
+                provisioned=True, capability_id=capability.capability_id
+            )
+        if renew_receiving_controller:
+            row = controller_rows[0]
+            previous = row["descriptor"]
+            now = _forward_authorization(
+                bundle, expires_at_ms, renew_receiving_controller=True
+            )
+            capability = create_capability(
+                current.secrets[row["secret_slot"]],
+                client_id=previous["client_id"],
+                methods=previous["methods"],
+                not_before_ms=now,
+                not_after_ms=_controller_grant_expiry(bundle, now),
+            )
+            row["descriptor"] = capability.descriptor
+            path = (
+                candidate
+                / controller_profile["client_directory"]
+                / controller_profile["client_config_filename"]
+            )
+            config = json.loads(path.read_bytes())
+            config["capability"] = capability.descriptor
+            path.unlink()
+            _write(path, canonical_bytes(config))
+            changes["host:receiving-controller"] = dict(
+                renewed=True,
+                previous_capability_id=previous["capability_id"],
+                capability_id=capability.capability_id,
+            )
         updated = store.rotate(
             lambda: bytearray(password),
             lambda: bytearray(password),
             expected_counter=current.counter,
             control_head=current.control_head,
-            secrets=current.secrets,
+            secrets=successor_secrets,
         )
         bundle["keystore"]["counter"] = updated.counter
         bundle["operator_capability_binding"] = (
@@ -719,10 +970,25 @@ def stage_capabilities(
         _write(candidate / "runtime.json", canonical_bytes(bundle))
         _validate(candidate, code, password)
         after = _snapshot(candidate)
-        _capability_successor(snapshot, after, additions)
+        _capability_successor(
+            snapshot,
+            after,
+            additions,
+            provision_receiving_controller=provision_receiving_controller,
+            renew_receiving_controller=renew_receiving_controller,
+            receiving_controller_lifetime=(
+                CONTROLLER_LIFETIME
+                if provision_receiving_controller or renew_receiving_controller
+                else None
+            ),
+        )
         if inventory_digest(source) != expected_source_sha256:
             raise UpgradeError("upgrade_source_conflict")
-        _forward_authorization(json.loads(snapshot["runtime.json"]), expires_at_ms)
+        _forward_authorization(
+            json.loads(snapshot["runtime.json"]),
+            expires_at_ms,
+            renew_receiving_controller=renew_receiving_controller,
+        )
         receipt = {
             "schema": "dm.operator.capability-upgrade/v1",
             "source": str(source),
@@ -739,6 +1005,12 @@ def stage_capabilities(
             "add_methods": additions,
             "changes": changes,
         }
+        if provision_receiving_controller:
+            receipt["provision_receiving_controller"] = True
+        if renew_receiving_controller:
+            receipt["renew_receiving_controller"] = True
+        if provision_receiving_controller or renew_receiving_controller:
+            receipt["receiving_controller_lifetime"] = CONTROLLER_LIFETIME
         _write(transaction / "ready.json", canonical_bytes(receipt))
         return receipt
 
@@ -798,18 +1070,44 @@ def publish(
             if "published.json" in artifacts:
                 raise UpgradeError("upgrade_rewind_detected")
             legacy_bundle = json.loads(artifacts["checkpoint/runtime.json"])
-            _forward_authorization(legacy_bundle, receipt["expires_at_ms"])
+            _forward_authorization(
+                legacy_bundle,
+                receipt["expires_at_ms"],
+                renew_receiving_controller=capability_upgrade
+                and receipt.get("renew_receiving_controller", False),
+            )
             if capability_upgrade:
                 _capability_successor(
-                    _snapshot(source), _snapshot(successor), receipt["add_methods"]
+                    _snapshot(source),
+                    _snapshot(successor),
+                    receipt["add_methods"],
+                    provision_receiving_controller=receipt.get(
+                        "provision_receiving_controller", False
+                    ),
+                    renew_receiving_controller=receipt.get(
+                        "renew_receiving_controller", False
+                    ),
+                    receiving_controller_lifetime=receipt.get(
+                        "receiving_controller_lifetime"
+                    ),
                 )
             _validate(successor, Path(__file__).resolve().parent.parent, password)
+            if capability_upgrade:
+                _forward_authorization(
+                    json.loads((successor / "runtime.json").read_bytes()),
+                    receipt["expires_at_ms"],
+                )
             if (inventory_digest(source), inventory_digest(successor)) != (old, new):
                 raise UpgradeError("upgrade_source_or_candidate_conflict")
             # Fresh publication needs live authority AFTER validation and final
             # inventory I/O, immediately before exchange. The committed (new, old)
             # branch intentionally bypasses admission: it acknowledges exact bytes.
-            _forward_authorization(legacy_bundle, receipt["expires_at_ms"])
+            _forward_authorization(
+                legacy_bundle,
+                receipt["expires_at_ms"],
+                renew_receiving_controller=capability_upgrade
+                and receipt.get("renew_receiving_controller", False),
+            )
             _exchange(source, successor)
         elif pair != (new, old):
             raise UpgradeError("upgrade_ambiguous_state_preserved")
@@ -1125,6 +1423,11 @@ def _read_request(
     if capability_upgrade:
         fields -= {"legacy_source", "legacy_sha256"}
         fields.add("add_methods")
+        for field in ("provision_receiving_controller", "renew_receiving_controller"):
+            if isinstance(request, dict) and field in request:
+                if type(request[field]) is not bool:
+                    raise UpgradeError("upgrade_invalid_controller_selection")
+                fields.add(field)
     if not isinstance(request, dict) or set(request) != fields:
         raise UpgradeError("upgrade_invalid_request")
     for key in {"source", "transaction", "legacy_source"} & fields:

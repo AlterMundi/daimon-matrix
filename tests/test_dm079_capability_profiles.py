@@ -12,6 +12,7 @@ from daimon_matrix.operator_capabilities import (
     HOST_PROFILE_NAMES,
     OPERATOR_CAPABILITY_TTL_MS,
     OPERATOR_PROFILE_NAMES,
+    OPTIONAL_HOST_CAPABILITY_PROFILES,
     OperatorCapabilityError,
     create_host_capability_set,
     create_operator_capability_set,
@@ -142,12 +143,66 @@ class OperatorCapabilityProfileTests(unittest.TestCase):
             },
         )
         self.assertTrue(all(methods for methods in profiles.values()))
-        self.assertEqual(frozenset().union(*profiles.values()), SERVICE_METHODS)
+        controller_methods = frozenset().union(
+            *OPTIONAL_HOST_CAPABILITY_PROFILES.values()
+        )
+        self.assertEqual(
+            frozenset().union(*profiles.values()) | controller_methods,
+            SERVICE_METHODS,
+        )
+        self.assertFalse(frozenset().union(*profiles.values()) & controller_methods)
         for (left_name, left), (right_name, right) in itertools.combinations(
             profiles.items(), 2
         ):
             with self.subTest(left=left_name, right=right_name):
                 self.assertFalse(left & right)
+
+    def test_receiving_controller_is_optional_independently_keyed_and_bounded(
+        self,
+    ) -> None:
+        now_ms = 1_800_000_000_000
+        defaults, _, _ = create_host_capability_set("legion", issued_at_ms=now_ms)
+        self.assertNotIn("receiving-controller", defaults)
+        capabilities, keys, slots = create_host_capability_set(
+            "legion", issued_at_ms=now_ms, include_receiving_controller=True
+        )
+        descriptors = {name: cap.descriptor for name, cap in capabilities.items()}
+        validated = validate_host_capability_set(
+            descriptors,
+            slots,
+            {slots[name]: key for name, key in keys.items()},
+            label="legion",
+            issued_at_ms=now_ms,
+            observed_at_ms=now_ms,
+        )
+        self.assertEqual(len(set(keys.values())), 3)
+        self.assertEqual(
+            set(validated["receiving-controller"].methods),
+            {"runtime.reader-selection"},
+        )
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            create_request(
+                validated["status"],
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=now_ms,
+                method="runtime.reader-selection",
+                params={},
+            )
+        for missing in HOST_PROFILE_NAMES:
+            with (
+                self.subTest(missing=missing),
+                self.assertRaisesRegex(
+                    OperatorCapabilityError, "invalid_host_capability_set"
+                ),
+            ):
+                validate_host_capability_set(
+                    {k: v for k, v in descriptors.items() if k != missing},
+                    {k: v for k, v in slots.items() if k != missing},
+                    {slots[name]: key for name, key in keys.items()},
+                    label="legion",
+                    issued_at_ms=now_ms,
+                    observed_at_ms=now_ms,
+                )
 
     def test_observe_profile_has_no_semantic_mutation(self) -> None:
         forbidden = {

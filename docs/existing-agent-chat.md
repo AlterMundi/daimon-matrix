@@ -43,13 +43,25 @@ in argv/environment/tool output. The attachment contains paths, not key copies.
 For Codex use `--skills-dir "$HOME/.agents/skills"` instead of, or in addition to,
 `--hermes-home`. A narrower per-agent skills directory is appropriate on shared
 operator hosts: do not grant unrelated agents the same local capability.
-The installed skill is explicit-only (`allow_implicit_invocation: false`).
+Pass `--register-codex-mcp` to configure the native tools through the existing
+Codex CLI. Identical retries preserve the role. An already configured different
+command requires its exact `--previous-codex-mcp-sha256`; unknown settings refuse
+replacement. Original configuration is retained privately beneath the attachment.
+The native writer first edits a private copy; unrelated-setting changes refuse
+before active configuration is touched. Owner-local installer serialization and
+an immediate original-or-intended byte check reject observed concurrent edits;
+this is not an atomic fence against unrelated config writers. Durable original,
+candidate and selection evidence permit retry after a lost publication reply.
+Configuration acceptance is separate from a live native tool catalog.
+
+The installed skill allows normal selection (`allow_implicit_invocation: true`);
+this does not authorize autonomous inbox reads or sends.
 Codex skill locations and discovery follow the
 [official skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
 The installer is idempotent for identical inputs and refuses modified existing
-files. It never rewrites Hermes config, SOUL, native memory, Codex config or
-existing skills. Parent directories must not be writable by other principals;
+files. Apart from explicitly selected native MCP registration, it never rewrites
+Hermes config, SOUL, native memory, Codex config or existing skills. Parent directories must not be writable by other principals;
 new attachment directories/files are 0700/0600. Partial installation is safe
 to retry with identical inputs; a conflict must be reconciled without deleting
 an existing profile.
@@ -61,12 +73,19 @@ Hermes process when idle; do not launch a duplicate gateway. Five tools appear:
 `messaging_delivery`. No hooks are registered. Existing legacy Tribe tools are
 not silently remapped; use the Matrix names for Matrix traffic.
 
-The installer emits the helper argv and optional MCP argv. Codex can use the
-skill's helper directly, without editing its MCP config. Any MCP-capable harness
-can explicitly configure that stdio command to expose only the four messaging
-operations. It opens no network listener and starts no Matrix service.
+The installer emits the helper argv and messaging-only MCP argv. A Codex
+receiving installation must register the MCP command through its supported
+configuration writer and verify the native tool catalog. Emitting an unused
+command is incomplete integration. Existing conversations use supported MCP
+reload where available; no `/new`, model turn or native service restart is
+required solely for registration. The MCP exposes the four messaging operations
+without a network listener or another Matrix service.
 
-## Call and retry
+Ordinary communication uses native tools. A missing catalog is explicit degraded
+integration, never a silent console fallback. The helper below remains available
+for identified diagnosis/recovery; it is not the normal interaction procedure.
+
+## Diagnostic calls and exact retry
 
 The skill's `connection.json` supplies the exact helper argv. Append `channels`
 to list configured channel IDs without reading an inbox. For a human-requested
@@ -90,6 +109,15 @@ old authenticated requests must not be silently regenerated under a new key.
 
 ## Evidence and limits
 
+For local source regressions, run `PYTHONPATH=src <existing-python> -m unittest
+tests.test_agent_chat`. A reused runtime venv may contain an older installed SDK;
+do not overwrite that live environment to test checkout changes. Installed-wheel
+CI separately verifies the packaged candidate rather than the source overlay.
+The pre-push invariant hook also needs that qualified interpreter. When it is
+not selected by the shell, use the existing `FROZEN_CHECK_PYTHON` override, for
+example `FROZEN_CHECK_PYTHON=.venv/bin/python git push`. Do not install dependencies
+into the system or live runtime merely to satisfy an unqualified hook default.
+
 Tests cover no-I/O installation/registration, identical installation, modified
 file and symlink refusal, messaging-only capability, wrong-channel rejection,
 stdin-only text, no hook registration, and durable exact retry/payload conflict.
@@ -97,9 +125,11 @@ Existing messaging tests cover authenticated stdio/UDS transport and daemon
 contracts. Live participant readiness additionally requires actual peer enrollment
 and a human-requested conversation; tool registration alone does not prove that.
 
-## File-based peer connection
+## Explicit separate peer connection
 
-If both agents have identities but no signed peer application yet, use
+Only for a deliberately separate peer application outside the configured Tribe
+group, use
 [file-peer-enrollment.md](file-peer-enrollment.md). It avoids SSH and exchanges
 only an encrypted offer and a signed public response; private identity keys stay
-on their original hosts.
+on their original hosts. Same-Tribe members use the shared membership registration
+above and do not need per-pair enrollment, including for membership-directed sends.

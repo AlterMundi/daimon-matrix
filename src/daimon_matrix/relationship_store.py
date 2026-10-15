@@ -222,16 +222,16 @@ class RelationshipStore:
         self.path = Path(os.path.abspath(path))
         self.authority_resolver = authority_resolver
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> sqlite3.Connection:
         _prepare_path(self.path)
         database = sqlite3.connect(
             self.path,
-            timeout=BUSY_TIMEOUT_MS / 1000,
+            timeout=busy_timeout_ms / 1000,
             isolation_level=None,
         )
         try:
             database.row_factory = sqlite3.Row
-            database.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            database.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
             database.execute("PRAGMA foreign_keys=ON")
             if (
                 str(
@@ -247,10 +247,12 @@ class RelationshipStore:
         return database
 
     @contextmanager
-    def _database(self) -> Iterator[sqlite3.Connection]:
+    def _database(
+        self, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS
+    ) -> Iterator[sqlite3.Connection]:
         database: sqlite3.Connection | None = None
         try:
-            database = self._connect()
+            database = self._connect(busy_timeout_ms=busy_timeout_ms)
             yield database
         except sqlite3.Error as exception:
             raise RelationshipStoreError("relationship_store_corrupt") from exception
@@ -460,6 +462,7 @@ class RelationshipStore:
         *,
         at_ms: int,
         card_verifier: CardVerifier | None,
+        busy_timeout_ms: int = BUSY_TIMEOUT_MS,
     ) -> Iterator[RelationshipView]:
         """Current authority held against every SQLite history writer.
 
@@ -470,7 +473,12 @@ class RelationshipStore:
         """
         if not self.path.is_file():
             raise RelationshipStoreError("relationship_authority_missing")
-        with self._database() as database:
+        if (
+            type(busy_timeout_ms) is not int
+            or not 0 <= busy_timeout_ms <= BUSY_TIMEOUT_MS
+        ):
+            raise RelationshipStoreError("invalid_relationship_wait")
+        with self._database(busy_timeout_ms=busy_timeout_ms) as database:
             database.execute("BEGIN IMMEDIATE")
             try:
                 row = database.execute(

@@ -7,7 +7,9 @@ No ordinary operator/host capability profiles or runtime schemas are extended.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -444,7 +446,10 @@ GROUP_SPECIFICATION_SCHEMA = _object(
     {
         "schema": {"const": APPLICATION_SCHEMA_V3},
         "listen": SPECIFICATION_SCHEMA["properties"]["listen"],
-        "authorities": SPECIFICATION_SCHEMA["properties"]["authorities"],
+        "authorities": {
+            **SPECIFICATION_SCHEMA["properties"]["authorities"],
+            "minItems": 1,
+        },
         "relationship_events": SPECIFICATION_SCHEMA["properties"][
             "relationship_events"
         ],
@@ -1370,11 +1375,7 @@ def _compose(
             or capability_predecessor["key_id"] != descriptor["key_id"]
         ):
             raise MessagingConfigError("messaging_capability_state_rejected")
-    selected_stores = {
-        name: filename
-        for name, filename in application["stores"].items()
-        if shared is None or name != "relationships"
-    }
+    selected_stores = _selected_store_files(application)
     if not initialize:
         for filename in selected_stores.values():
             if not (root / filename).is_file():
@@ -1577,7 +1578,13 @@ def _compose_group(
     from .routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
     from .runtime import MessagingHTTPContext
     from .sealed import EnvelopeStore
-    from .service import MESSAGING_METHODS, MessagingServiceContext
+    from .service import (
+        MESSAGING_METHODS,
+        RECEIVING_CONTROL_METHODS,
+        LoadedStoreBinding,
+        MessagingServiceContext,
+        ReceivingServiceContext,
+    )
     from .tribe_conversation import TribeConversation
 
     service, ordinary = runtime.service, runtime.service.relationships
@@ -1665,6 +1672,9 @@ def _compose_group(
                 path,
                 allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
             )
+    # The shared relationships were validated by their base loader; use the
+    # existing strict published-layout validator before this group can release.
+    _validate_store_schema("relationships", ordinary.store.path)
     records = TribeRecordStore(
         stores["records"],
         sign=lambda value: create_binding(runtime, value),
@@ -1732,6 +1742,15 @@ def _compose_group(
                 if member["status"] == "active"
             ]
         )
+    controllers = [
+        selected
+        for selected in service.capabilities.values()
+        if selected.client_id
+        == f"client:host:{service.runtime_label}:receiving-controller"
+        and set(selected.methods) == RECEIVING_CONTROL_METHODS
+    ]
+    if len(controllers) > 1:
+        raise MessagingConfigError("messaging_reader_controller_binding_rejected")
     group = GroupMessaging(
         lane=lane,
         policy=MessagingTribePolicy(**application["tribe"]["policy"]),
@@ -1742,6 +1761,11 @@ def _compose_group(
         ),
         egress=runtime.egress,
         labels=labels,
+        controlled_readers=bool(controllers),
+        loaded_store_bindings=tuple(service.loaded_stores.values())
+        + tuple(LoadedStoreBinding.capture(path) for path in stores.values())
+        if not initialize
+        else (),
     )
     group.validate(service)
     ingresses = {}
@@ -1759,6 +1783,7 @@ def _compose_group(
             egress_catalog_id=f"messaging-{phase}-responses",
             egress_authority_head=service.origin["body_ref"],
             egress_authorizer=group._authorize,
+            store_guard=group._verify_loaded_stores,
             intake_validator=None,
             intake_admission=group.admit_message
             if phase == "message"
@@ -1785,6 +1810,11 @@ def _compose_group(
         service=replace(
             service,
             messaging=messaging,
+            receiving=ReceivingServiceContext(
+                controllers[0].capability_id, {channel_id: group}
+            )
+            if controllers
+            else None,
             capabilities={**service.capabilities, capability.capability_id: capability},
         ),
         messaging_http=MessagingHTTPContext(
@@ -1798,10 +1828,29 @@ def _compose_group(
 def _read_publication(
     root: Path, verify: Callable[[Any, Any], None]
 ) -> tuple[Any, Path]:
+    application, metadata, _ = _read_verified_publication(root, verify)
+    return application, metadata
+
+
+def _read_verified_publication(
+    root: Path, verify: Callable[[Any, Any], None]
+) -> tuple[Any, Path, Any]:
     """Read one atomic signed publication; missing pointer never means bootstrap."""
+    publication = read_document(root / "publication.json")
+    metadata = _publication_metadata(root, publication, verify)
+    application = read_document(metadata / "application.json")
+    validate_shape(application)
+    verify(application, read_document(metadata / "binding.json"))
+    if config_digest(application) != publication["body"]["application_sha256"]:
+        raise MessagingConfigError("messaging_publication_rejected")
+    return application, metadata, publication
+
+
+def _publication_metadata(
+    root: Path, publication: Any, verify: Callable[[Any, Any], None]
+) -> Path:
     import re
 
-    publication = read_document(root / "publication.json")
     if not isinstance(publication, dict) or set(publication) != {"body", "binding"}:
         raise MessagingConfigError("messaging_publication_rejected")
     body = publication["body"]
@@ -1819,18 +1868,39 @@ def _read_publication(
     ):
         raise MessagingConfigError("messaging_publication_rejected")
     verify(body, publication["binding"])
-    metadata = root if generation == "." else _directory(root / generation)
-    application = read_document(metadata / "application.json")
-    validate_shape(application)
-    verify(application, read_document(metadata / "binding.json"))
-    if config_digest(application) != body["application_sha256"]:
-        raise MessagingConfigError("messaging_publication_rejected")
-    return application, metadata
+    return root if generation == "." else _directory(root / generation)
 
 
 def read_publication(runtime: HostedRuntime, root: Path) -> tuple[Any, Path]:
     return _read_publication(
         root, lambda value, binding: verify_binding(runtime, value, binding)
+    )
+
+
+@dataclass(frozen=True)
+class VerifiedPublication:
+    """Exact owner-verified bytes handed from visibility to application load."""
+
+    root: Path
+    metadata: Path
+    application: bytes
+    publication: bytes
+    identity_sha256: str
+
+
+def read_verified_publication(
+    runtime: HostedRuntime, root: Path
+) -> VerifiedPublication:
+    root = _directory(root)
+    application, metadata, publication = _read_verified_publication(
+        root, lambda value, binding: verify_binding(runtime, value, binding)
+    )
+    return VerifiedPublication(
+        root,
+        metadata,
+        canonical_bytes(application),
+        canonical_bytes(publication),
+        config_digest(_identity(runtime)),
     )
 
 
@@ -2013,16 +2083,187 @@ def _verify_historical_transport(
     raise MessagingConfigError("messaging_transport_conflict")
 
 
+def _selected_store_files(application: Mapping[str, Any]) -> dict[str, str]:
+    """Exclude the reserved local relationship leaf for a shared runtime."""
+    return {
+        name: filename
+        for name, filename in application["stores"].items()
+        if application.get("relationship_mode") is None or name != "relationships"
+    }
+
+
 def load_application(
-    runtime: HostedRuntime, app_directory: Path | str
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    *,
+    verified_publication: VerifiedPublication | None = None,
 ) -> HostedRuntime:
     """Load signed owner-local state; no signing, enrollment or network activity."""
     try:
         root = _directory(app_directory)
         if root == runtime.state_root or runtime.state_root in root.parents:
             raise ValueError()
-        application, metadata = read_publication(runtime, root)
-        return _compose(runtime, root, application, metadata_root=metadata)
+        selected = verified_publication or read_verified_publication(runtime, root)
+        if selected.root != root or selected.identity_sha256 != config_digest(
+            _identity(runtime)
+        ):
+            raise MessagingConfigError("messaging_publication_owner_changed")
+        application = json.loads(selected.application)
+        for binding in runtime.service.loaded_stores.values():
+            binding.verify()
+        # A private Python hand-off never bypasses signed artifact validation.
+        packet = json.loads(selected.publication)
+        if selected.metadata != _publication_metadata(
+            root, packet, lambda value, binding: verify_binding(runtime, value, binding)
+        ):
+            raise MessagingConfigError("messaging_publication_rejected")
+        validate_shape(application)
+        if config_digest(application) != packet["body"]["application_sha256"]:
+            raise MessagingConfigError("messaging_publication_rejected")
+        from .service import LoadedStoreBinding
+
+        paths = {
+            role: _store_path(root, filename)
+            for role, filename in _selected_store_files(application).items()
+        }
+        before = {
+            role: LoadedStoreBinding.file_identity(path) for role, path in paths.items()
+        }
+        view = _compose(runtime, root, application, metadata_root=selected.metadata)
+        stores = {
+            role: LoadedStoreBinding.capture(
+                path,
+                metadata={"relationships": "metadata"}
+                if role == "relationships"
+                else None,
+            )
+            for role, path in paths.items()
+        }
+        if any(stores[role].identity != before[role] for role in stores):
+            raise MessagingConfigError("messaging_loaded_store_replaced")
+        bindings = {
+            **runtime.service.loaded_stores,
+            **{"application." + role: binding for role, binding in stores.items()},
+        }
+        shared = {
+            "ledger": LoadedStoreBinding.capture(
+                runtime.service.ledger.path,
+                metadata={"ledger": "metadata", "communication": "communication_meta"},
+            )
+        }
+        if (
+            application.get("relationship_mode") is not None
+            and runtime.service.relationships is not None
+        ):
+            shared["relationships"] = LoadedStoreBinding.capture(
+                runtime.service.relationships.store.path,
+                metadata={"relationships": "metadata"},
+            )
+        # Composition may migrate layouts, but cannot adopt a different physical
+        # base store under the immutable observation of the original process.
+        for role, original in runtime.service.loaded_stores.items():
+            original.verify()
+            if role in shared and shared[role].identity != original.identity:
+                raise MessagingConfigError("messaging_loaded_store_replaced")
+        bindings.update(shared)
+        for binding in bindings.values():
+            binding.verify()
+        if runtime.service.loaded_runtime is None:
+            # Bare synthetic/legacy services retain absent base qualification.
+            return replace(view, service=replace(view.service, loaded_stores=bindings))
+        visibility = view.egress.observe_loaded_binding()
+        authorities = None
+        if application["schema"] == APPLICATION_SCHEMA_V3:
+            from .messaging import GroupMessaging
+
+            messaging = view.service.messaging
+            if messaging is None:
+                raise MessagingConfigError("messaging_group_composition_rejected")
+            loaded_group = messaging.channels[application["tribe"]["channel_id"]]
+            if not isinstance(loaded_group, GroupMessaging):
+                raise MessagingConfigError("messaging_group_composition_rejected")
+            authorities = {}
+            for approved in application["authorities"]:
+                ref = approved["manifest"]["being_ref"]
+                verified = loaded_group.lane.authority_resolver(ref)
+                if not isinstance(verified, (RootAuthority, RootHistoryAuthority)):
+                    raise MessagingConfigError(
+                        "messaging_relationship_authority_mismatch"
+                    )
+                active = (
+                    verified.active
+                    if isinstance(verified, RootHistoryAuthority)
+                    else verified
+                )
+                if active.manifest.digest != config_digest(approved["manifest"]):
+                    raise MessagingConfigError(
+                        "messaging_relationship_authority_mismatch"
+                    )
+                authorities[ref] = {
+                    "active_manifest_hash": active.manifest.digest,
+                    "active_control_head": active.state.head,
+                    "accepted_manifest_hashes": list(
+                        verified.accepted_manifest_hashes
+                        if isinstance(verified, RootHistoryAuthority)
+                        else (active.manifest.digest,)
+                    ),
+                }
+        document = {
+            "schema": "dm.runtime.loaded-application/v1",
+            "loaded_base_sha256": hashlib.sha256(
+                runtime.service.loaded_runtime
+            ).hexdigest(),
+            "application_sha256": config_digest(application),
+            "config_sha256": config_digest(
+                {key: value for key, value in application.items() if key != "client"}
+            ),
+            "publication": packet["body"],
+            "publication_sha256": config_digest(packet),
+            "stores": {
+                role: json.loads(binding.observation)
+                for role, binding in stores.items()
+            },
+            "shared_stores": {
+                role: json.loads(binding.observation)
+                for role, binding in shared.items()
+            },
+            "shared_relationships": application.get("relationship_mode") is not None,
+            "communication_store_role": "ledger",
+            "tribe": application.get("tribe"),
+            "visibility": visibility,
+            "authorities": authorities,
+        }
+        document["loaded_view_sha256"] = config_digest(document)
+        if view.service.receiving is not None:
+            import time
+
+            document["reader_gates"] = {
+                channel_id: {
+                    key: value
+                    for key, value in group.egress.reader_snapshot(
+                        channel_id, deadline_ns=time.monotonic_ns() + 2_000_000_000
+                    ).items()
+                    if key
+                    in {
+                        "process_id",
+                        "process_instance_id",
+                        "channel_id",
+                        "context_sha256",
+                        "controlled",
+                    }
+                }
+                for channel_id, group in view.service.receiving.channels.items()
+            }
+        else:
+            document["reader_gates"] = None
+        return replace(
+            view,
+            service=replace(
+                view.service,
+                loaded_application=canonical_bytes(document),
+                loaded_stores=bindings,
+            ),
+        )
     except MessagingConfigError:
         raise
     except Exception:

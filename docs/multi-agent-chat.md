@@ -63,8 +63,9 @@ are rejected. No credential is implicitly borrowed from another identity.
 
 For a distinct Codex identity, generate and enroll its own identity, use its own
 client capability and retry directory, and install the existing `daimon-chat`
-skill using `tools/install_agent_chat.py --skills-dir`. Keep explicit-only skill
-invocation and no inbox hooks. The same helper also serves Hermes and MCP.
+skill using `tools/install_agent_chat.py --skills-dir --register-codex-mcp`.
+Keep normal skill discovery and native tools, human-request-only effects and no
+inbox hooks. The same attachment supports the configured Hermes plugin.
 
 ## Qualification and rollback
 
