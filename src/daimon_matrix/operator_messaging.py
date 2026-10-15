@@ -1,8 +1,8 @@
 """Trusted operator provisioning of an external signed messaging application.
 
-Never expose prepare(), renew(), republish(), admit_group_application(), or the
-password descriptor to an autonomous/model tool. The daemon only verifies; it
-cannot renew, re-publish or sign application enrollment.
+Provisioning, publication and disclosure signing here are trusted-owner
+operations. Never expose them or the password descriptor to autonomous/model
+tools. The daemon only verifies; it cannot renew, re-publish or sign enrollment.
 
 Publication is a mandatory signed metadata pointer. Renewal changes that pointer
 atomically while all stores and keys remain at their original paths. Run the CLI
@@ -42,6 +42,7 @@ from .messaging_config import (
     _directory,
     _public_identity,
     _read_publication,
+    _read_verified_publication,
     _validate_store_schema,
     application_routes,
     capability_state_record,
@@ -1964,6 +1965,436 @@ def admit_group_application(
             "predecessor_sha256": expected_application_sha256,
             "generation": generation,
             "admitted_being_refs": sorted(admitted),
+        }
+    finally:
+        os.close(fd)
+
+
+def _group_visibility_context(
+    runtime: HostedRuntime, app_directory: Path | str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read current owner selection and actual verified group membership only."""
+    from .messaging_config import APPLICATION_SCHEMA_V3
+
+    application, _ = read_publication(runtime, _directory(app_directory))
+    ordinary = runtime.service.relationships
+    if (
+        application["schema"] != APPLICATION_SCHEMA_V3
+        or ordinary is None
+        or ordinary.authority_resolver is None
+        or application["relationship_mode"]
+        != {
+            "mode": "shared",
+            "runtime_id": runtime.service.runtime_id,
+            "state_root": str(runtime.state_root),
+            "store_filename": ordinary.store.path.name,
+        }
+        or ordinary.store.path != runtime.state_root / ordinary.store.path.name
+    ):
+        raise MessagingConfigError("messaging_group_visibility_context_rejected")
+    with ordinary.store.authorization_view(
+        at_ms=runtime.service.clock(), card_verifier=ordinary.card_verifier
+    ) as view:
+        snapshot = view.snapshot(application["tribe"]["policy"]["tribe_ref"])
+    members = {
+        row["principal_id"]: row
+        for row in snapshot.value["members"]
+        if row["state"] == "active"
+    }
+    authorities = _application_authorities(application)
+    owner = _runtime_epoch(runtime).manifest.being_ref
+    if (
+        set(members) != set(authorities)
+        or owner not in members
+        or authorities.get(owner) != _runtime_epoch(runtime)
+        or members[owner]["membership_ref"]
+        != application["tribe"]["policy"]["membership_ref"]
+        or any(
+            _current_epoch(ordinary.authority_resolver(ref)) != authority
+            for ref, authority in authorities.items()
+        )
+    ):
+        raise MessagingConfigError("messaging_group_visibility_context_rejected")
+    return application, members
+
+
+def group_visibility_disclosure(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    *,
+    approved_destination: Mapping[str, Any],
+    issued_at_ms: int,
+    local_being_ref: str | None = None,
+) -> dict[str, Any]:
+    """Derive one exact group disclosure from a trusted owner's frozen intent.
+
+    The destination must come from the receiving owner's approved configuration,
+    never from a peer's proposed payload. A foreign local_being_ref is useful
+    only to verify that participant's proposal before signing with this owner.
+    This public reader neither signs nor publishes nor changes membership.
+    """
+    from .native_egress import VISIBILITY_SCOPE_RISKS
+    from .telegram_mirror import REPRESENTATIONS
+
+    application, members = _group_visibility_context(runtime, app_directory)
+    destination = dict(approved_destination)
+    if (
+        set(destination) != {"bot_id", "chat_id", "topic_id", "representation"}
+        or type(destination["bot_id"]) is not int
+        or not 0 < destination["bot_id"] < 2**52
+        or type(destination["chat_id"]) is not int
+        or not 0 < abs(destination["chat_id"]) < 2**52
+        or (
+            destination["topic_id"] is not None
+            and (
+                type(destination["topic_id"]) is not int
+                or not 0 < destination["topic_id"] < 2**52
+            )
+        )
+        or not isinstance(destination["representation"], str)
+        or destination["representation"] not in REPRESENTATIONS
+        or type(issued_at_ms) is not int
+        or not 0 <= issued_at_ms <= runtime.service.clock()
+        or issued_at_ms >= 2**52
+    ):
+        raise MessagingConfigError("messaging_group_visibility_disclosure_rejected")
+    owner = _runtime_epoch(runtime).manifest.being_ref
+    local = owner if local_being_ref is None else local_being_ref
+    if not isinstance(local, str) or local not in members:
+        raise MessagingConfigError("messaging_group_visibility_disclosure_rejected")
+    participants = sorted(members)
+    scope = {
+        "mode": "all-inter-daimon-communications",
+        "channels": [
+            {
+                "channel_id": application["tribe"]["channel_id"],
+                "direction": "group",
+                "local_being_ref": local,
+                "tribe_ref": application["tribe"]["policy"]["tribe_ref"],
+                "membership_ref": members[local]["membership_ref"],
+                "participants": participants,
+            }
+        ],
+        "projected_content": "complete-plaintext-content-and-metadata",
+    }
+    return {
+        "schema": "dm.messaging.visibility-disclosure/v1",
+        "issued_at_ms": issued_at_ms,
+        "destination": destination,
+        "scope": scope,
+        "scope_sha256": config_digest(scope),
+        "participants": participants,
+        "risk": VISIBILITY_SCOPE_RISKS["all-inter-daimon-communications"],
+    }
+
+
+def accept_group_visibility(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    disclosure: Mapping[str, Any],
+    *,
+    approved_destination: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Sign only this being's exact approved disclosure as a trusted owner.
+
+    Existing members and an enrolled newcomer use the same signature format.
+    The actual group application/membership must already be selected offline.
+    A remote proposal is data: it cannot select a destination, omit members,
+    change the Tribe or name a fictitious local membership/channel.
+    """
+    _verify_group_visibility_disclosure(
+        runtime, app_directory, disclosure, approved_destination=approved_destination
+    )
+    return create_binding(runtime, disclosure)
+
+
+def _verify_group_visibility_disclosure(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    disclosure: Mapping[str, Any],
+    *,
+    approved_destination: Mapping[str, Any],
+) -> None:
+    try:
+        channels = disclosure["scope"]["channels"]
+        if not isinstance(channels, list) or len(channels) != 1:
+            raise ValueError()
+        expected = group_visibility_disclosure(
+            runtime,
+            app_directory,
+            approved_destination=approved_destination,
+            issued_at_ms=disclosure["issued_at_ms"],
+            local_being_ref=channels[0]["local_being_ref"],
+        )
+        if disclosure != expected:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise MessagingConfigError(
+            "messaging_group_visibility_disclosure_rejected"
+        ) from None
+
+
+def publish_group_visibility(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    installation: Path,
+    disclosure: Mapping[str, Any],
+    bindings: Sequence[Mapping[str, Any]],
+    *,
+    expected_installation_sha256: str | None,
+    initial_configuration: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Select fully accepted group visibility under the trusted offline writer.
+
+    Existing owners preserve their exact destination, keys, qualification and
+    history. A genuine first installation uses the owner's separately approved
+    destination/secrets/qualification; it does not overwrite a native baseline.
+    No probe, message, membership, egress selection or model is started here.
+    """
+    import fcntl
+
+    from .native_egress import _SAFE_LEAF, load_owner_visibility
+
+    root = _directory(installation.parent)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        application, _, publication = _read_verified_publication(
+            _directory(app_directory),
+            lambda document, binding: verify_binding(runtime, document, binding),
+        )
+        app_digest = config_digest(application)
+        operation = root / (
+            ".group-visibility-"
+            + config_digest(
+                {
+                    "application": app_digest,
+                    "disclosure": disclosure,
+                    "predecessor": expected_installation_sha256,
+                }
+            )
+        )
+        selected = (
+            read_document(installation)
+            if installation.exists() or installation.is_symlink()
+            else None
+        )
+        prior = None
+        if expected_installation_sha256 is None:
+            if initial_configuration is None or set(initial_configuration) != {
+                "destination",
+                "secrets",
+                "telegram_qualification",
+            }:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            approved_destination = initial_configuration["destination"]
+            references = initial_configuration["secrets"]
+            if (
+                not isinstance(references, Mapping)
+                or set(references)
+                != {"telegram_token_file", "telegram_token_sha256", "proof_key_file"}
+                or any(
+                    not isinstance(references[name], str)
+                    or _SAFE_LEAF.fullmatch(references[name]) is None
+                    for name in ("telegram_token_file", "proof_key_file")
+                )
+            ):
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            # The complete native loader verifies the token/proof-key references
+            # and retained qualification before any installation publication.
+            proof_key = protected_read(
+                root / initial_configuration["secrets"]["proof_key_file"], size=32
+            )
+            generation = 1
+            base = {
+                "schema": "dm.messaging.visibility-installation/v1",
+                "runtime_id": runtime.service.runtime_id,
+                "secrets": copy.deepcopy(initial_configuration["secrets"]),
+                "telegram_qualification": copy.deepcopy(
+                    initial_configuration["telegram_qualification"]
+                ),
+                "policy": {
+                    "schema": "daimon-visibility-policy/v2",
+                    "origin": "owner-signed-installation",
+                    **approved_destination,
+                    "proof_key_id": "sha256:" + hashlib.sha256(proof_key).hexdigest(),
+                },
+            }
+        else:
+            if (
+                initial_configuration is not None
+                or re.fullmatch(r"[0-9a-f]{64}", expected_installation_sha256) is None
+                or selected is None
+            ):
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            if config_digest(selected["document"]) == expected_installation_sha256:
+                prior = selected
+            elif operation.exists():
+                prior = read_document(_directory(operation) / "predecessor.json")
+            else:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            previous = prior["document"]
+            if config_digest(previous) != expected_installation_sha256:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            approved_destination = previous["disclosure"]["destination"]
+            generation = previous["generation"] + 1
+            base = copy.deepcopy(previous)
+
+        _verify_group_visibility_disclosure(
+            runtime,
+            app_directory,
+            disclosure,
+            approved_destination=approved_destination,
+        )
+        owner = _runtime_epoch(runtime).manifest.being_ref
+        if disclosure["scope"]["channels"][0]["local_being_ref"] != owner:
+            raise MessagingConfigError("messaging_group_visibility_conflict")
+        ordinary = runtime.service.relationships
+        if ordinary is None or ordinary.store.authority_resolver is None:
+            raise MessagingConfigError("messaging_group_visibility_context_rejected")
+        authorities = {}
+        for ref, pinned in _application_authorities(application).items():
+            authority = ordinary.store.authority_resolver(ref)
+            if (
+                not isinstance(authority, (RootAuthority, RootHistoryAuthority))
+                or _current_epoch(authority) != pinned
+            ):
+                raise MessagingConfigError("messaging_relationship_authority_mismatch")
+            authorities[ref] = authority
+
+        def validate(path: Path, expected_app: str) -> None:
+            load_owner_visibility(
+                read_document(path),
+                directory=root,
+                expected_application_sha256=expected_app,
+                verify_owner_binding=lambda document, binding: verify_binding(
+                    runtime, document, binding
+                ),
+                verify_participant_binding=lambda actor,
+                document,
+                binding: _verify_visibility_participant(
+                    authorities,
+                    actor,
+                    document,
+                    binding,
+                    at_ms=runtime.service.clock(),
+                ),
+                clock=runtime.service.clock,
+                catalog_mode="validate",
+            )
+
+        acceptance_by_being = {}
+        for binding in bindings:
+            actor = binding["body"]["being_ref"]
+            if actor not in authorities or actor in acceptance_by_being:
+                raise MessagingConfigError(
+                    "messaging_group_visibility_acceptance_rejected"
+                )
+            _verify_visibility_participant(
+                authorities, actor, disclosure, binding, at_ms=runtime.service.clock()
+            )
+            acceptance_by_being[actor] = copy.deepcopy(binding)
+        if set(acceptance_by_being) != set(disclosure["participants"]):
+            raise MessagingConfigError("messaging_group_visibility_acceptance_missing")
+        acceptance = {
+            "schema": "dm.messaging.visibility-acceptance-set/v1",
+            "disclosure_sha256": config_digest(disclosure),
+            "bindings": [
+                acceptance_by_being[ref] for ref in disclosure["participants"]
+            ],
+        }
+        if prior is not None:
+            previous = prior["document"]
+            if not set(previous["disclosure"]["participants"]) < set(
+                disclosure["participants"]
+            ):
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            old_shape = copy.deepcopy(dict(disclosure))
+            old_shape["issued_at_ms"] = previous["disclosure"]["issued_at_ms"]
+            old_shape["participants"] = previous["disclosure"]["participants"]
+            old_shape["scope"]["channels"][0]["participants"] = old_shape[
+                "participants"
+            ]
+            old_shape["scope_sha256"] = config_digest(old_shape["scope"])
+            if (
+                old_shape != previous["disclosure"]
+                or disclosure["issued_at_ms"] < old_shape["issued_at_ms"]
+            ):
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+        document = {
+            **base,
+            "generation": generation,
+            "application_sha256": app_digest,
+            "disclosure": copy.deepcopy(dict(disclosure)),
+            "acceptance_set": acceptance,
+            "policy": {
+                **base["policy"],
+                "generation": generation,
+                "acceptance_digest": config_digest(acceptance),
+            },
+        }
+        envelope = {"document": document, "binding": create_binding(runtime, document)}
+        if selected not in (prior, envelope):
+            raise MessagingConfigError("messaging_group_visibility_conflict")
+        operation.mkdir(mode=0o700, exist_ok=True)
+        _directory(operation)
+        if prior is not None:
+            # Preserve and authenticate the exact preimage even after a lost
+            # acknowledgment left the successor selected on disk.
+            _publish_retained_entry(
+                operation,
+                "predecessor.json",
+                canonical_bytes(prior),
+                error_code="messaging_group_visibility_conflict",
+            )
+            allowed_previous = {app_digest}
+            predecessor = publication["body"]["predecessor_sha256"]
+            if predecessor is not None:
+                allowed_previous.add(predecessor)
+            if prior["document"]["application_sha256"] not in allowed_previous:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
+            validate(
+                operation / "predecessor.json", prior["document"]["application_sha256"]
+            )
+        candidate = operation / "candidate.json"
+        _publish_retained_entry(
+            operation,
+            candidate.name,
+            canonical_bytes(envelope),
+            error_code="messaging_group_visibility_conflict",
+        )
+        validate(candidate, app_digest)
+        staged = operation / "selection.json"
+        if selected != envelope:
+            _publish_retained_entry(
+                operation,
+                staged.name,
+                canonical_bytes(envelope),
+                error_code="messaging_group_visibility_conflict",
+            )
+        latest_app, _ = read_publication(runtime, _directory(app_directory))
+        current = (
+            read_document(installation)
+            if installation.exists() or installation.is_symlink()
+            else None
+        )
+        if config_digest(latest_app) != app_digest or current != selected:
+            raise MessagingConfigError("messaging_group_visibility_conflict")
+        if selected == envelope:
+            _sync(operation)
+            _sync(root)
+            return {"status": "current", "installation_sha256": config_digest(document)}
+        os.replace(staged, installation)
+        _sync(operation)
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        return {
+            "status": "group-visibility-selected",
+            "installation_sha256": config_digest(document),
         }
     finally:
         os.close(fd)

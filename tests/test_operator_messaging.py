@@ -2743,6 +2743,429 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
         self.assertEqual(sorted(self.app.iterdir()), files)
 
+    def member_application(self):
+        from daimon_matrix.messaging_config import application_routes
+        from daimon_matrix.relationship_store import (
+            RelationshipServiceContext,
+            RelationshipStore,
+        )
+        from daimon_matrix.synthetic_relationships import _seed
+        from tests.test_messaging_runtime import loaded, public_document
+
+        # The legacy factory hard-codes founder seed labels. Supply this genuine
+        # synthetic member's public genesis and encryption input instead; native
+        # runtime, custody and application verification remain unmodified.
+        def identity_document(identity, _label):
+            return public_document(identity, "member")
+
+        def identity_seed(label):
+            return _seed(
+                "member:encryption" if label == "founder:encryption" else label
+            )
+
+        with (
+            patch("tests.test_messaging_runtime.public_document", identity_document),
+            patch("daimon_matrix.synthetic_relationships._seed", identity_seed),
+        ):
+            _, runtime, _ = loaded(
+                self, self.fixture.member, clock=lambda: self.fixture.now
+            )
+        ordinary = RelationshipStore(
+            runtime.state_root / "relationships.sqlite",
+            authority_resolver=self.fixture.receiver_lane.authority_resolver,
+        )
+        for event in self.fixture.events:
+            ordinary.ingest(event)
+        runtime.service.communication.upgrade_receipts_v2()
+        runtime.service.communication.upgrade_legs_v3()
+        runtime = replace(
+            runtime,
+            service=replace(
+                runtime.service,
+                relationships=RelationshipServiceContext(
+                    ordinary,
+                    self.fixture.journey.card_verifier,
+                    self.fixture.receiver_lane.authority_resolver,
+                ),
+            ),
+        )
+        specification = copy.deepcopy(self.candidate)
+        del specification["client"]
+        specification["listen"]["port"] = 48766
+        specification["intake"] = specification["roster"][1]["route"]
+        specification["tribe"]["policy"]["membership_ref"] = self.fixture.membership_ref
+        specification["relationship_mode"].update(
+            runtime_id=runtime.service.runtime_id,
+            state_root=str(runtime.state_root),
+            store_filename=ordinary.path.name,
+        )
+        sources = {
+            row["secret_file"]: self.app / row["secret_file"]
+            for row in application_routes(specification)
+        }
+        app = runtime.state_root.parent / "member-group-application"
+        prepare(runtime, app, specification, secret_sources=sources)
+        return runtime, app
+
+    def test_each_real_owner_signs_the_exact_group_disclosure_as_itself(self):
+        from daimon_matrix.messaging_config import verify_visibility_participant
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        self.accept()
+        self.publish()
+        destination = {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "compact-html/v1",
+        }
+        disclosure = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        other, other_app = self.member_application()
+        for runtime, app, authority in (
+            (self.runtime, self.app, self.fixture.founder.authority),
+            (other, other_app, self.fixture.member.authority),
+        ):
+            binding = accept_group_visibility(
+                runtime, app, disclosure, approved_destination=destination
+            )
+            self.assertEqual(binding["body"]["being_ref"], authority.manifest.being_ref)
+            verify_visibility_participant(
+                authority,
+                authority.manifest.being_ref,
+                disclosure,
+                binding,
+                at_ms=self.fixture.now,
+            )
+            self.assertEqual(
+                accept_group_visibility(
+                    runtime, app, disclosure, approved_destination=destination
+                ),
+                binding,
+            )
+
+    def test_visibility_signature_refuses_peer_selected_destination_or_scope(self):
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        self.accept()
+        self.publish()
+        destination = {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "compact-html/v1",
+        }
+        original = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        altered = []
+        for name, value in (
+            ("participants", original["participants"][:1]),
+            ("risk", "different-risk"),
+            ("issued_at_ms", self.fixture.now + 1),
+            ("extra", "unapproved"),
+        ):
+            altered.append({**original, name: value})
+        wrong_chat = copy.deepcopy(original)
+        wrong_chat["destination"]["chat_id"] -= 1
+        altered.append(wrong_chat)
+        wrong_member = copy.deepcopy(original)
+        wrong_member["scope"]["channels"][0]["membership_ref"] = "other-membership"
+        wrong_member["scope_sha256"] = config_digest(wrong_member["scope"])
+        altered.append(wrong_member)
+        with patch(
+            "daimon_matrix.operator_messaging.create_binding",
+            side_effect=AssertionError("invalid disclosure reached signing"),
+        ):
+            for disclosure in altered:
+                with self.subTest(disclosure=disclosure), self.assertRaises(ValueError):
+                    accept_group_visibility(
+                        self.runtime,
+                        self.app,
+                        disclosure,
+                        approved_destination=destination,
+                    )
+
+    def visibility_configuration(self):
+        directory = self.app.parent / "group-visibility"
+        directory.mkdir(mode=0o700)
+        token = b"137:SIGNED_TEST_ONLY"
+        proof = b"v" * 32
+        for name, raw in (("telegram.token", token), ("proof.key", proof)):
+            path = directory / name
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        return directory / "installation.json", {
+            "destination": {
+                "bot_id": 137,
+                "chat_id": -100137,
+                "topic_id": None,
+                "representation": "compact-html/v1",
+            },
+            "secrets": {
+                "telegram_token_file": "telegram.token",
+                "telegram_token_sha256": hashlib.sha256(token).hexdigest(),
+                "proof_key_file": "proof.key",
+            },
+            "telegram_qualification": {
+                "schema": "dm.messaging.telegram-qualification/v1",
+                "qualified_at_ms": self.fixture.now,
+                "token_sha256": hashlib.sha256(token).hexdigest(),
+                "get_me_bot_id": 137,
+                "probe_chat_id": -100137,
+                "probe_topic_id": None,
+                "probe_message_id": 1,
+                "probe_text_sha256": "b" * 64,
+            },
+        }
+
+    def accepted_disclosure(self, destination):
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        disclosure = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        bindings = [
+            accept_group_visibility(
+                self.runtime,
+                self.app,
+                disclosure,
+                approved_destination=destination,
+            )
+        ]
+        if self.fixture.member.state.being_ref in disclosure["participants"]:
+            other, other_app = self.member_application()
+            bindings.append(
+                accept_group_visibility(
+                    other,
+                    other_app,
+                    disclosure,
+                    approved_destination=destination,
+                )
+            )
+        return disclosure, bindings
+
+    def initial_visibility(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        return installation, configuration, result
+
+    def test_initial_and_expanded_visibility_preserve_keys_qualification_and_retry(
+        self,
+    ):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        previous = json.loads(installation.read_bytes())
+        key_files = {
+            name: (
+                (installation.parent / name).stat().st_ino,
+                (installation.parent / name).read_bytes(),
+            )
+            for name in ("telegram.token", "proof.key")
+        }
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        selected = json.loads(installation.read_bytes())
+        self.assertEqual(selected["document"]["generation"], 2)
+        self.assertEqual(
+            selected["document"]["secrets"], previous["document"]["secrets"]
+        )
+        self.assertEqual(
+            selected["document"]["telegram_qualification"],
+            previous["document"]["telegram_qualification"],
+        )
+        for name, (inode, raw) in key_files.items():
+            self.assertEqual((installation.parent / name).stat().st_ino, inode)
+            self.assertEqual((installation.parent / name).read_bytes(), raw)
+        self.assertEqual(len(selected["document"]["acceptance_set"]["bindings"]), 2)
+        retry = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(retry, {**result, "status": "current"})
+        self.assertEqual(json.loads(installation.read_bytes()), selected)
+
+    def test_visibility_lost_selection_reply_recovers_original_generation(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        replace_file = os.replace
+
+        def lost(source, destination):
+            replace_file(source, destination)
+            if Path(destination) == installation:
+                raise OSError("lost visibility publication reply")
+
+        with (
+            patch("daimon_matrix.operator_messaging.os.replace", side_effect=lost),
+            self.assertRaises(OSError),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        before = installation.read_bytes()
+        recovered = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(recovered["status"], "current")
+        self.assertEqual(installation.read_bytes(), before)
+        self.assertEqual(json.loads(before)["document"]["generation"], 2)
+
+    def test_visibility_missing_acceptance_preserves_the_selected_predecessor(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        before = installation.read_bytes()
+        with self.assertRaisesRegex(ValueError, "acceptance_missing"):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings[:1],
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), before)
+
+    def test_visibility_retry_does_not_overwrite_a_later_signed_generation(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        # A separately selected, valid owner-signed installation has won since
+        # this retained admission. Its current generation must never roll back.
+        later = json.loads(installation.read_bytes())["document"]
+        later["generation"] += 1
+        later["policy"]["generation"] += 1
+        winner = canonical_bytes(
+            {
+                "document": later,
+                "binding": create_binding(self.runtime, later),
+            }
+        )
+        installation.write_bytes(winner)
+        with self.assertRaisesRegex(ValueError, "group_visibility_conflict"):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), winner)
+
+    def test_initial_visibility_rejects_escaping_secret_paths_before_reading(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        configuration["secrets"]["proof_key_file"] = "../private.key"
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.protected_read",
+                side_effect=AssertionError("unsafe reference reached a private read"),
+            ),
+            self.assertRaisesRegex(ValueError, "group_visibility_conflict"),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=None,
+                initial_configuration=configuration,
+            )
+        self.assertFalse(installation.exists())
+
+    def test_disclosure_refuses_a_stale_application_audience(self):
+        from daimon_matrix.operator_messaging import group_visibility_disclosure
+
+        self.accept()
+        with self.assertRaisesRegex(ValueError, "group_visibility_context_rejected"):
+            group_visibility_disclosure(
+                self.runtime,
+                self.app,
+                approved_destination={
+                    "bot_id": 137,
+                    "chat_id": -100137,
+                    "topic_id": None,
+                    "representation": "compact-html/v1",
+                },
+                issued_at_ms=self.fixture.now,
+            )
+
     def test_admission_cannot_replace_routes_client_stores_or_approved_addition(self):
         self.accept()
         original = copy.deepcopy(self.candidate)

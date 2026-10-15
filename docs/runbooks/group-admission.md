@@ -49,7 +49,38 @@ files or a lost reply after pointer publication. It never remints a client or
 replaces stores. A `current` or `group-application-published` result proves only
 the application selection, not visibility acceptance or completed admission.
 
-Expanded-participant disclosure acceptance and the before/after receiving
-transaction remain unfinished. Do not substitute `republish`, the same-audience
-`visibility_presentation`, or an archived pair installation for those operations.
-Keep the already prepared VPS software update independent of this increment.
+## Exact group visibility acceptance
+
+`group_visibility_disclosure` derives participants, the actual Tribe and local
+membership/channel from the current signed application and verified relationship
+store. Supply the receiving owner's approved destination and one retained issue
+time. Do not derive either the destination or approval from a peer's text.
+
+`accept_group_visibility` verifies that exact disclosure before signing only the
+receiving being's binding. Different bodies never sign for a different being.
+Existing members and a genuine prepared newcomer use the same native binding
+format. A peer may propose another member's local group channel, but it cannot
+omit members, substitute a membership/Tribe or select a destination. A stale
+application inventory cannot authorize the signature.
+
+`publish_group_visibility` requires every participant's verified binding. For an
+existing application, pin the original installation document digest; only the
+participant expansion and its corresponding group disclosure may change. The
+destination, presentation, risk, keys, qualification and existing history remain
+intact. A first group installation instead takes the owner's explicitly approved
+destination, private file references and retained Telegram qualification. Choose
+a new group installation path: do not overwrite the native baseline installation.
+
+The complete candidate is checked by the native visibility loader before the
+selection changes. Retained preimages and exact candidate bytes make a lost
+selection reply resumable without another generation or new consent signature.
+Only the original or exact intended installation is accepted: a later signed
+selection conflicts, rather than being replaced by a stale retry. Temporary
+documents stay in an operation-private directory; secrets stay at their existing
+owner paths. No network probe, speech, model, membership or positive egress gate
+is started by these SDK functions.
+
+The qualified Cluster owner routes, public-history selector and before/after
+receiving transaction remain unfinished. Do not substitute `republish`, the
+same-audience `visibility_presentation`, or an archived pair installation for the
+new operations. Keep the prepared VPS software update independent of this work.
