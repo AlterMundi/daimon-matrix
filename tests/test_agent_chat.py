@@ -27,12 +27,18 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
-    def tooling_fixture(self, *, disabled=False):
+    def tooling_fixture(self, *, disabled=False, binding_filename="binding.json"):
         self.setup_binding()
         from tools.install_agent_chat import reconcile_tooling
 
         attachment = self.args.attachment
         mirror = self.args.skills_dir / "daimon-chat/connection.json"
+        if binding_filename != "binding.json":
+            (attachment / "binding.json").rename(attachment / binding_filename)
+            for path in (attachment / "connection.json", mirror):
+                value = json.loads(path.read_bytes())
+                value["command"][-1] = str(attachment / binding_filename)
+                path.write_bytes(canonical_bytes(value))
         old = json.loads((attachment / "connection.json").read_bytes())["command"]
         command = [
             "/selected/python",
@@ -40,7 +46,7 @@ class AgentChatTests(unittest.TestCase):
             "-I",
             "-S",
             "--binding",
-            str(attachment / "binding.json"),
+            str(attachment / binding_filename),
         ]
         home = self.root / "codex-home"
         home.mkdir(mode=0o700)
@@ -58,7 +64,7 @@ class AgentChatTests(unittest.TestCase):
         config.write_text(original)
         config.chmod(0o600)
         protected = [
-            self.args.attachment / "binding.json",
+            self.args.attachment / binding_filename,
             self.args.client_config,
             self.args.client_key,
             self.write("AGENTS.md", b"Personal instructions"),
@@ -89,6 +95,55 @@ class AgentChatTests(unittest.TestCase):
             )
 
         return home, config, mirror, command, preserved, writer, reconcile
+
+    def test_tooling_adopts_existing_owner_binding_without_renaming_or_replaying(self):
+        home, config, mirror, command, preserved, writer, reconcile = (
+            self.tooling_fixture(binding_filename="owner-binding.json")
+        )
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            result = reconcile()
+            self.assertEqual(result["status"], "configured")
+            self.assertEqual(reconcile(), result)
+            self.assertEqual(run.call_count, 1)
+        self.assertFalse((self.args.attachment / "binding.json").exists())
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
+        self.assertEqual(json.loads(mirror.read_bytes())["command"], command)
+        self.assertIn("owner-binding.json", config.read_text())
+
+    def test_tooling_cannot_switch_existing_binding_or_request_history(self):
+        home, config, mirror, command, preserved, writer, reconcile = (
+            self.tooling_fixture(binding_filename="owner-binding.json")
+        )
+        attachment = self.args.attachment
+        alternate = json.loads((attachment / "owner-binding.json").read_bytes())
+        requests = attachment / "different-requests"
+        requests.mkdir(mode=0o700)
+        alternate["request_dir"] = str(requests)
+        path = attachment / "binding.json"
+        path.write_bytes(canonical_bytes(alternate))
+        path.chmod(0o600)
+        command[-1] = str(path)
+        before = {
+            p: p.read_bytes() for p in (config, mirror, attachment / "connection.json")
+        }
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "tooling_connection_invalid"):
+                reconcile()
+            run.assert_not_called()
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
 
     def test_tooling_private_preparation_cannot_publish_after_owner_deadline(self):
         home, config, mirror, _command, preserved, writer, reconcile = (
