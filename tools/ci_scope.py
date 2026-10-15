@@ -51,6 +51,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "docs/multi-agent-chat.md",
         "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
+        "docs/runbooks/group-admission.md",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",

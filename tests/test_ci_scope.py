@@ -12,6 +12,26 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_group_admission_uses_existing_installed_visibility_contracts(self):
+        changed = [
+            "src/daimon_matrix/operator_messaging.py",
+            "tests/test_operator_messaging.py",
+            "docs/runbooks/group-admission.md",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+        ]
+        self.assertEqual(profile(changed), "visibility")
+        for unrelated in (
+            "src/daimon_matrix/identity.py",
+            "src/daimon_matrix/keystore.py",
+            "docs/runbooks/unknown.md",
+        ):
+            self.assertEqual(profile([*changed, unrelated]), "full")
+
     def test_native_chat_uses_installed_chat_and_receiving_contracts(self):
         from tools.ci_scope import RECEIVING_CONTROL_FILES
 
