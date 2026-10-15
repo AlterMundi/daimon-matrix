@@ -47,6 +47,11 @@ Pass `--register-codex-mcp` to configure the native tools through the existing
 Codex CLI. Identical retries preserve the role. An already configured different
 command requires its exact `--previous-codex-mcp-sha256`; unknown settings refuse
 replacement. Original configuration is retained privately beneath the attachment.
+The native writer first edits a private copy; unrelated-setting changes refuse
+before active configuration is touched. Owner-local installer serialization and
+an immediate original-or-intended byte check reject observed concurrent edits;
+this is not an atomic fence against unrelated config writers. Durable original,
+candidate and selection evidence permit retry after a lost publication reply.
 Configuration acceptance is separate from a live native tool catalog.
 
 The installed skill allows normal selection (`allow_implicit_invocation: true`);
@@ -55,8 +60,8 @@ Codex skill locations and discovery follow the
 [official skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
 The installer is idempotent for identical inputs and refuses modified existing
-files. It never rewrites Hermes config, SOUL, native memory, Codex config or
-existing skills. Parent directories must not be writable by other principals;
+files. Apart from explicitly selected native MCP registration, it never rewrites
+Hermes config, SOUL, native memory, Codex config or existing skills. Parent directories must not be writable by other principals;
 new attachment directories/files are 0700/0600. Partial installation is safe
 to retry with identical inputs; a conflict must be reconciled without deleting
 an existing profile.

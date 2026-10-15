@@ -25,6 +25,132 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_codex_candidate_refusal_never_changes_real_config_on_retry(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = (
+            '[mcp_servers.memory]\ncommand = "memory"\nenabled = true\n'
+        )
+        config.write_text(original)
+        config.chmod(0o600)
+
+        def writer(argv, **options):
+            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+            self.assertEqual(staged.read_text(), original)
+            self.assertNotEqual(staged, config)
+            staged.write_text(
+                original.replace("enabled = true\n", "")
+                + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+            )
+            return Mock(returncode=0)
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+        ):
+            for _ in range(2):
+                with self.assertRaisesRegex(ValueError, "configuration_conflict"):
+                    register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+                self.assertEqual(config.read_text(), original)
+            self.assertEqual(run.call_count, 2)
+
+    def test_codex_missing_home_under_symlink_never_invokes_writer(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        real = self.root / "real"
+        real.mkdir(mode=0o700)
+        link = self.root / "link"
+        link.symlink_to(real, target_is_directory=True)
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(link / "missing")}),
+            patch("tools.install_agent_chat.subprocess.run") as run,
+            self.assertRaises(ValueError),
+        ):
+            register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+        run.assert_not_called()
+        self.assertFalse((real / "missing" / "config.toml").exists())
+
+    def test_codex_lost_publication_reply_reconciles_without_rewriting(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = 'model = "preserved"\n'
+        config.write_text(original)
+        config.chmod(0o600)
+        candidate = (
+            original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+        )
+
+        def writer(argv, **options):
+            (Path(options["env"]["CODEX_HOME"]) / "config.toml").write_text(candidate)
+            return Mock(returncode=0)
+
+        replace = os.replace
+
+        def lost_reply(source, target):
+            replace(source, target)
+            raise OSError("synthetic reply lost after publication")
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+        ):
+            with (
+                patch("tools.install_agent_chat.os.replace", side_effect=lost_reply),
+                self.assertRaisesRegex(OSError, "reply lost"),
+            ):
+                register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+            self.assertEqual(config.read_text(), candidate)
+            history = self.root / "attachment" / "codex-mcp-history"
+            saved = list(history.iterdir())
+            self.assertEqual(len(saved), 1)
+            self.assertEqual((saved[0] / "config.before.toml").read_text(), original)
+            self.assertEqual(
+                (saved[0] / "candidate-home/config.toml").read_text(), candidate
+            )
+            self.assertEqual(
+                register_codex_mcp(self.root / "attachment", ["/python", "mcp"])[
+                    "status"
+                ],
+                "configured",
+            )
+            self.assertEqual(run.call_count, 1)
+
+    def test_codex_intervening_owner_edit_is_not_overwritten(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = 'model = "original"\n'
+        intervening = 'model = "owner-change"\n'
+        config.write_text(original)
+        config.chmod(0o600)
+
+        def writer(argv, **options):
+            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+            staged.write_text(
+                original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+            )
+            config.write_text(intervening)
+            return Mock(returncode=0)
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch("tools.install_agent_chat.subprocess.run", side_effect=writer),
+            self.assertRaisesRegex(ValueError, "configuration_changed"),
+        ):
+            register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+        self.assertEqual(config.read_text(), intervening)
+
     def test_codex_role_replacement_requires_exact_reviewed_predecessor(self):
         from tools.install_agent_chat import register_codex_mcp
 
@@ -39,7 +165,8 @@ class AgentChatTests(unittest.TestCase):
         ).hexdigest()
 
         def writer(argv, **options):
-            config.write_text(original.replace("/old/python", "/new/python"))
+            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+            staged.write_text(original.replace("/old/python", "/new/python"))
             return Mock(returncode=0)
 
         with (
@@ -81,7 +208,8 @@ class AgentChatTests(unittest.TestCase):
                 argv, ["/existing/codex", "mcp", "add", "matrix", "--", *command]
             )
             self.assertNotIn("shell", options)
-            config.write_text(
+            staged = Path(options["env"]["CODEX_HOME"]) / "config.toml"
+            staged.write_text(
                 original + '\n[mcp_servers.matrix]\ncommand = "/qualified/python"\n'
                 'args = ["-I", "-m", "daimon_matrix.agent_chat", "mcp"]\n'
             )
