@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -24,6 +25,93 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_codex_role_replacement_requires_exact_reviewed_predecessor(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = '[mcp_servers.matrix]\ncommand = "/old/python"\nargs = ["mcp"]\n'
+        config.write_text(original)
+        config.chmod(0o600)
+        previous = hashlib.sha256(
+            canonical_bytes({"command": "/old/python", "args": ["mcp"]})
+        ).hexdigest()
+
+        def writer(argv, **options):
+            config.write_text(original.replace("/old/python", "/new/python"))
+            return Mock(returncode=0)
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch(
+                "tools.install_agent_chat.shutil.which", return_value="/existing/codex"
+            ),
+            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+        ):
+            result = register_codex_mcp(
+                self.root / "attachment",
+                ["/new/python", "mcp"],
+                previous_sha256=previous,
+            )
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(
+                (Path(result["history"]) / "config.before.toml").read_text(), original
+            )
+            config.write_text(config.read_text() + "enabled = false\n")
+            with self.assertRaisesRegex(ValueError, "codex_mcp_disabled"):
+                register_codex_mcp(self.root / "attachment", ["/new/python", "mcp"])
+            self.assertEqual(run.call_count, 1)
+
+    def test_codex_registration_preserves_other_config_and_exact_role_retries(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = (
+            'model = "existing"\n[mcp_servers.memory]\ncommand = "memory-reader"\n'
+        )
+        config.write_text(original)
+        config.chmod(0o600)
+        command = ["/qualified/python", "-I", "-m", "daimon_matrix.agent_chat", "mcp"]
+
+        def writer(argv, **options):
+            self.assertEqual(
+                argv, ["/existing/codex", "mcp", "add", "matrix", "--", *command]
+            )
+            self.assertNotIn("shell", options)
+            config.write_text(
+                original + '\n[mcp_servers.matrix]\ncommand = "/qualified/python"\n'
+                'args = ["-I", "-m", "daimon_matrix.agent_chat", "mcp"]\n'
+            )
+            return Mock(returncode=0)
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch(
+                "tools.install_agent_chat.shutil.which", return_value="/existing/codex"
+            ),
+            patch("tools.install_agent_chat.subprocess.run", side_effect=writer) as run,
+        ):
+            installed = register_codex_mcp(self.root / "attachment", command)
+            self.assertEqual(installed["status"], "configured")
+            self.assertEqual(installed["catalog_acceptance"], "unobserved")
+            self.assertEqual(
+                (Path(installed["history"]) / "config.before.toml").read_text(),
+                original,
+            )
+            self.assertEqual(
+                register_codex_mcp(self.root / "attachment", command)["status"],
+                "configured",
+            )
+            self.assertEqual(run.call_count, 1)
+            before_conflict = config.read_bytes()
+            with self.assertRaisesRegex(ValueError, "codex_mcp_conflict"):
+                register_codex_mcp(self.root / "attachment", ["/another/python", "mcp"])
+            self.assertEqual(config.read_bytes(), before_conflict)
+            self.assertEqual(run.call_count, 1)
+
     def test_native_catalog_has_bound_channels_and_one_logical_send_id(self):
         from daimon_matrix.mcp_server import MESSAGING_TOOL_CONTRACTS
 

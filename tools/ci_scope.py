@@ -47,6 +47,9 @@ MIRROR_FILES = frozenset(
 VISIBILITY_FILES = MESSAGING_FILES | frozenset(
     {
         "docs/mandatory-telegram-visibility.md",
+        "docs/existing-agent-chat.md",
+        "docs/multi-agent-chat.md",
+        "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
@@ -61,10 +64,12 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "src/daimon_matrix/native_egress.py",
         "src/daimon_matrix/routes.py",
         "src/daimon_matrix/neutral_skill_assets/daimon-chat/SKILL.md",
+        "src/daimon_matrix/neutral_skill_assets/daimon-chat/agents/openai.yaml",
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/telegram_mirror.py",
         "tests/test_agent_chat.py",
+        "tests/test_neutral_binding.py",
         "tests/test_dm053_routes.py",
         "tests/test_labels.py",
         "tests/test_mandatory_echo.py",

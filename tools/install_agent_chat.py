@@ -10,7 +10,10 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tomllib
 import uuid
 from pathlib import Path
 from typing import Any
@@ -45,6 +48,77 @@ def _put(path: Path, raw: bytes) -> None:
         stream.write(raw)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def register_codex_mcp(
+    attachment: Path,
+    command: list[str],
+    *,
+    previous_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Configure this owner's existing Matrix role through Codex's writer.
+
+    This starts no model or service and makes no catalog/readiness claim.
+    Replacing an existing role needs its exact prior command digest; unrelated
+    configuration and optional role settings must remain untouched.
+    """
+    home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    if not home.is_absolute() or home.is_symlink():
+        raise ValueError("agent_chat_codex_home_invalid")
+    if home.exists():
+        _directory(home)
+    config = home / "config.toml"
+    from daimon_matrix.messaging_config import protected_read
+
+    before = protected_read(config) if config.exists() or config.is_symlink() else b""
+    old = tomllib.loads(before.decode())
+    servers = old.get("mcp_servers", {})
+    existing = servers.get("matrix")
+    wanted = {"command": command[0], "args": command[1:]}
+    if existing is not None:
+        current = {key: existing.get(key) for key in wanted}
+        if current == wanted:
+            if existing.get("enabled", True) is not True:
+                raise ValueError("agent_chat_codex_mcp_disabled")
+            return {"status": "configured", "catalog_acceptance": "unobserved"}
+        if previous_sha256 != hashlib.sha256(canonical_bytes(current)).hexdigest():
+            raise ValueError("agent_chat_codex_mcp_conflict")
+        # The native add command can replace a role; preserve optional owner
+        # selections rather than assuming how it rewrites them.
+        if set(existing) != set(wanted):
+            raise ValueError("agent_chat_codex_mcp_settings_require_reconciliation")
+    codex = shutil.which("codex")
+    if codex is None:
+        raise ValueError("agent_chat_codex_cli_unavailable")
+    history = attachment / "codex-mcp-history" / str(uuid.uuid4())
+    _put(history / "config.before.toml", before)
+    result = subprocess.run(
+        [codex, "mcp", "add", "matrix", "--", *command],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError("agent_chat_codex_mcp_registration_failed")
+    new = tomllib.loads(protected_read(config).decode())
+    if (
+        {key: value for key, value in new.items() if key != "mcp_servers"}
+        != {key: value for key, value in old.items() if key != "mcp_servers"}
+        or {
+            key: value
+            for key, value in new.get("mcp_servers", {}).items()
+            if key != "matrix"
+        }
+        != {key: value for key, value in servers.items() if key != "matrix"}
+        or new.get("mcp_servers", {}).get("matrix") != wanted
+    ):
+        raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+    _put(history / "selection.json", canonical_bytes(wanted))
+    return {
+        "status": "configured",
+        "catalog_acceptance": "unobserved",
+        "history": str(history),
+    }
 
 
 def _tools() -> list[dict[str, Any]]:
@@ -135,10 +209,10 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         _put(home / "daimon-chat" / "connection.json", connection)
         _put(
             home / "daimon-chat" / "agents/openai.yaml",
-            b"policy:\n  allow_implicit_invocation: false\n",
+            b"policy:\n  allow_implicit_invocation: true\n",
         )
     _put(target / "connection.json", connection)
-    return {
+    result: dict[str, Any] = {
         "status": "installed",
         "command": command,
         "new_daemons": 0,
@@ -151,6 +225,13 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         else None,
         "mcp_command": [*command, "mcp"],
     }
+    if getattr(args, "register_codex_mcp", False):
+        result["codex_mcp"] = register_codex_mcp(
+            target,
+            result["mcp_command"],
+            previous_sha256=getattr(args, "previous_codex_mcp_sha256", None),
+        )
+    return result
 
 
 def _semantic_schema(value: Any) -> Any:
@@ -294,6 +375,12 @@ def main() -> None:
     parser.add_argument("--incoming", action="append", default=[])
     parser.add_argument("--outgoing", action="append", default=[])
     parser.add_argument("--hermes-home", type=Path)
+    parser.add_argument(
+        "--register-codex-mcp",
+        action="store_true",
+        help="Register native Matrix tools through this owner's Codex config writer",
+    )
+    parser.add_argument("--previous-codex-mcp-sha256")
     parser.add_argument(
         "--skills-dir",
         type=Path,

@@ -30,6 +30,7 @@ class CIScopeTests(unittest.TestCase):
         ):
             job = workflow.split(section, 1)[1].split(end, 1)[0]
             self.assertIn("tests.test_agent_chat", job)
+            self.assertIn("tests.test_neutral_binding.SkillDiscoveryTests", job)
             self.assertIn("dist/*.whl", job)
 
     def test_receiving_control_requires_installed_role_and_replay_contracts(self):

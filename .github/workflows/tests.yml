@@ -193,6 +193,7 @@ jobs:
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_ci_scope tests.test_labels tests.test_agent_chat
+          tests.test_neutral_binding.SkillDiscoveryTests.test_cli_emits_packaged_chat_and_composed_profile_without_changing_inputs
           tests.test_telegram_mirror tests.test_telegram_executor_portability
           tests.test_mandatory_echo tests.test_mandatory_echo_integration
           tests.test_chat_link tests.test_chat_host -v
@@ -297,6 +298,7 @@ jobs:
           tests.test_native_messaging.NativeMessagingDaemonLifecycleTests.test_shutdown_waits_for_inflight_messaging_intake
           tests.test_group_messaging_runtime
           tests.test_agent_chat
+          tests.test_neutral_binding.SkillDiscoveryTests.test_cli_emits_packaged_chat_and_composed_profile_without_changing_inputs
           tests.test_dm053_routes.BoundedTransportTests
           tests.test_dm053_routes.InboxAndProtocolTests
           tests.test_release_compatibility

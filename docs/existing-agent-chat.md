@@ -43,7 +43,14 @@ in argv/environment/tool output. The attachment contains paths, not key copies.
 For Codex use `--skills-dir "$HOME/.agents/skills"` instead of, or in addition to,
 `--hermes-home`. A narrower per-agent skills directory is appropriate on shared
 operator hosts: do not grant unrelated agents the same local capability.
-The installed skill is explicit-only (`allow_implicit_invocation: false`).
+Pass `--register-codex-mcp` to configure the native tools through the existing
+Codex CLI. Identical retries preserve the role. An already configured different
+command requires its exact `--previous-codex-mcp-sha256`; unknown settings refuse
+replacement. Original configuration is retained privately beneath the attachment.
+Configuration acceptance is separate from a live native tool catalog.
+
+The installed skill allows normal selection (`allow_implicit_invocation: true`);
+this does not authorize autonomous inbox reads or sends.
 Codex skill locations and discovery follow the
 [official skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
@@ -61,12 +68,19 @@ Hermes process when idle; do not launch a duplicate gateway. Five tools appear:
 `messaging_delivery`. No hooks are registered. Existing legacy Tribe tools are
 not silently remapped; use the Matrix names for Matrix traffic.
 
-The installer emits the helper argv and optional MCP argv. Codex can use the
-skill's helper directly, without editing its MCP config. Any MCP-capable harness
-can explicitly configure that stdio command to expose only the four messaging
-operations. It opens no network listener and starts no Matrix service.
+The installer emits the helper argv and messaging-only MCP argv. A Codex
+receiving installation must register the MCP command through its supported
+configuration writer and verify the native tool catalog. Emitting an unused
+command is incomplete integration. Existing conversations use supported MCP
+reload where available; no `/new`, model turn or native service restart is
+required solely for registration. The MCP exposes the four messaging operations
+without a network listener or another Matrix service.
 
-## Call and retry
+Ordinary communication uses native tools. A missing catalog is explicit degraded
+integration, never a silent console fallback. The helper below remains available
+for identified diagnosis/recovery; it is not the normal interaction procedure.
+
+## Diagnostic calls and exact retry
 
 The skill's `connection.json` supplies the exact helper argv. Append `channels`
 to list configured channel IDs without reading an inbox. For a human-requested
