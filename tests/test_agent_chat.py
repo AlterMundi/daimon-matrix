@@ -70,7 +70,7 @@ class AgentChatTests(unittest.TestCase):
         protected.append(request)
         preserved = {path: path.read_bytes() for path in protected}
 
-        def writer(codex, candidate_home, selected):
+        def writer(codex, candidate_home, selected, **options):
             self.assertNotEqual(candidate_home, home)
             self.assertEqual(selected, [*command, "mcp"])
             replacement = (
@@ -83,12 +83,44 @@ class AgentChatTests(unittest.TestCase):
 
         operation_id = "operation:" + str(uuid.uuid4())
 
-        def reconcile():
+        def reconcile(**options):
             return reconcile_tooling(
-                attachment, command, operation_id, connections=[mirror]
+                attachment, command, operation_id, connections=[mirror], **options
             )
 
         return home, config, mirror, command, preserved, writer, reconcile
+
+    def test_tooling_private_preparation_cannot_publish_after_owner_deadline(self):
+        home, config, mirror, _command, preserved, writer, reconcile = (
+            self.tooling_fixture()
+        )
+        connection = self.args.attachment / "connection.json"
+        before = {p: p.read_bytes() for p in (connection, mirror, config)}
+        clock = [1]
+
+        def late_writer(*args, **options):
+            self.assertGreater(options["timeout_seconds"], 0)
+            self.assertLess(options["timeout_seconds"], 30)
+            writer(*args)
+            clock[0] = 101
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch(
+                "tools.install_agent_chat.time.monotonic_ns",
+                side_effect=lambda: clock[0],
+            ),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=late_writer
+            ) as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "tooling_deadline_expired"):
+                reconcile(deadline_ns=100)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+            self.assertEqual(reconcile(deadline_ns=200)["status"], "configured")
+            self.assertEqual(run.call_count, 1)
+        self.assertEqual({p: p.read_bytes() for p in preserved}, preserved)
 
     def test_tooling_adoption_reconciles_each_lost_file_reply_without_repreparation(
         self,

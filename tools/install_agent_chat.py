@@ -300,7 +300,13 @@ def _register_codex_mcp_locked(
     }
 
 
-def _codex_candidate(home: Path, before: bytes, command: list[str]) -> bytes:
+def _codex_candidate(
+    home: Path,
+    before: bytes,
+    command: list[str],
+    *,
+    timeout_seconds: float | None = None,
+) -> bytes:
     """Resume private preparation without overwriting an unrecognized candidate."""
     from daimon_matrix.messaging_config import protected_read
 
@@ -325,7 +331,12 @@ def _codex_candidate(home: Path, before: bytes, command: list[str]) -> bytes:
         codex = shutil.which("codex")
         if codex is None:
             raise ValueError("agent_chat_codex_cli_unavailable")
-        _write_codex_role(codex, home, command)
+        _write_codex_role(
+            codex,
+            home,
+            command,
+            **({} if timeout_seconds is None else {"timeout_seconds": timeout_seconds}),
+        )
         candidate = protected_read(config)
     if tomllib.loads(candidate.decode()) != expected:
         raise ValueError("agent_chat_codex_mcp_configuration_conflict")
@@ -377,6 +388,7 @@ def reconcile_tooling(
     operation_id: str,
     *,
     connections: Sequence[Path] = (),
+    deadline_ns: int | None = None,
 ) -> dict[str, Any]:
     """Adopt an owner-derived qualified command without reenrolling the body.
 
@@ -386,6 +398,15 @@ def reconcile_tooling(
     """
     from daimon_matrix.messaging_config import protected_read
 
+    def remaining() -> float:
+        if deadline_ns is None:
+            return 30
+        value = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        if value <= 0:
+            raise ValueError("agent_chat_tooling_deadline_expired")
+        return min(30, value)
+
+    remaining()
     identifier = operation_id.removeprefix("operation:")
     if str(uuid.UUID(identifier)) != identifier:
         raise ValueError("agent_chat_tooling_operation_invalid")
@@ -466,7 +487,10 @@ def reconcile_tooling(
             ):
                 raise ValueError("agent_chat_codex_mcp_conflict")
             candidate = _codex_candidate(
-                history / "candidate-home", originals[-1], [*command, "mcp"]
+                history / "candidate-home",
+                originals[-1],
+                [*command, "mcp"],
+                **({} if deadline_ns is None else {"timeout_seconds": remaining()}),
             )
             _put(history / f"{len(paths) - 1}.after", candidate)
             manifest = {
@@ -512,9 +536,11 @@ def reconcile_tooling(
                 break
             directory = directory.parent
         for path, before, after in updates:
+            remaining()
             if _binding_fingerprint(attachment)[1] != binding_sha:
                 raise ValueError("agent_chat_tooling_conflict")
             _publish_exact(path, before, after)
+        remaining()
         role = tomllib.loads(updates[-1][2].decode())["mcp_servers"]["matrix"]
         client = bridge(binding).client.config
         return dict(
