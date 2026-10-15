@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 import uuid
 from pathlib import Path
@@ -27,7 +28,9 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
-    def tooling_fixture(self, *, disabled=False, binding_filename="binding.json"):
+    def tooling_fixture(
+        self, *, disabled=False, binding_filename="binding.json", startup=""
+    ):
         self.setup_binding()
         from tools.install_agent_chat import reconcile_tooling
 
@@ -60,6 +63,7 @@ class AgentChatTests(unittest.TestCase):
             + fragment
             + 'env = { KEEP = "synthetic" }\ntool_timeout_sec = 53.0\n'
             + ("enabled = false\n" if disabled else "")
+            + startup
         )
         config.write_text(original)
         config.chmod(0o600)
@@ -85,6 +89,11 @@ class AgentChatTests(unittest.TestCase):
             )
             (candidate_home / "config.toml").write_text(
                 original.replace(fragment, replacement)
+                + (
+                    f"startup_timeout_sec = {options['startup_timeout_seconds']}\n"
+                    if "startup_timeout_seconds" in options
+                    else ""
+                )
             )
 
         operation_id = "operation:" + str(uuid.uuid4())
@@ -115,6 +124,41 @@ class AgentChatTests(unittest.TestCase):
         self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
         self.assertEqual(json.loads(mirror.read_bytes())["command"], command)
         self.assertIn("owner-binding.json", config.read_text())
+
+    def test_tooling_startup_default_preserves_explicit_budgets_and_restrictions(self):
+        for startup, key, value in (
+            ("", "startup_timeout_sec", 60.0),
+            ("startup_timeout_sec = 7.0\n", "startup_timeout_sec", 7.0),
+            ("startup_timeout_ms = 8000\n", "startup_timeout_ms", 8000),
+        ):
+            with self.subTest(startup=startup):
+                home, config, _, _, _, writer, reconcile = self.tooling_fixture(
+                    disabled=True,
+                    startup=startup + 'enabled_tools = ["messaging_inbox"]\n',
+                )
+                with (
+                    patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+                    patch(
+                        "tools.install_agent_chat.shutil.which", return_value="/codex"
+                    ),
+                    patch(
+                        "tools.install_agent_chat._write_codex_role", side_effect=writer
+                    ) as run,
+                ):
+                    first = reconcile()
+                    after = config.read_bytes()
+                    self.assertEqual(reconcile(), first)
+                    self.assertEqual(run.call_count, 1)
+                    self.assertEqual(config.read_bytes(), after)
+                role = tomllib.loads(after.decode())["mcp_servers"]["matrix"]
+                self.assertEqual(role[key], value)
+                self.assertEqual(role["enabled_tools"], ["messaging_inbox"])
+                self.assertFalse(role["enabled"])
+                if key == "startup_timeout_ms":
+                    self.assertNotIn("startup_timeout_sec", role)
+                # Each subcase owns its private synthetic tree.
+                self.tearDown()
+                self.setUp()
 
     def test_tooling_cannot_switch_existing_binding_or_request_history(self):
         home, config, mirror, command, preserved, writer, reconcile = (
@@ -156,7 +200,7 @@ class AgentChatTests(unittest.TestCase):
         def late_writer(*args, **options):
             self.assertGreater(options["timeout_seconds"], 0)
             self.assertLess(options["timeout_seconds"], 30)
-            writer(*args)
+            writer(*args, **options)
             clock[0] = 101
 
         with (
@@ -279,8 +323,8 @@ class AgentChatTests(unittest.TestCase):
         connections = [self.args.attachment / "connection.json", mirror]
         before = {p: p.read_bytes() for p in connections}
 
-        def edited(*args):
-            writer(*args)
+        def edited(*args, **options):
+            writer(*args, **options)
             config.write_text(config.read_text().replace('"personal"', '"owner-edit"'))
 
         with (
@@ -381,10 +425,45 @@ class AgentChatTests(unittest.TestCase):
                                 timeout_seconds=0.5,
                             )
                     else:
-                        _write_codex_role(str(stub), home, ["/synthetic/python"])
+                        _write_codex_role(
+                            str(stub),
+                            home,
+                            ["/synthetic/python"],
+                            startup_timeout_seconds=60,
+                        )
                     self.assertLess(time.monotonic() - before, 5)
                 self.assertEqual(len(processes), 1)
                 self.assertIsNotNone(processes[0].poll())
+
+    def test_codex_existing_command_receives_missing_startup_default_once(self):
+        from tools.install_agent_chat import register_codex_mcp
+
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        original = '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+        config.write_text(original)
+        config.chmod(0o600)
+
+        def writer(codex, candidate_home, command, **options):
+            self.assertEqual(options["startup_timeout_seconds"], 60.0)
+            (candidate_home / "config.toml").write_text(
+                original + "startup_timeout_sec = 60.0\n"
+            )
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            first = register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+            self.assertEqual(
+                (Path(first["history"]) / "config.before.toml").read_text(), original
+            )
+            register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
+            self.assertEqual(run.call_count, 1)
 
     def test_codex_candidate_refusal_never_changes_real_config_on_retry(self):
         from tools.install_agent_chat import register_codex_mcp
@@ -396,13 +475,14 @@ class AgentChatTests(unittest.TestCase):
         config.write_text(original)
         config.chmod(0o600)
 
-        def writer(codex, candidate_home, selected_command):
+        def writer(codex, candidate_home, selected_command, **options):
             staged = candidate_home / "config.toml"
             self.assertEqual(staged.read_text(), original)
             self.assertNotEqual(staged, config)
             staged.write_text(
                 original.replace("enabled = true\n", "")
                 + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+                "startup_timeout_sec = 60.0\n"
             )
             return Mock(returncode=0)
 
@@ -446,9 +526,10 @@ class AgentChatTests(unittest.TestCase):
         config.chmod(0o600)
         candidate = (
             original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+            "startup_timeout_sec = 60.0\n"
         )
 
-        def writer(codex, candidate_home, selected_command):
+        def writer(codex, candidate_home, selected_command, **options):
             (candidate_home / "config.toml").write_text(candidate)
             return Mock(returncode=0)
 
@@ -497,10 +578,11 @@ class AgentChatTests(unittest.TestCase):
         config.write_text(original)
         config.chmod(0o600)
 
-        def writer(codex, candidate_home, selected_command):
+        def writer(codex, candidate_home, selected_command, **options):
             staged = candidate_home / "config.toml"
             staged.write_text(
                 original + '[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+                "startup_timeout_sec = 60.0\n"
             )
             config.write_text(intervening)
             return Mock(returncode=0)
@@ -527,9 +609,12 @@ class AgentChatTests(unittest.TestCase):
             canonical_bytes({"command": "/old/python", "args": ["mcp"]})
         ).hexdigest()
 
-        def writer(codex, candidate_home, selected_command):
+        def writer(codex, candidate_home, selected_command, **options):
             staged = candidate_home / "config.toml"
-            staged.write_text(original.replace("/old/python", "/new/python"))
+            staged.write_text(
+                original.replace("/old/python", "/new/python")
+                + "startup_timeout_sec = 60.0\n"
+            )
             return Mock(returncode=0)
 
         with (
@@ -568,13 +653,14 @@ class AgentChatTests(unittest.TestCase):
         config.chmod(0o600)
         command = ["/qualified/python", "-I", "-m", "daimon_matrix.agent_chat", "mcp"]
 
-        def writer(codex, candidate_home, selected_command):
+        def writer(codex, candidate_home, selected_command, **options):
             self.assertEqual(codex, "/existing/codex")
             self.assertEqual(selected_command, command)
             staged = candidate_home / "config.toml"
             staged.write_text(
                 original + '\n[mcp_servers.matrix]\ncommand = "/qualified/python"\n'
                 'args = ["-I", "-m", "daimon_matrix.agent_chat", "mcp"]\n'
+                "startup_timeout_sec = 60.0\n"
             )
             return Mock(returncode=0)
 
@@ -623,7 +709,7 @@ class AgentChatTests(unittest.TestCase):
             canonical_bytes({"command": "/old/python", "args": ["mcp"]})
         ).hexdigest()
 
-        def writer(codex, candidate_home, command):
+        def writer(codex, candidate_home, command, **options):
             self.assertNotEqual(candidate_home, home)
             self.assertEqual(command, ["/new/python", "mcp"])
             (candidate_home / "config.toml").write_text(
