@@ -19,6 +19,8 @@ import sys
 import time
 import tomllib
 import uuid
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +72,12 @@ def register_codex_mcp(
     home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     if not home.is_absolute() or home.is_symlink():
         raise ValueError("agent_chat_codex_home_invalid")
+    with _codex_owner_lock(home):
+        return _register_codex_mcp_locked(home, attachment, command, previous_sha256)
+
+
+@contextmanager
+def _codex_owner_lock(home: Path) -> Iterator[None]:
     _mkdir(home)
     _directory(home)
     lock = os.open(
@@ -87,7 +95,7 @@ def register_codex_mcp(
         ):
             raise ValueError("agent_chat_codex_mcp_lock_rejected")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return _register_codex_mcp_locked(home, attachment, command, previous_sha256)
+        yield
     finally:
         os.close(lock)
 
@@ -249,29 +257,10 @@ def _register_codex_mcp_locked(
             return {"status": "configured", "catalog_acceptance": "unobserved"}
         if previous_sha256 != hashlib.sha256(canonical_bytes(current)).hexdigest():
             raise ValueError("agent_chat_codex_mcp_conflict")
-    codex = shutil.which("codex")
-    if codex is None:
-        raise ValueError("agent_chat_codex_cli_unavailable")
     history = attachment / "codex-mcp-history" / str(uuid.uuid4())
     _put(history / "config.before.toml", before)
     candidate_home = history / "candidate-home"
-    candidate_config = candidate_home / "config.toml"
-    _put(candidate_config, before)
-    _write_codex_role(codex, candidate_home, command)
-    candidate = protected_read(candidate_config)
-    new = tomllib.loads(candidate.decode())
-    if (
-        {key: value for key, value in new.items() if key != "mcp_servers"}
-        != {key: value for key, value in old.items() if key != "mcp_servers"}
-        or {
-            key: value
-            for key, value in new.get("mcp_servers", {}).items()
-            if key != "matrix"
-        }
-        != {key: value for key, value in servers.items() if key != "matrix"}
-        or new.get("mcp_servers", {}).get("matrix") != {**(existing or {}), **wanted}
-    ):
-        raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+    candidate = _codex_candidate(candidate_home, before, command)
     _put(history / "config.candidate.toml", candidate)
     _put(
         history / "selection.json",
@@ -309,6 +298,238 @@ def _register_codex_mcp_locked(
         "catalog_acceptance": "unobserved",
         "history": str(history),
     }
+
+
+def _codex_candidate(home: Path, before: bytes, command: list[str]) -> bytes:
+    """Resume private preparation without overwriting an unrecognized candidate."""
+    from daimon_matrix.messaging_config import protected_read
+
+    old = tomllib.loads(before.decode())
+    servers = old.get("mcp_servers", {})
+    expected = {
+        **old,
+        "mcp_servers": {
+            **servers,
+            "matrix": {
+                **servers.get("matrix", {}),
+                "command": command[0],
+                "args": command[1:],
+            },
+        },
+    }
+    config = home / "config.toml"
+    if not config.exists():
+        _put(config, before)
+    candidate = protected_read(config)
+    if candidate == before and old != expected:
+        codex = shutil.which("codex")
+        if codex is None:
+            raise ValueError("agent_chat_codex_cli_unavailable")
+        _write_codex_role(codex, home, command)
+        candidate = protected_read(config)
+    if tomllib.loads(candidate.decode()) != expected:
+        raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+    return candidate
+
+
+def _publish_exact(path: Path, before: bytes, after: bytes) -> None:
+    """Complete an original-or-intended file replacement and its durability."""
+    from daimon_matrix.messaging_config import protected_read
+
+    current = protected_read(path)
+    if current not in (before, after):
+        raise ValueError("agent_chat_tooling_conflict")
+    if current != after:
+        temporary = path.parent / (".matrix-tooling-" + str(uuid.uuid4()))
+        try:
+            _put(temporary, after)
+            if protected_read(path) != before:
+                raise ValueError("agent_chat_tooling_conflict")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    _sync_directory(path.parent)
+
+
+def _binding_fingerprint(attachment: Path) -> tuple[dict[str, Any], str]:
+    from daimon_matrix.messaging_config import protected_read
+
+    path = attachment / "binding.json"
+    binding = load_binding(path)
+    bridge(binding)  # Validate messaging-only capability; no request is sent.
+    raw = json.loads(protected_read(path))
+    paths = {path}
+    children = [binding]
+    if "links" in binding:
+        paths.update(Path(item) for item in raw["links"].values())
+        children = list(binding["links"].values())
+    paths.update(Path(child["client_config"]) for child in children)
+    vector = {
+        str(item): hashlib.sha256(protected_read(item)).hexdigest()
+        for item in sorted(paths)
+    }
+    return binding, hashlib.sha256(canonical_bytes(vector)).hexdigest()
+
+
+def reconcile_tooling(
+    attachment: Path,
+    command: list[str],
+    operation_id: str,
+    *,
+    connections: Sequence[Path] = (),
+) -> dict[str, Any]:
+    """Adopt an owner-derived qualified command without reenrolling the body.
+
+    The owning adapter derives command from its approved SDK/code, never peer
+    text. One retained operation owns all exact connection/config preimages.
+    Native catalog acceptance and active-session reload remain separate.
+    """
+    from daimon_matrix.messaging_config import protected_read
+
+    identifier = operation_id.removeprefix("operation:")
+    if str(uuid.UUID(identifier)) != identifier:
+        raise ValueError("agent_chat_tooling_operation_invalid")
+    attachment = Path(os.path.abspath(attachment))
+    if (
+        not command
+        or any(
+            not isinstance(item, str) or not item or "\0" in item for item in command
+        )
+        or command[-2:] != ["--binding", str(attachment / "binding.json")]
+    ):
+        raise ValueError("agent_chat_tooling_command_invalid")
+    home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    if not home.is_absolute() or home.is_symlink():
+        raise ValueError("agent_chat_codex_home_invalid")
+    paths = [attachment / "connection.json", *connections, home / "config.toml"]
+    if (
+        len(paths) > 10
+        or len(set(paths)) != len(paths)
+        or any(not item.is_absolute() or ".." in item.parts for item in paths)
+    ):
+        raise ValueError("agent_chat_tooling_paths_invalid")
+    history = attachment / "codex-mcp-history" / ("tooling-" + identifier)
+    command_sha = hashlib.sha256(canonical_bytes(command)).hexdigest()
+    with _codex_owner_lock(home):
+        binding, binding_sha = _binding_fingerprint(attachment)
+        intent = dict(
+            operation_id=operation_id,
+            command_sha256=command_sha,
+            binding_sha256=binding_sha,
+            paths=list(map(str, paths)),
+        )
+        _put(history / "intent.json", canonical_bytes(intent))
+        manifest_path = history / "manifest.json"
+        if not manifest_path.exists():
+            originals = []
+            for index, path in enumerate(paths):
+                saved = history / f"{index}.before"
+                if not saved.exists():
+                    _put(saved, protected_read(path))
+                before = protected_read(saved)
+                if protected_read(path) != before:
+                    raise ValueError("agent_chat_tooling_conflict")
+                originals.append(before)
+            current_command = None
+            for index, before in enumerate(originals[:-1]):
+                original = json.loads(before)
+                if (
+                    set(original) != {"command", "tools", "incoming_channels"}
+                    or original["incoming_channels"] != binding["incoming_channels"]
+                    or not isinstance(original["command"], list)
+                    or {row.get("name") for row in original["tools"]}
+                    != {row["name"] for row in _tools()}
+                ):
+                    raise ValueError("agent_chat_tooling_connection_invalid")
+                if (
+                    current_command is not None
+                    and current_command != original["command"]
+                ):
+                    raise ValueError("agent_chat_tooling_conflict")
+                current_command = original["command"]
+                _put(
+                    history / f"{index}.after",
+                    canonical_bytes(
+                        {**original, "command": command, "tools": _tools()}
+                    ),
+                )
+            role = (
+                tomllib.loads(originals[-1].decode())
+                .get("mcp_servers", {})
+                .get("matrix")
+            )
+            if (
+                not isinstance(role, dict)
+                or not current_command
+                or role.get("command") != current_command[0]
+                or role.get("args") != [*current_command[1:], "mcp"]
+            ):
+                raise ValueError("agent_chat_codex_mcp_conflict")
+            candidate = _codex_candidate(
+                history / "candidate-home", originals[-1], [*command, "mcp"]
+            )
+            _put(history / f"{len(paths) - 1}.after", candidate)
+            manifest = {
+                **intent,
+                "files": [
+                    dict(
+                        path=str(path),
+                        before_sha256=hashlib.sha256(originals[index]).hexdigest(),
+                        after_sha256=hashlib.sha256(
+                            protected_read(history / f"{index}.after")
+                        ).hexdigest(),
+                    )
+                    for index, path in enumerate(paths)
+                ],
+            }
+            _put(manifest_path, canonical_bytes(manifest))
+        manifest = json.loads(protected_read(manifest_path))
+        if (
+            set(manifest) != {*intent, "files"}
+            or {key: manifest[key] for key in intent} != intent
+            or not isinstance(manifest["files"], list)
+            or len(manifest["files"]) != len(paths)
+        ):
+            raise ValueError("agent_chat_tooling_conflict")
+        updates = []
+        for index, row in enumerate(manifest["files"]):
+            before, after = (
+                protected_read(history / f"{index}.{suffix}")
+                for suffix in ("before", "after")
+            )
+            if (
+                row["path"] != str(paths[index])
+                or row["before_sha256"] != hashlib.sha256(before).hexdigest()
+                or row["after_sha256"] != hashlib.sha256(after).hexdigest()
+                or protected_read(paths[index]) not in (before, after)
+            ):
+                raise ValueError("agent_chat_tooling_conflict")
+            updates.append((paths[index], before, after))
+        directory = history / "candidate-home"
+        while True:
+            _sync_directory(directory)
+            if directory == attachment.parent:
+                break
+            directory = directory.parent
+        for path, before, after in updates:
+            if _binding_fingerprint(attachment)[1] != binding_sha:
+                raise ValueError("agent_chat_tooling_conflict")
+            _publish_exact(path, before, after)
+        role = tomllib.loads(updates[-1][2].decode())["mcp_servers"]["matrix"]
+        client = bridge(binding).client.config
+        return dict(
+            status="configured" if role.get("enabled", True) is True else "disabled",
+            operation_id=operation_id,
+            binding_sha256=binding_sha,
+            command_sha256=command_sha,
+            config_sha256=hashlib.sha256(updates[-1][2]).hexdigest(),
+            transition_sha256=hashlib.sha256(canonical_bytes(manifest)).hexdigest(),
+            runtime_id=client.runtime_id,
+            server=client.expected_server,
+            incoming_channels=binding["incoming_channels"],
+            outgoing_channels=binding["outgoing_channels"],
+            catalog_acceptance="unobserved",
+        )
 
 
 def _tools() -> list[dict[str, Any]]:

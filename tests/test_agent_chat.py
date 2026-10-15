@@ -27,6 +27,177 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def tooling_fixture(self, *, disabled=False):
+        self.setup_binding()
+        from tools.install_agent_chat import reconcile_tooling
+
+        attachment = self.args.attachment
+        mirror = self.args.skills_dir / "daimon-chat/connection.json"
+        old = json.loads((attachment / "connection.json").read_bytes())["command"]
+        command = [
+            "/selected/python",
+            "-B",
+            "-I",
+            "-S",
+            "--binding",
+            str(attachment / "binding.json"),
+        ]
+        home = self.root / "codex-home"
+        home.mkdir(mode=0o700)
+        config = home / "config.toml"
+        fragment = (
+            f"command = {json.dumps(old[0])}\nargs = {json.dumps([*old[1:], 'mcp'])}\n"
+        )
+        original = (
+            'model = "personal"\n[mcp_servers.other]\ncommand = "/bin/false"\n'
+            "[mcp_servers.matrix]\n"
+            + fragment
+            + 'env = { KEEP = "synthetic" }\ntool_timeout_sec = 53.0\n'
+            + ("enabled = false\n" if disabled else "")
+        )
+        config.write_text(original)
+        config.chmod(0o600)
+        protected = [
+            self.args.attachment / "binding.json",
+            self.args.client_config,
+            self.args.client_key,
+            self.write("AGENTS.md", b"Personal instructions"),
+            self.write("installation.json", b"Original installation receipt"),
+        ]
+        request = attachment / "requests/pending.json"
+        request.write_bytes(b"Original uncertain request")
+        request.chmod(0o600)
+        protected.append(request)
+        preserved = {path: path.read_bytes() for path in protected}
+
+        def writer(codex, candidate_home, selected):
+            self.assertNotEqual(candidate_home, home)
+            self.assertEqual(selected, [*command, "mcp"])
+            replacement = (
+                f"command = {json.dumps(command[0])}\n"
+                f"args = {json.dumps([*command[1:], 'mcp'])}\n"
+            )
+            (candidate_home / "config.toml").write_text(
+                original.replace(fragment, replacement)
+            )
+
+        operation_id = "operation:" + str(uuid.uuid4())
+
+        def reconcile():
+            return reconcile_tooling(
+                attachment, command, operation_id, connections=[mirror]
+            )
+
+        return home, config, mirror, command, preserved, writer, reconcile
+
+    def test_tooling_adoption_reconciles_each_lost_file_reply_without_repreparation(
+        self,
+    ):
+        home, config, mirror, command, preserved, writer, reconcile = (
+            self.tooling_fixture()
+        )
+        connection = self.args.attachment / "connection.json"
+        replace = os.replace
+        pending = {connection, mirror, config}
+
+        def lose_reply(source, target):
+            replace(source, target)
+            if target in pending:
+                pending.remove(target)
+                raise OSError("lost reply after owned replacement")
+
+        from tools import install_agent_chat as installer
+
+        put = installer._put
+
+        def lose_preparation(path, raw):
+            put(path, raw)
+            if path.name == "2.after":
+                raise OSError("lost reply after private preparation")
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            with (
+                patch("tools.install_agent_chat._put", side_effect=lose_preparation),
+                self.assertRaisesRegex(OSError, "private preparation"),
+            ):
+                reconcile()
+            with patch("tools.install_agent_chat.os.replace", side_effect=lose_reply):
+                for _ in range(3):
+                    with self.assertRaisesRegex(OSError, "lost reply"):
+                        reconcile()
+            self.assertEqual(pending, set())
+            result = reconcile()
+            selected = {p: p.read_bytes() for p in (connection, mirror, config)}
+            self.assertEqual(reconcile(), result)
+            self.assertEqual(selected, {p: p.read_bytes() for p in selected})
+            self.assertEqual(run.call_count, 1)
+            with self.assertRaises(ValueError):
+                installer.reconcile_tooling(
+                    self.args.attachment,
+                    ["/different/python", *command[1:]],
+                    result["operation_id"],
+                    connections=[mirror],
+                )
+            self.assertEqual(selected, {p: p.read_bytes() for p in selected})
+        self.assertEqual(result["status"], "configured")
+        self.assertEqual(result["catalog_acceptance"], "unobserved")
+        self.assertEqual(json.loads(connection.read_bytes())["command"], command)
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
+
+    def test_tooling_adoption_refuses_intervening_config_edit_before_connection_writes(
+        self,
+    ):
+        home, config, mirror, _, preserved, writer, reconcile = self.tooling_fixture()
+        connections = [self.args.attachment / "connection.json", mirror]
+        before = {p: p.read_bytes() for p in connections}
+
+        def edited(*args):
+            writer(*args)
+            config.write_text(config.read_text().replace('"personal"', '"owner-edit"'))
+
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch("tools.install_agent_chat._write_codex_role", side_effect=edited),
+            self.assertRaisesRegex(ValueError, "tooling_conflict"),
+        ):
+            reconcile()
+        self.assertIn('"owner-edit"', config.read_text())
+        self.assertEqual(before, {p: p.read_bytes() for p in connections})
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
+
+    def test_tooling_adoption_preserves_disabled_role_and_reports_it(self):
+        home, config, _, _, _, writer, reconcile = self.tooling_fixture(disabled=True)
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch("tools.install_agent_chat._write_codex_role", side_effect=writer),
+        ):
+            self.assertEqual(reconcile()["status"], "disabled")
+            self.assertIn("enabled = false", config.read_text())
+
+    def test_tooling_adoption_refuses_unrelated_native_role_without_mutation(self):
+        home, config, mirror, _, _, _, reconcile = self.tooling_fixture()
+        config.write_text(config.read_text().replace('"mcp"', '"other-command"'))
+        before = {
+            p: p.read_bytes()
+            for p in (config, mirror, self.args.attachment / "connection.json")
+        }
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat._write_codex_role") as run,
+            self.assertRaisesRegex(ValueError, "codex_mcp_conflict"),
+        ):
+            reconcile()
+        run.assert_not_called()
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+
     def test_native_writer_bounds_stalled_input_and_reaps_after_close_failure(self):
         from tools.install_agent_chat import _write_codex_role
 
