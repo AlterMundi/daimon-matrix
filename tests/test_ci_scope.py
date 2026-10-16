@@ -12,6 +12,29 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_installer_only_changes_keep_installed_attachment_checks(self):
+        from tools.ci_scope import INSTALLER_FILES
+
+        self.assertEqual(profile(list(INSTALLER_FILES)), "agent-chat-installer")
+        for extra in (
+            "src/daimon_matrix/messaging_config.py",
+            "src/daimon_matrix/keystore.py",
+            "requirements-dev.txt",
+            "tests/test_unknown_contract.py",
+        ):
+            self.assertNotEqual(
+                profile([*INSTALLER_FILES, extra]), "agent-chat-installer"
+            )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  agent-chat-installer:", 1)[1].split("  peer:", 1)[0]
+        self.assertIn("needs.scope.outputs.profile == 'agent-chat-installer'", job)
+        self.assertIn("requirements-dev.txt .", job)
+        self.assertIn("tests.test_agent_chat", job)
+        self.assertIn("tests.test_ci_scope", job)
+        self.assertNotIn("tests.test_group_messaging_runtime", job)
+
     def test_migration_checks_are_installed_and_combined_admission_keeps_them(self):
         from tools.ci_scope import COMMUNICATION_MIGRATION_FILES
 

@@ -7,6 +7,16 @@ import os
 import subprocess
 from pathlib import Path
 
+INSTALLER_FILES = frozenset(
+    {
+        "tools/install_agent_chat.py",
+        "tests/test_agent_chat.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
 PEER_FILES = frozenset(
     {
         "tools/chat_link.py",
@@ -291,6 +301,8 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if "tools/install_agent_chat.py" in changed and changed <= INSTALLER_FILES:
+        return "agent-chat-installer"
     migration = changed & {
         "src/daimon_matrix/operator_communication_migration.py",
         "tests/test_operator_communication_migration.py",
