@@ -73,6 +73,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "tests/test_dm053_routes.py",
         "tests/test_labels.py",
         "tests/test_mandatory_echo.py",
+        "tests/test_mandatory_echo_integration.py",
         "tests/test_messaging_runtime.py",
         "tests/test_operator_messaging.py",
         "tests/test_telegram_mirror.py",
