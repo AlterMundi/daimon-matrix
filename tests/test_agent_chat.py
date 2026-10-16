@@ -465,6 +465,74 @@ class AgentChatTests(unittest.TestCase):
             register_codex_mcp(self.root / "attachment", ["/python", "mcp"])
             self.assertEqual(run.call_count, 1)
 
+    def test_initial_registration_does_not_publish_after_its_original_deadline(self):
+        from tools import install_agent_chat as installer
+
+        for boundary in ("candidate", "temporary"):
+            with self.subTest(boundary=boundary):
+                home = self.root / ("deadline-" + boundary)
+                home.mkdir(mode=0o700)
+                config = home / "config.toml"
+                before = 'model = "preserved"\n'
+                config.write_text(before)
+                config.chmod(0o600)
+                clock = [1]
+
+                def writer(
+                    _binary,
+                    candidate,
+                    command,
+                    *,
+                    before=before,
+                    boundary=boundary,
+                    clock=clock,
+                    **options,
+                ):
+                    self.assertGreater(options["timeout_seconds"], 0)
+                    self.assertLess(options["timeout_seconds"], 30)
+                    (candidate / "config.toml").write_text(
+                        before + '[mcp_servers.matrix]\ncommand = "/python"\n'
+                        'args = ["mcp"]\nstartup_timeout_sec = 60\n'
+                    )
+                    if boundary == "candidate":
+                        clock[0] = 101
+
+                put = installer._put
+
+                def slow_put(path, raw, *, put=put, boundary=boundary, clock=clock):
+                    put(path, raw)
+                    if boundary == "temporary" and path.name.startswith(".matrix-mcp-"):
+                        clock[0] = 101
+
+                with (
+                    patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+                    patch.object(
+                        installer.time,
+                        "monotonic_ns",
+                        side_effect=lambda clock=clock: clock[0],
+                    ),
+                    patch.object(installer.shutil, "which", return_value="/codex"),
+                    patch.object(installer, "_write_codex_role", side_effect=writer),
+                    patch.object(installer, "_put", side_effect=slow_put),
+                ):
+                    with self.assertRaisesRegex(ValueError, "tooling_deadline_expired"):
+                        installer.register_codex_mcp(
+                            home / "attachment", ["/python", "mcp"], deadline_ns=100
+                        )
+                    self.assertEqual(config.read_text(), before)
+                    result = installer.register_codex_mcp(
+                        home / "attachment", ["/python", "mcp"], deadline_ns=200
+                    )
+                    self.assertEqual(result["status"], "configured")
+                    selected = config.read_bytes()
+                    self.assertEqual(
+                        installer.register_codex_mcp(
+                            home / "attachment", ["/python", "mcp"], deadline_ns=200
+                        )["status"],
+                        "configured",
+                    )
+                    self.assertEqual(config.read_bytes(), selected)
+
     def test_codex_candidate_refusal_never_changes_real_config_on_retry(self):
         from tools.install_agent_chat import register_codex_mcp
 
