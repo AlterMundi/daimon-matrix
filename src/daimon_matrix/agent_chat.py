@@ -125,7 +125,8 @@ class AgentChatMcp(DaimonMcp):
             ),
             "messaging_delivery": (
                 "Inspect a retained message's delivery evidence "
-                "without sending it again."
+                "without sending it again. Unconfirmed transport may include a safe "
+                "last_failure code; it does not prove rejection or non-delivery."
             ),
         }
         for tool in result.tools:

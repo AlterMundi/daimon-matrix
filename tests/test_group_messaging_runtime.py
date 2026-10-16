@@ -14,6 +14,7 @@ from unittest.mock import patch
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import CommunicationStore
 from daimon_matrix.daemon import create_messaging_http_server
+from daimon_matrix.mandatory_echo import read_diagnostic
 from daimon_matrix.messaging import GroupMessaging, MessagingTribePolicy
 from daimon_matrix.native_egress import (
     VISIBILITY_SCHEMA_VERSION,
@@ -21,7 +22,12 @@ from daimon_matrix.native_egress import (
     NativeEgressError,
     synthetic_visibility,
 )
-from daimon_matrix.routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
+from daimon_matrix.routes import (
+    DirectHTTPProvider,
+    OpaqueInbox,
+    RouteAmbiguous,
+    TransportIngress,
+)
 from tests import test_dm051_sealed as sealing_fixtures
 
 
@@ -290,6 +296,126 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_group_route_failure_remains_inspectable_after_expiry_without_retry(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retain the safe cause of an uncertain group copy",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ) as dispatch:
+            first = sender.send(**arguments)
+            dispatch.assert_called_once()
+        remote = next(x for x in first["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["state"], "pending")
+        self.assertEqual(remote["last_failure"]["code"], "route_timeout")
+        observed = remote["last_failure"]["observed_at_ms"]
+        self.fixture.now += 60_000
+        with patch.object(
+            provider, "send_prepared", side_effect=AssertionError("retry")
+        ):
+            retained = sender.inspect(client_id="test", send_id=arguments["send_id"])
+        remote = next(
+            x for x in retained["transport"] if x["state"] != "author-retained"
+        )
+        self.assertEqual(remote["last_failure"]["observed_at_ms"], observed)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(retained["semantic"]["terminal"])
+
+    def test_group_exact_retry_success_supersedes_safe_failure_without_reauthoring(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="the exact retry can prove the original group copy",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ):
+            first = sender.send(**arguments)
+        recovered = self.send_and_settle(sender, **arguments)
+        self.assertEqual(recovered["message_id"], first["message_id"])
+        self.assertTrue(recovered["semantic"]["terminal"])
+        remote = next(
+            x for x in recovered["transport"] if x["state"] != "author-retained"
+        )
+        self.assertNotIn("last_failure", remote)
+        request_id = str(
+            uuid.uuid5(
+                uuid.UUID(arguments["send_id"]),
+                f"tribe-transport/v1:{receiver.lane.being_ref}:{receiver.lane.local_embodiment_id}",
+            )
+        )
+        self.assertEqual(
+            read_diagnostic(sender.records.path, "route", request_id)["code"],
+            "route_timeout",
+        )
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_group_diagnostics_never_include_arbitrary_route_error_text(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        private = "arbitrary-peer-text-with-private-details"
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous(private)
+        ):
+            result = sender.send(
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="only closed diagnostic codes",
+            )
+        remote = next(x for x in result["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["last_failure"]["code"], "outcome-unknown")
+        self.assertNotIn(private, str(result))
+
+    def test_group_unavailable_diagnostics_preserve_uncertain_transport_outcome(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        for observer in ("write_diagnostic", "read_diagnostic"):
+            with (
+                self.subTest(observer=observer),
+                patch.object(
+                    provider,
+                    "send_prepared",
+                    side_effect=RouteAmbiguous("route_timeout"),
+                ),
+                patch(
+                    "daimon_matrix.messaging." + observer,
+                    side_effect=OSError("synthetic observer unavailable"),
+                ),
+            ):
+                result = sender.send(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="diagnostics are not delivery proof",
+                )
+            remote = next(
+                x for x in result["transport"] if x["state"] != "author-retained"
+            )
+            self.assertEqual(remote["state"], "pending")
+            self.assertEqual(remote["attempt_state"], "unconfirmed")
+            self.assertNotIn("last_failure", remote)
+            self.assertFalse(result["semantic"]["terminal"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
     def test_group_mention_and_connected_reply_show_one_logical_destination(self):
         from daimon_matrix.telegram_mirror import render_readable_parts
 

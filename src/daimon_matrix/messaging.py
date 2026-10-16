@@ -15,7 +15,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -35,6 +35,7 @@ from .communication import (
 )
 from .labels import LabelError, LabelIndex
 from .ledger import Ledger
+from .mandatory_echo import read_diagnostic, write_diagnostic
 from .messaging_store import (
     MessagingInboxError,
     MessagingInboxStore,
@@ -1853,6 +1854,7 @@ class GroupMessaging:
                     member["receiving_copy"] = "proved"
                     member["receiving_leg_ids"].append(leg["leg_id"])
             state, proof_hash = "pending", None
+            failure = None
             route = "available" if target in self.providers else "unavailable"
             attempt = "not-attempted"
             if author:
@@ -1872,6 +1874,11 @@ class GroupMessaging:
                     proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
                 elif self.records.get("transport", request_id) is not None:
                     attempt = "unconfirmed"
+                    # Diagnostics never establish or invalidate receiving proof.
+                    with suppress(OSError, sqlite3.Error, ValueError):
+                        failure = read_diagnostic(
+                            self.records.path, "route", request_id
+                        )
                 elif route == "unavailable":
                     state = "unroutable"
             transport.append(
@@ -1882,6 +1889,7 @@ class GroupMessaging:
                     "response_sha256": proof_hash,
                     "attempt_state": attempt,
                     "current_route": route,
+                    **({"last_failure": failure} if failure is not None else {}),
                 }
             )
         result = {
@@ -2512,9 +2520,19 @@ class GroupMessaging:
                 authorize=authorize_write,
                 require_bounded_write=controlled_data,
             )
-        except RouteError:
+        except RouteError as failure:
             # An unknown outcome stays pending. Retrying uses the same bytes and
-            # receipt identity; never substitute a new logical message.
+            # receipt identity; never substitute a new logical message. Preserve
+            # only the existing closed diagnostic code, never exception text or
+            # peer responses. A failed observer cannot change native outcomes.
+            with suppress(OSError, sqlite3.Error, ValueError):
+                write_diagnostic(
+                    self.records.path,
+                    "route",
+                    request_id,
+                    failure.code,
+                    self.lane.clock(),
+                )
             return
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
