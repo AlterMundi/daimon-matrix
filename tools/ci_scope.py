@@ -51,6 +51,9 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "docs/multi-agent-chat.md",
         "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
+        "docs/runbooks/group-admission.md",
+        "docs/verification/dm025-invariants.json",
+        "schemas/hosted/v1/local-api.schema.json",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",
@@ -76,6 +79,8 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "tests/test_mandatory_echo_integration.py",
         "tests/test_messaging_runtime.py",
         "tests/test_operator_messaging.py",
+        "tests/test_dm025_cli_mcp.py",
+        "tests/test_closed_visibility_provisioning.py",
         "tests/test_telegram_mirror.py",
         "tools/install_agent_chat.py",
     }
@@ -154,9 +159,26 @@ AUTHORITY_ADOPTION_FILES = frozenset(
 )
 
 
+COMMUNICATION_MIGRATION_FILES = frozenset(
+    {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+        "docs/runbooks/group-admission.md",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
+
 TRIBE_GROUP_FILES = (
     VISIBILITY_FILES
     | AUTHORITY_ADOPTION_FILES
+    | COMMUNICATION_MIGRATION_FILES
     | frozenset(
         {
             "specs/tribe-conversation.md",
@@ -269,6 +291,12 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    migration = changed & {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+    }
+    if migration and changed <= COMMUNICATION_MIGRATION_FILES:
+        return "communication-migration"
     if changed <= RECEIVING_CONTROL_FILES and changed & {
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",
@@ -302,6 +330,18 @@ def profile(paths: list[str]) -> str:
         }
         and changed <= TRIBE_GROUP_FILES
     ):
+        if changed & {
+            "src/daimon_matrix/operator_communication_migration.py",
+            "tests/test_operator_communication_migration.py",
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/messaging_config.py",
+            "tests/test_operator_messaging.py",
+            "tests/test_closed_visibility_provisioning.py",
+            "tests/test_dm025_cli_mcp.py",
+            "schemas/hosted/v1/local-api.schema.json",
+            "docs/verification/dm025-invariants.json",
+        }:
+            return "group-admission"
         return "tribe-group"
     if (
         changed <= AUTHORITY_ADOPTION_FILES
@@ -407,16 +447,26 @@ def main() -> None:
             "visibility"
             if selected == "mirror"
             else "tribe-group"
-            if selected in {"bounded-group-transport", "receiving-control"}
+            if selected
+            in {
+                "bounded-group-transport",
+                "receiving-control",
+                "group-admission",
+                "communication-migration",
+            }
             else selected
         )
         + "\nnative_checks="
         + ("false" if selected == "mirror" else "true")
     )
-    if selected == "bounded-group-transport":
+    if selected in {"bounded-group-transport", "communication-migration"}:
         value += "\ngroup_receipt_checks=false"
+    if selected == "communication-migration":
+        value += "\ngroup_migration_only=true"
     if selected == "receiving-control":
         value += "\ngroup_receiving_checks=true"
+    if selected == "group-admission":
+        value += "\ngroup_admission_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

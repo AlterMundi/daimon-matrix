@@ -1896,6 +1896,12 @@ class GroupMessaging:
             "schema": "dm.tribe.delivery/v1",
             "send_id": send_id,
             "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "author": {
+                "being_ref": message["being_ref"],
+                "embodiment_id": message["origin"]["embodiment_id"],
+            },
+            "response_context": message["payload"]["body"].get("response_context"),
             "thread_id": message["payload"]["intent"]["thread_id"],
             "tribe_ref": self.policy.tribe_ref,
             "audience": message["payload"]["body"]["audience"],
@@ -1906,6 +1912,15 @@ class GroupMessaging:
                 "expires_at_ms": plan["expires_at_ms"],
                 "expired": self.lane.clock() >= plan["expires_at_ms"],
             },
+            # Inspect the existing obligation without preparing visibility or
+            # releasing native bytes. An authored event alone is not echo proof.
+            "visibility": (
+                self.egress.inspect_retained(
+                    self.egress.binding("tribe-carriers", send_id)
+                )
+                if self.records.get("native", send_id) is not None
+                else None
+            ),
         }
         destination = message["payload"]["body"].get("destination")
         if destination is not None:
@@ -2233,9 +2248,19 @@ class GroupMessaging:
                     "text": parent["payload"]["body"]["text"][:160],
                 },
             )
-            if destination is not None:
+            parent_audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in parent["payload"]["body"]["audience"]
+            }
+            audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in message["payload"]["body"]["audience"]
+            }
+            if destination is not None or not audience <= parent_audience:
                 # Correlation is authorized by the verified parent; copying
                 # parent plaintext requires its separate disclosure provenance.
+                # A later group audience may include newly admitted members or
+                # bodies that were never recipients of that original message.
                 projection["reply_to"].pop("text")
                 projection["reply_to"].pop("sender")
         retained_native = self.records.get("native", send_id)
