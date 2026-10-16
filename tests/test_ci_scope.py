@@ -273,6 +273,21 @@ class CIScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(profile([*changed, path]), "full")
 
+    def test_visibility_worker_fix_uses_existing_installed_visibility_checks(self):
+        changed = [
+            "src/daimon_matrix/daemon.py",
+            "src/daimon_matrix/native_egress.py",
+            "tests/test_mandatory_echo_integration.py",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changed), "visibility")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/identity.py"]), "full")
+
     def test_operator_presentation_correction_runs_installed_visibility_checks(self):
         changed = [
             "src/daimon_matrix/operator_messaging.py",
