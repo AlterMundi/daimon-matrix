@@ -480,6 +480,132 @@ class AgentChatTests(unittest.TestCase):
                 self.assertEqual(len(processes), 1)
                 self.assertIsNotNone(processes[0].poll())
 
+    def test_codex_registration_from_absent_or_empty_config_recovers_partial_install(
+        self,
+    ):
+        from tools import install_agent_chat as installer
+
+        for initial in (None, b""):
+            with self.subTest(initial=initial):
+                home = self.root / ("absent-home" if initial is None else "empty-home")
+                home.mkdir(mode=0o700)
+                config = home / "config.toml"
+                if initial is not None:
+                    config.write_bytes(initial)
+                    config.chmod(0o600)
+                attachment = home / "attachment"
+                candidate = (
+                    b'[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+                    b"startup_timeout_sec = 60\n"
+                )
+                attempts = []
+
+                def writer(
+                    _binary,
+                    staging,
+                    _command,
+                    *,
+                    attempts=attempts,
+                    candidate=candidate,
+                    **options,
+                ):
+                    attempts.append(staging)
+                    self.assertEqual((staging / "config.toml").read_bytes(), b"")
+                    if len(attempts) == 1:
+                        raise ValueError("synthetic native writer interruption")
+                    (staging / "config.toml").write_bytes(candidate)
+
+                with (
+                    patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+                    patch.object(installer.shutil, "which", return_value="/codex"),
+                    patch.object(
+                        installer, "_write_codex_role", side_effect=writer
+                    ) as run,
+                ):
+                    with self.assertRaisesRegex(ValueError, "writer interruption"):
+                        installer.register_codex_mcp(attachment, ["/python", "mcp"])
+                    self.assertEqual(config.exists(), initial is not None)
+                    if initial is not None:
+                        self.assertEqual(config.read_bytes(), initial)
+                    result = installer.register_codex_mcp(
+                        attachment, ["/python", "mcp"]
+                    )
+                    self.assertEqual(result["status"], "configured")
+                    self.assertEqual(config.read_bytes(), candidate)
+                    self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(
+                        (Path(result["history"]) / "config.before.toml").read_bytes(),
+                        b"",
+                    )
+                    installer.register_codex_mcp(attachment, ["/python", "mcp"])
+                    self.assertEqual(run.call_count, 2)
+
+    def test_codex_candidate_resumes_retained_empty_staging(self):
+        from tools import install_agent_chat as installer
+
+        staging = self.root / "staging"
+        installer._put(staging / "config.toml", b"")
+        expected = (
+            b'[mcp_servers.matrix]\ncommand = "/python"\nargs = ["mcp"]\n'
+            b"startup_timeout_sec = 60\n"
+        )
+
+        def writer(_binary, home, _command, **options):
+            (home / "config.toml").write_bytes(expected)
+
+        with (
+            patch.object(installer.shutil, "which", return_value="/codex"),
+            patch.object(installer, "_write_codex_role", side_effect=writer) as run,
+        ):
+            self.assertEqual(
+                installer._codex_candidate(staging, b"", ["/python", "mcp"]), expected
+            )
+            self.assertEqual(
+                installer._codex_candidate(staging, b"", ["/python", "mcp"]), expected
+            )
+            self.assertEqual(run.call_count, 1)
+
+    def test_empty_config_exception_preserves_private_file_boundary(self):
+        from daimon_matrix.messaging_config import protected_read
+        from tools import install_agent_chat as installer
+
+        for kind in ("symlink", "hardlink", "public", "directory", "fifo", "oversize"):
+            with self.subTest(kind=kind):
+                home = self.root / kind
+                home.mkdir(mode=0o700)
+                config = home / "config.toml"
+                if kind in ("symlink", "hardlink"):
+                    target = home / "other.toml"
+                    installer._put(target, b"")
+                    if kind == "symlink":
+                        config.symlink_to(target)
+                    else:
+                        os.link(target, config)
+                elif kind == "directory":
+                    config.mkdir(mode=0o700)
+                elif kind == "fifo":
+                    os.mkfifo(config, 0o600)
+                else:
+                    installer._put(config, b"")
+                    if kind == "public":
+                        config.chmod(0o644)
+                    else:
+                        with config.open("wb") as stream:
+                            stream.truncate(4 * 1024 * 1024 + 1)
+                with (
+                    patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+                    patch.object(installer, "_write_codex_role") as run,
+                    self.assertRaises(ValueError),
+                ):
+                    installer.register_codex_mcp(
+                        home / "attachment", ["/python", "mcp"]
+                    )
+                run.assert_not_called()
+        secret = self.root / "empty-secret"
+        installer._put(secret, b"")
+        with self.assertRaises(ValueError):
+            protected_read(secret)
+
     def test_codex_existing_command_receives_missing_startup_default_once(self):
         from tools.install_agent_chat import register_codex_mcp
 
