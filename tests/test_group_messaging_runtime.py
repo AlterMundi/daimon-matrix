@@ -290,6 +290,39 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_delivery_inspection_does_not_claim_or_retry_an_unconfirmed_echo(self):
+        sender, _receiver = self.groups
+        for boundary in ("carrier", "echo"):
+            with self.subTest(boundary=boundary):
+                request = dict(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="technical visibility observation",
+                )
+                target, method = (
+                    (sender.records, "admit")
+                    if boundary == "carrier"
+                    else (sender.egress, "prepare_visibility")
+                )
+                with patch.object(
+                    target, method, side_effect=RuntimeError("interrupted visibility")
+                ), self.assertRaisesRegex(RuntimeError, "interrupted visibility"):
+                    sender.send(**request)
+                with patch.object(
+                    sender.egress,
+                    "prepare_visibility",
+                    side_effect=AssertionError("inspection retried echo"),
+                ):
+                    result = sender.inspect(
+                        client_id="test", send_id=request["send_id"]
+                    )
+                if boundary == "carrier":
+                    self.assertIsNone(result["visibility"])
+                else:
+                    self.assertNotEqual(result["visibility"]["echo_state"], "confirmed")
+                self.assertIsNone(result["response_context"])
+
     def test_group_mention_and_connected_reply_show_one_logical_destination(self):
         from daimon_matrix.telegram_mirror import render_readable_parts
 
@@ -311,6 +344,15 @@ class GroupRuntimeTests(unittest.TestCase):
         expected = {sender.lane.being_ref, receiver.lane.being_ref}
         self.assertEqual({row["being_ref"] for row in first["audience"]}, expected)
         self.assertTrue(first["semantic"]["terminal"])
+        self.assertEqual(first["visibility"]["echo_state"], "confirmed")
+        self.assertEqual(
+            first["visibility"]["confirmed_parts"], first["visibility"]["part_count"]
+        )
+        self.assertEqual(
+            first["message_hash"],
+            sender.ledger.event(first["message_id"])["content_hash"],
+        )
+        self.assertIsNone(first["response_context"])
         reply_id = str(uuid.uuid4())
         response = self.send_and_settle(
             receiver,
@@ -326,6 +368,24 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertEqual(reply_projection["reply_to"]["text"], arguments["text"])
         self.assertEqual({row["being_ref"] for row in response["audience"]}, expected)
         self.assertTrue(response["semantic"]["terminal"])
+        self.assertEqual(
+            response["response_context"],
+            {
+                "message_id": first["message_id"],
+                "message_hash": first["message_hash"],
+                "sender_being_ref": first["author"]["being_ref"],
+                "sender_embodiment_id": first["author"]["embodiment_id"],
+            },
+        )
+        self.assertEqual(response["thread_id"], first["thread_id"])
+        with patch.object(
+            receiver.egress,
+            "prepare_visibility",
+            side_effect=AssertionError("inspection must not publish"),
+        ):
+            retained = receiver.inspect(client_id="test", send_id=reply_id)
+        self.assertEqual(retained["visibility"], response["visibility"])
+        self.assertEqual(retained["response_context"], response["response_context"])
 
     def test_expanded_group_reply_omits_automatic_old_quote_and_keeps_exact_retry(self):
         from daimon_matrix.telegram_mirror import render_readable_parts

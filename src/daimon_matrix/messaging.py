@@ -1888,6 +1888,12 @@ class GroupMessaging:
             "schema": "dm.tribe.delivery/v1",
             "send_id": send_id,
             "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "author": {
+                "being_ref": message["being_ref"],
+                "embodiment_id": message["origin"]["embodiment_id"],
+            },
+            "response_context": message["payload"]["body"].get("response_context"),
             "thread_id": message["payload"]["intent"]["thread_id"],
             "tribe_ref": self.policy.tribe_ref,
             "audience": message["payload"]["body"]["audience"],
@@ -1898,6 +1904,15 @@ class GroupMessaging:
                 "expires_at_ms": plan["expires_at_ms"],
                 "expired": self.lane.clock() >= plan["expires_at_ms"],
             },
+            # Inspect the existing obligation without preparing visibility or
+            # releasing native bytes. An authored event alone is not echo proof.
+            "visibility": (
+                self.egress.inspect_retained(
+                    self.egress.binding("tribe-carriers", send_id)
+                )
+                if self.records.get("native", send_id) is not None
+                else None
+            ),
         }
         destination = message["payload"]["body"].get("destination")
         if destination is not None:
