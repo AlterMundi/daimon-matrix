@@ -80,7 +80,29 @@ documents stay in an operation-private directory; secrets stay at their existing
 owner paths. No network probe, speech, model, membership or positive egress gate
 is started by these SDK functions.
 
-The qualified Cluster owner routes, public-history selector and before/after
-receiving transaction remain unfinished. Do not substitute `republish`, the
+## Recoverable first communication schema
+
+A first group application requires the current communication schema. Prepare it
+on the new body's original store before interrupting existing members. Use the
+existing `daimon-communication-migration plan` and `apply` commands under that
+body's runtime writer; do not silently upgrade during a read or group publish.
+
+Retain the original approved plan hash and backup directory. Repeating the same
+`apply` resumes partial preparation or an exact rehearsed intermediate schema on
+the same physical store. The journal binds that plan, the source file identity,
+anchor and source/intermediate/target state hashes. A pending migration refuses
+later accepted work or a replaced source rather than restoring a database.
+Unbound historical backup directories still use the explicit legacy recovery
+route; they are not inferred as new migration intents.
+
+A lost completion reply returns the same historical result without repeating
+DDL, including after subsequent accepted work. This proves that migration's
+completion, not present store health. Cluster callers pass their existing finite
+monotonic deadline to `operator_communication_migration.apply`; expiry retains
+any completed effect for exact recovery and never authorizes a fresh migration.
+The original ledger, authority and conversation history remain in place.
+
+Cluster's complete before/after receiving transaction remains unfinished.
+Do not substitute `republish`, the
 same-audience `visibility_presentation`, or an archived pair installation for the
 new operations. Keep the prepared VPS software update independent of this work.

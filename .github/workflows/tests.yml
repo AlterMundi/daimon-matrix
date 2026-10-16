@@ -21,6 +21,7 @@ jobs:
       group_receipt_checks: ${{ steps.scope.outputs.group_receipt_checks }}
       group_receiving_checks: ${{ steps.scope.outputs.group_receiving_checks }}
       group_admission_checks: ${{ steps.scope.outputs.group_admission_checks }}
+      group_migration_only: ${{ steps.scope.outputs.group_migration_only }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -290,6 +291,7 @@ jobs:
           "$RUNNER_TEMP/dm-group/bin/python" -m pip install -r requirements-vectors.txt mcp==2.0.0 wasmtime==45.0.0 dist/*.whl
           echo "$RUNNER_TEMP/dm-group/bin" >> "$GITHUB_PATH"
       - name: Group delivery and corrected membership contracts
+        if: needs.scope.outputs.group_migration_only != 'true'
         # The prior installed qualification exercised all 432 affected contracts;
         # preserve its passing evidence and recheck the changed expectations plus
         # the complete group journey instead of repeating unrelated journeys.
@@ -323,6 +325,12 @@ jobs:
           python -W error::ResourceWarning -m unittest
           tests.test_operator_messaging tests.test_closed_visibility_provisioning
           tests.test_dm025_cli_mcp -v
+      - name: Installed resumable communication migration
+        if: needs.scope.outputs.group_migration_only == 'true' || needs.scope.outputs.group_admission_checks == 'true'
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
+          tests.test_operator_communication_migration -v
       - name: Installed receiving control and unchanged legacy capability loading
         if: needs.scope.outputs.group_receiving_checks == 'true'
         run: >-

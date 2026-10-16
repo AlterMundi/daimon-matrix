@@ -158,9 +158,26 @@ AUTHORITY_ADOPTION_FILES = frozenset(
 )
 
 
+COMMUNICATION_MIGRATION_FILES = frozenset(
+    {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+        "docs/runbooks/group-admission.md",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
+
 TRIBE_GROUP_FILES = (
     VISIBILITY_FILES
     | AUTHORITY_ADOPTION_FILES
+    | COMMUNICATION_MIGRATION_FILES
     | frozenset(
         {
             "specs/tribe-conversation.md",
@@ -273,6 +290,12 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    migration = changed & {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+    }
+    if migration and changed <= COMMUNICATION_MIGRATION_FILES:
+        return "communication-migration"
     if changed <= RECEIVING_CONTROL_FILES and changed & {
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",
@@ -307,6 +330,8 @@ def profile(paths: list[str]) -> str:
         and changed <= TRIBE_GROUP_FILES
     ):
         if changed & {
+            "src/daimon_matrix/operator_communication_migration.py",
+            "tests/test_operator_communication_migration.py",
             "src/daimon_matrix/operator_messaging.py",
             "src/daimon_matrix/messaging_config.py",
             "tests/test_operator_messaging.py",
@@ -422,14 +447,21 @@ def main() -> None:
             if selected == "mirror"
             else "tribe-group"
             if selected
-            in {"bounded-group-transport", "receiving-control", "group-admission"}
+            in {
+                "bounded-group-transport",
+                "receiving-control",
+                "group-admission",
+                "communication-migration",
+            }
             else selected
         )
         + "\nnative_checks="
         + ("false" if selected == "mirror" else "true")
     )
-    if selected == "bounded-group-transport":
+    if selected in {"bounded-group-transport", "communication-migration"}:
         value += "\ngroup_receipt_checks=false"
+    if selected == "communication-migration":
+        value += "\ngroup_migration_only=true"
     if selected == "receiving-control":
         value += "\ngroup_receiving_checks=true"
     if selected == "group-admission":

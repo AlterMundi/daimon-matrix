@@ -12,6 +12,56 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_migration_checks_are_installed_and_combined_admission_keeps_them(self):
+        from tools.ci_scope import COMMUNICATION_MIGRATION_FILES
+
+        self.assertEqual(
+            profile(list(COMMUNICATION_MIGRATION_FILES)), "communication-migration"
+        )
+        self.assertEqual(
+            profile(
+                [
+                    *COMMUNICATION_MIGRATION_FILES,
+                    "tests/test_group_messaging_runtime.py",
+                ]
+            ),
+            "group-admission",
+        )
+        self.assertEqual(
+            profile([*COMMUNICATION_MIGRATION_FILES, "src/daimon_matrix/keystore.py"]),
+            "full",
+        )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        group = workflow.split("  tribe-group:", 1)[1].split("  human-tribu:", 1)[0]
+        self.assertIn("dist/*.whl", group)
+        core = group.split("- name: Group delivery", 1)[1].split("- name:", 1)[0]
+        self.assertIn("needs.scope.outputs.group_migration_only != 'true'", core)
+        migration = group.split(
+            "- name: Installed resumable communication migration", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("tests.test_operator_communication_migration", migration)
+        self.assertIn("group_admission_checks == 'true'", migration)
+        self.assertIn("group_migration_only == 'true'", migration)
+
+    def test_migration_only_reuses_wheel_job_without_unrelated_group_journeys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "scope-output"
+            with (
+                patch("tools.ci_scope.select", return_value="communication-migration"),
+                patch.object(sys, "argv", ["ci_scope.py", "--base", "base"]),
+                patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            ):
+                main()
+            selected = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            self.assertEqual(selected["profile"], "tribe-group")
+            self.assertEqual(selected["group_migration_only"], "true")
+            self.assertEqual(selected["group_receipt_checks"], "false")
+            self.assertNotEqual(selected.get("group_admission_checks"), "true")
+
     def test_combined_group_and_admission_keeps_both_contract_sets(self):
         changed = [
             "src/daimon_matrix/messaging.py",
