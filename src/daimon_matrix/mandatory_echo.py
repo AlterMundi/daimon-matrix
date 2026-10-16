@@ -966,9 +966,13 @@ class MandatoryEcho:
         Expiry must not destroy the ability to diagnose an unfinished operation.
         """
         state = _status(self._journal._load(operation_id, expected_binding_digest))
-        state["last_failure"] = read_diagnostic(
-            self._journal_path(), "echo", operation_id
-        )
+        state["last_failure"] = None
+        # The authenticated journal above remains mandatory. Its optional
+        # diagnostic sidecar must not hide otherwise valid historical proof.
+        with suppress(OSError, sqlite3.Error, ValueError):
+            state["last_failure"] = read_diagnostic(
+                self._journal_path(), "echo", operation_id
+            )
         return state
 
     def ambiguity(

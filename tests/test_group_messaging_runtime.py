@@ -296,6 +296,48 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_corrupt_diagnostic_sidecar_preserves_delivery_and_verified_visibility(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="an optional diagnostic cannot hide retained delivery evidence",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ):
+            original = sender.send(**request)
+        sidecar = sender.records.path.with_name(
+            sender.records.path.name + ".transport-diagnostics.sqlite"
+        )
+        sidecar.write_bytes(b"invalid synthetic SQLite diagnostic")
+        with (
+            patch.object(
+                provider, "send_prepared", side_effect=AssertionError("retry")
+            ),
+            patch.object(
+                sender.egress,
+                "prepare_visibility",
+                side_effect=AssertionError("visibility replay"),
+            ),
+        ):
+            retained = sender.inspect(client_id="test", send_id=request["send_id"])
+        remote = next(
+            row for row in retained["transport"] if row["state"] != "author-retained"
+        )
+        self.assertEqual(retained["message_id"], original["message_id"])
+        self.assertEqual(remote["state"], "pending")
+        self.assertNotIn("last_failure", remote)
+        self.assertFalse(retained["semantic"]["terminal"])
+        self.assertEqual(retained["visibility"]["echo_state"], "confirmed")
+        self.assertIsNone(retained["visibility"]["echo_last_failure"])
+
     def test_group_route_failure_remains_inspectable_after_expiry_without_retry(self):
         sender, receiver = self.groups
         provider = sender.providers[
