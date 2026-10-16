@@ -514,7 +514,7 @@ def _run_egress_worker(
     try:
         while not stop.is_set():
             try:
-                result = controller.run_worker_batch(limit=32)
+                result = controller.run_worker_batch(limit=32, include_status=False)
                 controller.worker_succeeded()
                 delay = 0.01 if result["processed"] == 32 else EGRESS_SCAN_SECONDS
             except (NativeEgressError, OSError, ValueError):

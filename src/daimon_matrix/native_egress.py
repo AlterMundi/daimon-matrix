@@ -2502,14 +2502,19 @@ class MandatoryEgressController:
                 self._live_permits.remove(permit.nonce)
             return self._consume_permit_locked(first, native_bytes, effect)
 
-    def _queued_bindings(self) -> list[tuple[int, str, str, OperationBinding]]:
+    def _queued_bindings(
+        self, *, unexpired_at_ms: int | None = None
+    ) -> list[tuple[int, str, str, OperationBinding]]:
         rows: list[tuple[int, str, str, OperationBinding]] = []
         for catalog_id, catalog in self._catalogs.items():
             with self._database(catalog) as database:
-                for row in database.execute(
-                    "SELECT * FROM mandatory_egress_operations "
-                    "ORDER BY created_at_ms, operation_id"
-                ):
+                query = "SELECT * FROM mandatory_egress_operations"
+                parameters: tuple[int, ...] = ()
+                if unexpired_at_ms is not None:
+                    query += " WHERE deadline_ms > ?"
+                    parameters = (unexpired_at_ms,)
+                query += " ORDER BY created_at_ms, operation_id"
+                for row in database.execute(query, parameters):
                     binding = self._binding_from_row(catalog_id, row)
                     rows.append(
                         (
@@ -2522,15 +2527,20 @@ class MandatoryEgressController:
         rows.sort(key=lambda item: item[:3])
         return rows
 
-    def run_worker_batch(self, *, limit: int = 32) -> dict[str, int | str | None]:
+    def run_worker_batch(
+        self, *, limit: int = 32, include_status: bool = True
+    ) -> dict[str, int | str | None]:
         if (
             not isinstance(limit, int)
             or isinstance(limit, bool)
             or not 1 <= limit <= 128
+            or type(include_status) is not bool
         ):
             raise NativeEgressError("egress_worker_bounds")
         processed = 0
-        for _, _, _, binding in self._queued_bindings():
+        # Scheduling only: an expired native binding cannot authorize advance.
+        # Explicit status/history still inspect every retained obligation.
+        for _, _, _, binding in self._queued_bindings(unexpired_at_ms=self._clock()):
             if processed >= limit:
                 break
             try:
@@ -2541,7 +2551,7 @@ class MandatoryEgressController:
                 continue
             self.advance_one(binding)
             processed += 1
-        return {"processed": processed, **self.status()}
+        return {"processed": processed, **(self.status() if include_status else {})}
 
     def status(self) -> dict[str, int | str | None]:
         counts = {"pending": 0, "retryable": 0, "quarantined": 0}
