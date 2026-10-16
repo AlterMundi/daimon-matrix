@@ -529,8 +529,13 @@ def reconcile_tooling(
             for index, before in enumerate(originals[:-1]):
                 original = json.loads(before)
                 if (
-                    set(original) != {"command", "tools", "incoming_channels"}
+                    set(original) not in (
+                        {"command", "tools", "incoming_channels"},
+                        {"command", "tools", "incoming_channels", "outgoing_channels"},
+                    )
                     or original["incoming_channels"] != binding["incoming_channels"]
+                    or original.get("outgoing_channels", binding["outgoing_channels"])
+                    != binding["outgoing_channels"]
                     or not isinstance(original["command"], list)
                     or original["command"][-2:]
                     != ["--binding", str(attachment / binding_filename)]

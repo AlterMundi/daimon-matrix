@@ -125,6 +125,51 @@ class AgentChatTests(unittest.TestCase):
         self.assertEqual(json.loads(mirror.read_bytes())["command"], command)
         self.assertIn("owner-binding.json", config.read_text())
 
+    def test_tooling_preserves_deployed_outgoing_connection_metadata(self):
+        home, _config, mirror, command, preserved, writer, reconcile = (
+            self.tooling_fixture(binding_filename="owner-binding.json")
+        )
+        binding = json.loads((self.args.attachment / "owner-binding.json").read_bytes())
+        for path in (self.args.attachment / "connection.json", mirror):
+            value = json.loads(path.read_bytes())
+            value["outgoing_channels"] = binding["outgoing_channels"]
+            path.write_bytes(canonical_bytes(value))
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            first = reconcile()
+            self.assertEqual(reconcile(), first)
+            self.assertEqual(run.call_count, 1)
+        for path in (self.args.attachment / "connection.json", mirror):
+            value = json.loads(path.read_bytes())
+            self.assertEqual(value["outgoing_channels"], binding["outgoing_channels"])
+            self.assertEqual(value["command"], command)
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
+
+    def test_tooling_rejects_outgoing_connection_mismatch_without_publication(self):
+        home, config, mirror, _, preserved, writer, reconcile = self.tooling_fixture()
+        path = self.args.attachment / "connection.json"
+        value = json.loads(path.read_bytes())
+        value["outgoing_channels"] = ["foreign-channel"]
+        path.write_bytes(canonical_bytes(value))
+        original = {p: p.read_bytes() for p in (path, mirror, config)}
+        with (
+            patch.dict(os.environ, {"CODEX_HOME": str(home)}),
+            patch("tools.install_agent_chat.shutil.which", return_value="/codex"),
+            patch(
+                "tools.install_agent_chat._write_codex_role", side_effect=writer
+            ) as run,
+        ):
+            with self.assertRaisesRegex(ValueError, "tooling_connection_invalid"):
+                reconcile()
+            run.assert_not_called()
+        self.assertEqual(original, {p: p.read_bytes() for p in original})
+        self.assertEqual(preserved, {p: p.read_bytes() for p in preserved})
+
     def test_tooling_startup_default_preserves_explicit_budgets_and_restrictions(self):
         for startup, key, value in (
             ("", "startup_timeout_sec", 60.0),
