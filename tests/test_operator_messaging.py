@@ -9,6 +9,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -1700,12 +1701,14 @@ class ProvisioningTests(unittest.TestCase):
                 path = target / name
                 saved = target / (name + ".saved")
                 path.rename(saved)
-                with self.assertRaisesRegex(
-                    ValueError, "messaging_required_store_missing"
-                ):
-                    load_application(runtime, target)
-                self.assertFalse(path.exists())
-                saved.rename(path)
+                try:
+                    with self.assertRaisesRegex(
+                        ValueError, "messaging_required_store_missing"
+                    ):
+                        load_application(runtime, target)
+                    self.assertFalse(path.exists())
+                finally:
+                    saved.rename(path)
         self.assertIn(revocation, channel.relationships.events())
 
     def test_empty_published_replay_store_fails_closed(self):
@@ -2509,6 +2512,920 @@ class RetainedVisibilityAcceptanceTests(unittest.TestCase):
         self.assertEqual(read_publication(advanced, target)[1], selected)
         self.assertEqual(sorted(path.name for path in target.iterdir()), before)
         daemon_visibility_check(advanced, target, installation)
+
+
+class GroupApplicationAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        from daimon_matrix.native_egress import closed_visibility
+        from tests.test_dm051_sealed import TribeConversationLaneTests
+        from tests.test_group_messaging_runtime import GroupRuntimeTests
+        from tests.test_messaging_runtime import public_document
+
+        self.fixture = TribeConversationLaneTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.runtime, self.app, self.view = GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False, founder_only=True
+        )
+        # The admission owner starts after the predecessor writer is quiesced.
+        # Its closed controller has no already-bound predecessor reader context.
+        self.runtime = replace(
+            self.runtime,
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        self.previous, _ = read_publication(self.runtime, self.app)
+        self.expected = config_digest(self.previous)
+        self.candidate = copy.deepcopy(self.previous)
+        member = self.fixture.member
+        self.admitted = [member.state.being_ref]
+        self.candidate["authorities"].append(public_document(member, "member"))
+        self.candidate["relationship_events"] = [
+            *self.previous["relationship_events"],
+            *[
+                event
+                for event in self.fixture.events
+                if event not in self.previous["relationship_events"]
+            ],
+        ]
+        key = self.app.parent / "admitted-body.key"
+        key.write_bytes(b"n" * 32)
+        key.chmod(0o600)
+        self.sources = {key.name: key}
+        route = {
+            "provider_ref": "admitted-body",
+            "route_ref": "admitted-body",
+            "key_ref": "admitted-body",
+            "endpoint": "http://127.0.0.1:48766/dm-messaging/v1/message",
+            "secret_file": key.name,
+            "secret_sha256": hashlib.sha256(key.read_bytes()).hexdigest(),
+        }
+        self.candidate["roster"].append(
+            {
+                "being_ref": member.state.being_ref,
+                "embodiment_id": member.origin["embodiment_id"],
+                "body_ref": member.origin["body_ref"],
+                "route": route,
+            }
+        )
+
+    def accept(self):
+        for event in self.fixture.events:
+            self.runtime.service.relationships.store.ingest(event)
+
+    def publish(self, **changes):
+        from daimon_matrix.operator_messaging import admit_group_application
+
+        options = {
+            "expected_application_sha256": self.expected,
+            "admitted_being_refs": self.admitted,
+            "secret_sources": self.sources,
+        }
+        options.update(changes)
+        return admit_group_application(
+            self.runtime, self.app, self.candidate, **options
+        )
+
+    def test_publication_preserves_client_keys_stores_and_exact_retry(self):
+        self.accept()
+        client = (self.app / "client.key").read_bytes()
+        old_key = self.app / self.previous["intake"]["secret_file"]
+        key_bytes = old_key.read_bytes()
+        stores = {
+            filename: (self.app / filename).stat().st_ino
+            for filename in self.previous["stores"].values()
+        }
+        record = {"summary": "retained before admission"}
+        record_id = str(uuid.uuid4())
+        self.view.service.messaging.channels["tribe"].records.reserve(
+            "request", record_id, record, lambda: record
+        )
+        first = self.publish()
+        self.assertEqual(first["status"], "group-application-published")
+        selected, metadata = read_publication(self.runtime, self.app)
+        self.assertEqual(selected, self.candidate)
+        self.assertEqual(selected["client"], self.previous["client"])
+        self.assertEqual((self.app / "client.key").read_bytes(), client)
+        self.assertEqual(old_key.read_bytes(), key_bytes)
+        self.assertEqual(
+            {name: (self.app / name).stat().st_ino for name in stores}, stores
+        )
+        group = load_application(self.runtime, self.app).service.messaging.channels[
+            "tribe"
+        ]
+        self.assertEqual(group.records.get("request", record_id), record)
+        self.assertEqual(len(group.receiving_roster()["audience"]), 2)
+        files = sorted(self.app.iterdir())
+        publication = (self.app / "publication.json").read_bytes()
+        again = self.publish()
+        self.assertEqual(again, {**first, "status": "current"})
+        self.assertEqual(sorted(self.app.iterdir()), files)
+        self.assertEqual((self.app / "publication.json").read_bytes(), publication)
+        self.assertEqual(metadata.name, first["generation"])
+
+    def test_lost_reply_recovers_without_reminting_client_or_generation(self):
+        self.accept()
+        replace_file = os.replace
+
+        def lost_reply(source, destination):
+            result = replace_file(source, destination)
+            if Path(destination) == self.app / "publication.json":
+                raise OSError("lost reply after publication")
+            return result
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.os.replace", side_effect=lost_reply
+            ),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        before, metadata = read_publication(self.runtime, self.app)
+        client = (self.app / "client.key").read_bytes()
+        result = self.publish()
+        self.assertEqual(result["status"], "current")
+        self.assertEqual(read_publication(self.runtime, self.app), (before, metadata))
+        self.assertEqual((self.app / "client.key").read_bytes(), client)
+
+    def test_torn_staging_key_recovers_before_selecting_the_same_generation(self):
+        self.accept()
+        from daimon_matrix.operator_messaging import _write
+
+        def interrupted(directory, name, raw):
+            if directory.name == "transport-staging" and ".stage-" in name:
+                _write(directory, name, raw[:8])
+                raise OSError("interrupted staging write")
+            return _write(directory, name, raw)
+
+        with (
+            patch("daimon_matrix.operator_messaging._write", side_effect=interrupted),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        result = self.publish()
+        self.assertEqual(result["status"], "group-application-published")
+        self.assertEqual(list(self.app.rglob("*.stage-*")), [])
+        self.assertEqual((self.app / "admitted-body.key").read_bytes(), b"n" * 32)
+
+    def test_new_key_staging_never_deletes_an_old_key_with_a_stage_shaped_name(self):
+        from daimon_matrix.native_egress import closed_visibility
+
+        collision = "route.key.stage-" + "a" * 32
+        original_key = self.app / self.previous["intake"]["secret_file"]
+        specification = copy.deepcopy(self.previous)
+        del specification["client"]
+        for route in (
+            specification["intake"],
+            *[row["route"] for row in specification["roster"]],
+        ):
+            route["secret_file"] = collision
+        other_app = self.app.parent / "collision-application"
+        prepare(
+            self.runtime,
+            other_app,
+            specification,
+            secret_sources={collision: original_key},
+        )
+        self.runtime = replace(
+            self.runtime,
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        self.app = other_app
+        self.previous, _ = read_publication(self.runtime, self.app)
+        self.expected = config_digest(self.previous)
+        self.candidate["client"] = self.previous["client"]
+        self.candidate["intake"] = self.previous["intake"]
+        self.candidate["roster"][0] = self.previous["roster"][0]
+        self.candidate["roster"][1]["route"]["secret_file"] = "route.key"
+        self.sources = {"route.key": next(iter(self.sources.values()))}
+        before = (self.app / collision).read_bytes()
+        self.accept()
+        self.publish()
+        self.assertEqual((self.app / collision).read_bytes(), before)
+        self.assertEqual((self.app / "route.key").read_bytes(), b"n" * 32)
+
+    def test_lost_key_rename_reply_resyncs_both_directories_on_exact_retry(self):
+        from daimon_matrix.operator_messaging import _publish, _sync
+
+        self.accept()
+
+        def interrupted(source, destination):
+            _publish(source, destination)
+            if Path(destination) == self.app / "admitted-body.key":
+                raise OSError("lost key rename reply")
+
+        with (
+            patch("daimon_matrix.operator_messaging._publish", side_effect=interrupted),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        self.assertEqual((self.app / "admitted-body.key").read_bytes(), b"n" * 32)
+        synced = []
+
+        def sync(directory):
+            _sync(directory)
+            synced.append(directory)
+
+        with patch("daimon_matrix.operator_messaging._sync", side_effect=sync):
+            result = self.publish()
+        generation = self.app / result["generation"]
+        self.assertIn(generation / "transport-staging", synced)
+        self.assertIn(generation, synced)
+        self.assertIn(self.app, synced)
+
+    def test_unaccepted_member_is_rejected_before_candidate_files_are_written(self):
+        files = sorted(self.app.iterdir())
+        with self.assertRaisesRegex(ValueError, "messaging_group_admission_conflict"):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+        self.assertEqual(sorted(self.app.iterdir()), files)
+
+    def member_application(self):
+        from daimon_matrix.messaging_config import application_routes
+        from daimon_matrix.relationship_store import (
+            RelationshipServiceContext,
+            RelationshipStore,
+        )
+        from daimon_matrix.synthetic_relationships import _seed
+        from tests.test_messaging_runtime import loaded, public_document
+
+        # The legacy factory hard-codes founder seed labels. Supply this genuine
+        # synthetic member's public genesis and encryption input instead; native
+        # runtime, custody and application verification remain unmodified.
+        def identity_document(identity, _label):
+            return public_document(identity, "member")
+
+        def identity_seed(label):
+            return _seed(
+                "member:encryption" if label == "founder:encryption" else label
+            )
+
+        with (
+            patch("tests.test_messaging_runtime.public_document", identity_document),
+            patch("daimon_matrix.synthetic_relationships._seed", identity_seed),
+        ):
+            _, runtime, _ = loaded(
+                self, self.fixture.member, clock=lambda: self.fixture.now
+            )
+        ordinary = RelationshipStore(
+            runtime.state_root / "relationships.sqlite",
+            authority_resolver=self.fixture.receiver_lane.authority_resolver,
+        )
+        for event in self.fixture.events:
+            ordinary.ingest(event)
+        runtime.service.communication.upgrade_receipts_v2()
+        runtime.service.communication.upgrade_legs_v3()
+        runtime = replace(
+            runtime,
+            service=replace(
+                runtime.service,
+                relationships=RelationshipServiceContext(
+                    ordinary,
+                    self.fixture.journey.card_verifier,
+                    self.fixture.receiver_lane.authority_resolver,
+                ),
+            ),
+        )
+        specification = copy.deepcopy(self.candidate)
+        del specification["client"]
+        specification["listen"]["port"] = 48766
+        specification["intake"] = specification["roster"][1]["route"]
+        specification["tribe"]["policy"]["membership_ref"] = self.fixture.membership_ref
+        specification["relationship_mode"].update(
+            runtime_id=runtime.service.runtime_id,
+            state_root=str(runtime.state_root),
+            store_filename=ordinary.path.name,
+        )
+        sources = {
+            row["secret_file"]: self.app / row["secret_file"]
+            for row in application_routes(specification)
+        }
+        app = runtime.state_root.parent / "member-group-application"
+        prepare(runtime, app, specification, secret_sources=sources)
+        return runtime, app
+
+    def test_each_real_owner_signs_the_exact_group_disclosure_as_itself(self):
+        from daimon_matrix.messaging_config import verify_visibility_participant
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        self.accept()
+        self.publish()
+        destination = {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "compact-html/v1",
+        }
+        disclosure = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        other, other_app = self.member_application()
+        for runtime, app, authority in (
+            (self.runtime, self.app, self.fixture.founder.authority),
+            (other, other_app, self.fixture.member.authority),
+        ):
+            binding = accept_group_visibility(
+                runtime, app, disclosure, approved_destination=destination
+            )
+            self.assertEqual(binding["body"]["being_ref"], authority.manifest.being_ref)
+            verify_visibility_participant(
+                authority,
+                authority.manifest.being_ref,
+                disclosure,
+                binding,
+                at_ms=self.fixture.now,
+            )
+            self.assertEqual(
+                accept_group_visibility(
+                    runtime, app, disclosure, approved_destination=destination
+                ),
+                binding,
+            )
+
+    def test_visibility_signature_refuses_peer_selected_destination_or_scope(self):
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        self.accept()
+        self.publish()
+        destination = {
+            "bot_id": 137,
+            "chat_id": -100137,
+            "topic_id": None,
+            "representation": "compact-html/v1",
+        }
+        original = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        altered = []
+        for name, value in (
+            ("participants", original["participants"][:1]),
+            ("risk", "different-risk"),
+            ("issued_at_ms", self.fixture.now + 1),
+            ("extra", "unapproved"),
+        ):
+            altered.append({**original, name: value})
+        wrong_chat = copy.deepcopy(original)
+        wrong_chat["destination"]["chat_id"] -= 1
+        altered.append(wrong_chat)
+        wrong_member = copy.deepcopy(original)
+        wrong_member["scope"]["channels"][0]["membership_ref"] = "other-membership"
+        wrong_member["scope_sha256"] = config_digest(wrong_member["scope"])
+        altered.append(wrong_member)
+        with patch(
+            "daimon_matrix.operator_messaging.create_binding",
+            side_effect=AssertionError("invalid disclosure reached signing"),
+        ):
+            for disclosure in altered:
+                with self.subTest(disclosure=disclosure), self.assertRaises(ValueError):
+                    accept_group_visibility(
+                        self.runtime,
+                        self.app,
+                        disclosure,
+                        approved_destination=destination,
+                    )
+
+    def visibility_configuration(self):
+        directory = self.app.parent / "group-visibility"
+        directory.mkdir(mode=0o700)
+        token = b"137:SIGNED_TEST_ONLY"
+        proof = b"v" * 32
+        for name, raw in (("telegram.token", token), ("proof.key", proof)):
+            path = directory / name
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        return directory / "installation.json", {
+            "destination": {
+                "bot_id": 137,
+                "chat_id": -100137,
+                "topic_id": None,
+                "representation": "compact-html/v1",
+            },
+            "secrets": {
+                "telegram_token_file": "telegram.token",
+                "telegram_token_sha256": hashlib.sha256(token).hexdigest(),
+                "proof_key_file": "proof.key",
+            },
+            "telegram_qualification": {
+                "schema": "dm.messaging.telegram-qualification/v1",
+                "qualified_at_ms": self.fixture.now,
+                "token_sha256": hashlib.sha256(token).hexdigest(),
+                "get_me_bot_id": 137,
+                "probe_chat_id": -100137,
+                "probe_topic_id": None,
+                "probe_message_id": 1,
+                "probe_text_sha256": "b" * 64,
+            },
+        }
+
+    def accepted_disclosure(self, destination):
+        from daimon_matrix.operator_messaging import (
+            accept_group_visibility,
+            group_visibility_disclosure,
+        )
+
+        disclosure = group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=destination,
+            issued_at_ms=self.fixture.now,
+        )
+        bindings = [
+            accept_group_visibility(
+                self.runtime,
+                self.app,
+                disclosure,
+                approved_destination=destination,
+            )
+        ]
+        if self.fixture.member.state.being_ref in disclosure["participants"]:
+            other, other_app = self.member_application()
+            bindings.append(
+                accept_group_visibility(
+                    other,
+                    other_app,
+                    disclosure,
+                    approved_destination=destination,
+                )
+            )
+        return disclosure, bindings
+
+    def initial_visibility(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        return installation, configuration, result
+
+    def test_initial_and_expanded_visibility_preserve_keys_qualification_and_retry(
+        self,
+    ):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        previous = json.loads(installation.read_bytes())
+        key_files = {
+            name: (
+                (installation.parent / name).stat().st_ino,
+                (installation.parent / name).read_bytes(),
+            )
+            for name in ("telegram.token", "proof.key")
+        }
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        selected = json.loads(installation.read_bytes())
+        self.assertEqual(selected["document"]["generation"], 2)
+        self.assertEqual(
+            selected["document"]["secrets"], previous["document"]["secrets"]
+        )
+        self.assertEqual(
+            selected["document"]["telegram_qualification"],
+            previous["document"]["telegram_qualification"],
+        )
+        for name, (inode, raw) in key_files.items():
+            self.assertEqual((installation.parent / name).stat().st_ino, inode)
+            self.assertEqual((installation.parent / name).read_bytes(), raw)
+        self.assertEqual(len(selected["document"]["acceptance_set"]["bindings"]), 2)
+        retry = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(retry, {**result, "status": "current"})
+        self.assertEqual(json.loads(installation.read_bytes()), selected)
+
+    def test_visibility_lost_selection_reply_recovers_original_generation(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        replace_file = os.replace
+
+        def lost(source, destination):
+            replace_file(source, destination)
+            if Path(destination) == installation:
+                raise OSError("lost visibility publication reply")
+
+        with (
+            patch("daimon_matrix.operator_messaging.os.replace", side_effect=lost),
+            self.assertRaises(OSError),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        before = installation.read_bytes()
+        recovered = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(recovered["status"], "current")
+        self.assertEqual(installation.read_bytes(), before)
+        self.assertEqual(json.loads(before)["document"]["generation"], 2)
+
+    def test_visibility_parent_sync_precedes_selection_and_retry_recovers(self):
+        from daimon_matrix.operator_messaging import _sync, publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        original = installation.read_bytes()
+
+        def lost_parent_sync(directory):
+            _sync(directory)
+            if directory == installation.parent:
+                self.assertEqual(installation.read_bytes(), original)
+                raise OSError("lost parent directory sync acknowledgment")
+
+        with (
+            patch(
+                "daimon_matrix.operator_messaging._sync", side_effect=lost_parent_sync
+            ),
+            self.assertRaises(OSError),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), original)
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+        self.assertEqual(
+            json.loads(installation.read_bytes())["document"]["generation"], 2
+        )
+
+    def test_visibility_rejected_predecessor_does_not_poison_exact_retry(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        original = installation.read_bytes()
+        damaged = json.loads(original)
+        damaged["binding"]["signature"] = "tampered"
+        installation.write_bytes(canonical_bytes(damaged))
+        operations = set(installation.parent.glob(".group-visibility-*"))
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(
+            set(installation.parent.glob(".group-visibility-*")), operations
+        )
+        installation.write_bytes(original)
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+
+    def test_visibility_rejected_initial_config_does_not_poison_exact_retry(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        damaged = copy.deepcopy(configuration)
+        damaged["secrets"]["telegram_token_sha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=None,
+                initial_configuration=damaged,
+            )
+        self.assertFalse(installation.exists())
+        self.assertEqual(list(installation.parent.glob(".group-visibility-*")), [])
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        self.assertEqual(result["status"], "group-visibility-selected")
+
+    def test_visibility_missing_acceptance_preserves_the_selected_predecessor(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        before = installation.read_bytes()
+        with self.assertRaisesRegex(ValueError, "acceptance_missing"):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings[:1],
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), before)
+
+    def test_visibility_retry_does_not_overwrite_a_later_signed_generation(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration, initial = self.initial_visibility()
+        self.accept()
+        self.publish()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+        )
+        # A separately selected, valid owner-signed installation has won since
+        # this retained admission. Its current generation must never roll back.
+        later = json.loads(installation.read_bytes())["document"]
+        later["generation"] += 1
+        later["policy"]["generation"] += 1
+        winner = canonical_bytes(
+            {
+                "document": later,
+                "binding": create_binding(self.runtime, later),
+            }
+        )
+        installation.write_bytes(winner)
+        with self.assertRaisesRegex(ValueError, "group_visibility_conflict"):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(installation.read_bytes(), winner)
+
+    def test_initial_visibility_rejects_escaping_secret_paths_before_reading(self):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        installation, configuration = self.visibility_configuration()
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        configuration["secrets"]["proof_key_file"] = "../private.key"
+        with (
+            patch(
+                "daimon_matrix.operator_messaging.protected_read",
+                side_effect=AssertionError("unsafe reference reached a private read"),
+            ),
+            self.assertRaisesRegex(ValueError, "group_visibility_conflict"),
+        ):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=None,
+                initial_configuration=configuration,
+            )
+        self.assertFalse(installation.exists())
+
+    def test_disclosure_refuses_a_stale_application_audience(self):
+        from daimon_matrix.operator_messaging import group_visibility_disclosure
+
+        self.accept()
+        with self.assertRaisesRegex(ValueError, "group_visibility_context_rejected"):
+            group_visibility_disclosure(
+                self.runtime,
+                self.app,
+                approved_destination={
+                    "bot_id": 137,
+                    "chat_id": -100137,
+                    "topic_id": None,
+                    "representation": "compact-html/v1",
+                },
+                issued_at_ms=self.fixture.now,
+            )
+
+    def test_admission_cannot_replace_routes_client_stores_or_approved_addition(self):
+        self.accept()
+        original = copy.deepcopy(self.candidate)
+        cases = (
+            ("authorities", list(reversed(self.candidate["authorities"]))),
+            ("roster", [self.candidate["roster"][1]]),
+            ("stores", {**self.candidate["stores"], "records": "other.sqlite"}),
+            ("client", {**self.candidate["client"], "secret_sha256": "0" * 64}),
+            ("relationship_events", self.candidate["relationship_events"][1:]),
+        )
+        for name, value in cases:
+            self.candidate = {**original, name: value}
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.publish()
+        self.candidate = original
+        with self.assertRaises(ValueError):
+            self.publish(admitted_being_refs=[self.fixture.founder.state.being_ref])
+        with self.assertRaises(ValueError):
+            self.publish(expected_application_sha256="0" * 64)
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
+
+
+class PublicAuthorityHistoryTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_dm022_ledger import RootLedgerFixture
+
+        self.fixture = RootLedgerFixture()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.tearDown)
+
+    def restart(self):
+        from daimon_matrix.authority_epochs import create_authority_epoch
+        from daimon_matrix.identity import create_incarnation_authorization
+        from tests.test_dm022_ledger import NOW
+
+        fixture = self.fixture
+        credential = next(
+            value
+            for value in fixture.credentials.values()
+            if value["body"]["embodiment_id"] == "embodiment:legion"
+        )
+        incarnation = create_incarnation_authorization(
+            credential,
+            fixture.signing_seeds["legion"],
+            incarnation_id="incarnation:legion:1",
+            incarnation_sequence=1,
+            started_at_ms=NOW + 1,
+        )
+        manifest = copy.deepcopy(dict(fixture.manifest.value))
+        manifest["revision"] += 1
+        for row in manifest["embodiments"]:
+            if row["embodiment_id"] == "embodiment:legion":
+                row["status"] = "retired"
+                manifest["embodiments"].append(
+                    {
+                        **row,
+                        "status": "active",
+                        "incarnation_id": "incarnation:legion:1",
+                        "incarnation_authorization_id": incarnation["artifact_id"],
+                    }
+                )
+                break
+        manifest["embodiments"].sort(
+            key=lambda row: (row["embodiment_id"], row["incarnation_id"])
+        )
+        from daimon_matrix.weave import BeingManifest
+
+        successor = create_authority_epoch(
+            fixture.manifest,
+            BeingManifest.from_value(manifest),
+            embodiment_id="embodiment:legion",
+            previous_incarnation_id="incarnation:legion:0",
+            successor_authorization=incarnation,
+            signing_seed=fixture.signing_seeds["legion"],
+            issued_at_ms=NOW + 1,
+        )
+        previous = {
+            "schema": "dm.operator.authority/v1",
+            "control_artifacts": [fixture.genesis],
+            "control_head": fixture.state.head,
+            "manifest": fixture.manifest.value,
+            "credentials": list(fixture.credentials.values()),
+            "incarnations": list(fixture.incarnations.values()),
+        }
+        current = {
+            **previous,
+            "manifest": manifest,
+            "incarnations": [*previous["incarnations"], incarnation],
+        }
+        history = [
+            {
+                **{key: value for key, value in previous.items() if key != "schema"},
+                "successor": successor,
+            }
+        ]
+        return previous, current, history
+
+    def test_public_history_verifies_historical_event_without_foreign_ledger(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+        from daimon_matrix.weave import verify_event
+
+        _, current, history = self.restart()
+        event = self.fixture.append(self.fixture.ledger_a, "legion", "old-proof")
+        inputs = copy.deepcopy((current, history))
+        authority = public_authority_history(current, history)
+        self.assertEqual(authority.historical[0], self.fixture.authority)
+        verify_event(event, authority)
+        self.assertEqual((current, history), inputs)
+        self.assertEqual(authority.active.manifest.value, current["manifest"])
+
+    def test_compact_native_restart_history_uses_the_same_validator(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+        from daimon_matrix.weave import verify_event
+
+        _, current, history = self.restart()
+        compact = [
+            {"manifest": row["manifest"], "successor": row["successor"]}
+            for row in history
+        ]
+        authority = public_authority_history(current, compact)
+        event = self.fixture.append(self.fixture.ledger_a, "legion", "old-proof")
+        verify_event(event, authority)
+
+    def test_public_history_rejects_forged_reordered_and_substituted_epochs(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+
+        previous, current, history = self.restart()
+        forged = copy.deepcopy(history)
+        forged[0]["successor"]["signature"]["value"] = b64url(bytes(64))
+        for document, epochs in (
+            (current, forged),
+            (previous, history),
+            (current, history * 2),
+            (current, history * 257),
+            (current, [{**history[0], "unexpected": True}]),
+            (current, [None]),
+            (current, "not-a-history"),
+        ):
+            with self.subTest(epochs=str(epochs)[:50]), self.assertRaises(ValueError):
+                public_authority_history(document, epochs)
+
+    def test_empty_history_does_not_invent_an_older_epoch(self):
+        from daimon_matrix.operator_messaging import public_authority_history
+
+        _, current, _ = self.restart()
+        authority = public_authority_history(current, [])
+        self.assertEqual(authority.historical, [])
+        self.assertEqual(
+            authority.accepted_manifest_hashes, (authority.manifest.digest,)
+        )
 
 
 class ForeignAuthorityAdoptionTests(unittest.TestCase):

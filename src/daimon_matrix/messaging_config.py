@@ -2126,9 +2126,13 @@ def load_application(
             role: _store_path(root, filename)
             for role, filename in _selected_store_files(application).items()
         }
-        before = {
-            role: LoadedStoreBinding.file_identity(path) for role, path in paths.items()
-        }
+        try:
+            before = {
+                role: LoadedStoreBinding.file_identity(path)
+                for role, path in paths.items()
+            }
+        except FileNotFoundError:
+            raise MessagingConfigError("messaging_required_store_missing") from None
         view = _compose(runtime, root, application, metadata_root=selected.metadata)
         stores = {
             role: LoadedStoreBinding.capture(

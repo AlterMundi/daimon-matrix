@@ -4,7 +4,7 @@
   "deployment": "not-applicable",
   "mcp_protocols": ["2025-06-18", "2026-07-28"],
   "mcp_sdk": "mcp==2.0.0",
-  "service_method_count": 86,
+  "service_method_count": 87,
   "cli_command_count": 72,
   "mcp_tool_count": 69,
   "mcp_resource_count": 8,

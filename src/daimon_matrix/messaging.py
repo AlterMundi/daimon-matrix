@@ -2225,9 +2225,19 @@ class GroupMessaging:
                     "text": parent["payload"]["body"]["text"][:160],
                 },
             )
-            if destination is not None:
+            parent_audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in parent["payload"]["body"]["audience"]
+            }
+            audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in message["payload"]["body"]["audience"]
+            }
+            if destination is not None or not audience <= parent_audience:
                 # Correlation is authorized by the verified parent; copying
                 # parent plaintext requires its separate disclosure provenance.
+                # A later group audience may include newly admitted members or
+                # bodies that were never recipients of that original message.
                 projection["reply_to"].pop("text")
                 projection["reply_to"].pop("sender")
         retained_native = self.records.get("native", send_id)
