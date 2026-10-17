@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -975,7 +975,7 @@ class GroupRuntimeTests(unittest.TestCase):
         checked = []
 
         def authorize():
-            if sender.egress._fence.locked():
+            if sender.egress._fence._is_owned():
                 self.fixture.now += 60_000
                 checked.append(True)
 
@@ -1181,21 +1181,189 @@ class GroupRuntimeTests(unittest.TestCase):
     def test_bounded_release_deadline_includes_existing_fence_wait(self):
         controller, binding, raw = self._bounded_write_operation()
         controller.advance_one(binding)
-        controller._fence.acquire()
         effects = []
+        with (
+            self.held_fence(controller),
+            self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+        ):
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 20_000_000,
+            )
+        self.assertEqual(effects, [])
+        self.assertEqual(controller._live_permits, set())
+        self.assertIsNone(controller._attempt_deadline.get())
+
+    @contextmanager
+    def held_fence(self, controller):
+        entered, release = threading.Event(), threading.Event()
+
+        def hold():
+            with controller._fence:
+                entered.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold)
+        worker.start()
         try:
-            with self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"):
+            self.assertTrue(entered.wait(5))
+            yield
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_transport_reservation_and_release_share_the_catalog_fence(self):
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        records = self.groups[0].records
+        entered, finish, releasing, completed = (threading.Event() for _ in range(4))
+        effects, failures = [], []
+        request_id = str(uuid.uuid4())
+        request = {"request": "exact frozen transport bytes"}
+
+        def factory():
+            entered.set()
+            if not finish.wait(5):
+                raise AssertionError("reservation completion missing")
+            return request
+
+        def reserve():
+            try:
+                records.reserve("transport", request_id, request, factory)
+            except BaseException as failure:
+                failures.append(failure)
+
+        def release():
+            releasing.set()
+            try:
                 controller.release_bounded(
                     binding,
                     raw,
                     effects.append,
-                    deadline_ns=time.monotonic_ns() + 20_000_000,
+                    deadline_ns=time.monotonic_ns() + 5_000_000_000,
                 )
+            except BaseException as failure:
+                failures.append(failure)
+            finally:
+                completed.set()
+
+        writer = threading.Thread(target=reserve)
+        releaser = threading.Thread(target=release)
+        try:
+            writer.start()
+            self.assertTrue(entered.wait(5))
+            releaser.start()
+            self.assertTrue(releasing.wait(5))
+            # With the former unfenced reservation this release fails SQLITE_BUSY.
+            self.assertFalse(completed.wait(0.05))
         finally:
-            controller._fence.release()
-        self.assertEqual(effects, [])
-        self.assertEqual(controller._live_permits, set())
-        self.assertIsNone(controller._attempt_deadline.get())
+            finish.set()
+            writer.join(5)
+            if releaser.ident is not None:
+                releaser.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(releaser.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(effects, [raw])
+        self.assertEqual(records.get("transport", request_id), request)
+        self.assertEqual(controller.inspect_retained(binding)["completed_releases"], 1)
+
+    def test_record_guard_obeys_explicit_and_inherited_attempt_deadlines(self):
+        controller, binding, _raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        records = self.groups[0].records
+        request_id = str(uuid.uuid4())
+        with (
+            self.held_fence(controller),
+            self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+        ):
+            records.reserve(
+                "transport",
+                request_id,
+                {},
+                lambda: {},
+                deadline_ns=time.monotonic_ns() + 20_000_000,
+            )
+        self.assertIsNone(records.get("transport", request_id))
+        inherited = time.monotonic_ns() - 1
+        token = controller._attempt_deadline.set(inherited)
+        try:
+            with (
+                self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+                controller.local_storage(
+                    deadline_ns=time.monotonic_ns() + 1_000_000_000
+                ),
+            ):
+                self.fail("expired inherited budget was extended")
+        finally:
+            controller._attempt_deadline.reset(token)
+        self.assertEqual(controller.inspect_retained(binding)["completed_releases"], 0)
+
+    def test_slow_split_response_does_not_hold_the_local_catalog_fence(self):
+        sender, receiver = self.groups
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        profile = provider._round_trip
+        entered, finish = threading.Event(), threading.Event()
+        effects, failures, results = [], [], []
+
+        def open_exchange(deadline):
+            exchange = profile.bounded_open(deadline)
+
+            def read():
+                entered.set()
+                if not finish.wait(5):
+                    raise AssertionError("response release missing")
+                return exchange.read()
+
+            return replace(exchange, read=read)
+
+        provider._round_trip = replace(profile, bounded_open=open_exchange)
+
+        def send():
+            try:
+                results.append(
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="delayed split response",
+                    )
+                )
+            except BaseException as failure:
+                failures.append(failure)
+
+        worker = threading.Thread(target=send)
+        try:
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 1_000_000_000,
+            )
+            self.assertEqual(effects, [raw])
+            self.assertTrue(worker.is_alive())
+        finally:
+            finish.set()
+            worker.join(5)
+            for server in [*self.servers, self.servers[0]]:
+                server._threads.join()
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        self.assertTrue(
+            sender.inspect(client_id="test", send_id=results[0]["send_id"])["semantic"][
+                "terminal"
+            ]
+        )
 
     def test_bounded_release_rechecks_time_after_local_verification(self):
         controller, binding, raw = self._bounded_write_operation()

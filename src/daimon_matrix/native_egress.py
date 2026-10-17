@@ -806,7 +806,7 @@ class MandatoryEgressController:
         if catalog_mode not in {"validate", "migrate", "synthetic"}:
             raise NativeEgressError("egress_catalog_mode_invalid")
         self._catalog_mode: Literal["validate", "migrate", "synthetic"] = catalog_mode
-        self._fence = threading.Lock()
+        self._fence = threading.RLock()
         # Owner control and physical writes share this exact fence. A restarted
         # compositor never inherits a positive selection from retained evidence.
         self._reader_instance_id = str(uuid.uuid4())
@@ -1659,7 +1659,44 @@ class MandatoryEgressController:
             self._worker_state = "stopped"
 
     @contextmanager
+    def local_storage(self, *, deadline_ns: int | None = None) -> Iterator[int | None]:
+        """Order local catalog access with release, without a second lock order.
+
+        Native resolution and reader-control persistence reenter this fence.
+        Never keep this scope around connection setup or response reads.
+        """
+        inherited = self._attempt_deadline.get()
+        if inherited is not None:
+            deadline_ns = (
+                inherited if deadline_ns is None else min(inherited, deadline_ns)
+            )
+        token = self._attempt_deadline.set(deadline_ns)
+        acquired = False
+        try:
+            if deadline_ns is None:
+                acquired = self._fence.acquire()
+            else:
+                acquired = self._fence.acquire(
+                    timeout=self._remaining_attempt_seconds(deadline_ns)
+                )
+                if not acquired:
+                    raise NativeEgressError("egress_attempt_deadline")
+                self._remaining_attempt_seconds(deadline_ns)
+            yield deadline_ns
+        finally:
+            if acquired:
+                self._fence.release()
+            self._attempt_deadline.reset(token)
+
+    @contextmanager
     def _database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
+        # Bound records and controller catalogs can share one SQLite file.
+        # Guard reads through close too: DELETE-journal readers obstruct commit.
+        with self.local_storage(), self._open_database(catalog) as database:
+            yield database
+
+    @contextmanager
+    def _open_database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
         database: sqlite3.Connection | None = None
         try:
             deadline = self._attempt_deadline.get()

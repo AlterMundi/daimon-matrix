@@ -500,7 +500,19 @@ class ReceivingOwnerApiTests(unittest.TestCase):
         checked = []
 
         def locked(*args):
-            self.assertFalse(self.group.egress._fence.acquire(blocking=False))
+            acquisitions = []
+
+            def contend():
+                acquired = self.group.egress._fence.acquire(blocking=False)
+                acquisitions.append(acquired)
+                if acquired:
+                    self.group.egress._fence.release()
+
+            contender = threading.Thread(target=contend)
+            contender.start()
+            contender.join(1)
+            self.assertFalse(contender.is_alive())
+            self.assertEqual(acquisitions, [False])
             with (
                 closing(
                     sqlite3.connect(self.group.lane.relationships.path, timeout=0)
@@ -1473,13 +1485,13 @@ class DurableReaderRecoveryTests(unittest.TestCase):
 
     def test_signed_order_ignores_sql_sequence_and_rejects_document_tampering(self):
         self.enabled()
-        with sqlite3.connect(self.records.path) as database:
+        with closing(sqlite3.connect(self.records.path)) as database, database:
             database.execute(
                 "UPDATE tribe_records SET sequence=sequence+100 "
                 "WHERE kind='reader-control'"
             )
         self.assertTrue(self.restart().reader_ready("tribe", reader()))
-        with sqlite3.connect(self.records.path) as database:
+        with closing(sqlite3.connect(self.records.path)) as database, database:
             database.execute(
                 "UPDATE tribe_records SET document=? "
                 "WHERE kind='reader-control' "

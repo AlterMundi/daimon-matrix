@@ -1972,7 +1972,10 @@ class GroupMessaging:
                 elif self.records.get("transport", request_id) is not None:
                     attempt = "unconfirmed"
                     # Diagnostics never establish or invalidate receiving proof.
-                    with suppress(OSError, sqlite3.Error, ValueError):
+                    with (
+                        suppress(OSError, sqlite3.Error, ValueError),
+                        self.egress.local_storage(),
+                    ):
                         failure = read_diagnostic(
                             self.records.path, "route", request_id
                         )
@@ -2555,7 +2558,9 @@ class GroupMessaging:
         controlled_data = directed or (self.controlled_readers and not receipt)
         requirements = (
             self._reader_requirements(
-                self.records.get("send", operation.operation_id),
+                self.records.get(
+                    "send", operation.operation_id, deadline_ns=deadline_ns
+                ),
                 document["resolution"]["manifest_hash"],
             )
             if controlled_data
@@ -2599,10 +2604,11 @@ class GroupMessaging:
             request_id,
             fingerprint,
             lambda: {"request": b64url(provider.prepare_submission(submission))},
+            deadline_ns=deadline_ns,
         )
         raw = unb64url(retained["request"])
         if receipt:
-            proof = self.records.transport_result(request_id)
+            proof = self.records.transport_result(request_id, deadline_ns=deadline_ns)
             if proof is not None:
                 result = provider.validate_prepared_response(
                     raw, unb64url(proof["response"])
@@ -2647,7 +2653,10 @@ class GroupMessaging:
             # receipt identity; never substitute a new logical message. Preserve
             # only the existing closed diagnostic code, never exception text or
             # peer responses. A failed observer cannot change native outcomes.
-            with suppress(OSError, sqlite3.Error, ValueError):
+            with (
+                suppress(OSError, sqlite3.Error, ValueError),
+                self.egress.local_storage(),
+            ):
                 write_diagnostic(
                     self.records.path,
                     "route",

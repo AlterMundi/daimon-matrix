@@ -8,7 +8,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -65,15 +65,28 @@ class TribeRecordStore:
             )
 
     @contextmanager
-    def _database(self, *, timeout: float = 5.0) -> Iterator[sqlite3.Connection]:
-        _prepare_path(self.path)
-        with closing(
-            sqlite3.connect(self.path, isolation_level=None, timeout=timeout)
-        ) as database:
-            database.row_factory = sqlite3.Row
-            database.execute("PRAGMA journal_mode=DELETE")
-            database.execute("PRAGMA synchronous=FULL")
-            yield database
+    def _database(
+        self, *, timeout: float = 5.0, deadline_ns: int | None = None
+    ) -> Iterator[sqlite3.Connection]:
+        guard = (
+            nullcontext()
+            if self.egress is None
+            else self.egress.local_storage(deadline_ns=deadline_ns)
+        )
+        with guard as inherited:
+            _prepare_path(self.path)
+            # A bounded attempt must not add SQLite's per-statement busy wait.
+            with closing(
+                sqlite3.connect(
+                    self.path,
+                    isolation_level=None,
+                    timeout=timeout if inherited is None and deadline_ns is None else 0,
+                )
+            ) as database:
+                database.row_factory = sqlite3.Row
+                database.execute("PRAGMA journal_mode=DELETE")
+                database.execute("PRAGMA synchronous=FULL")
+                yield database
 
     def _checked(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         raw = bytes(row["document"])
@@ -102,6 +115,8 @@ class TribeRecordStore:
         record_id: str,
         request: Any,
         factory: Callable[[], dict[str, Any]],
+        *,
+        deadline_ns: int | None = None,
     ) -> dict[str, Any]:
         if kind not in {
             "send",
@@ -123,7 +138,7 @@ class TribeRecordStore:
         if str(uuid.UUID(record_id)) != record_id:
             raise ValueError("tribe_record_id_invalid")
         request_hash = hashlib.sha256(canonical_bytes(request)).hexdigest()
-        with self._database() as database:
+        with self._database(deadline_ns=deadline_ns) as database:
             database.execute("BEGIN IMMEDIATE")
             try:
                 result = self._reserve_in_transaction(
@@ -251,7 +266,7 @@ class TribeRecordStore:
         self, channel_id: str, *, deadline_ns: int | None = None
     ) -> dict[str, Any] | None:
         self._reader_budget(deadline_ns)
-        with self._database(timeout=0) as database:
+        with self._database(timeout=0, deadline_ns=deadline_ns) as database:
             return self._reader_head(database, channel_id, deadline_ns=deadline_ns)
 
     def append_reader_control(
@@ -264,7 +279,7 @@ class TribeRecordStore:
     ) -> dict[str, Any]:
         """Durable authenticated local intent; no inbox or visibility operation."""
         self._reader_budget(deadline_ns)
-        with self._database(timeout=0) as database:
+        with self._database(timeout=0, deadline_ns=deadline_ns) as database:
             database.execute("BEGIN IMMEDIATE")
             try:
                 if (
@@ -564,8 +579,10 @@ class TribeRecordStore:
                     database.rollback()
                 raise
 
-    def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
-        with self._database() as database:
+    def get(
+        self, kind: str, record_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._database(deadline_ns=deadline_ns) as database:
             row = database.execute(
                 "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
                 (kind, record_id),
@@ -620,8 +637,10 @@ class TribeRecordStore:
             "has_more": len(headers) > len(selected),
         }
 
-    def transport_result(self, request_id: str) -> dict[str, Any] | None:
-        with self._database() as database:
+    def transport_result(
+        self, request_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._database(deadline_ns=deadline_ns) as database:
             row = database.execute(
                 "SELECT * FROM tribe_records WHERE kind='transport-result' "
                 "AND json_extract(CAST(document AS TEXT),'$.request_id')=? "
