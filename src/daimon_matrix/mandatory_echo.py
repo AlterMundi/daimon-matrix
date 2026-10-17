@@ -823,6 +823,28 @@ LOCAL_EGRESS_DIAGNOSTIC_CODES = frozenset(
     }
 )
 
+INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
+    {
+        "storage_busy",
+        "storage_unavailable",
+        "failure_unknown",
+        "egress_operation_invalid",
+        "egress_attempt_deadline",
+        "echo_projection_invalid",
+        "echo_policy_invalid",
+        "echo_proof_invalid",
+        "transport_response_conflict",
+        "transport_request_conflict",
+        "delivery_id_conflict",
+        "tribe_loaded_store_uncertain",
+        "tribe_retained_intake_verification_uncertain",
+        "tribe_control_recovery_binding_conflict",
+        "tribe_control_commit_uncertain",
+        "messaging_binding_rejected",
+        "tribe_record_corrupt",
+    }
+)
+
 
 _DIAGNOSTIC_CODES = frozenset(
     {
@@ -843,7 +865,9 @@ _DIAGNOSTIC_CODES = frozenset(
         "route_connection_failed",
         "route_http_response_invalid",
     }
-) | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
+) | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES) | frozenset(
+    "intake_" + code for code in INTAKE_FAILURE_CODES
+)
 
 
 @contextmanager

@@ -1802,12 +1802,55 @@ class GroupRuntimeTests(unittest.TestCase):
             receiver.reconcile_intake()["items"][0]["state"], "recipient-intake"
         )
 
+    def test_control_ack_failure_retains_closed_receiver_diagnostic(self):
+        sender, _receiver = self.groups
+        busy = sqlite3.OperationalError("private storage details")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        for failure, expected in (
+            (NativeEgressError("echo_catalog_invalid"), "intake_echo_catalog_invalid"),
+            (NativeEgressError("private diagnostic text"), "intake_failure_unknown"),
+            (busy, "intake_storage_busy"),
+        ):
+            with self.subTest(expected=expected):
+                inbox = sender.intake_ingresses["evidence"].inbox
+                with patch.object(
+                    inbox, "_finalize_retained_intake", side_effect=failure
+                ):
+                    result = self.send_and_settle(
+                        sender,
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="retain the ACK failure without claiming delivery",
+                    )
+                self.assertFalse(result["semantic"]["terminal"])
+                admission = sender.records.intake_page()["items"][-1]["admission"]
+                request_id = admission["context"]["request"]["request_id"]
+                self.assertIsNotNone(sender.records.get("control-proof", request_id))
+                self.assertIsNone(sender.records.get("intake-ack", request_id))
+                self.assertIsNone(sender.records.get("control-terminal", request_id))
+                diagnostic = read_diagnostic(
+                    inbox.path, "intake-ack-transaction", request_id
+                )
+                self.assertEqual(diagnostic["code"], expected)
+                sidecar = inbox.path.with_name(
+                    inbox.path.name + ".transport-diagnostics.sqlite"
+                )
+                self.assertNotIn(b"private diagnostic text", sidecar.read_bytes())
+                self.assertNotIn(b"private storage details", sidecar.read_bytes())
+
     def test_postcommit_ticket_verification_failure_is_uncertain_not_refused(self):
         sender, receiver = self.groups
-        with patch.object(
-            receiver,
-            "_retained_message_ticket",
-            side_effect=ValueError("synthetic retained verification failure"),
+        with (
+            patch.object(
+                receiver,
+                "_retained_message_ticket",
+                side_effect=ValueError("synthetic retained verification failure"),
+            ),
+            patch(
+                "daimon_matrix.routes.write_diagnostic",
+                side_effect=OSError("unavailable diagnostic storage"),
+            ),
         ):
             first = self.send_and_settle(
                 sender,

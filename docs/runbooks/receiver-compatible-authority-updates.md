@@ -87,3 +87,10 @@ uses one visibility factory and is not a qualified recovery command for that dua
 profile. Reuse the host's supported composition under the writer lock rather than
 loading a second runtime beside its daemon. Local recovery of an expired control
 does not prove that the original live HTTP ACK failure has been corrected.
+
+The receiver retains authenticated intake failures as a closed diagnostic code
+and stage in its existing transport-diagnostics sidecar. Stages distinguish
+admission verification, the opaque ACK transaction and the signed ACK record.
+These local observations neither change the wire reply nor prove remote delivery;
+unknown exception text is never retained and a diagnostic-write failure does not
+replace the original intake result.

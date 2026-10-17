@@ -34,7 +34,11 @@ from urllib.parse import urlsplit
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
-from .mandatory_echo import LOCAL_EGRESS_DIAGNOSTIC_CODES
+from .mandatory_echo import (
+    INTAKE_FAILURE_CODES,
+    LOCAL_EGRESS_DIAGNOSTIC_CODES,
+    write_diagnostic,
+)
 from .native_egress import (
     MandatoryEgressController,
     NativeEgressError,
@@ -69,6 +73,30 @@ _ID_CHARS: Final = frozenset(
 
 Clock = Callable[[], int]
 RoundTrip = Callable[[bytes], bytes]
+
+
+def _intake_failure_code(failure: Exception) -> str:
+    """Closed local diagnostics; exception text never becomes retained payload."""
+    current: BaseException | None = failure
+    result = "intake_failure_unknown"
+    for _ in range(5):
+        if current is None:
+            break
+        if isinstance(current, sqlite3.Error):
+            code = getattr(current, "sqlite_errorcode", None)
+            if isinstance(code, int) and code & 255 in (
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            ):
+                return "intake_storage_busy"
+            return "intake_storage_unavailable"
+        code = current.code if isinstance(current, RouteError) else str(current)
+        if code in INTAKE_FAILURE_CODES:
+            result = "intake_" + code
+        if isinstance(current, OSError):
+            result = "intake_storage_unavailable"
+        current = current.__cause__
+    return result
 
 
 @dataclass(frozen=True)
@@ -1273,6 +1301,7 @@ class TransportIngress:
             # persistence; it must never become a sticky peer refusal.
             if self.store_guard is not None:
                 self.store_guard()
+            intake_stage = "intake-validation"
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:
@@ -1302,6 +1331,7 @@ class TransportIngress:
                     assert self.fence_ref is not None
                     self.intake_gate(self.presence_ref, self.fence_ref)
                 if self.intake_admission is not None:
+                    intake_stage = "intake-admission"
                     ticket = self.intake_admission(
                         {
                             "request": dict(value),
@@ -1328,6 +1358,7 @@ class TransportIngress:
                         carrier_inspector=self.carrier_inspector,
                     )
                 else:
+                    intake_stage = "intake-ack-transaction"
                     intake = self.inbox._finalize_retained_intake(
                         request_id=request_id,
                         request_hash=request_hash,
@@ -1337,6 +1368,7 @@ class TransportIngress:
                         received_at_ms=ticket.received_at_ms,
                         response_factory=response_factory,
                     )
+                    intake_stage = "intake-ack-record"
                     ticket.acknowledge(intake["_egress_response"])
             except (
                 RouteError,
@@ -1346,6 +1378,17 @@ class TransportIngress:
                 OSError,
                 sqlite3.Error,
             ) as failure:
+                if intake_stage != "intake-validation":
+                    # Transaction cleanup precedes this independent sidecar.
+                    # Observability must not replace the retained-intake result.
+                    with suppress(ValueError, OSError, sqlite3.Error):
+                        write_diagnostic(
+                            self.inbox.path,
+                            intake_stage,
+                            request_id,
+                            _intake_failure_code(failure),
+                            self.clock(),
+                        )
                 if ticket is not None:
                     raise RouteAmbiguous(
                         "transport_intake_recovery_pending"
