@@ -63,3 +63,27 @@ onboarding; this repair never invents membership or imports another body.
 This procedure installs no model attention, autonomous peer reply, inbox reader
 or scheduler. Existing human authorization covers the finite deployment; it
 adds no repeated approval or new identity ceremony.
+
+## Resume a missing observation or retained intake
+
+`systemctl is-active` proves unit state, not socket readiness or successful native
+startup. Await the selected sockets, then use the current authenticated base and
+group APIs with their connected-process observer and the existing loaded verifier.
+Resume a missing observation without repeating a completed lifecycle transition.
+Do not reconstruct archived pair enrollment to observe a selected membership group.
+A scoped maintenance driver restores every service it paused on success or failure.
+
+When signed intake is already committed, recover the original retained operation
+under exclusive native runtime ownership. `GroupMessaging.reconcile_intake` is a
+finite technical operation: an expired control can retain its historical ACK and
+project its verified receipt without network egress, new message IDs or models.
+Native intake, retained control and signed semantic completion remain distinct.
+
+Use the receiving deployment's actual composition. A dual base/group host loads
+its closed base controller first, then its independently signed application via
+`chat_host.application_view`; the group's proof key cannot authenticate the base
+catalogs. The current standalone `operator_messaging reconcile-intake` command
+uses one visibility factory and is not a qualified recovery command for that dual
+profile. Reuse the host's supported composition under the writer lock rather than
+loading a second runtime beside its daemon. Local recovery of an expired control
+does not prove that the original live HTTP ACK failure has been corrected.
