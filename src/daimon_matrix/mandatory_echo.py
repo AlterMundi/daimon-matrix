@@ -846,6 +846,31 @@ INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
 )
 
 
+COMPLETION_FAILURE_CODES = (
+    frozenset(
+        {
+            "communication_projection_busy",
+            "communication_pending_invalid",
+            "communication_state_rollback",
+            "communication_anchor_corrupt",
+            "communication_anchor_unsafe",
+            "communication_event_rejected",
+            "foreign_receipt_binding_mismatch",
+            "foreign_receipt_store_missing",
+            "foreign_receipt_store_corrupt",
+            "terminal_receipt_conflict",
+            "semantic_leg_quarantined",
+            "sqlite_busy",
+            "sqlite_unavailable",
+            "storage_missing",
+            "storage_conflict",
+            "storage_unavailable",
+        }
+    )
+    | INTAKE_FAILURE_CODES
+)
+
+
 _DIAGNOSTIC_CODES = (
     frozenset(
         {
@@ -873,6 +898,7 @@ _DIAGNOSTIC_CODES = (
             "completion_failed",
         }
     )
+    | frozenset("completion_" + code for code in COMPLETION_FAILURE_CODES)
     | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
     | frozenset("intake_" + code for code in INTAKE_FAILURE_CODES)
 )

@@ -3320,7 +3320,9 @@ class GroupMessaging:
             proof = self.records.get("control-proof", request_id)
             assert proof is not None
             self.communication.record_foreign_receipt(
-                proof["receipt"], recipient_being_ref=proof["recipient_being_ref"]
+                proof["receipt"],
+                recipient_being_ref=proof["recipient_being_ref"],
+                deadline_ns=deadline_ns,
             )
             terminal = {
                 "state": "receipt-projected",

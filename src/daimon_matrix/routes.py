@@ -9,6 +9,7 @@ decide semantic delivery.
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import hmac
 import html
@@ -35,6 +36,7 @@ from urllib.parse import urlsplit
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
 from .mandatory_echo import (
+    COMPLETION_FAILURE_CODES,
     INTAKE_FAILURE_CODES,
     LOCAL_EGRESS_DIAGNOSTIC_CODES,
     write_diagnostic,
@@ -281,6 +283,37 @@ class DurableIntakeTicket:
     completion_expires_at_ms: int | None = None
 
 
+def _completion_failure_code(failure: Exception) -> str:
+    """Retain only closed codes; exception strings and private paths stay local."""
+    current: BaseException | None = failure
+    result = "completion_failed"
+    for _ in range(5):
+        if current is None:
+            break
+        if isinstance(current, sqlite3.Error):
+            busy = getattr(current, "sqlite_errorcode", 0) & 255 in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }
+            return "completion_sqlite_busy" if busy else "completion_sqlite_unavailable"
+        if isinstance(current, OSError):
+            return "completion_" + {
+                errno.ENOENT: "storage_missing",
+                errno.EEXIST: "storage_conflict",
+            }.get(current.errno or 0, "storage_unavailable")
+        code = (
+            current.code
+            if isinstance(current, (CommunicationError, RouteError))
+            else str(current)
+            if isinstance(current, NativeEgressError)
+            else None
+        )
+        if code in COMPLETION_FAILURE_CODES:
+            result = "completion_" + str(code)
+        current = current.__cause__
+    return result
+
+
 @dataclass(frozen=True)
 class TransportReply:
     """HTTP writes the exact ACK before invoking its retained completion ticket."""
@@ -338,8 +371,12 @@ class TransportReply:
                     transient |= isinstance(failure, NativeEgressError) and str(
                         failure
                     ) in {"egress_storage_busy", "egress_attempt_deadline"}
+                    transient |= (
+                        isinstance(failure, CommunicationError)
+                        and failure.code == "communication_projection_busy"
+                    )
                     if not transient:
-                        code = "completion_failed"
+                        code = _completion_failure_code(failure)
                         break
                 remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
                 if remaining <= 0:

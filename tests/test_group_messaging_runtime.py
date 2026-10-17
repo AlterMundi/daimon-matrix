@@ -1366,6 +1366,60 @@ class GroupRuntimeTests(unittest.TestCase):
         blocked.complete(deadline_ns=time.monotonic_ns() - 1)
         self.assertEqual(outcomes[-1], "completion_blocked")
 
+    def test_completion_diagnostic_retains_closed_failure_cause_without_text(self):
+        import errno
+
+        from daimon_matrix.communication import CommunicationError
+        from daimon_matrix.mandatory_echo import write_diagnostic
+
+        sqlite_failure = sqlite3.OperationalError("private path")
+        sqlite_failure.sqlite_errorcode = sqlite3.SQLITE_IOERR
+        causes = [
+            (
+                CommunicationError("communication_pending_invalid"),
+                "completion_communication_pending_invalid",
+            ),
+            (
+                FileNotFoundError(errno.ENOENT, "private path"),
+                "completion_storage_missing",
+            ),
+            (
+                FileExistsError(errno.EEXIST, "private path"),
+                "completion_storage_conflict",
+            ),
+            (sqlite_failure, "completion_sqlite_unavailable"),
+            (ValueError("private path"), "completion_failed"),
+        ]
+        for failure, expected in causes:
+            with self.subTest(expected=expected):
+                wrapper = ValueError("private wrapper")
+                wrapper.__cause__ = failure
+                codes = []
+
+                def complete(_, error=wrapper):
+                    raise error
+
+                reply = TransportReply(
+                    b"ack",
+                    lambda: None,
+                    after_response_bounded=complete,
+                    completion_expires_at_ms=2000,
+                    completion_clock=lambda: 1000,
+                    completion_diagnostic=codes.append,
+                )
+                reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+                self.assertEqual(codes, [expected])
+                native = self.groups[0].intake_ingresses["message"].inbox.path
+                write_diagnostic(
+                    native, "intake-completion", "test-completion", expected, 1000
+                )
+                self.assertEqual(
+                    read_diagnostic(native, "intake-completion", "test-completion")[
+                        "code"
+                    ],
+                    expected,
+                )
+
     def test_http_completion_does_not_retry_a_blocked_receipt_return(self):
         sender, receiver = self.groups
         provider = receiver.providers[

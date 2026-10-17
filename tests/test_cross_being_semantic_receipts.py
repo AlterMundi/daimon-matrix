@@ -2,13 +2,19 @@
 
 import copy
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.communication import CommunicationStore, select_persisted_schema
+from daimon_matrix.communication import (
+    CommunicationError,
+    CommunicationStore,
+    select_persisted_schema,
+)
 from daimon_matrix.synthetic_relationships import _uuid
 from daimon_matrix.weave import create_event
 from tests import test_native_messaging as native
@@ -516,6 +522,136 @@ class ForeignReceiptTests(unittest.TestCase):
                 self.receipt(), recipient_being_ref=self.pair.recipient.state.being_ref
             )["terminal"]
         )
+
+    def test_concurrent_projection_waits_for_post_commit_pending_cleanup(self):
+        store = self.store()
+        other = CommunicationStore(
+            copy.copy(self.sender.ledger),
+            receipts_v2=True,
+            foreign_authority_resolver=lambda ref: self.pair.public[ref],
+            clock=lambda: self.pair.now,
+        )
+        committed, release, entering, finished = (threading.Event() for _ in range(4))
+        errors = []
+        results = []
+        receipt = self.receipt()
+        remove = store._pending_remove
+
+        def paused_cleanup():
+            committed.set()
+            if not release.wait(5):
+                raise TimeoutError("fixture cleanup not released")
+            remove()
+
+        def project(target):
+            try:
+                if target is other:
+                    entering.set()
+                results.append(
+                    target.record_foreign_receipt(
+                        receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+                    )
+                )
+            except Exception as error:
+                errors.append(error)
+            finally:
+                if target is other:
+                    finished.set()
+
+        first = threading.Thread(target=project, args=(store,))
+        second = threading.Thread(target=project, args=(other,))
+        with patch.object(store, "_pending_remove", side_effect=paused_cleanup):
+            first.start()
+            try:
+                self.assertTrue(committed.wait(5))
+                self.assertTrue(store._pending_path().exists())
+                started = time.monotonic()
+                with self.assertRaisesRegex(
+                    CommunicationError, "communication_projection_busy"
+                ):
+                    other.record_foreign_receipt(
+                        receipt,
+                        recipient_being_ref=self.pair.recipient.state.being_ref,
+                        deadline_ns=time.monotonic_ns() + 20_000_000,
+                    )
+                self.assertLess(time.monotonic() - started, 0.2)
+                second.start()
+                self.assertTrue(entering.wait(2))
+                # An initializer must not recover the active writer's sidecar.
+                self.assertFalse(finished.wait(0.2))
+                self.assertTrue(store._pending_path().exists())
+            finally:
+                release.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["terminal"] for result in results))
+        self.assertFalse(store._pending_path().exists())
+
+    def test_native_callbacks_are_read_only_and_do_not_wait_for_projection_gate(self):
+        import sqlite3
+
+        entered, release = threading.Event(), threading.Event()
+        store = self.store()
+
+        def hold_projection():
+            with store._database():
+                entered.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold_projection)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with patch.object(
+                store, "_projection", side_effect=AssertionError("lock inversion")
+            ):
+                with self.assertRaisesRegex(
+                    CommunicationError, "communication_egress_missing"
+                ):
+                    store._resolve_egress("missing")
+                with self.assertRaisesRegex(
+                    CommunicationError, "route_attempt_not_known"
+                ):
+                    store.egress_attempt("missing")
+                with (
+                    store._egress_database() as database,
+                    self.assertRaises(sqlite3.OperationalError),
+                ):
+                    database.execute("DELETE FROM communication_messages")
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_native_callbacks_preserve_owner_path_checks_without_creating_files(self):
+        import sqlite3
+
+        from daimon_matrix.ledger import LedgerStateError
+
+        store = self.store()
+        path = store.ledger.path
+        path.chmod(0o644)
+        try:
+            with self.assertRaisesRegex(LedgerStateError, "ledger_file_not_owner_only"):
+                store._resolve_egress("missing")
+        finally:
+            path.chmod(0o600)
+        link = path.with_name("linked-ledger")
+        link.symlink_to(path)
+        view = copy.copy(store)
+        view.ledger = copy.copy(store.ledger)
+        view.ledger.path = link
+        with self.assertRaisesRegex(LedgerStateError, "ledger_file_not_owner_only"):
+            view.egress_attempt("missing")
+        view.ledger.path = path.with_name("absent-ledger")
+        with self.assertRaises(sqlite3.OperationalError):
+            view.egress_attempt("missing")
+        self.assertFalse(view.ledger.path.exists())
 
     def test_foreign_reducer_recovers_anchor_before_database_commit(self):
         from unittest.mock import patch

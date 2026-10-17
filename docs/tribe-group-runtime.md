@@ -120,6 +120,16 @@ projection before ACK creation. Incorporating that already validated proof into
 Control proof does not become speech, a readable conversation item, a reciprocal
 receipt or a model turn. Transport ACK and signed semantic delivery stay distinct.
 
+Concurrent projection operations on one owned ledger serialize through SQLite
+COMMIT, pending-journal cleanup and connection close. SQLite's writer lock alone
+ends too early to protect that cleanup from a second initializer. This local gate
+is shared by all views of that ledger; completion uses its existing explicit
+deadline when waiting. Native egress's immutable request/route callbacks stay
+read-only and outside the gate to preserve lock ordering and ACK progress. Full
+signature, projection, pending-journal and rollback validation remains required.
+Closed completion diagnostics retain safe error/errno categories, never exception
+text or private paths; a missing signed receipt is never inferred from an ACK.
+
 `operator_messaging reconcile-intake` is a finite owner operation under the same
 exclusive runtime lock as the daemon. It accepts bounded `--intake-after`,
 `--intake-limit`, `--intake-max-bytes` and `--intake-max-elapsed-ms` navigation

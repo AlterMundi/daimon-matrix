@@ -15,6 +15,8 @@ import os
 import secrets
 import sqlite3
 import stat
+import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -23,10 +25,16 @@ from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, Final
+from weakref import WeakValueDictionary
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
-from .ledger import Ledger, LedgerStateError
+from .ledger import (
+    Ledger,
+    LedgerStateError,
+    _assert_owner_directory,
+    _assert_owner_file,
+)
 from .native_egress import MandatoryEgressController, OperationBinding
 from .weave import (
     BoundHistoryAuthority,
@@ -658,6 +666,26 @@ def select_persisted_schema(store: CommunicationStore, ledger: Ledger) -> None:
         store.receipts_v2 = True
 
 
+# SQLite's writer lock ends at COMMIT, before the projection's pending file is
+# removed. Keep that whole local lifetime exclusive across all views of a ledger.
+# The daemon owns cross-process writing; this gate orders its concurrent threads.
+_projection_gates: WeakValueDictionary[Path, threading.RLock] = WeakValueDictionary()
+_projection_gates_lock = threading.Lock()
+_projection_deadline: ContextVar[int | None] = ContextVar(
+    "communication_projection_deadline", default=None
+)
+
+
+def _projection_gate(path: Path) -> threading.RLock:
+    key = path.resolve()
+    with _projection_gates_lock:
+        gate = _projection_gates.get(key)
+        if gate is None:
+            gate = threading.RLock()
+            _projection_gates[key] = gate
+        return gate
+
+
 class CommunicationStore:
     """Durable logical-message reducer and operational queue projection."""
 
@@ -682,6 +710,7 @@ class CommunicationStore:
         self.clock = clock
         self.uuid_factory = uuid_factory
         self.token_factory = token_factory
+        self._projection_gate = _projection_gate(ledger.path)
         self._egress: MandatoryEgressController | None = None
         self._egress_catalog: str | None = None
         self._egress_authorizers: list[Callable[[OperationBinding], bool]] = []
@@ -690,13 +719,67 @@ class CommunicationStore:
         )
 
     @contextmanager
-    def _database(self) -> Iterator[sqlite3.Connection]:
-        token = _verified_events.set(_VerifiedEvents({}))
+    def _projection(self, *, deadline_ns: int | None = None) -> Iterator[None]:
+        inherited = _projection_deadline.get()
+        if inherited is not None:
+            deadline_ns = (
+                inherited if deadline_ns is None else min(inherited, deadline_ns)
+            )
+        token = _projection_deadline.set(deadline_ns)
+        acquired = False
         try:
-            with self.ledger._database() as database:
-                yield database
+            if deadline_ns is None:
+                acquired = self._projection_gate.acquire()
+            else:
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0 or not self._projection_gate.acquire(
+                    timeout=remaining
+                ):
+                    raise CommunicationError(
+                        "communication_projection_busy", retryable=True
+                    )
+                acquired = True
+                if time.monotonic_ns() >= deadline_ns:
+                    raise CommunicationError(
+                        "communication_projection_busy", retryable=True
+                    )
+            yield
         finally:
-            _verified_events.reset(token)
+            if acquired:
+                self._projection_gate.release()
+            _projection_deadline.reset(token)
+
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
+        # Do not release this gate at COMMIT: pending cleanup and close are part
+        # of the same projection operation. No network runs inside this scope.
+        with self._projection():
+            token = _verified_events.set(_VerifiedEvents({}))
+            try:
+                with self.ledger._database() as database:
+                    yield database
+            finally:
+                _verified_events.reset(token)
+
+    @contextmanager
+    def _egress_database(self) -> Iterator[sqlite3.Connection]:
+        # Native egress invokes these immutable lookups under its physical fence.
+        # They must never acquire the projection gate (the opposite lock order),
+        # initialize the store, recover sidecars or change authority/projections.
+        path = self.ledger.path
+        _assert_owner_directory(path.parent)
+        ancestor = path.parent
+        while ancestor != ancestor.parent:
+            if ancestor.is_symlink():
+                raise LedgerStateError("ledger_ancestor_symlink")
+            ancestor = ancestor.parent
+        _assert_owner_file(path)
+        database = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
+        database.row_factory = sqlite3.Row
+        try:
+            yield database
+        finally:
+            database.close()
 
     def bind_egress(
         self,
@@ -726,7 +809,7 @@ class CommunicationStore:
         return any(authorize(binding) for authorize in self._egress_authorizers)
 
     def _resolve_egress(self, locator: str) -> bytes:
-        with self._database() as database:
+        with self._egress_database() as database:
             row = database.execute(
                 "SELECT request FROM communication_egress_requests WHERE attempt_id=?",
                 (locator,),
@@ -736,7 +819,7 @@ class CommunicationStore:
         return bytes(row[0])
 
     def egress_attempt(self, attempt_id: str) -> dict[str, str]:
-        with self._database() as database:
+        with self._egress_database() as database:
             row = database.execute(
                 "SELECT provider_ref, route_ref FROM communication_attempts "
                 "WHERE attempt_id=?",
@@ -3044,9 +3127,23 @@ class CommunicationStore:
         return event, leg
 
     def record_foreign_receipt(
-        self, receipt: Mapping[str, Any], *, recipient_being_ref: str
+        self,
+        receipt: Mapping[str, Any],
+        *,
+        recipient_being_ref: str,
+        deadline_ns: int | None = None,
     ) -> dict[str, Any]:
         """Trusted intake only: independently enrolled recipient, not model input."""
+        # Group/base views can have different egress controllers. Propagate the
+        # caller's budget explicitly rather than depending on either controller.
+        with self._projection(deadline_ns=deadline_ns):
+            return self._record_foreign_receipt(
+                receipt, recipient_being_ref=recipient_being_ref
+            )
+
+    def _record_foreign_receipt(
+        self, receipt: Mapping[str, Any], *, recipient_being_ref: str
+    ) -> dict[str, Any]:
         self.initialize()
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
