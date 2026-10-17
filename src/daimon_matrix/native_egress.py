@@ -2702,6 +2702,8 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_operation_invalid")
         if _digest(native_bytes) != binding.native_sha256:
             raise NativeEgressError("egress_operation_mismatch")
+        if not self._authorize(binding, self._catalogs[binding.catalog_id]):
+            raise NativeEgressError("egress_authority_blocked")
         if binding.path_id in INTRA_BEING_LANE_PATHS and not (
             self._mirror_sibling_conversations
             and binding.path_id in SIBLING_CONVERSATION_PATHS
