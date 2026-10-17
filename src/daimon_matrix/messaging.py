@@ -2504,7 +2504,7 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> str | None:
         if receipt:
             if not self._claim_transport(row, operation, receipt=True):
                 return
@@ -2512,7 +2512,7 @@ class GroupMessaging:
                 if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
                     return
                 self.egress.prepare_visibility(operation)
-                self._transmit_one(
+                return self._transmit_one(
                     native,
                     row,
                     operation,
@@ -2523,7 +2523,7 @@ class GroupMessaging:
             finally:
                 self._finish_transport(row, operation, receipt=True)
         else:
-            self._transmit_one(
+            return self._transmit_one(
                 native,
                 row,
                 operation,
@@ -2541,7 +2541,7 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None,
         authorize: Callable[[], None] | None,
-    ) -> None:
+    ) -> str | None:
         from .routes import RouteError
         from .sealed import inspect_delivery
 
@@ -2668,7 +2668,7 @@ class GroupMessaging:
                     failure.code,
                     self.lane.clock(),
                 )
-            return
+            return failure.code
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
         from .sealed import inspect_delivery
@@ -3091,13 +3091,20 @@ class GroupMessaging:
                 deadline_ms=obligation["deadline_ms"],
                 authority_head=self.ledger.local_origin["body_ref"],
             )
-            self._transmit(
+            failure_code = self._transmit(
                 native,
                 obligation["return_target"],
                 operation,
                 receipt=True,
                 deadline_ns=deadline_ns,
             )
+            if failure_code in {
+                "route_authority_blocked",
+                "route_echo_unconfirmed",
+                "route_egress_blocked",
+                "transport_response_rejected",
+            }:
+                return {"state": "blocked-return"}
             state = self._retained_return_state(result, obligation) or "pending"
         if state == "pending":
             return {"state": state}

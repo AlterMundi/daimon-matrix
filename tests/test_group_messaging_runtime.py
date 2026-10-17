@@ -1366,6 +1366,31 @@ class GroupRuntimeTests(unittest.TestCase):
         blocked.complete(deadline_ns=time.monotonic_ns() - 1)
         self.assertEqual(outcomes[-1], "completion_blocked")
 
+    def test_http_completion_does_not_retry_a_blocked_receipt_return(self):
+        sender, receiver = self.groups
+        provider = receiver.providers[
+            (sender.lane.being_ref, sender.lane.local_embodiment_id)
+        ]["evidence"]
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteError("route_authority_blocked")
+        ) as transport:
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="blocked authority leaves retained receipt without retry",
+            )
+        transport.assert_called_once()
+        self.assertFalse(result["semantic"]["terminal"])
+        obligation = receiver.records.get("receipt-obligation", result["message_id"])
+        diagnostic = read_diagnostic(
+            receiver.intake_ingresses["message"].inbox.path,
+            "intake-completion",
+            obligation["first_request_id"],
+        )
+        self.assertEqual(diagnostic["code"], "completion_blocked")
+
     def test_transport_reservation_and_release_share_the_catalog_fence(self):
         controller, binding, raw = self._bounded_write_operation()
         controller.advance_one(binding)
