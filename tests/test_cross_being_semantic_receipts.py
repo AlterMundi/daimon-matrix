@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
+from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import CommunicationStore, select_persisted_schema
 from daimon_matrix.synthetic_relationships import _uuid
 from daimon_matrix.weave import create_event
@@ -35,7 +36,7 @@ class ForeignReceiptTests(unittest.TestCase):
         )
         self.message, self.resolution, _ = self.sender.ledger.events()
 
-    def receipt(self, *, payload=None, sequence=1):
+    def receipt(self, *, payload=None, sequence=1, previous=None):
         body = {
             "schema": "dm.communication.receipt/v2",
             "message_being_ref": self.message["being_ref"],
@@ -58,7 +59,7 @@ class ForeignReceiptTests(unittest.TestCase):
             authority=self.pair.recipient.authority,
             origin=self.pair.recipient.origin,
             sequence=sequence,
-            previous_event_id=None,
+            previous_event_id=previous,
             causal_parents=[],
             event_id=_uuid("receipt-" + str(sequence)),
             kind="experience.observed",
@@ -71,6 +72,128 @@ class ForeignReceiptTests(unittest.TestCase):
 
     def store(self):
         return self.semantic_store
+
+    def test_receipt_growth_verifies_each_exact_event_once_per_connection(self):
+        from daimon_matrix.communication import verify_event
+
+        previous = None
+        for index in range(4):
+            if index:
+                self.sender.prepare(
+                    client_id="owner",
+                    send_id=_uuid(f"memo-send-{index}"),
+                    thread_id=_uuid(f"memo-thread-{index}"),
+                    text="more completed history",
+                )
+                events = self.sender.ledger.events()
+                self.message = next(
+                    e for e in reversed(events) if e["subject"] == "communication"
+                )
+                self.resolution = next(
+                    e
+                    for e in reversed(events)
+                    if e["subject"] == "communication-resolution"
+                )
+            receipt = self.receipt(sequence=index + 1, previous=previous)
+            previous = receipt["event_id"]
+            with (
+                patch(
+                    "daimon_matrix.communication.verify_event", wraps=verify_event
+                ) as verify,
+                patch.object(
+                    self.store(), "_validate_store", wraps=self.store()._validate_store
+                ) as validate,
+            ):
+                result = self.store().record_foreign_receipt(
+                    receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+                )
+            self.assertTrue(result["terminal"])
+            exact = [canonical_bytes(call.args[0]) for call in verify.call_args_list]
+            self.assertEqual(len(exact), len(set(exact)))
+            self.assertGreaterEqual(len(exact), 3 * (index + 1))
+            self.assertEqual(validate.call_count, 2)
+
+    def test_verification_memo_rechecks_event_and_mutable_authority(self):
+        from dataclasses import replace
+
+        from daimon_matrix.communication import CommunicationError, _event, verify_event
+        from daimon_matrix.weave import RootAuthorityInventory
+
+        authority = copy.deepcopy(self.pair.sender.authority)
+        inventory = RootAuthorityInventory(
+            authority, {authority.state.being_ref: authority}
+        )
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.verify_event", wraps=verify_event
+            ) as verify,
+        ):
+            first = _event(self.message, inventory)
+            first["payload"]["body"].clear()
+            self.assertEqual(_event(self.message, inventory), self.message)
+            self.assertEqual(verify.call_count, 1)
+
+            for section, field in (("payload", "body"), ("signature", "value")):
+                bad = copy.deepcopy(self.message)
+                bad[section][field] = {} if section == "payload" else "A" * 86
+                with self.assertRaises(CommunicationError):
+                    _event(bad, inventory)
+
+            # Same object/head/manifest and event ID, different nested authority.
+            credential = next(iter(authority.credentials.values()))
+            saved = copy.deepcopy(credential)
+            credential["signatures"][0]["value"] = "A" * 86
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            credential.clear()
+            credential.update(saved)
+            changed = replace(
+                authority,
+                state=replace(authority.state, sequence=authority.state.sequence + 1),
+            )
+            inventory.authorities[authority.state.being_ref] = changed
+            previous = verify.call_count
+            _event(self.message, inventory)
+            self.assertEqual(verify.call_count, previous + 1)
+            changed.state.revocations[credential["body"]["embodiment_id"]] = {
+                "cutoff_incarnation_sequence": -1,
+                "revocation_generation": 1,
+            }
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            inventory.authorities.clear()
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+        # A second connection starts empty even when all public bytes match.
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.verify_event", wraps=verify_event
+            ) as verify,
+        ):
+            _event(self.message, self.pair.sender.authority)
+            self.assertEqual(verify.call_count, 1)
+
+    def test_verification_memo_uses_one_authority_selection(self):
+        from daimon_matrix.communication import CommunicationError, _event
+        from daimon_matrix.weave import RootAuthorityInventory
+
+        authority = self.pair.sender.authority
+        bad = copy.deepcopy(authority)
+        next(iter(bad.credentials.values()))["signatures"][0]["value"] = "A" * 86
+        inventory = RootAuthorityInventory(
+            authority, {authority.state.being_ref: authority}
+        )
+        with (
+            self.store()._database(),
+            patch.object(
+                RootAuthorityInventory, "select", side_effect=[bad, authority]
+            ) as select,
+        ):
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            self.assertEqual(select.call_count, 1)
 
     def test_deferred_receipt_preserves_observation_before_current_signing_time(self):
         original_observation = self.pair.now

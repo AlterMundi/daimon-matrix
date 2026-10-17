@@ -18,14 +18,25 @@ import stat
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Final
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .ledger import Ledger, LedgerStateError
 from .native_egress import MandatoryEgressController, OperationBinding
-from .weave import Event, EventAuthority, WeaveProtocolError, verify_event
+from .weave import (
+    BoundHistoryAuthority,
+    Event,
+    EventAuthority,
+    ProvisionalAuthority,
+    RootAuthority,
+    RootAuthorityInventory,
+    WeaveProtocolError,
+    verify_event,
+)
 
 MESSAGE_PAYLOAD_SCHEMA: Final = "dm.communication.message/v1"
 RESOLUTION_PAYLOAD_SCHEMA: Final = "dm.communication.resolution/v1"
@@ -190,9 +201,93 @@ def _canonical(value: Any, error: str) -> bytes:
         raise CommunicationError(error) from exception
 
 
+@dataclass
+class _VerifiedEvents:
+    entries: dict[tuple[bytes, bytes], tuple[Event, int]]
+    size: int = 0
+
+
+_verified_events: ContextVar[_VerifiedEvents | None] = ContextVar(
+    "communication_verified_events", default=None
+)
+
+
+def _authority_fingerprint(authority: EventAuthority) -> bytes | None:
+    # These exact implementations verify only this public material. Unknown
+    # implementations may have additional policy or effects and are never cached.
+    if type(authority) not in (RootAuthority, ProvisionalAuthority):
+        return None
+    material: dict[str, Any] = {
+        "manifest": authority.manifest.value,
+        "digest": authority.manifest.digest,
+        "trust_mode": authority.manifest.trust_mode,
+    }
+    if type(authority) is RootAuthority:
+        material.update(
+            state={
+                field.name: getattr(authority.state, field.name)
+                for field in fields(authority.state)
+            },
+            credentials=authority.credentials,
+            incarnations=authority.incarnations,
+        )
+    elif type(authority) is ProvisionalAuthority:
+        material["public_keys"] = authority.public_keys
+    else:
+        return None
+    return hashlib.sha256(canonical_bytes(material)).digest()
+
+
 def _event(value: Any, authority: EventAuthority) -> Event:
     try:
-        return verify_event(value, authority)
+        memo = _verified_events.get()
+        if (
+            memo is None
+            or not isinstance(value, Mapping)
+            or type(authority)
+            not in (
+                RootAuthority,
+                ProvisionalAuthority,
+                RootAuthorityInventory,
+                BoundHistoryAuthority,
+                RootHistoryAuthority,
+            )
+        ):
+            return verify_event(value, authority)
+        # Select on every lookup: removing an epoch or inventory entry must still
+        # refuse, even if its event verified earlier in this connection.
+        selector = getattr(authority, "select", None)
+        selected = selector(value) if callable(selector) else authority
+        fingerprint = _authority_fingerprint(selected)
+        if fingerprint is None:
+            return verify_event(value, authority)
+        raw = canonical_bytes(value)
+        key = (hashlib.sha256(raw).digest(), fingerprint)
+        cached = memo.entries.get(key)
+        if cached is not None:
+            return copy.deepcopy(cached[0])
+        verified = verify_event(value, selected)
+        # Nested authority mappings are mutable. Recompute, rather than trusting
+        # object identity, the control head, or a store mutation counter.
+        if (
+            _authority_fingerprint(selected) == fingerprint
+            and canonical_bytes(verified) == raw
+            and len(raw) <= 8 << 20
+        ):
+            while memo.entries and (
+                len(memo.entries) >= 2048 or memo.size + len(raw) > 8 << 20
+            ):
+                _, size = memo.entries.pop(next(iter(memo.entries)))
+                memo.size -= size
+            memo.entries[key] = (copy.deepcopy(verified), len(raw))
+            memo.size += len(raw)
+        return verified
+    except CanonicalError:
+        # Preserve the existing verifier's rejection behavior for malformed data.
+        try:
+            return verify_event(value, authority)
+        except WeaveProtocolError as exception:
+            raise CommunicationError("communication_event_rejected") from exception
     except WeaveProtocolError as exception:
         raise CommunicationError("communication_event_rejected") from exception
 
@@ -554,8 +649,12 @@ class CommunicationStore:
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
-        with self.ledger._database() as database:
-            yield database
+        token = _verified_events.set(_VerifiedEvents({}))
+        try:
+            with self.ledger._database() as database:
+                yield database
+        finally:
+            _verified_events.reset(token)
 
     def bind_egress(
         self,
