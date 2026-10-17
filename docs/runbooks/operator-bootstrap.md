@@ -237,7 +237,12 @@ own rollback and an atomic completion of the maintained opaque schema on the
 same original database inode; the operator never deletes its journal or replaces
 it with the rehearsal copy. Retained intent and the expected logical result allow
 an interrupted or lost-return recovery to resume without restoring old bytes.
-The raw preimages remain private evidence even after SQLite consumes a journal.
+The raw preimages remain private evidence even after SQLite consumes a journal;
+empty raw files also survive an interrupted evidence publication and exact retry.
+If composition adds its maintained authenticated empty visibility catalog before
+an interruption, retry recognizes that exact whole-database successor, derived
+on the disposable copy with the receiving controller. It does not ignore catalog
+tables or accept changed native rows, authentication or unrelated traffic.
 
 A retained recovery area requires the same explicit plan on subsequent initial
 recovery. Successful store repair is not publication: capability, effect-bound,

@@ -913,6 +913,102 @@ sys.stdin.buffer.read(1)
             operator.recover(runtime, target, **options)
         self.assertTrue(target.exists())
 
+    def test_empty_raw_evidence_install_resumes_before_intent(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        # A process can die after creating the files but before its first page
+        # write. Both empty preimages are valid protected recovery evidence.
+        path.write_bytes(b"")
+        journal.write_bytes(b"")
+        options["initial_store_recovery"]["main"]["sha256"] = hashlib.sha256(
+            b""
+        ).hexdigest()
+        options["initial_store_recovery"]["journal"]["sha256"] = hashlib.sha256(
+            b""
+        ).hexdigest()
+        before = path.read_bytes(), journal.read_bytes()
+        area = stage / ".initial-store-recovery"
+        publish = operator._publish
+
+        def lost(source, destination):
+            publish(source, destination)
+            if destination == area / "journal.before":
+                raise OSError("lost empty evidence installation")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost empty evidence installation"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse((area / "intent.json").exists())
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        operator.recover(runtime, target, **options)
+        self.assertEqual(
+            (target / ".initial-store-recovery/journal.before").read_bytes(), b""
+        )
+
+    def composed_store_without_publication(self):
+        from daimon_matrix import operator_messaging as operator
+
+        fixture = self.pending_store()
+        runtime, target, _stage, _application, options, path, _journal = fixture
+        publish = operator._publish_retained_entry
+
+        def lost(root, name, raw, **kwargs):
+            if name == "publication.json":
+                raise OSError("lost composed store before publication")
+            return publish(root, name, raw, **kwargs)
+
+        with (
+            patch.object(operator, "_publish_retained_entry", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost composed store before publication"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse(target.exists())
+        with contextlib.closing(sqlite3.connect(path)) as database:
+            self.assertEqual(
+                database.execute("SELECT count(*) FROM echo_v2_catalog").fetchone(),
+                (1,),
+            )
+        return fixture
+
+    def test_lost_composition_return_recovers_exact_visibility_successor(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, application, options, path, _journal = (
+            self.composed_store_without_publication()
+        )
+        inode = path.stat().st_ino
+        operator.recover(runtime, target, **options)
+        self.assertEqual((target / path.name).stat().st_ino, inode)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_composition_successor_rejects_unrelated_native_or_catalog_rows(self):
+        from daimon_matrix import operator_messaging as operator
+
+        for statement in (
+            "UPDATE inbox_meta SET next_sequence=42",
+            "UPDATE echo_v2_catalog SET authentication='changed'",
+        ):
+            with self.subTest(statement=statement):
+                runtime, target, _stage, _application, options, path, _journal = (
+                    self.composed_store_without_publication()
+                )
+                with contextlib.closing(sqlite3.connect(path)) as database:
+                    database.execute(statement)
+                    database.commit()
+                before = path.read_bytes()
+                with self.assertRaisesRegex(
+                    ValueError, "messaging_initial_store_recovery_rejected"
+                ):
+                    operator.recover(runtime, target, **options)
+                self.assertEqual(path.read_bytes(), before)
+                self.assertFalse(target.exists())
+
 
 class ProvisioningTests(unittest.TestCase):
     def test_peer_presentation_cli_keeps_primary_catalogs_with_distinct_proof_key(self):

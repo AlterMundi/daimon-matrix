@@ -605,6 +605,7 @@ def _publish_retained_entry(
     *,
     error_code: str,
     staging_prefix: str | None = None,
+    existing_reader: Callable[[Path], bytes] = protected_read,
 ) -> None:
     """Install complete fsynced journal bytes atomically and without replacement."""
     final_path = root / final_name
@@ -615,7 +616,7 @@ def _publish_retained_entry(
     except OSError as exception:
         raise MessagingConfigError(error_code) from exception
     else:
-        if protected_read(final_path) != raw:
+        if existing_reader(final_path) != raw:
             raise MessagingConfigError(error_code)
         _cleanup_retained_entry_staging(
             root, final_name, error_code=error_code, staging_prefix=staging_prefix
@@ -1415,7 +1416,9 @@ def _recover_initial_store(
     ):
         raise MessagingConfigError("messaging_initial_store_recovery_rejected")
 
-    def rehearse(raw: bytes, journal: bytes | None) -> str:
+    def rehearse(
+        raw: bytes, journal: bytes | None, *, include_successor: bool = False
+    ) -> tuple[str, set[str]]:
         check()
         with tempfile.TemporaryDirectory(
             prefix=".store-rehearsal-", dir=staging
@@ -1428,9 +1431,41 @@ def _recover_initial_store(
                 sqlite3.connect(work.as_uri() + "?mode=rw", uri=True, timeout=0)
             ) as database:
                 database.set_progress_handler(progress, 100)
-                result = _complete_initial_opaque(database, check)
+                base = _complete_initial_opaque(database, check)
+                result = {base}
+                can_expand = (
+                    include_successor
+                    and (
+                        runtime.egress.catalog_mode == "synthetic"
+                        or (
+                            runtime.egress.catalog_mode == "migrate"
+                            and runtime.egress.release_enabled
+                        )
+                    )
+                    and database.execute(
+                        "SELECT count(*) FROM inbox_requests"
+                    ).fetchone()
+                    == (0,)
+                    and not database.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE name='echo_v2_catalog'"
+                    ).fetchall()
+                )
+            if can_expand:
+                # Composition may subsequently add exactly this maintained,
+                # authenticated empty catalog. Derive its whole-state hash on
+                # the copy, never by ignoring visibility tables or later rows.
+                check()
+                phase = plan["role"].removeprefix("opaque-")
+                runtime.egress._provision(
+                    work, f"messaging-{phase}-responses", reconcile=False
+                )
+                with closing(
+                    sqlite3.connect(work.as_uri() + "?mode=rw", uri=True, timeout=0)
+                ) as database:
+                    database.set_progress_handler(progress, 100)
+                    result.add(_complete_initial_opaque(database, check))
             _validate_store_schema(plan["role"], work, allow_missing_visibility=True)
-            return result
+            return base, result
 
     # Bounded SQLite CPU and immediate busy refusal; the caller's actual effect
     # bound is also rechecked at every original mutation/publication boundary.
@@ -1443,14 +1478,14 @@ def _recover_initial_store(
         except MessagingConfigError:
             return 1
 
-    expected = rehearse(before, rollback)
+    expected, allowed = rehearse(before, rollback, include_successor=True)
     if intent_path.exists() and packet["body"] != {
         "schema": "dm.messaging.initial-store-recovery-intent/v1",
         "plan": plan,
         "expected_state_sha256": expected,
     }:
         raise MessagingConfigError("messaging_initial_store_recovery_rejected")
-    if rehearse(current_main, current_journal) != expected:
+    if rehearse(current_main, current_journal)[0] not in allowed:
         raise MessagingConfigError("messaging_initial_store_recovery_rejected")
     if not intent_path.exists():
         check()
@@ -1459,7 +1494,11 @@ def _recover_initial_store(
         for name, raw in (("main.before", before), ("journal.before", rollback)):
             check()
             _publish_retained_entry(
-                area, name, raw, error_code="messaging_initial_store_recovery_rejected"
+                area,
+                name,
+                raw,
+                error_code="messaging_initial_store_recovery_rejected",
+                existing_reader=lambda path: _initial_store_bytes(path)[0],
             )
         body = {
             "schema": "dm.messaging.initial-store-recovery-intent/v1",
@@ -1484,7 +1523,7 @@ def _recover_initial_store(
         sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=0)
     ) as database:
         database.set_progress_handler(progress, 100)
-        if _complete_initial_opaque(database, check) != expected:
+        if _complete_initial_opaque(database, check) not in allowed:
             raise MessagingConfigError("messaging_initial_store_recovery_rejected")
     _validate_store_schema(plan["role"], path, allow_missing_visibility=True)
     if (
