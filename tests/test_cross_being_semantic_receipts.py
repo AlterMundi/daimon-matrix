@@ -195,6 +195,30 @@ class ForeignReceiptTests(unittest.TestCase):
                 _event(self.message, inventory)
             self.assertEqual(select.call_count, 1)
 
+    def test_public_authority_snapshot_avoids_reserialization_without_type_coercion(
+        self,
+    ):
+        from daimon_matrix.communication import (
+            _authority_fingerprint,
+            _same_public_material,
+        )
+
+        authority = copy.deepcopy(self.pair.sender.authority)
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.canonical_bytes", wraps=canonical_bytes
+            ) as encode,
+        ):
+            first = _authority_fingerprint(authority)
+            self.assertEqual(_authority_fingerprint(authority), first)
+            self.assertEqual(encode.call_count, 1)
+            authority.manifest.value["revision"] = True
+            self.assertNotEqual(_authority_fingerprint(authority), first)
+            self.assertEqual(encode.call_count, 2)
+        self.assertFalse(_same_public_material({"a": [1]}, {"a": [True]}))
+        self.assertFalse(_same_public_material({"a": [1]}, {"a": [1.0]}))
+
     def test_deferred_receipt_preserves_observation_before_current_signing_time(self):
         original_observation = self.pair.now
         self.pair.now += 1000

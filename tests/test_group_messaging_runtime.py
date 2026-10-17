@@ -29,6 +29,7 @@ from daimon_matrix.routes import (
     RouteAmbiguous,
     RouteError,
     TransportIngress,
+    TransportReply,
 )
 from tests import test_dm051_sealed as sealing_fixtures
 
@@ -1215,6 +1216,155 @@ class GroupRuntimeTests(unittest.TestCase):
             release.set()
             worker.join(5)
         self.assertFalse(worker.is_alive())
+
+    def test_slow_own_echo_does_not_block_a_committed_incoming_ack(self):
+        receiver, sender = self.groups
+        from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
+
+        # The deployed representation suppresses ACK-only echo. A legacy full
+        # representation correctly waits for its own required publication.
+        receiver.egress._policy["representation"] = READABLE_REPRESENTATION
+        controller, binding, _raw = self._bounded_write_operation()
+        committed, publishing, finish, returned = (threading.Event() for _ in range(4))
+        failures, results = [], []
+        send_echo = controller._transport.send
+        commit = receiver.records.commit_intake
+
+        def slow_echo(request):
+            publishing.set()
+            if not finish.wait(5):
+                raise AssertionError("synthetic echo completion missing")
+            return send_echo(request)
+
+        def after_commit(**arguments):
+            value = commit(**arguments)
+            committed.set()
+            if not publishing.wait(5):
+                raise AssertionError("synthetic publication missing")
+            return value
+
+        def publish():
+            try:
+                if not committed.wait(5):
+                    raise AssertionError("synthetic incoming commit missing")
+                controller.advance_one(binding)
+            except BaseException as failure:
+                failures.append(failure)
+
+        def send():
+            try:
+                results.append(
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="ACK while another echo is pending",
+                    )
+                )
+            except BaseException as failure:
+                failures.append(failure)
+            finally:
+                returned.set()
+
+        publisher, incoming = (
+            threading.Thread(target=publish),
+            threading.Thread(target=send),
+        )
+        with (
+            patch.object(controller._transport, "send", side_effect=slow_echo),
+            patch.object(receiver.records, "commit_intake", side_effect=after_commit),
+        ):
+            try:
+                publisher.start()
+                incoming.start()
+                self.assertTrue(publishing.wait(5))
+                self.assertTrue(
+                    returned.wait(2),
+                    "incoming ACK waits for unrelated Telegram publication",
+                )
+                remote = next(
+                    row
+                    for row in results[0]["transport"]
+                    if row["being_ref"] == receiver.lane.being_ref
+                )
+                self.assertEqual(remote["state"], "recipient-intake")
+            finally:
+                finish.set()
+                publisher.join(5)
+                incoming.join(5)
+                for server in self.servers:
+                    server._threads.join()
+        self.assertFalse(publisher.is_alive())
+        self.assertFalse(incoming.is_alive())
+        self.assertEqual(failures, [])
+
+    def test_http_completion_retries_the_same_frozen_receipt_after_transient_failure(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = receiver.providers[
+            (sender.lane.being_ref, sender.lane.local_embodiment_id)
+        ]["evidence"]
+        original = provider.send_prepared
+        requests = []
+
+        def once_unavailable(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(provider, "send_prepared", side_effect=once_unavailable):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="finite automatic technical receipt recovery",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        receipt = receiver.records.get("receipt", result["message_id"])
+        self.assertIsNotNone(receipt)
+        terminal = receiver.records.get("receipt-terminal", result["message_id"])
+        self.assertEqual(terminal["state"], "recipient-intake")
+
+    def test_completion_budget_is_separate_frozen_and_stops_on_expiry_or_block(self):
+        now = [1000]
+        deadlines, outcomes = [], []
+
+        def complete(deadline):
+            deadlines.append(deadline)
+            if len(deadlines) == 1:
+                failure = sqlite3.OperationalError("private diagnostic must not leak")
+                failure.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                raise failure
+            return {"state": "receipt-projected"}
+
+        reply = TransportReply(
+            b"ack",
+            lambda: None,
+            after_response_bounded=complete,
+            completion_expires_at_ms=2000,
+            completion_clock=lambda: now[0],
+            completion_diagnostic=outcomes.append,
+        )
+        reply.complete(deadline_ns=time.monotonic_ns() - 1)
+        self.assertEqual(len(deadlines), 2)
+        self.assertEqual(deadlines[0], deadlines[1])
+        self.assertEqual(outcomes, ["completion_confirmed"])
+        deadlines.clear()
+        now[0] = 2000
+        reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+        self.assertEqual(deadlines, [])
+        self.assertEqual(outcomes[-1], "completion_budget_exhausted")
+        now[0] = 1000
+        blocked = replace(
+            reply, after_response_bounded=lambda _: {"state": "blocked-selection"}
+        )
+        blocked.complete(deadline_ns=time.monotonic_ns() - 1)
+        self.assertEqual(outcomes[-1], "completion_blocked")
 
     def test_transport_reservation_and_release_share_the_catalog_fence(self):
         controller, binding, raw = self._bounded_write_operation()

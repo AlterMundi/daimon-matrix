@@ -331,6 +331,16 @@ jobs:
           tests.test_mandatory_echo.EchoTests.test_closed_policy_projection_and_control_registry
           tests.test_telegram_mirror.CompactEchoRenderTests
           tests.test_single_active_tribe -v
+      - name: Echo execution and retained sibling visibility boundaries
+        # The execution/storage split changes these release paths as well as
+        # group ACKs. Reuse the rest of the existing visibility qualification.
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_sibling_mirror_confirms_conversations_and_exempts_sync
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_sibling_opt_in_blocks_native_effect_when_mirror_fails
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_signed_owner_retry_binds_exact_state_and_replays_without_post
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_signed_owner_retry_rejects_wrong_exact_fields_expiry_and_signature
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_shared_execution_fence_admits_one_identical_owner_retry -v
       - name: Changed receipt codec and membership rules
         if: needs.scope.outputs.group_receipt_checks != 'false'
         # The closed bounded-transport profile reuses PR350's installed proof;

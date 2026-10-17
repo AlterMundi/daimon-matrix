@@ -865,6 +865,12 @@ _DIAGNOSTIC_CODES = (
             "route_http_incomplete",
             "route_connection_failed",
             "route_http_response_invalid",
+            "completion_budget_exhausted",
+            "completion_expired",
+            "completion_confirmed",
+            "completion_blocked",
+            "completion_invalid",
+            "completion_failed",
         }
     )
     | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
@@ -874,7 +880,7 @@ _DIAGNOSTIC_CODES = (
 
 @contextmanager
 def _diagnostic_database(
-    native_path: Path | None, *, create: bool
+    native_path: Path | None, *, create: bool, timeout: float = 5
 ) -> Iterator[sqlite3.Connection | None]:
     # Observability is separate from the fixed authoritative store catalog. Older
     # SDKs can reopen the same native history without any migration or downgrade.
@@ -887,7 +893,9 @@ def _diagnostic_database(
         return
     _prepare_path(path)
     database = sqlite3.connect(
-        path.as_uri() + ("?mode=rw" if create else "?mode=ro"), uri=True, timeout=5
+        path.as_uri() + ("?mode=rw" if create else "?mode=ro"),
+        uri=True,
+        timeout=timeout,
     )
     try:
         database.row_factory = sqlite3.Row
@@ -912,10 +920,12 @@ def write_diagnostic(
     code: str,
     at_ms: int,
     attempt_id: str | None = None,
+    *,
+    timeout: float = 5,
 ) -> None:
     if not isinstance(code, str) or code not in _DIAGNOSTIC_CODES:
         code = "outcome-unknown"
-    with _diagnostic_database(native_path, create=True) as database:
+    with _diagnostic_database(native_path, create=True, timeout=timeout) as database:
         if database is None:
             return  # Anonymous synthetic journals have no durable filesystem.
         database.execute("BEGIN IMMEDIATE")
@@ -976,11 +986,13 @@ class MandatoryEcho:
         verify_retry: Callable[[bytes, dict[str, Any], str], RetryDecision | None]
         | None = None,
         execution_guard: Callable[[], AbstractContextManager[None]] | None = None,
+        storage_guard: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         self._journal, self._transport = journal, transport
         self._resolve, self._authorize = resolve, authorize
         self._clock = clock
         self._verify_retry, self._execution_guard = verify_retry, execution_guard
+        self._storage_guard = storage_guard or nullcontext
 
     def _current(self, record: dict[str, Any]) -> None:
         try:
@@ -1124,7 +1136,7 @@ class MandatoryEcho:
         authorization: bytes | None,
     ) -> dict[str, Any]:
         journal = self._journal
-        with journal._transaction():
+        with self._storage_guard(), journal._transaction():
             record = journal._load(operation_id, expected_binding_digest)
             self._current(record)
             state = _status(record)
@@ -1193,7 +1205,8 @@ class MandatoryEcho:
             record["revision"] += 1
             journal._write(record)
         self._checkpoint("intent_committed")
-        self._current(record)
+        with self._storage_guard():
+            self._current(record)
         try:
             raw = self._transport.send(_copy(request))
             classify_plain_response(raw, request, bot_id=policy["bot_id"])
@@ -1207,17 +1220,18 @@ class MandatoryEcho:
                 "response-validation-failed",
             }:
                 reason = "outcome-unknown"
-            write_diagnostic(
-                self._journal_path(),
-                "echo",
-                operation_id,
-                reason,
-                self._clock(),
-                attempt["attempt_id"],
-            )
+            with self._storage_guard():
+                write_diagnostic(
+                    self._journal_path(),
+                    "echo",
+                    operation_id,
+                    reason,
+                    self._clock(),
+                    attempt["attempt_id"],
+                )
             return _status(record)
         self._checkpoint("response_verified")
-        with journal._transaction():
+        with self._storage_guard(), journal._transaction():
             latest = journal._load(operation_id, expected_binding_digest)
             if latest != record:
                 raise EchoError("echo_state_conflict")
@@ -1232,4 +1246,5 @@ class MandatoryEcho:
             journal._write(latest)
         self._checkpoint("response_committed")
         self._publish_reference(latest)
-        return self.inspect(operation_id, expected_binding_digest)
+        with self._storage_guard():
+            return self.inspect(operation_id, expected_binding_digest)

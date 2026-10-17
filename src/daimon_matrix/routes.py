@@ -277,7 +277,8 @@ class DurableIntakeTicket:
     metadata: Mapping[str, Any]
     acknowledge: Callable[[bytes], None]
     after_response: Callable[[], None]
-    after_response_bounded: Callable[[int], None] | None = None
+    after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None
+    completion_expires_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -287,7 +288,10 @@ class TransportReply:
     response: bytes
     after_response: Callable[[], None]
     release_writer: Callable[[Callable[[bytes], None], int], None] | None = None
-    after_response_bounded: Callable[[int], None] | None = None
+    after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None
+    completion_expires_at_ms: int | None = None
+    completion_clock: Clock = lambda: time.time_ns() // 1_000_000
+    completion_diagnostic: Callable[[str], None] | None = None
 
     def write_to(self, writer: Callable[[bytes], None], *, deadline_ns: int) -> None:
         if self.release_writer is None:
@@ -295,6 +299,57 @@ class TransportReply:
         self.release_writer(writer, deadline_ns)
 
     def complete(self, *, deadline_ns: int) -> None:
+        if self.completion_expires_at_ms is not None:
+            # ACK writing retains its original five-second socket budget.
+            # Only admitted technical work gets a separate, once-frozen budget.
+            started = time.monotonic_ns()
+            remaining_ms = self.completion_expires_at_ms - self.completion_clock()
+            deadline_ns = started + min(30_000, max(0, remaining_ms)) * 1_000_000
+            code = "completion_budget_exhausted"
+            delay = 0.05
+            while time.monotonic_ns() < deadline_ns:
+                if self.completion_clock() >= self.completion_expires_at_ms:
+                    code = "completion_expired"
+                    break
+                try:
+                    outcome = (
+                        self.after_response_bounded(deadline_ns)
+                        if self.after_response_bounded is not None
+                        else None
+                    )
+                    if outcome is None:
+                        code = "completion_invalid"
+                        break
+                    state = outcome.get("state")
+                    if state not in {"pending", "in-flight"}:
+                        code = (
+                            "completion_confirmed"
+                            if state in {"recipient-intake", "receipt-projected"}
+                            else "completion_expired"
+                            if state == "expired"
+                            else "completion_blocked"
+                        )
+                        break
+                except Exception as failure:
+                    # Retry only a proved transient local storage failure.
+                    transient = isinstance(failure, sqlite3.Error) and (
+                        getattr(failure, "sqlite_errorcode", 0) & 255
+                    ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+                    transient |= isinstance(failure, NativeEgressError) and str(
+                        failure
+                    ) in {"egress_storage_busy", "egress_attempt_deadline"}
+                    if not transient:
+                        code = "completion_failed"
+                        break
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    break
+                time.sleep(min(delay, remaining))
+                delay = min(1.0, delay * 2)
+            if self.completion_diagnostic is not None:
+                with suppress(ValueError, OSError, sqlite3.Error):
+                    self.completion_diagnostic(code)
+            return
         if time.monotonic_ns() >= deadline_ns:
             return  # Durable intent remains pending; no new work is started.
         if self.after_response_bounded is not None:
@@ -1469,6 +1524,9 @@ class TransportIngress:
                     after_response_bounded=(
                         None if ticket is None else ticket.after_response_bounded
                     ),
+                    completion_expires_at_ms=(
+                        None if ticket is None else ticket.completion_expires_at_ms
+                    ),
                 )
             return self.egress.release(
                 self.egress.binding(self.egress_catalog_id, request_id),
@@ -1493,7 +1551,8 @@ class TransportIngress:
         response: bytes,
         *,
         after_response: Callable[[], None],
-        after_response_bounded: Callable[[int], None] | None = None,
+        after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None,
+        completion_expires_at_ms: int | None = None,
     ) -> TransportReply:
         binding = self.egress.binding(self.egress_catalog_id, request_id)
         # Preserve the selected visibility prerequisite, including legacy
@@ -1507,7 +1566,20 @@ class TransportIngress:
             )
 
         return TransportReply(
-            bytes(response), after_response, release, after_response_bounded
+            bytes(response),
+            after_response,
+            release,
+            after_response_bounded,
+            completion_expires_at_ms,
+            self.clock,
+            lambda code: write_diagnostic(
+                self.inbox.path,
+                "intake-completion",
+                request_id,
+                code,
+                self.clock(),
+                timeout=0,
+            ),
         )
 
     def intake_binding(self) -> dict[str, Any]:

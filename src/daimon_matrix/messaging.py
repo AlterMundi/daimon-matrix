@@ -2897,14 +2897,15 @@ class GroupMessaging:
     def _retained_message_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
-        admission, inbox, _obligation = self._retained_intake(context)
+        admission, inbox, obligation = self._retained_intake(context)
         identifier = inbox["message"]["event_id"]
 
         def after_response() -> None:
             self.complete_receipt(identifier)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_receipt(identifier, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_receipt(identifier, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -2914,6 +2915,7 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=obligation["deadline_ms"],
         )
 
     def _acknowledge_intake(
@@ -3271,8 +3273,9 @@ class GroupMessaging:
         def after_response() -> None:
             self.complete_control(request_id)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_control(request_id, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_control(request_id, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -3282,6 +3285,7 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=context["request"]["expires_at_ms"],
         )
 
     def complete_control(

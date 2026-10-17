@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, Final
 
@@ -205,11 +206,31 @@ def _canonical(value: Any, error: str) -> bytes:
 class _VerifiedEvents:
     entries: dict[tuple[bytes, bytes], tuple[Event, int]]
     size: int = 0
+    authorities: dict[int, tuple[EventAuthority, Any, bytes]] = dataclass_field(
+        default_factory=dict
+    )
 
 
 _verified_events: ContextVar[_VerifiedEvents | None] = ContextVar(
     "communication_verified_events", default=None
 )
+
+
+def _same_public_material(left: Any, right: Any) -> bool:
+    # JSON booleans and numbers compare equal in Python but have different
+    # canonical bytes. Only exact plain JSON types qualify for the fast path.
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(
+            type(key) is str and _same_public_material(value, right[key])
+            for key, value in left.items()
+        )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _same_public_material(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return type(left) in (str, int, bool, type(None)) and left == right
 
 
 def _authority_fingerprint(authority: EventAuthority) -> bytes | None:
@@ -235,7 +256,28 @@ def _authority_fingerprint(authority: EventAuthority) -> bytes | None:
         material["public_keys"] = authority.public_keys
     else:
         return None
-    return hashlib.sha256(canonical_bytes(material)).digest()
+    memo = _verified_events.get()
+    retained = None if memo is None else memo.authorities.get(id(authority))
+    if (
+        retained is not None
+        and retained[0] is authority
+        and _same_public_material(retained[1], material)
+    ):
+        # Full structural equality against an independent deep snapshot checks
+        # nested mutations on every lookup without reserializing unchanged keys.
+        return retained[2]
+    snapshot = copy.deepcopy(material)
+    raw = canonical_bytes(snapshot)
+    fingerprint = hashlib.sha256(raw).digest()
+    if memo is not None and len(raw) <= 1 << 20:
+        if len(memo.authorities) >= 16:
+            memo.authorities.clear()
+        memo.authorities[id(authority)] = (
+            authority,
+            snapshot,
+            fingerprint,
+        )
+    return fingerprint
 
 
 def _event(value: Any, authority: EventAuthority) -> Event:

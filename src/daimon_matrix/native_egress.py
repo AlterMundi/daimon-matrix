@@ -807,6 +807,8 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_catalog_mode_invalid")
         self._catalog_mode: Literal["validate", "migrate", "synthetic"] = catalog_mode
         self._fence = threading.RLock()
+        # Publication owns an execution slot, not the native writer fence.
+        self._echo_execution = threading.RLock()
         # Owner control and physical writes share this exact fence. A restarted
         # compositor never inherits a positive selection from retained evidence.
         self._reader_instance_id = str(uuid.uuid4())
@@ -1659,6 +1661,19 @@ class MandatoryEgressController:
             self._worker_state = "stopped"
 
     @contextmanager
+    def attempt_budget(self, deadline_ns: int) -> Iterator[None]:
+        """Inherit one elapsed budget without holding storage across network I/O."""
+        inherited = self._attempt_deadline.get()
+        if inherited is not None:
+            deadline_ns = min(inherited, deadline_ns)
+        self._remaining_attempt_seconds(deadline_ns)
+        token = self._attempt_deadline.set(deadline_ns)
+        try:
+            yield
+        finally:
+            self._attempt_deadline.reset(token)
+
+    @contextmanager
     def local_storage(self, *, deadline_ns: int | None = None) -> Iterator[int | None]:
         """Order local catalog access with release, without a second lock order.
 
@@ -1694,6 +1709,26 @@ class MandatoryEgressController:
         # Guard reads through close too: DELETE-journal readers obstruct commit.
         with self.local_storage(), self._open_database(catalog) as database:
             yield database
+
+    @contextmanager
+    def _publication_database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
+        # Open/configure under the storage guard, then release it during HTTP.
+        context = self._open_database(catalog)
+        with self.local_storage():
+            database = context.__enter__()
+        try:
+            yield database
+        except BaseException as failure:
+            # Cleanup retains ownership even when its elapsed budget expired.
+            with self._fence:
+                suppressed = context.__exit__(
+                    type(failure), failure, failure.__traceback__
+                )
+            if not suppressed:
+                raise
+        else:
+            with self._fence:
+                context.__exit__(None, None, None)
 
     @contextmanager
     def _open_database(self, catalog: _Catalog) -> Iterator[sqlite3.Connection]:
@@ -2393,12 +2428,27 @@ class MandatoryEgressController:
             resolve=lambda _operation: self._load_projection(binding),
             authorize=lambda _record: self._authorize(binding, catalog),
             clock=self._clock,
+            storage_guard=self.local_storage,
         )
 
     @contextmanager
     def _retry_execution_guard(self) -> Iterator[None]:
-        with self._fence:
+        deadline = self._attempt_deadline.get()
+        acquired = False
+        try:
+            acquired = (
+                self._echo_execution.acquire()
+                if deadline is None
+                else self._echo_execution.acquire(
+                    timeout=self._remaining_attempt_seconds(deadline)
+                )
+            )
+            if not acquired:
+                raise NativeEgressError("egress_attempt_deadline")
             yield
+        finally:
+            if acquired:
+                self._echo_execution.release()
 
     def _retry_mandatory(
         self, binding: OperationBinding, database: sqlite3.Connection
@@ -2439,6 +2489,7 @@ class MandatoryEgressController:
             clock=self._clock,
             verify_retry=verify_retry,
             execution_guard=self._retry_execution_guard,
+            storage_guard=self.local_storage,
         )
 
     def _authorize(self, binding: OperationBinding, catalog: _Catalog) -> bool:
@@ -2532,14 +2583,19 @@ class MandatoryEgressController:
     def retry_ambiguous(
         self, binding: OperationBinding, authorization: bytes
     ) -> dict[str, Any]:
-        """Owner-only signed recovery under the same fence as normal execution."""
+        """Owner-only recovery serialized with ordinary publication execution."""
 
         catalog = self._catalogs.get(binding.catalog_id)
         if catalog is None:
             raise NativeEgressError("egress_catalog_invalid")
         try:
-            with self._database(catalog) as database:
-                return self._retry_mandatory(binding, database).retry_ambiguous(
+            with (
+                self._retry_execution_guard(),
+                self._publication_database(catalog) as database,
+            ):
+                with self.local_storage():
+                    echo = self._retry_mandatory(binding, database)
+                return echo.retry_ambiguous(
                     binding.echo_operation_id,
                     binding.echo_binding_digest,
                     authorization,
@@ -2555,9 +2611,14 @@ class MandatoryEgressController:
         catalog = self._catalogs.get(binding.catalog_id)
         if catalog is None:
             raise NativeEgressError("egress_catalog_invalid")
-        with self._fence, self._database(catalog) as database:
+        with (
+            self._retry_execution_guard(),
+            self._publication_database(catalog) as database,
+        ):
             try:
-                return self._mandatory(binding, database).advance(
+                with self.local_storage():
+                    echo = self._mandatory(binding, database)
+                return echo.advance(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
             except EchoError as exception:
@@ -2631,6 +2692,23 @@ class MandatoryEgressController:
         self._live_permits.add(nonce)
         return ReleasePermit(binding, nonce, self._permit_marker)
 
+    def _prepare_release_visibility(
+        self, binding: OperationBinding, native_bytes: bytes
+    ) -> None:
+        if (
+            binding.catalog_id not in self._catalogs
+            or binding.path_id not in PEER_EGRESS_PATHS
+        ):
+            raise NativeEgressError("egress_operation_invalid")
+        if _digest(native_bytes) != binding.native_sha256:
+            raise NativeEgressError("egress_operation_mismatch")
+        if binding.path_id in INTRA_BEING_LANE_PATHS and not (
+            self._mirror_sibling_conversations
+            and binding.path_id in SIBLING_CONVERSATION_PATHS
+        ):
+            return
+        self.prepare_visibility(binding)
+
     def _consume_permit_locked(
         self,
         permit: ReleasePermit,
@@ -2666,8 +2744,11 @@ class MandatoryEgressController:
     ) -> _Result:
         """Issue and consume exactly one permit without releasing the shared fence."""
 
+        self._prepare_release_visibility(binding, native_bytes)
         with self._fence:
-            permit = self._issue_permit_locked(binding, native_bytes)
+            permit = self._issue_permit_locked(
+                binding, native_bytes, advance_visibility=False
+            )
             return self._consume_permit_locked(permit, native_bytes, effect)
 
     @staticmethod
@@ -2761,9 +2842,12 @@ class MandatoryEgressController:
     ) -> _Result:
         if not bindings:
             raise NativeEgressError("egress_permit_invalid")
+        for binding in bindings:
+            self._prepare_release_visibility(binding, native_bytes)
         with self._fence:
             permits = [
-                self._issue_permit_locked(item, native_bytes) for item in bindings
+                self._issue_permit_locked(item, native_bytes, advance_visibility=False)
+                for item in bindings
             ]
             # Every dependency is consumed by this one carrier call.  Consume the
             # first around I/O and invalidate the remaining permits immediately.
