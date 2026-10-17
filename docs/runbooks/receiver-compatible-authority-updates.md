@@ -94,3 +94,25 @@ admission verification, the opaque ACK transaction and the signed ACK record.
 These local observations neither change the wire reply nor prove remote delivery;
 unknown exception text is never retained and a diagnostic-write failure does not
 replace the original intake result.
+
+## Bounded local completion and transport retries
+
+Ledger and its CommunicationStore views share one per-path storage gate through
+transaction close and pending-sidecar cleanup. Other Ledger operations, including
+read APIs that initialize retained metadata, use that same gate. Completion carries
+its original monotonic deadline into local storage; this does not hold a lock over
+network effects. Native immutable egress callbacks use their explicit read-only
+connections outside the gate.
+
+An automatic completion retries proved SQLite BUSY/LOCKED, including beneath the
+known retained-intake verification wrapper. Unknown errors, authority failures and
+other wrappers remain terminal; a transient local storage deadline is not a signed
+receipt rejection. Closed diagnostics distinguish these outcomes without retaining
+exception text.
+
+The original data fanout permits at most three attempts for connection failure or
+timeout, using the exact retained request bytes, identifiers, route and original
+carrier/deadline. A verified retained ACK prevents another network release.
+Authority and current reader readiness are checked again before every write.
+Expired inspection and exact later observation never create another send. This is
+finite technical transport work, not inbox attention or autonomous model activity.

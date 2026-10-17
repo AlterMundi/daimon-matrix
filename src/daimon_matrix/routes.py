@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
+from .ledger import LedgerStorageBusy
 from .mandatory_echo import (
     COMPLETION_FAILURE_CODES,
     INTAKE_FAILURE_CODES,
@@ -283,6 +284,31 @@ class DurableIntakeTicket:
     completion_expires_at_ms: int | None = None
 
 
+def _transient_completion_failure(failure: Exception) -> bool:
+    """Only proved busy storage behind a known transparent wrapper can retry."""
+    current: BaseException | None = failure
+    for _ in range(5):
+        if isinstance(current, sqlite3.Error):
+            return getattr(current, "sqlite_errorcode", 0) & 255 in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }
+        if isinstance(current, LedgerStorageBusy):
+            return True
+        if isinstance(current, NativeEgressError):
+            return str(current) in {"egress_storage_busy", "egress_attempt_deadline"}
+        if isinstance(current, CommunicationError):
+            return current.code == "communication_projection_busy"
+        if (
+            isinstance(current, RouteAmbiguous)
+            and current.code == "tribe_retained_intake_verification_uncertain"
+        ):
+            current = current.__cause__
+            continue
+        return False
+    return False
+
+
 def _completion_failure_code(failure: Exception) -> str:
     """Retain only closed codes; exception strings and private paths stay local."""
     current: BaseException | None = failure
@@ -290,6 +316,8 @@ def _completion_failure_code(failure: Exception) -> str:
     for _ in range(5):
         if current is None:
             break
+        if isinstance(current, LedgerStorageBusy):
+            return "completion_ledger_storage_deadline"
         if isinstance(current, sqlite3.Error):
             busy = getattr(current, "sqlite_errorcode", 0) & 255 in {
                 sqlite3.SQLITE_BUSY,
@@ -364,18 +392,7 @@ class TransportReply:
                         )
                         break
                 except Exception as failure:
-                    # Retry only a proved transient local storage failure.
-                    transient = isinstance(failure, sqlite3.Error) and (
-                        getattr(failure, "sqlite_errorcode", 0) & 255
-                    ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
-                    transient |= isinstance(failure, NativeEgressError) and str(
-                        failure
-                    ) in {"egress_storage_busy", "egress_attempt_deadline"}
-                    transient |= (
-                        isinstance(failure, CommunicationError)
-                        and failure.code == "communication_projection_busy"
-                    )
-                    if not transient:
+                    if not _transient_completion_failure(failure):
                         code = _completion_failure_code(failure)
                         break
                 remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000

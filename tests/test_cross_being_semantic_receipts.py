@@ -653,6 +653,70 @@ class ForeignReceiptTests(unittest.TestCase):
             view.egress_attempt("missing")
         self.assertFalse(view.ledger.path.exists())
 
+    def test_ledger_event_and_rpc_wait_for_the_same_projection_gate(self):
+        from daimon_matrix.ledger import Ledger, LedgerStorageBusy
+
+        store = self.store()
+        original = store.ledger
+        other = Ledger(
+            original.path,
+            authority=original.authority,
+            local_origin=original.local_origin,
+            clock=original.clock,
+        )
+        entered, finished = threading.Event(), threading.Event()
+        results, errors = [], []
+
+        def read_and_begin_rpc():
+            entered.set()
+            try:
+                results.append(other.event(self.message["event_id"]))
+                results.append(
+                    other.begin_rpc(
+                        client_id="owner",
+                        request_id=_uuid("gate-rpc"),
+                        request_hash="a" * 64,
+                        method="runtime.status",
+                    )
+                )
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=read_and_begin_rpc)
+        with store._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            # A real SQLite contender would fail after30ms. Shared local
+            # ownership must wait outside SQLite until the projection closes.
+            with patch("daimon_matrix.ledger.BUSY_TIMEOUT_MS", 30):
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(2))
+                    budget_errors = []
+
+                    def bounded_read():
+                        try:
+                            with other.storage_budget(time.monotonic_ns() + 20_000_000):
+                                other.event(self.message["event_id"])
+                        except Exception as error:
+                            budget_errors.append(error)
+
+                    bounded = threading.Thread(target=bounded_read)
+                    bounded.start()
+                    bounded.join(2)
+                    self.assertFalse(bounded.is_alive())
+                    self.assertEqual(len(budget_errors), 1)
+                    self.assertIsInstance(budget_errors[0], LedgerStorageBusy)
+                    self.assertFalse(finished.wait(0.2))
+                finally:
+                    database.rollback()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results[0], self.message)
+        self.assertEqual(len(results), 2)
+
     def test_foreign_reducer_recovers_anchor_before_database_commit(self):
         from unittest.mock import patch
 

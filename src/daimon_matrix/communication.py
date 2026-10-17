@@ -15,8 +15,6 @@ import os
 import secrets
 import sqlite3
 import stat
-import threading
-import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -25,13 +23,13 @@ from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, Final
-from weakref import WeakValueDictionary
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .ledger import (
     Ledger,
     LedgerStateError,
+    LedgerStorageBusy,
     _assert_owner_directory,
     _assert_owner_file,
 )
@@ -666,26 +664,6 @@ def select_persisted_schema(store: CommunicationStore, ledger: Ledger) -> None:
         store.receipts_v2 = True
 
 
-# SQLite's writer lock ends at COMMIT, before the projection's pending file is
-# removed. Keep that whole local lifetime exclusive across all views of a ledger.
-# The daemon owns cross-process writing; this gate orders its concurrent threads.
-_projection_gates: WeakValueDictionary[Path, threading.RLock] = WeakValueDictionary()
-_projection_gates_lock = threading.Lock()
-_projection_deadline: ContextVar[int | None] = ContextVar(
-    "communication_projection_deadline", default=None
-)
-
-
-def _projection_gate(path: Path) -> threading.RLock:
-    key = path.resolve()
-    with _projection_gates_lock:
-        gate = _projection_gates.get(key)
-        if gate is None:
-            gate = threading.RLock()
-            _projection_gates[key] = gate
-        return gate
-
-
 class CommunicationStore:
     """Durable logical-message reducer and operational queue projection."""
 
@@ -710,7 +688,6 @@ class CommunicationStore:
         self.clock = clock
         self.uuid_factory = uuid_factory
         self.token_factory = token_factory
-        self._projection_gate = _projection_gate(ledger.path)
         self._egress: MandatoryEgressController | None = None
         self._egress_catalog: str | None = None
         self._egress_authorizers: list[Callable[[OperationBinding], bool]] = []
@@ -720,34 +697,13 @@ class CommunicationStore:
 
     @contextmanager
     def _projection(self, *, deadline_ns: int | None = None) -> Iterator[None]:
-        inherited = _projection_deadline.get()
-        if inherited is not None:
-            deadline_ns = (
-                inherited if deadline_ns is None else min(inherited, deadline_ns)
-            )
-        token = _projection_deadline.set(deadline_ns)
-        acquired = False
         try:
-            if deadline_ns is None:
-                acquired = self._projection_gate.acquire()
-            else:
-                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
-                if remaining <= 0 or not self._projection_gate.acquire(
-                    timeout=remaining
-                ):
-                    raise CommunicationError(
-                        "communication_projection_busy", retryable=True
-                    )
-                acquired = True
-                if time.monotonic_ns() >= deadline_ns:
-                    raise CommunicationError(
-                        "communication_projection_busy", retryable=True
-                    )
-            yield
-        finally:
-            if acquired:
-                self._projection_gate.release()
-            _projection_deadline.reset(token)
+            with self.ledger.local_storage(deadline_ns=deadline_ns):
+                yield
+        except LedgerStorageBusy as failure:
+            raise CommunicationError(
+                "communication_projection_busy", retryable=True
+            ) from failure
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:

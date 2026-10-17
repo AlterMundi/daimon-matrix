@@ -31,7 +31,7 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
-from .ledger import Clock, Ledger, LedgerError
+from .ledger import Clock, Ledger, LedgerError, LedgerStorageBusy
 from .messaging_store import TribeRecordStore
 from .relationship_store import RelationshipStore, RelationshipStoreError
 from .sealed import (
@@ -1345,6 +1345,9 @@ class TribeConversation:
                 occurred_at_ms=now,
                 causal_parents=(message["event_id"],) if authored_local else (),
             )
+        except LedgerStorageBusy:
+            # Local budget contention is not rejection of signed receipt data.
+            raise
         except (LedgerError, WeaveProtocolError) as exception:
             raise TribeConversationError("tribe_lane_receipt_rejected") from exception
 

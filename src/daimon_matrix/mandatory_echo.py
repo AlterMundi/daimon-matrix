@@ -849,6 +849,7 @@ INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
 COMPLETION_FAILURE_CODES = (
     frozenset(
         {
+            "ledger_storage_deadline",
             "communication_projection_busy",
             "communication_pending_invalid",
             "communication_state_rollback",

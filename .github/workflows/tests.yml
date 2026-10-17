@@ -22,6 +22,7 @@ jobs:
       group_receiving_checks: ${{ steps.scope.outputs.group_receiving_checks }}
       group_admission_checks: ${{ steps.scope.outputs.group_admission_checks }}
       group_migration_only: ${{ steps.scope.outputs.group_migration_only }}
+      group_ledger_checks: ${{ steps.scope.outputs.group_ledger_checks }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -331,6 +332,14 @@ jobs:
           tests.test_mandatory_echo.EchoTests.test_closed_policy_projection_and_control_registry
           tests.test_telegram_mirror.CompactEchoRenderTests
           tests.test_single_active_tribe -v
+      - name: Shared ledger storage and local consumers
+        if: needs.scope.outputs.group_ledger_checks == 'true'
+        # The local storage gate changes Ledger callers, not unrelated memory,
+        # CAD, migration or protocol journeys. Retain existing evidence there.
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_dm022_ledger tests.test_dm031_curator
+          tests.test_dm032_curator_worker tests.test_dm054_scopes -v
       - name: Echo execution and retained sibling visibility boundaries
         # The execution/storage split changes these release paths as well as
         # group ACKs. Reuse the rest of the existing visibility qualification.

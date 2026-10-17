@@ -12,6 +12,34 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_shared_ledger_group_gate_adds_owning_consumers_without_unrelated_suites(
+        self,
+    ):
+        from tools.ci_scope import LEDGER_GROUP_FILES
+
+        changed = [
+            "src/daimon_matrix/ledger.py",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+        ]
+        self.assertEqual(profile(changed), "ledger-group-storage")
+        self.assertEqual(profile(list(LEDGER_GROUP_FILES)), "ledger-group-storage")
+        self.assertEqual(profile(["src/daimon_matrix/ledger.py"]), "full")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/keystore.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn(
+            "group_ledger_checks: ${{ steps.scope.outputs.group_ledger_checks }}",
+            workflow,
+        )
+        self.assertIn("if: needs.scope.outputs.group_ledger_checks == 'true'", workflow)
+        self.assertIn("tests.test_dm022_ledger tests.test_dm031_curator", workflow)
+        self.assertIn(
+            "tests.test_dm032_curator_worker tests.test_dm054_scopes", workflow
+        )
+
     def test_installer_only_changes_keep_installed_attachment_checks(self):
         from tools.ci_scope import INSTALLER_FILES
 

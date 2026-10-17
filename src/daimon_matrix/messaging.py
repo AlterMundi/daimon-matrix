@@ -2447,14 +2447,30 @@ class GroupMessaging:
             try:
                 if authorize is not None:
                     authorize()
-                self._transmit(
-                    native,
-                    row,
-                    operation,
-                    receipt=False,
-                    deadline_ns=deadline_ns,
-                    authorize=authorize,
-                )
+                for attempt in range(3):
+                    outcome = self._transmit(
+                        native,
+                        row,
+                        operation,
+                        receipt=False,
+                        deadline_ns=deadline_ns,
+                        authorize=authorize,
+                    )
+                    if (
+                        outcome not in {"route_connection_failed", "route_timeout"}
+                        or attempt == 2
+                    ):
+                        break
+                    remaining = min(
+                        (deadline_ns - time.monotonic_ns()) / 1_000_000_000,
+                        (operation.deadline_ms - self.lane.clock()) / 1000,
+                    )
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.05 * 2**attempt, remaining))
+                    # Recheck authority/readers at each original-byte release.
+                    if authorize is not None:
+                        authorize()
             finally:
                 self._finish_transport(row, operation, receipt=False)
 
@@ -2607,15 +2623,14 @@ class GroupMessaging:
             deadline_ns=deadline_ns,
         )
         raw = unb64url(retained["request"])
-        if receipt:
-            proof = self.records.transport_result(request_id, deadline_ns=deadline_ns)
-            if proof is not None:
-                result = provider.validate_prepared_response(
-                    raw, unb64url(proof["response"])
-                )
-                if dict(result) != proof["result"]:
-                    raise ValueError("tribe_receipt_return_proof_conflict")
-                return None
+        proof = self.records.transport_result(request_id, deadline_ns=deadline_ns)
+        if proof is not None:
+            result = provider.validate_prepared_response(
+                raw, unb64url(proof["response"])
+            )
+            if dict(result) != proof["result"]:
+                raise ValueError("tribe_receipt_return_proof_conflict")
+            return None
 
         def retain_response(response: bytes) -> None:
             observed = {
@@ -2958,7 +2973,8 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(message_id)
         try:
-            return self._complete_receipt(message_id, deadline_ns=deadline_ns)
+            with self.ledger.storage_budget(deadline_ns):
+                return self._complete_receipt(message_id, deadline_ns=deadline_ns)
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(message_id)
@@ -3308,29 +3324,30 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(key)
         try:
-            admission = self.records.get("intake-admission", request_id)
-            if admission is None:
-                raise ValueError("tribe_control_recovery_missing")
-            self.retained_evidence_ticket(admission["context"])
-            terminal = self.records.get("control-terminal", request_id)
-            if terminal is not None:
-                if terminal["control_sha256"] != admission["control_sha256"]:
-                    raise ValueError("tribe_control_recovery_binding_conflict")
-                return terminal
-            proof = self.records.get("control-proof", request_id)
-            assert proof is not None
-            self.communication.record_foreign_receipt(
-                proof["receipt"],
-                recipient_being_ref=proof["recipient_being_ref"],
-                deadline_ns=deadline_ns,
-            )
-            terminal = {
-                "state": "receipt-projected",
-                "control_sha256": admission["control_sha256"],
-            }
-            return self.records.reserve(
-                "control-terminal", request_id, terminal, lambda: terminal
-            )
+            with self.ledger.storage_budget(deadline_ns):
+                admission = self.records.get("intake-admission", request_id)
+                if admission is None:
+                    raise ValueError("tribe_control_recovery_missing")
+                self.retained_evidence_ticket(admission["context"])
+                terminal = self.records.get("control-terminal", request_id)
+                if terminal is not None:
+                    if terminal["control_sha256"] != admission["control_sha256"]:
+                        raise ValueError("tribe_control_recovery_binding_conflict")
+                    return terminal
+                proof = self.records.get("control-proof", request_id)
+                assert proof is not None
+                self.communication.record_foreign_receipt(
+                    proof["receipt"],
+                    recipient_being_ref=proof["recipient_being_ref"],
+                    deadline_ns=deadline_ns,
+                )
+                terminal = {
+                    "state": "receipt-projected",
+                    "control_sha256": admission["control_sha256"],
+                }
+                return self.records.reserve(
+                    "control-terminal", request_id, terminal, lambda: terminal
+                )
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(key)

@@ -87,6 +87,36 @@ class DirectLaneTests(unittest.TestCase):
         self.assertEqual(len(result["deliveries"]), 1)
         self.assertEqual(result["deliveries"][0]["state"], "delivered")
 
+    def test_receipt_authoring_preserves_storage_deadline_but_rejects_ledger_errors(
+        self,
+    ):
+        from daimon_matrix.ledger import LedgerError, LedgerStorageBusy
+        from daimon_matrix.tribe_conversation import TribeConversationError
+
+        lane = self.fixture.receiver_lane
+        validated = lane.validate_intake(self.prepare()["payload"])
+        arguments = dict(
+            membership_ref=validated.membership_ref, now=validated.validated_at_ms
+        )
+        with (
+            patch.object(
+                lane.ledger, "append_local_idempotent", side_effect=LedgerStorageBusy()
+            ),
+            self.assertRaises(LedgerStorageBusy),
+        ):
+            lane._author_receipt(validated.message, validated.resolution, **arguments)
+        with (
+            patch.object(
+                lane.ledger,
+                "append_local_idempotent",
+                side_effect=LedgerError("invalid receipt"),
+            ),
+            self.assertRaisesRegex(
+                TribeConversationError, "tribe_lane_receipt_rejected"
+            ),
+        ):
+            lane._author_receipt(validated.message, validated.resolution, **arguments)
+
     def test_direct_cannot_be_relabelled_as_old_group_wire(self):
         from daimon_matrix.tribe_conversation import (
             TRIBE_CONVERSATION_SCHEMA,
@@ -418,7 +448,13 @@ class GroupRuntimeTests(unittest.TestCase):
             provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
         ) as dispatch:
             first = sender.send(**arguments)
-            dispatch.assert_called_once()
+            self.assertEqual(dispatch.call_count, 3)
+            self.assertTrue(
+                all(
+                    call.args == dispatch.call_args.args
+                    for call in dispatch.call_args_list
+                )
+            )
         remote = next(x for x in first["transport"] if x["state"] != "author-retained")
         self.assertEqual(remote["state"], "pending")
         self.assertEqual(remote["last_failure"]["code"], "route_timeout")
@@ -850,6 +886,26 @@ class GroupRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(historical["transport"][0]["reader_readiness"])
         self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_direct_reader_withdrawal_between_bounded_attempts_stops_release(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+
+        def unavailable_then_withdraw(*args, **kwargs):
+            sender.direct_reader_ready = None
+            raise RouteAmbiguous("route_connection_failed")
+
+        with patch.object(
+            provider, "send_prepared", side_effect=unavailable_then_withdraw
+        ) as dispatch:
+            result = sender.send(**self.direct_arguments(sender, receiver))
+        dispatch.assert_called_once()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["transport"][0]["reader_readiness"])
+        self.assertFalse(result["semantic"]["terminal"])
 
     def test_direct_reader_invalidation_at_actual_write_retains_uncertain_attempt(self):
         sender, receiver = self.groups
@@ -1365,6 +1421,156 @@ class GroupRuntimeTests(unittest.TestCase):
         )
         blocked.complete(deadline_ns=time.monotonic_ns() - 1)
         self.assertEqual(outcomes[-1], "completion_blocked")
+
+    def test_http_completion_retries_wrapped_sqlite_busy_without_resending_control(
+        self,
+    ):
+        sender, _receiver = self.groups
+        original = sender._retained_evidence_ticket
+        failures, attempts = [], []
+
+        def busy_once_after_ack(context):
+            request_id = context["request"]["request_id"]
+            if sender.records.get("intake-ack", request_id) is not None:
+                attempts.append(request_id)
+                if not failures:
+                    failures.append(request_id)
+                    error = sqlite3.OperationalError("private storage diagnostic")
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                    # The public retained-ticket seam adds this real wrapper.
+                    raise error
+            return original(context)
+
+        with patch.object(
+            sender, "_retained_evidence_ticket", side_effect=busy_once_after_ack
+        ):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="recover only retained control projection",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(failures), 1)
+        self.assertGreaterEqual(len(attempts), 2)
+        self.assertEqual(set(attempts), set(failures))
+        self.assertIsNotNone(sender.records.get("control-terminal", failures[0]))
+
+    def test_completion_does_not_retry_authority_or_unknown_wrappers_with_busy_cause(
+        self,
+    ):
+        from daimon_matrix.ledger import LedgerStorageBusy
+        from daimon_matrix.routes import _transient_completion_failure
+
+        busy = sqlite3.OperationalError("private storage diagnostic")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        for failure in [
+            RouteAmbiguous("route_authority_blocked"),
+            ValueError("unknown wrapper"),
+        ]:
+            failure.__cause__ = busy
+            calls, diagnostics = [], []
+
+            def complete(_, error=failure, observed=calls):
+                observed.append(True)
+                raise error
+
+            reply = TransportReply(
+                b"ack",
+                lambda: None,
+                after_response_bounded=complete,
+                completion_expires_at_ms=2000,
+                completion_clock=lambda: 1000,
+                completion_diagnostic=diagnostics.append,
+            )
+            reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(_transient_completion_failure(failure))
+        self.assertTrue(_transient_completion_failure(LedgerStorageBusy()))
+
+    def test_bounded_data_retry_uses_exact_request_and_one_native_intake(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        original = provider.send_prepared
+        requests = []
+
+        def lose_first(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                # The receiver commits but its original HTTP reply is lost.
+                original(raw, **arguments)
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(provider, "send_prepared", side_effect=lose_first):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="one owned carrier with exact-byte retry",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        # A retained proved ACK already prevents a second network attempt.
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_bounded_data_retry_recovers_unobserved_attempt_with_exact_bytes(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        original = provider.send_prepared
+        requests = []
+
+        def fail_before_first_write(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(
+            provider, "send_prepared", side_effect=fail_before_first_write
+        ):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="retry the same unobserved carrier",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_data_retry_stops_at_attempt_cap_and_original_expiry(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        for expire in (False, True):
+            with self.subTest(expire=expire):
+                calls = []
+
+                def unavailable(raw, expires=expire, attempts=calls, **_):
+                    attempts.append(raw)
+                    if expires:
+                        self.fixture.now += 60_000
+                    raise RouteAmbiguous("route_connection_failed")
+
+                with patch.object(provider, "send_prepared", side_effect=unavailable):
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="bounded exact retry",
+                    )
+                self.assertEqual(len(calls), 1 if expire else 3)
+                self.assertEqual(len(set(calls)), 1)
 
     def test_completion_diagnostic_retains_closed_failure_cause_without_text(self):
         import errno

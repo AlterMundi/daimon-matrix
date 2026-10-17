@@ -299,8 +299,30 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
 )
 
 
+LEDGER_GROUP_FILES = RECEIVING_CONTROL_FILES | frozenset(
+    {
+        "src/daimon_matrix/ledger.py",
+        "tests/test_dm022_ledger.py",
+        "tests/test_dm031_curator.py",
+        "tests/test_dm032_curator_worker.py",
+        "tests/test_dm054_scopes.py",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed <= LEDGER_GROUP_FILES
+        and {
+            "src/daimon_matrix/ledger.py",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+        }
+        <= changed
+    ):
+        return "ledger-group-storage"
     if "tools/install_agent_chat.py" in changed and changed <= INSTALLER_FILES:
         return "agent-chat-installer"
     migration = changed & {
@@ -462,6 +484,7 @@ def main() -> None:
             if selected
             in {
                 "bounded-group-transport",
+                "ledger-group-storage",
                 "receiving-control",
                 "group-admission",
                 "communication-migration",
@@ -475,8 +498,10 @@ def main() -> None:
         value += "\ngroup_receipt_checks=false"
     if selected == "communication-migration":
         value += "\ngroup_migration_only=true"
-    if selected == "receiving-control":
+    if selected in {"receiving-control", "ledger-group-storage"}:
         value += "\ngroup_receiving_checks=true"
+    if selected == "ledger-group-storage":
+        value += "\ngroup_ledger_checks=true"
     if selected == "group-admission":
         value += "\ngroup_admission_checks=true"
     print(value.splitlines()[0])
