@@ -12,6 +12,35 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_initial_messaging_recovery_reuses_installed_visibility_lane(self):
+        changes = [
+            "src/daimon_matrix/operator_messaging.py",
+            "tests/test_operator_messaging.py",
+            "docs/runbooks/operator-bootstrap.md",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changes), "visibility")
+        for unrelated in (
+            "src/daimon_matrix/keystore.py",
+            "requirements-dev.txt",
+            "unknown.py",
+        ):
+            self.assertEqual(profile([*changes, unrelated]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        lane = workflow.split("  visibility:", 1)[1].split("  authority-adoption:", 1)[
+            0
+        ]
+        self.assertIn("dist/*.whl", lane)
+        self.assertIn("tests.test_operator_messaging", lane)
+        self.assertIn("tests.test_messaging_runtime", lane)
+
     def test_installer_only_changes_keep_installed_attachment_checks(self):
         from tools.ci_scope import INSTALLER_FILES
 

@@ -193,6 +193,823 @@ class ExclusivePublicationTests(unittest.TestCase):
                 operator._publish(Path("source"), Path("target"))
 
 
+class InitialPreparationRecoveryTests(unittest.TestCase):
+    def interrupted(self, *, after_compose=True, route_leaf=None, metadata_fault=None):
+        import time
+
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, specification, sources, _ = application_fixture(self)
+        if route_leaf is not None:
+            route = specification["incoming"]["routes"]["message"]
+            sources[route_leaf] = sources.pop(route["secret_file"])
+            route["secret_file"] = route_leaf
+        target = self.root / "initial-application"
+        compose = operator._compose
+        write = operator._write
+
+        def interrupted_metadata(root, name, raw):
+            if (metadata_fault == "pointer" and "-current.json.stage-" in name) or (
+                metadata_fault == "publication"
+                and name.startswith(".initial-publication.stage-")
+            ):
+                write(root, name, raw[:8])
+                raise OSError("initial preparation interrupted")
+            return write(root, name, raw)
+
+        def interrupt(*args, **kwargs):
+            if after_compose:
+                compose(*args, **kwargs)
+            if metadata_fault is not None:
+                return
+            raise OSError("initial preparation interrupted")
+
+        with (
+            patch.object(operator, "_compose", side_effect=interrupt),
+            patch.object(operator, "_write", side_effect=interrupted_metadata),
+            self.assertRaisesRegex(ValueError, "messaging_prepare_rejected"),
+        ):
+            operator.prepare(runtime, target, specification, secret_sources=sources)
+        stages = list(target.parent.glob(".messaging-prepare-*"))
+        self.assertEqual(len(stages), 1)
+        stage = stages[0]
+        application = json.loads((stage / "application.json").read_bytes())
+        options = dict(
+            expected_application_sha256=config_digest(application),
+            expected_specification_sha256=config_digest(specification),
+            initial_staging=stage,
+            effect_not_after_ms=time.time_ns() // 1_000_000 + 60_000,
+        )
+        return runtime, target, stage, application, options
+
+    def test_recovery_preserves_real_client_genesis_and_existing_stores(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import _capability_journal_names
+
+        runtime, target, stage, application, options = self.interrupted()
+        key = (stage / "client.key").read_bytes()
+        stores = {
+            name: (stage / name).stat().st_ino
+            for name in application["stores"].values()
+        }
+        _, stem = _capability_journal_names(
+            runtime, application["client"]["descriptor"]
+        )
+        genesis = runtime.state_root / (stem + "-00000000000000000000.json")
+        before = genesis.read_bytes()
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            result = operator.recover(runtime, target, **options)
+        self.assertEqual(result["status"], "configured")
+        self.assertFalse(stage.exists())
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertEqual(genesis.read_bytes(), before)
+        self.assertEqual(
+            {name: (target / name).stat().st_ino for name in stores}, stores
+        )
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_legacy_partial_prefix_uses_retained_genesis_and_repairs_missing_pointer(
+        self,
+    ):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            read_capability_state,
+        )
+
+        runtime, target, stage, application, options = self.interrupted(
+            after_compose=False
+        )
+        (stage / ".initial-capability-genesis.json").unlink()
+        descriptor = application["client"]["descriptor"]
+        _, stem = _capability_journal_names(runtime, descriptor)
+        (runtime.state_root / (stem + "-floor.json")).unlink()
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual(read_capability_state(runtime, descriptor)["sequence"], 0)
+        self.assertEqual(
+            read_publication(runtime, target)[0]["client"], application["client"]
+        )
+
+    def test_pending_or_orphan_companions_are_preserved_before_any_effect(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import _capability_journal_names
+
+        runtime, target, stage, application, options = self.interrupted()
+        _, stem = _capability_journal_names(
+            runtime, application["client"]["descriptor"]
+        )
+        floor = runtime.state_root / (stem + "-floor.json")
+        floor.unlink()
+        store = stage / application["stores"]["inbox"]
+        for present in (True, False):
+            saved = store.read_bytes()
+            if not present:
+                store.unlink()
+            for suffix in ("-wal", "-shm", "-journal"):
+                with self.subTest(main_present=present, companion=suffix):
+                    companion = store.with_name(store.name + suffix)
+                    companion.write_bytes(b"retained pending state")
+                    companion.chmod(0o600)
+                    with (
+                        patch.object(operator, "_compose") as compose,
+                        self.assertRaisesRegex(
+                            ValueError, "messaging_required_store_invalid"
+                        ),
+                    ):
+                        operator.recover(runtime, target, **options)
+                    compose.assert_not_called()
+                    self.assertFalse(floor.exists())
+                    self.assertEqual(store.exists(), present)
+                    self.assertEqual(companion.read_bytes(), b"retained pending state")
+                    companion.unlink()
+            if not present:
+                store.write_bytes(saved)
+                store.chmod(0o600)
+        self.assertFalse(target.exists())
+
+    def test_unprotected_store_or_companion_refused_before_sqlite_open(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options = self.interrupted()
+        store = stage / application["stores"]["inbox"]
+        alias = stage / ".retained-store"
+        store.rename(alias)
+        for fault in ("symlink", "hardlink", "public", "companion-symlink"):
+            with self.subTest(fault=fault):
+                if fault == "symlink":
+                    store.symlink_to(alias)
+                elif fault == "hardlink":
+                    os.link(alias, store)
+                else:
+                    store.write_bytes(alias.read_bytes())
+                    store.chmod(0o644 if fault == "public" else 0o600)
+                companion = store.with_name(store.name + "-wal")
+                if fault == "companion-symlink":
+                    companion.symlink_to(alias)
+                with (
+                    patch(
+                        "sqlite3.connect", side_effect=AssertionError("SQLite opened")
+                    ),
+                    self.assertRaisesRegex(ValueError, "messaging_file_rejected"),
+                ):
+                    operator.recover(runtime, target, **options)
+                store.unlink()
+                if companion.is_symlink():
+                    companion.unlink()
+        self.assertFalse(target.exists())
+
+    def test_legacy_stage_parent_sync_precedes_capability_or_store_effects(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import _capability_journal_names
+
+        runtime, target, stage, application, options = self.interrupted(
+            after_compose=False
+        )
+        (stage / ".initial-capability-genesis.json").unlink()
+        _, stem = _capability_journal_names(
+            runtime, application["client"]["descriptor"]
+        )
+        floor = runtime.state_root / (stem + "-floor.json")
+        floor.unlink()
+        original = operator._sync
+
+        def interrupt(path):
+            if path == stage.parent:
+                raise OSError("retained parent sync interrupted")
+            original(path)
+
+        with (
+            patch.object(operator, "_sync", side_effect=interrupt),
+            patch.object(operator, "_recover_initial_capability") as capability,
+            patch.object(operator, "_compose") as compose,
+            self.assertRaisesRegex(OSError, "retained parent sync interrupted"),
+        ):
+            operator.recover(runtime, target, **options)
+        capability.assert_called_once()
+        self.assertEqual(capability.call_args.kwargs, {"repair": False})
+        compose.assert_not_called()
+        self.assertFalse(floor.exists())
+        self.assertTrue(
+            all(not (stage / name).exists() for name in application["stores"].values())
+        )
+        self.assertFalse(target.exists())
+
+    def test_torn_recovery_pointer_or_publication_retries_same_client(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import _capability_journal_names
+
+        for boundary in ("pointer", "publication"):
+            with self.subTest(boundary=boundary):
+                runtime, target, stage, application, options = self.interrupted()
+                _, stem = _capability_journal_names(
+                    runtime, application["client"]["descriptor"]
+                )
+                floor = runtime.state_root / (stem + "-floor.json")
+                if boundary == "pointer":
+                    floor.unlink()
+                prefix = (
+                    floor.name + ".stage-"
+                    if boundary == "pointer"
+                    else ".initial-publication.stage-"
+                )
+                original = operator._write
+
+                def interrupt(root, name, raw, *, prefix=prefix, original=original):
+                    if name.startswith(prefix):
+                        original(root, name, raw[:8])
+                        raise OSError("torn recovery metadata")
+                    return original(root, name, raw)
+
+                with (
+                    patch.object(operator, "_write", side_effect=interrupt),
+                    self.assertRaisesRegex(OSError, "torn recovery metadata"),
+                ):
+                    operator.recover(runtime, target, **options)
+                incomplete = (
+                    floor if boundary == "pointer" else stage / "publication.json"
+                )
+                self.assertFalse(incomplete.exists())
+                with patch.object(
+                    operator,
+                    "create_messaging_capability",
+                    side_effect=AssertionError("new client"),
+                ):
+                    operator.recover(runtime, target, **options)
+                self.assertEqual(read_publication(runtime, target)[0], application)
+                self.assertEqual(list(target.glob(".initial-publication.stage-*")), [])
+                self.assertEqual(
+                    list(runtime.state_root.glob(floor.name + ".stage-*")), []
+                )
+
+    def test_torn_initial_pointer_or_publication_recovers_original_stage(self):
+        from daimon_matrix import operator_messaging as operator
+
+        for boundary in ("pointer", "publication"):
+            with self.subTest(boundary=boundary):
+                runtime, target, stage, application, options = self.interrupted(
+                    metadata_fault=boundary
+                )
+                self.assertFalse((stage / "publication.json").exists())
+                with patch.object(
+                    operator,
+                    "create_messaging_capability",
+                    side_effect=AssertionError("new client"),
+                ):
+                    operator.recover(runtime, target, **options)
+                self.assertEqual(read_publication(runtime, target)[0], application)
+                self.assertEqual(list(target.glob(".initial-publication.stage-*")), [])
+
+    def test_private_recovery_metadata_preserves_legal_application_leaves(self):
+        from daimon_matrix import operator_messaging as operator
+
+        for name in ("capability-genesis.json", "publication.json.stage-" + "a" * 32):
+            with self.subTest(route_leaf=name):
+                runtime, target, stage, application, options = self.interrupted(
+                    route_leaf=name
+                )
+                key = (stage / name).read_bytes()
+                operator.recover(runtime, target, **options)
+                self.assertEqual((target / name).read_bytes(), key)
+                self.assertEqual(read_publication(runtime, target)[0], application)
+
+    def test_recovery_refuses_foreign_specification_key_and_revoked_prefix(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            capability_state_record,
+        )
+
+        for fault in ("specification", "key", "forged-binding", "revoked"):
+            with self.subTest(fault=fault):
+                runtime, target, stage, application, options = self.interrupted()
+                if fault == "specification":
+                    options["expected_specification_sha256"] = "0" * 64
+                elif fault == "key":
+                    (stage / "client.key").write_bytes(b"x" * 32)
+                elif fault == "forged-binding":
+                    binding = json.loads((stage / "binding.json").read_bytes())
+                    binding["signature"] = "A" * len(binding["signature"])
+                    (stage / "binding.json").write_bytes(canonical_bytes(binding))
+                else:
+                    descriptor = application["client"]["descriptor"]
+                    _, stem = _capability_journal_names(runtime, descriptor)
+                    prior = (runtime.state_root / (stem + "-current.json")).read_bytes()
+                    revoked = capability_state_record(
+                        runtime,
+                        descriptor,
+                        sequence=1,
+                        predecessor_sha256=hashlib.sha256(prior).hexdigest(),
+                        action="revoke",
+                        occurred_at_ms=runtime.service.clock(),
+                    )
+                    operator._publish_capability_entry(
+                        runtime.state_root,
+                        stem + "-00000000000000000001.json",
+                        canonical_bytes(revoked),
+                    )
+                before = {
+                    p.name: p.read_bytes()
+                    for p in runtime.state_root.glob(".messaging-capability-*.json")
+                }
+                with self.assertRaises(ValueError):
+                    operator.recover(runtime, target, **options)
+                self.assertFalse(target.exists())
+                self.assertTrue(stage.is_dir())
+                self.assertEqual(
+                    {
+                        p.name: p.read_bytes()
+                        for p in runtime.state_root.glob(".messaging-capability-*.json")
+                    },
+                    before,
+                )
+
+    def test_expiry_at_publication_preserves_stage_without_publishing(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options = self.interrupted()
+        clock = [options["effect_not_after_ms"] * 1_000_000 - 1_000_000]
+        sync = operator._sync
+        parent_syncs = []
+
+        def expires(path):
+            sync(path)
+            if path == stage.parent:
+                parent_syncs.append(path)
+                if len(parent_syncs) == 2:
+                    clock[0] = options["effect_not_after_ms"] * 1_000_000
+
+        with (
+            patch.object(operator.time, "time_ns", side_effect=lambda: clock[0]),
+            patch.object(operator, "_sync", side_effect=expires),
+            patch.object(operator, "_publish", wraps=operator._publish) as publish,
+            self.assertRaisesRegex(ValueError, "messaging_initial_recovery_expired"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse(any(call.args[1] == target for call in publish.call_args_list))
+        self.assertFalse(target.exists())
+        self.assertTrue(stage.is_dir())
+
+    def test_lost_publication_return_recovers_after_expiry_without_republishing(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options = self.interrupted()
+        publish = operator._publish
+
+        def lost_return(source, destination):
+            publish(source, destination)
+            if destination == target:
+                raise OSError("lost initial publication return")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost_return),
+            self.assertRaises(OSError),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertTrue(target.is_dir())
+        self.assertFalse(stage.exists())
+        with patch.object(
+            operator, "_publish", side_effect=AssertionError("republication")
+        ):
+            result = operator.recover(
+                runtime, target, **{**options, "effect_not_after_ms": 0}
+            )
+        self.assertEqual(result["application_sha256"], config_digest(application))
+
+    def test_initial_recovery_cli_bootstraps_without_a_published_application(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options = self.interrupted()
+        with (
+            patch("daimon_matrix.runtime.load_runtime", return_value=runtime) as load,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            status = operator.main(
+                [
+                    "recover",
+                    "--state-root",
+                    str(runtime.state_root),
+                    "--app-dir",
+                    str(target),
+                    "--password-fd",
+                    "0",
+                    "--initial-staging",
+                    str(stage),
+                    "--expected-application-sha256",
+                    options["expected_application_sha256"],
+                    "--expected-specification-sha256",
+                    options["expected_specification_sha256"],
+                    "--effect-not-after-ms",
+                    str(options["effect_not_after_ms"]),
+                ]
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "configured")
+        self.assertFalse(load.call_args.kwargs["egress"].release_enabled)
+        self.assertIsNone(load.call_args.kwargs["egress_factory"])
+        self.assertTrue(target.is_dir())
+
+
+class InitialStoreRecoveryTests(unittest.TestCase):
+    interrupted = InitialPreparationRecoveryTests.interrupted
+
+    def pending_store(self, *, complete=False, foreign=False):
+        import subprocess
+        import sys
+
+        from daimon_matrix.messaging_config import _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY
+
+        runtime, target, stage, application, options = self.interrupted()
+        path = stage / application["stores"]["opaque-message"]
+        if complete:
+            with contextlib.closing(sqlite3.connect(path)) as database:
+                database.execute("UPDATE inbox_meta SET next_sequence=42")
+                database.execute(
+                    "INSERT INTO inbox_claims VALUES('retained','hash',?)",
+                    (b'{"retained":true}',),
+                )
+                database.commit()
+        else:
+            path.unlink()
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+        statements = _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY["opaque"].split(";")
+        program = """import json,sqlite3,sys
+spec=json.loads(sys.argv[2])
+db=sqlite3.connect(sys.argv[1],isolation_level=None)
+db.execute('PRAGMA journal_mode=DELETE')
+db.execute('PRAGMA synchronous=FULL')
+if not spec['complete']:
+ db.executescript(spec['prefix'])
+ db.execute('INSERT INTO inbox_meta VALUES(1,1)')
+if spec['foreign']:db.execute('CREATE TABLE unexpected(value TEXT)')
+db.execute('PRAGMA cache_size=2')
+db.execute('BEGIN IMMEDIATE')
+if spec['complete']:
+ db.execute('UPDATE inbox_meta SET next_sequence=99')
+ for number in range(200):
+  db.execute('INSERT INTO inbox_claims VALUES(?,?,?)',(str(number),'hash',b'x'*4096))
+else:db.execute(spec['next'])
+print('PENDING',flush=True)
+sys.stdin.buffer.read(1)
+"""
+        specification = dict(
+            complete=complete,
+            foreign=foreign,
+            prefix=";".join(statements[:3]) + ";",
+            next=statements[3],
+        )
+        with subprocess.Popen(
+            [sys.executable, "-I", "-c", program, str(path), json.dumps(specification)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as writer:
+            self.assertEqual(writer.stdout.readline().strip(), "PENDING")
+            writer.kill()
+            writer.wait(timeout=5)
+        journal = path.with_name(path.name + "-journal")
+        self.assertTrue(journal.exists())
+        if complete:
+            self.assertEqual(
+                journal.read_bytes()[:8], bytes.fromhex("d9d505f920a163d7")
+            )
+
+        def evidence(file):
+            info = file.stat()
+            return dict(
+                identity=[info.st_dev, info.st_ino],
+                sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
+            )
+
+        plan = dict(
+            schema="dm.messaging.initial-store-recovery/v1",
+            application_sha256=options["expected_application_sha256"],
+            specification_sha256=options["expected_specification_sha256"],
+            stage_identity=[stage.stat().st_dev, stage.stat().st_ino],
+            role="opaque-message",
+            main=evidence(path),
+            journal=evidence(journal),
+        )
+        return (
+            runtime,
+            target,
+            stage,
+            application,
+            {**options, "initial_store_recovery": plan},
+            path,
+            journal,
+        )
+
+    def test_killed_constructor_prefix_recovers_same_store_and_client(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options, path, journal = (
+            self.pending_store()
+        )
+        key = (stage / "client.key").read_bytes()
+        inode = path.stat().st_ino
+        before = path.read_bytes(), journal.read_bytes()
+        operator.recover(runtime, target, **options)
+        recovered = target / path.name
+        self.assertEqual(recovered.stat().st_ino, inode)
+        self.assertFalse(recovered.with_name(recovered.name + "-journal").exists())
+        area = target / ".initial-store-recovery"
+        self.assertEqual(
+            (
+                (area / "main.before").read_bytes(),
+                (area / "journal.before").read_bytes(),
+            ),
+            before,
+        )
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_real_hot_journal_preserves_committed_rows(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, _application, options, path, _journal = (
+            self.pending_store(complete=True)
+        )
+        operator.recover(runtime, target, **options)
+        with contextlib.closing(sqlite3.connect(target / path.name)) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT singleton,next_sequence FROM inbox_meta"
+                ).fetchall(),
+                [(1, 42)],
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT claim_id,result_json FROM inbox_claims"
+                ).fetchall(),
+                [("retained", b'{"retained":true}')],
+            )
+
+    def test_foreign_schema_refuses_without_changing_original_pair(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, _application, options, path, journal = (
+            self.pending_store(foreign=True)
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_rejected"
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse(target.exists())
+
+    def test_changed_plan_or_revoked_client_refuses_before_store_effects(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            capability_state_record,
+        )
+
+        runtime, target, stage, application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        changed = copy.deepcopy(options)
+        changed["initial_store_recovery"]["main"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_rejected"
+        ):
+            operator.recover(runtime, target, **changed)
+        descriptor = application["client"]["descriptor"]
+        _, stem = _capability_journal_names(runtime, descriptor)
+        previous = (runtime.state_root / (stem + "-current.json")).read_bytes()
+        revoked = capability_state_record(
+            runtime,
+            descriptor,
+            sequence=1,
+            predecessor_sha256=hashlib.sha256(previous).hexdigest(),
+            action="revoke",
+            occurred_at_ms=runtime.service.clock(),
+        )
+        operator._publish_capability_entry(
+            runtime.state_root,
+            stem + "-00000000000000000001.json",
+            canonical_bytes(revoked),
+        )
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_capability_conflict"
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse((stage / ".initial-store-recovery").exists())
+
+    def test_lost_store_recovery_return_reconciles_retained_intent(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options, _path, journal = (
+            self.pending_store()
+        )
+        original = operator._sync
+
+        def lost(path_to_sync):
+            original(path_to_sync)
+            if (
+                path_to_sync == stage
+                and (stage / ".initial-store-recovery/intent.json").exists()
+                and not journal.exists()
+            ):
+                raise OSError("lost store recovery return")
+
+        with (
+            patch.object(operator, "_sync", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost store recovery return"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse(target.exists())
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_required"
+        ):
+            operator.recover(
+                runtime,
+                target,
+                **{k: v for k, v in options.items() if k != "initial_store_recovery"},
+            )
+        operator.recover(runtime, target, **options)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+
+    def test_expiry_after_intent_preserves_original_pair_without_publication(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        clock = [options["effect_not_after_ms"] * 1_000_000 - 1_000_000]
+        original = operator._publish_retained_entry
+
+        def expire(root, name, raw, **kwargs):
+            original(root, name, raw, **kwargs)
+            if root == stage / ".initial-store-recovery" and name == "intent.json":
+                clock[0] = options["effect_not_after_ms"] * 1_000_000
+
+        with (
+            patch.object(operator.time, "time_ns", side_effect=lambda: clock[0]),
+            patch.object(operator, "_publish_retained_entry", side_effect=expire),
+            self.assertRaisesRegex(ValueError, "messaging_initial_recovery_expired"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse(target.exists())
+
+    def test_lost_intent_install_resyncs_before_original_recovery(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        area = stage / ".initial-store-recovery"
+        publish = operator._publish
+
+        def lost(source, destination):
+            publish(source, destination)
+            if destination == area / "intent.json":
+                raise OSError("lost recovery intent installation")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost recovery intent installation"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        synced = []
+        sync = operator._sync
+        complete = operator._complete_initial_opaque
+
+        def record(directory):
+            sync(directory)
+            synced.append(directory)
+
+        def check_durability(database, check):
+            if database.execute("PRAGMA database_list").fetchone()[2] == str(path):
+                self.assertIn(area, synced)
+                self.assertIn(stage, synced[synced.index(area) + 1 :])
+            return complete(database, check)
+
+        with (
+            patch.object(operator, "_sync", side_effect=record),
+            patch.object(
+                operator, "_complete_initial_opaque", side_effect=check_durability
+            ),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertTrue(target.exists())
+
+    def test_empty_raw_evidence_install_resumes_before_intent(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        # A process can die after creating the files but before its first page
+        # write. Both empty preimages are valid protected recovery evidence.
+        path.write_bytes(b"")
+        journal.write_bytes(b"")
+        options["initial_store_recovery"]["main"]["sha256"] = hashlib.sha256(
+            b""
+        ).hexdigest()
+        options["initial_store_recovery"]["journal"]["sha256"] = hashlib.sha256(
+            b""
+        ).hexdigest()
+        before = path.read_bytes(), journal.read_bytes()
+        area = stage / ".initial-store-recovery"
+        publish = operator._publish
+
+        def lost(source, destination):
+            publish(source, destination)
+            if destination == area / "journal.before":
+                raise OSError("lost empty evidence installation")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost empty evidence installation"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse((area / "intent.json").exists())
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        operator.recover(runtime, target, **options)
+        self.assertEqual(
+            (target / ".initial-store-recovery/journal.before").read_bytes(), b""
+        )
+
+    def composed_store_without_publication(self):
+        from daimon_matrix import operator_messaging as operator
+
+        fixture = self.pending_store()
+        runtime, target, _stage, _application, options, path, _journal = fixture
+        publish = operator._publish_retained_entry
+
+        def lost(root, name, raw, **kwargs):
+            if name == "publication.json":
+                raise OSError("lost composed store before publication")
+            return publish(root, name, raw, **kwargs)
+
+        with (
+            patch.object(operator, "_publish_retained_entry", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost composed store before publication"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse(target.exists())
+        with contextlib.closing(sqlite3.connect(path)) as database:
+            self.assertEqual(
+                database.execute("SELECT count(*) FROM echo_v2_catalog").fetchone(),
+                (1,),
+            )
+        return fixture
+
+    def test_lost_composition_return_recovers_exact_visibility_successor(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, application, options, path, _journal = (
+            self.composed_store_without_publication()
+        )
+        inode = path.stat().st_ino
+        operator.recover(runtime, target, **options)
+        self.assertEqual((target / path.name).stat().st_ino, inode)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_composition_successor_rejects_unrelated_native_or_catalog_rows(self):
+        from daimon_matrix import operator_messaging as operator
+
+        for statement in (
+            "UPDATE inbox_meta SET next_sequence=42",
+            "UPDATE echo_v2_catalog SET authentication='changed'",
+        ):
+            with self.subTest(statement=statement):
+                runtime, target, _stage, _application, options, path, _journal = (
+                    self.composed_store_without_publication()
+                )
+                with contextlib.closing(sqlite3.connect(path)) as database:
+                    database.execute(statement)
+                    database.commit()
+                before = path.read_bytes()
+                with self.assertRaisesRegex(
+                    ValueError, "messaging_initial_store_recovery_rejected"
+                ):
+                    operator.recover(runtime, target, **options)
+                self.assertEqual(path.read_bytes(), before)
+                self.assertFalse(target.exists())
+
+
 class ProvisioningTests(unittest.TestCase):
     def test_peer_presentation_cli_keeps_primary_catalogs_with_distinct_proof_key(self):
         from daimon_matrix import operator_messaging as operator
@@ -839,6 +1656,34 @@ class ProvisioningTests(unittest.TestCase):
                     current["client"]["descriptor"]["capability_id"],
                     loaded.service.capabilities,
                 )
+
+    def test_initial_prepare_preserves_private_stage_after_capability_effect(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import read_capability_state
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "interrupted-initial-application"
+        with (
+            patch.object(operator, "_compose", side_effect=OSError("interrupted")),
+            self.assertRaisesRegex(ValueError, "messaging_prepare_rejected"),
+        ):
+            operator.prepare(runtime, target, spec, secret_sources=sources)
+
+        self.assertFalse(target.exists())
+        stages = list(target.parent.glob(".messaging-prepare-*"))
+        self.assertEqual(
+            len(stages), 1, "durable genesis must retain its original client"
+        )
+        application = json.loads((stages[0] / "application.json").read_bytes())
+        client = application["client"]
+        self.assertEqual(
+            hashlib.sha256((stages[0] / "client.key").read_bytes()).hexdigest(),
+            client["secret_sha256"],
+        )
+        self.assertEqual(
+            read_capability_state(runtime, client["descriptor"])["capability_id"],
+            client["descriptor"]["capability_id"],
+        )
 
     def test_genesis_journal_publication_is_atomic_and_exact_retry_converges(self):
         from daimon_matrix import operator_messaging as operator
@@ -1738,7 +2583,7 @@ class ProvisioningTests(unittest.TestCase):
         sync = operator._sync
 
         def fail_parent(path):
-            if path == target.parent:
+            if path == target.parent and target.exists():
                 raise OSError("synthetic fsync failure")
             sync(path)
 
@@ -2569,6 +3414,107 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
                 "route": route,
             }
         )
+
+    def test_initial_group_recovery_preserves_retained_record_and_client(self):
+        import subprocess
+        import sys
+        import time
+
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import application_routes
+
+        specification = copy.deepcopy(self.previous)
+        del specification["client"]
+        sources = {
+            row["secret_file"]: self.app / row["secret_file"]
+            for row in application_routes(specification)
+        }
+        target = self.app.parent / "interrupted-initial-group"
+        compose = operator._compose
+        identifier, record = (
+            str(uuid.uuid4()),
+            {"summary": "retained before initial publication"},
+        )
+
+        def interrupted(*args, **kwargs):
+            view = compose(*args, **kwargs)
+            view.service.messaging.channels["tribe"].records.reserve(
+                "request", identifier, record, lambda: record
+            )
+            raise OSError("group composition return lost")
+
+        with (
+            patch.object(operator, "_compose", side_effect=interrupted),
+            self.assertRaises(ValueError),
+        ):
+            operator.prepare(
+                self.runtime, target, specification, secret_sources=sources
+            )
+        (stage,) = target.parent.glob(".messaging-prepare-*")
+        application = json.loads((stage / "application.json").read_bytes())
+        key = (stage / "client.key").read_bytes()
+        events = self.runtime.service.relationships.store.events()
+        store = stage / application["stores"]["opaque-message"]
+        program = """import sqlite3,sys
+db=sqlite3.connect(sys.argv[1],isolation_level=None)
+db.execute('BEGIN IMMEDIATE')
+db.execute('UPDATE inbox_meta SET next_sequence=99')
+print('PENDING',flush=True)
+sys.stdin.buffer.read(1)
+"""
+        with subprocess.Popen(
+            [sys.executable, "-I", "-c", program, str(store)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as writer:
+            self.assertEqual(writer.stdout.readline().strip(), "PENDING")
+            writer.kill()
+            writer.wait(timeout=5)
+
+        def evidence(path):
+            info = path.stat()
+            return dict(
+                identity=[info.st_dev, info.st_ino],
+                sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+
+        plan = dict(
+            schema="dm.messaging.initial-store-recovery/v1",
+            application_sha256=config_digest(application),
+            specification_sha256=config_digest(specification),
+            stage_identity=[stage.stat().st_dev, stage.stat().st_ino],
+            role="opaque-message",
+            main=evidence(store),
+            journal=evidence(store.with_name(store.name + "-journal")),
+        )
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            operator.recover(
+                self.runtime,
+                target,
+                initial_staging=stage,
+                expected_application_sha256=config_digest(application),
+                expected_specification_sha256=config_digest(specification),
+                effect_not_after_ms=time.time_ns() // 1_000_000 + 60_000,
+                initial_store_recovery=plan,
+            )
+        loaded = load_application(self.runtime, target)
+        self.assertEqual(
+            loaded.service.messaging.channels["tribe"].records.get(
+                "request", identifier
+            ),
+            record,
+        )
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(
+            (target / store.name).stat().st_ino, plan["main"]["identity"][1]
+        )
+        self.assertEqual(self.runtime.service.relationships.store.events(), events)
 
     def accept(self):
         for event in self.fixture.events:

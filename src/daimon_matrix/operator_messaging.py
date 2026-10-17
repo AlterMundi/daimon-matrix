@@ -9,7 +9,8 @@ atomically while all stores and keys remain at their original paths. Run the CLI
 with the daemon stopped: it takes the same runtime lock and reads the password
 once. A published durability error is NOT a rollback: preserve the directory,
 inspect diagnostics for its exact application_sha256, then use recover with
---expected-application-sha256. Neither recovery nor loading initializes stores.
+--expected-application-sha256. Published recovery and loading never initialize
+stores; explicitly authorized initial-stage recovery can finish missing stores.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import FrameType
@@ -32,9 +34,13 @@ from typing import Any, cast
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import canonical_bytes
-from .local_api import create_messaging_capability
+from .local_api import LocalCapability, create_messaging_capability
 from .messaging_config import (
+    _STORE_SCHEMA_SQL,
+    _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY,
     APPLICATION_SCHEMA,
+    APPLICATION_SCHEMA_V2,
+    CAPABILITY_STATE_SCHEMA,
     MessagingConfigError,
     _capability_journal_names,
     _capability_state_chain,
@@ -43,6 +49,9 @@ from .messaging_config import (
     _public_identity,
     _read_publication,
     _read_verified_publication,
+    _selected_store_files,
+    _store_catalog,
+    _store_path,
     _validate_store_schema,
     application_routes,
     capability_state_record,
@@ -555,10 +564,10 @@ _CAPABILITY_ENTRY_MAX_BYTES = 4 * 1024 * 1024
 
 
 def _cleanup_retained_entry_staging(
-    root: Path, final_name: str, *, error_code: str
+    root: Path, final_name: str, *, error_code: str, staging_prefix: str | None = None
 ) -> None:
     """Remove only bounded, private residue for one exact journal entry."""
-    prefix = final_name + ".stage-"
+    prefix = staging_prefix if staging_prefix is not None else final_name + ".stage-"
     pattern = re.compile(re.escape(prefix) + r"[0-9a-f]{32}$")
     candidates: list[Path] = []
     for path in root.iterdir():
@@ -590,7 +599,13 @@ def _cleanup_retained_entry_staging(
 
 
 def _publish_retained_entry(
-    root: Path, final_name: str, raw: bytes, *, error_code: str
+    root: Path,
+    final_name: str,
+    raw: bytes,
+    *,
+    error_code: str,
+    staging_prefix: str | None = None,
+    existing_reader: Callable[[Path], bytes] = protected_read,
 ) -> None:
     """Install complete fsynced journal bytes atomically and without replacement."""
     final_path = root / final_name
@@ -601,14 +616,19 @@ def _publish_retained_entry(
     except OSError as exception:
         raise MessagingConfigError(error_code) from exception
     else:
-        if protected_read(final_path) != raw:
+        if existing_reader(final_path) != raw:
             raise MessagingConfigError(error_code)
-        _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
+        _cleanup_retained_entry_staging(
+            root, final_name, error_code=error_code, staging_prefix=staging_prefix
+        )
         _sync(root)
         return
 
-    _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
-    staging_name = final_name + ".stage-" + secrets.token_hex(16)
+    _cleanup_retained_entry_staging(
+        root, final_name, error_code=error_code, staging_prefix=staging_prefix
+    )
+    prefix = staging_prefix if staging_prefix is not None else final_name + ".stage-"
+    staging_name = prefix + secrets.token_hex(16)
     _write(root, staging_name, raw)
     _publish(root / staging_name, final_path)
     _sync(root)
@@ -621,28 +641,68 @@ def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
 
 
 def _initialize_capability_state(
-    runtime: HostedRuntime, descriptor: Mapping[str, Any]
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+    *,
+    genesis: Mapping[str, Any] | None = None,
 ) -> None:
     """Publish the immutable authenticated genesis outside app generations."""
     _, stem = _capability_journal_names(runtime, descriptor)
-    record = capability_state_record(
-        runtime,
-        descriptor,
-        sequence=0,
-        predecessor_sha256=None,
-        action="activate",
-        occurred_at_ms=runtime.service.clock(),
+    record = (
+        genesis
+        if genesis is not None
+        else capability_state_record(
+            runtime,
+            descriptor,
+            sequence=0,
+            predecessor_sha256=None,
+            action="activate",
+            occurred_at_ms=runtime.service.clock(),
+        )
     )
+    _validate_initial_genesis(runtime, descriptor, record)
     raw = canonical_bytes(record)
     _publish_capability_entry(
         runtime.state_root,
         stem + "-00000000000000000000.json",
         raw,
     )
-    _write(runtime.state_root, stem + "-current.json", raw)
-    _write(runtime.state_root, stem + "-floor.json", raw)
+    _publish_capability_entry(runtime.state_root, stem + "-current.json", raw)
+    _publish_capability_entry(runtime.state_root, stem + "-floor.json", raw)
     _sync(runtime.state_root)
     read_capability_state(runtime, descriptor)
+
+
+def _validate_initial_genesis(
+    runtime: HostedRuntime, descriptor: Mapping[str, Any], record: Mapping[str, Any]
+) -> None:
+    """Authenticate an original genesis without signing a replacement record."""
+    try:
+        identity, _stem = _capability_journal_names(runtime, descriptor)
+        body = record["body"]
+        if (
+            set(record) != {"body", "binding"}
+            or type(body["occurred_at_ms"]) is not int
+            or body["occurred_at_ms"] < 0
+            or body
+            != {
+                "schema": CAPABILITY_STATE_SCHEMA,
+                "journal_identity": identity,
+                "runtime_id": runtime.service.runtime_id,
+                "sequence": 0,
+                "predecessor_sha256": None,
+                "action": "activate",
+                "capability_id": descriptor["capability_id"],
+                "client_id": descriptor["client_id"],
+                "key_id": descriptor["key_id"],
+                "descriptor_sha256": config_digest(descriptor),
+                "occurred_at_ms": body["occurred_at_ms"],
+            }
+        ):
+            raise ValueError()
+        verify_binding_within_history(runtime, body, record["binding"])
+    except Exception:
+        raise MessagingConfigError("messaging_initial_capability_conflict") from None
 
 
 def _publish_capability_pointers(
@@ -1142,15 +1202,601 @@ def _published_predecessor_descriptor(
     return cast(Mapping[str, Any], predecessor)
 
 
+def _recover_initial_capability(
+    runtime: HostedRuntime,
+    staging: Path,
+    descriptor: Mapping[str, Any],
+    check: Callable[[], None],
+    *,
+    repair: bool = True,
+) -> None:
+    """Resume only the same authenticated genesis, never an advanced/revoked client."""
+    _identity, stem = _capability_journal_names(runtime, descriptor)
+    entry = runtime.state_root / (stem + "-00000000000000000000.json")
+    retained = staging / ".initial-capability-genesis.json"
+    if retained.exists():
+        genesis = read_document(retained)
+    elif entry.exists():
+        # Legacy interrupted prepare retained no stage-local genesis. Its actual
+        # immutable journal is the only acceptable source; never infer its date.
+        genesis = read_document(entry)
+    else:
+        raise MessagingConfigError("messaging_initial_capability_unobserved")
+    _validate_initial_genesis(runtime, descriptor, genesis)
+    raw = canonical_bytes(genesis)
+    if entry.exists():
+        _identity, _stem, chain = _capability_state_chain(runtime, descriptor)
+        if len(chain) != 1 or chain[0][1] != raw:
+            raise MessagingConfigError("messaging_initial_capability_conflict")
+    elif any(runtime.state_root.glob(stem + "-*.json")):
+        # Pointers or later entries without genesis are missing history, not an
+        # invitation to recreate an old capability from a private stage.
+        raise MessagingConfigError("messaging_initial_capability_conflict")
+    missing = []
+    for suffix in ("current", "floor"):
+        pointer = runtime.state_root / (stem + "-" + suffix + ".json")
+        if pointer.exists():
+            if protected_read(pointer) != raw:
+                raise MessagingConfigError("messaging_initial_capability_conflict")
+        else:
+            missing.append(pointer.name)
+    if not repair:
+        return
+    check()
+    _publish_capability_entry(runtime.state_root, entry.name, raw)
+    for name in missing:
+        check()
+        _publish_capability_entry(runtime.state_root, name, raw)
+    _sync(runtime.state_root)
+    read_capability_state(runtime, descriptor)
+
+
+def _initial_store_bytes(path: Path) -> tuple[bytes, dict[str, Any]]:
+    """Capture a protected, bounded SQLite file; an interrupted main may be empty."""
+    _store_path(path.parent, path.name)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_mode & 0o077
+            or before.st_nlink != 1
+            or not 0 <= before.st_size <= 4 * 1024 * 1024
+        ):
+            raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(4 * 1024 * 1024 + 1)
+        after = os.fstat(fd)
+        fields = (
+            "st_dev",
+            "st_ino",
+            "st_uid",
+            "st_mode",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            any(getattr(before, field) != getattr(after, field) for field in fields)
+            or len(raw) != before.st_size
+        ):
+            raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+        return raw, {
+            "identity": [before.st_dev, before.st_ino],
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    finally:
+        os.close(fd)
+
+
+def _initial_store_pair(path: Path) -> tuple[bytes, bytes | None, dict[str, Any]]:
+    _store_path(path.parent, path.name)
+    if any(path.with_name(path.name + suffix).exists() for suffix in ("-wal", "-shm")):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    raw, main = _initial_store_bytes(path)
+    if raw and (raw[:16] != b"SQLite format 3\x00" or raw[18:20] != b"\x01\x01"):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    journal = path.with_name(path.name + "-journal")
+    rollback, journal_info = (
+        _initial_store_bytes(journal) if journal.exists() else (None, None)
+    )
+    # SQLite's super-journal trailer ends with the journal magic. Refuse it
+    # before even rehearsing: recovery may otherwise access another database.
+    magic = bytes.fromhex("d9d505f920a163d7")
+    if rollback is not None and (
+        (any(rollback[:8]) and rollback[:8] != magic) or rollback.endswith(magic)
+    ):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    return raw, rollback, {"main": main, "journal": journal_info}
+
+
+def _complete_initial_opaque(database: Any, check: Callable[[], None]) -> str:
+    """Accept a full schema or its exact initial constructor prefix, then finish it."""
+    import sqlite3
+    from contextlib import closing
+
+    actual = _store_catalog(database)
+    if database.execute("PRAGMA integrity_check").fetchall() != [
+        ("ok",)
+    ] or database.execute("PRAGMA user_version").fetchone() != (0,):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    with closing(sqlite3.connect(":memory:")) as expected:
+        prefixes = [_store_catalog(expected)]
+        for statement in _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY["opaque"].split(";"):
+            if statement.strip():
+                expected.execute(statement)
+                prefixes.append(_store_catalog(expected))
+        if actual not in prefixes:
+            expected.executescript(_STORE_SCHEMA_SQL["opaque"])
+            if actual != _store_catalog(expected):
+                raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+        elif actual != prefixes[-1]:
+            # A partial initial constructor has never admitted queue data.
+            # A schema subset holding traffic is not a constructor prefix.
+            for kind, table, _name, _sql in actual:
+                if kind != "table":
+                    continue
+                if table == "inbox_meta":
+                    metadata = database.execute(
+                        "SELECT singleton,next_sequence FROM inbox_meta"
+                    ).fetchall()
+                    if metadata != [(1, 1)] and not (
+                        actual == prefixes[1] and metadata == []
+                    ):
+                        raise MessagingConfigError(
+                            "messaging_initial_store_recovery_rejected"
+                        )
+                elif database.execute(
+                    'SELECT count(*) FROM "' + table + '"'
+                ).fetchone() != (0,):
+                    raise MessagingConfigError(
+                        "messaging_initial_store_recovery_rejected"
+                    )
+        if any(row[1] == "inbox_meta" for row in actual):
+            metadata = database.execute(
+                "SELECT singleton,next_sequence FROM inbox_meta"
+            ).fetchall()
+            if (not metadata and actual != prefixes[1]) or (
+                metadata
+                and (
+                    len(metadata) != 1
+                    or metadata[0][0] != 1
+                    or type(metadata[0][1]) is not int
+                    or metadata[0][1] < 1
+                )
+            ):
+                raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    check()
+    # Reuse the maintained constructor schema, atomically. SQLite owns journal
+    # rollback/removal, including cold residue; never unlink a live journal.
+    database.executescript(
+        "BEGIN IMMEDIATE;"
+        + _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY["opaque"]
+        + "INSERT OR IGNORE INTO inbox_meta VALUES(1,1);PRAGMA user_version=0;COMMIT;"
+    )
+    check()
+    return hashlib.sha256("\n".join(database.iterdump()).encode()).hexdigest()
+
+
+def _recover_initial_store(
+    runtime: HostedRuntime,
+    staging: Path,
+    path: Path,
+    plan: Mapping[str, Any],
+    check: Callable[[], None],
+) -> None:
+    """Rehearse exact evidence, then recover the same original SQLite inode."""
+    import sqlite3
+    from contextlib import closing
+
+    area = staging / ".initial-store-recovery"
+    if area.exists():
+        _directory(area)
+    intent_path = area / "intent.json"
+    current_main, current_journal, current = _initial_store_pair(path)
+    if current["main"]["identity"] != plan["main"]["identity"]:
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    if intent_path.exists():
+        packet = read_document(intent_path)
+        verify_binding(runtime, packet["body"], packet["binding"])
+        if packet["body"]["plan"] != plan:
+            raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+        before = _initial_store_bytes(area / "main.before")[0]
+        rollback = _initial_store_bytes(area / "journal.before")[0]
+    else:
+        if current != {"main": plan["main"], "journal": plan["journal"]}:
+            raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+        assert current_journal is not None
+        before, rollback = current_main, current_journal
+    if (
+        hashlib.sha256(before).hexdigest() != plan["main"]["sha256"]
+        or hashlib.sha256(rollback).hexdigest() != plan["journal"]["sha256"]
+    ):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+
+    def rehearse(
+        raw: bytes, journal: bytes | None, *, include_successor: bool = False
+    ) -> tuple[str, set[str]]:
+        check()
+        with tempfile.TemporaryDirectory(
+            prefix=".store-rehearsal-", dir=staging
+        ) as directory:
+            work = Path(directory) / "store.sqlite"
+            _write(work.parent, work.name, raw)
+            if journal is not None:
+                _write(work.parent, work.name + "-journal", journal)
+            with closing(
+                sqlite3.connect(work.as_uri() + "?mode=rw", uri=True, timeout=0)
+            ) as database:
+                database.set_progress_handler(progress, 100)
+                base = _complete_initial_opaque(database, check)
+                result = {base}
+                can_expand = (
+                    include_successor
+                    and (
+                        runtime.egress.catalog_mode == "synthetic"
+                        or (
+                            runtime.egress.catalog_mode == "migrate"
+                            and runtime.egress.release_enabled
+                        )
+                    )
+                    and database.execute(
+                        "SELECT count(*) FROM inbox_requests"
+                    ).fetchone()
+                    == (0,)
+                    and not database.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE name='echo_v2_catalog'"
+                    ).fetchall()
+                )
+            if can_expand:
+                # Composition may subsequently add exactly this maintained,
+                # authenticated empty catalog. Derive its whole-state hash on
+                # the copy, never by ignoring visibility tables or later rows.
+                check()
+                phase = plan["role"].removeprefix("opaque-")
+                runtime.egress._provision(
+                    work, f"messaging-{phase}-responses", reconcile=False
+                )
+                with closing(
+                    sqlite3.connect(work.as_uri() + "?mode=rw", uri=True, timeout=0)
+                ) as database:
+                    database.set_progress_handler(progress, 100)
+                    result.add(_complete_initial_opaque(database, check))
+            _validate_store_schema(plan["role"], work, allow_missing_visibility=True)
+            return base, result
+
+    # Bounded SQLite CPU and immediate busy refusal; the caller's actual effect
+    # bound is also rechecked at every original mutation/publication boundary.
+    deadline = time.time_ns() // 1_000_000 + 30_000
+
+    def progress() -> int:
+        try:
+            check()
+            return int(time.time_ns() // 1_000_000 >= deadline)
+        except MessagingConfigError:
+            return 1
+
+    expected, allowed = rehearse(before, rollback, include_successor=True)
+    if intent_path.exists() and packet["body"] != {
+        "schema": "dm.messaging.initial-store-recovery-intent/v1",
+        "plan": plan,
+        "expected_state_sha256": expected,
+    }:
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    if rehearse(current_main, current_journal)[0] not in allowed:
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    if not intent_path.exists():
+        check()
+        if not area.exists():
+            area.mkdir(mode=0o700)
+        for name, raw in (("main.before", before), ("journal.before", rollback)):
+            check()
+            _publish_retained_entry(
+                area,
+                name,
+                raw,
+                error_code="messaging_initial_store_recovery_rejected",
+                existing_reader=lambda path: _initial_store_bytes(path)[0],
+            )
+        body = {
+            "schema": "dm.messaging.initial-store-recovery-intent/v1",
+            "plan": plan,
+            "expected_state_sha256": expected,
+        }
+        check()
+        _publish_retained_entry(
+            area,
+            "intent.json",
+            canonical_bytes({"body": body, "binding": create_binding(runtime, body)}),
+            error_code="messaging_initial_store_recovery_rejected",
+        )
+    # An intent visible after a lost publication return may still need its
+    # directory durability established before original store effects resume.
+    _sync(area)
+    _sync(staging)
+    if _initial_store_pair(path)[2] != current:
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    check()
+    with closing(
+        sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=0)
+    ) as database:
+        database.set_progress_handler(progress, 100)
+        if _complete_initial_opaque(database, check) not in allowed:
+            raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    _validate_store_schema(plan["role"], path, allow_missing_visibility=True)
+    if (
+        path.stat().st_ino != plan["main"]["identity"][1]
+        or path.stat().st_dev != plan["main"]["identity"][0]
+    ):
+        raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+    _sync(staging)
+
+
+def _recover_initial(
+    runtime: HostedRuntime,
+    target: Path,
+    staging: Path,
+    *,
+    expected_application_sha256: str,
+    expected_specification_sha256: str,
+    effect_not_after_ms: int | None,
+    initial_store_recovery: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Authenticate an explicitly selected private stage before finishing its prefix."""
+    import fcntl
+
+    def check() -> None:
+        if (
+            type(effect_not_after_ms) is not int
+            or not 0 < time.time_ns() // 1_000_000 < effect_not_after_ms < 2**53
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_expired")
+
+    check()
+    staging = _directory(staging)
+    _directory(target.parent)
+    if (
+        staging.parent != target.parent
+        or not staging.name.startswith(".messaging-prepare-")
+        or target == runtime.state_root
+        or runtime.state_root in target.parents
+        or target.exists()
+        or target.is_symlink()
+    ):
+        raise MessagingConfigError("messaging_initial_recovery_conflict")
+    fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        application = read_document(staging / "application.json")
+        validate_shape(application)
+        if (
+            config_digest(application) != expected_application_sha256
+            or config_digest({k: v for k, v in application.items() if k != "client"})
+            != expected_specification_sha256
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        verify_binding(runtime, application, read_document(staging / "binding.json"))
+        for row in [application["client"], *application_routes(application)]:
+            if (
+                hashlib.sha256(
+                    protected_read(staging / row["secret_file"], size=32)
+                ).hexdigest()
+                != row["secret_sha256"]
+            ):
+                raise MessagingConfigError("messaging_key_rejected")
+        client = application["client"]
+        capability = LocalCapability.from_value(
+            client["descriptor"],
+            protected_read(staging / client["secret_file"], size=32),
+        )
+        if (
+            set(capability.methods) != MESSAGING_METHODS
+            or not capability.active_at(runtime.service.clock())
+            or capability.capability_id in runtime.service.capabilities
+            or any(
+                c.client_id == capability.client_id
+                for c in runtime.service.capabilities.values()
+            )
+            or read_document(staging / "client.json")
+            != {
+                "schema": "dm.local.client-config/v3",
+                "capability": capability.descriptor,
+                "expected_server": dict(runtime.service.origin),
+                "runtime_id": runtime.service.runtime_id,
+                "runtime_label": runtime.service.runtime_label,
+            }
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        # Protect every store/companion before SQLite opens any file. Pending or
+        # orphan journals require a separate recovery decision, never recreation.
+        stores = {
+            role: _store_path(staging, filename)
+            for role, filename in _selected_store_files(application).items()
+        }
+        recovery_role = None
+        if initial_store_recovery is not None:
+            plan = initial_store_recovery
+            if (
+                set(plan)
+                != {
+                    "schema",
+                    "application_sha256",
+                    "specification_sha256",
+                    "stage_identity",
+                    "role",
+                    "main",
+                    "journal",
+                }
+                or plan["schema"] != "dm.messaging.initial-store-recovery/v1"
+                or plan["application_sha256"] != expected_application_sha256
+                or plan["specification_sha256"] != expected_specification_sha256
+                or plan["stage_identity"] != [os.fstat(fd).st_dev, os.fstat(fd).st_ino]
+                or not isinstance(plan["role"], str)
+                or plan["role"] not in {"opaque-message", "opaque-evidence"}
+                or plan["role"] not in stores
+            ):
+                raise MessagingConfigError("messaging_initial_store_recovery_rejected")
+            for key in ("main", "journal"):
+                row = plan[key]
+                if (
+                    not isinstance(row, dict)
+                    or set(row) != {"identity", "sha256"}
+                    or not isinstance(row["identity"], list)
+                    or len(row["identity"]) != 2
+                    or any(
+                        type(value) is not int or value < 0 for value in row["identity"]
+                    )
+                    or not isinstance(row["sha256"], str)
+                    or re.fullmatch("[0-9a-f]{64}", row["sha256"]) is None
+                ):
+                    raise MessagingConfigError(
+                        "messaging_initial_store_recovery_rejected"
+                    )
+            recovery_role = plan["role"]
+        elif (staging / ".initial-store-recovery").exists():
+            raise MessagingConfigError("messaging_initial_store_recovery_required")
+        for role, path in stores.items():
+            if any(
+                path.with_name(path.name + suffix).exists()
+                for suffix in (
+                    ("-wal", "-shm")
+                    if role == recovery_role
+                    else ("-wal", "-shm", "-journal")
+                )
+            ):
+                raise MessagingConfigError("messaging_required_store_invalid")
+        for role, path in stores.items():
+            if path.exists() and role != recovery_role:
+                _validate_store_schema(
+                    role,
+                    path,
+                    require_inbox_admission=application["schema"]
+                    == APPLICATION_SCHEMA_V2,
+                    allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
+                )
+        if (staging / "publication.json").exists():
+            packet = read_document(staging / "publication.json")
+            if packet["body"] != {
+                "schema": "dm.messaging.publication/v1",
+                "generation": ".",
+                "application_sha256": expected_application_sha256,
+                "predecessor_sha256": None,
+            }:
+                raise MessagingConfigError("messaging_initial_recovery_conflict")
+            verify_binding(runtime, packet["body"], packet["binding"])
+        _recover_initial_capability(
+            runtime, staging, capability.descriptor, check, repair=False
+        )
+        # Legacy stages may never have reached their creation-directory fsync.
+        # Retain authenticated recovery inputs before any new durable effect.
+        _sync(staging)
+        _sync(staging.parent)
+        if recovery_role is not None:
+            assert initial_store_recovery is not None
+            _recover_initial_store(
+                runtime, staging, stores[recovery_role], initial_store_recovery, check
+            )
+        _recover_initial_capability(runtime, staging, capability.descriptor, check)
+        existing_catalogs = runtime.egress.registered_catalog_ids()
+        check()
+        _compose(runtime, staging, application, initialize=True)
+        if runtime.egress.catalog_mode == "migrate" and runtime.egress.release_enabled:
+            new_catalogs = runtime.egress.registered_catalog_ids() - existing_catalogs
+            check()
+            runtime.egress.migrate_registered_catalogs(
+                new_catalogs, version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs(new_catalogs)
+        if not (staging / "publication.json").exists():
+            check()
+            _publish_retained_entry(
+                staging,
+                "publication.json",
+                _publication(runtime, application, ".", None),
+                error_code="messaging_initial_recovery_conflict",
+                staging_prefix=".initial-publication.stage-",
+            )
+        load_application(runtime, staging)
+        _sync(staging)
+        _sync(staging.parent)
+        if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (
+            staging.lstat().st_dev,
+            staging.lstat().st_ino,
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        check()
+        _publish(staging, target)
+        try:
+            _sync(target.parent)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        load_application(runtime, target)
+        return {
+            "status": "configured",
+            "application_sha256": expected_application_sha256,
+        }
+    finally:
+        os.close(fd)
+
+
 def recover(
     runtime: HostedRuntime,
     app_directory: Path | str,
     *,
     expected_application_sha256: str,
+    initial_staging: Path | str | None = None,
+    expected_specification_sha256: str | None = None,
+    effect_not_after_ms: int | None = None,
+    initial_store_recovery: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate exact published state and finish an interrupted renewal journal."""
+    """Recover published state or an explicitly approved initial private stage.
+
+    Initial recovery preserves the original client, signed genesis and stores.
+    The trusted owner binds the stage/application/specification to its retained
+    request and holds the runtime writer. A fresh publication needs its own fixed
+    execution bound; this does not renew an old owner request or Matrix authority.
+    """
     import fcntl
 
+    if initial_staging is not None:
+        if (
+            not isinstance(expected_specification_sha256, str)
+            or re.fullmatch("[0-9a-f]{64}", expected_specification_sha256) is None
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        target = Path(os.path.abspath(app_directory))
+        if not target.exists():
+            return _recover_initial(
+                runtime,
+                target,
+                Path(initial_staging),
+                expected_application_sha256=expected_application_sha256,
+                expected_specification_sha256=expected_specification_sha256,
+                effect_not_after_ms=effect_not_after_ms,
+                initial_store_recovery=initial_store_recovery,
+            )
+        # A lost return after exclusive publication is historical recovery of
+        # the same initial app. The old staging name no longer needs to exist.
+        application, metadata = read_publication(runtime, _directory(target))
+        publication = read_document(target / "publication.json")["body"]
+        if (
+            metadata != target
+            or publication["generation"] != "."
+            or publication["predecessor_sha256"] is not None
+            or config_digest({k: v for k, v in application.items() if k != "client"})
+            != expected_specification_sha256
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+    elif (
+        expected_specification_sha256 is not None
+        or effect_not_after_ms is not None
+        or initial_store_recovery is not None
+    ):
+        raise MessagingConfigError("messaging_initial_recovery_conflict")
     target = _directory(app_directory)
     fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -1208,6 +1854,7 @@ def prepare(
     No grant, identity, transport key or foreign ledger is invented here.
     """
     staging = None
+    retain_staging = False
     try:
         target = Path(os.path.abspath(app_directory))
         _directory(target.parent)
@@ -1264,7 +1911,22 @@ def prepare(
         )
         persisted = read_document(staging / "application.json")
         verify_binding(runtime, persisted, read_document(staging / "binding.json"))
-        _initialize_capability_state(runtime, cap.descriptor)
+        genesis = capability_state_record(
+            runtime,
+            cap.descriptor,
+            sequence=0,
+            predecessor_sha256=None,
+            action="activate",
+            occurred_at_ms=runtime.service.clock(),
+        )
+        _write(staging, ".initial-capability-genesis.json", canonical_bytes(genesis))
+        # The capability journal outlives this private directory. Its original
+        # client and signed application must be durable before the first effect,
+        # and remain available if that effect or later composition is interrupted.
+        _sync(staging)
+        _sync(staging.parent)
+        retain_staging = True
+        _initialize_capability_state(runtime, cap.descriptor, genesis=genesis)
         existing_catalogs = runtime.egress.registered_catalog_ids()
         _compose(runtime, staging, persisted, initialize=True)
         if runtime.egress.catalog_mode == "migrate" and runtime.egress.release_enabled:
@@ -1273,7 +1935,13 @@ def prepare(
                 new_catalogs, version=VISIBILITY_SCHEMA_VERSION
             )
             runtime.egress.validate_registered_catalogs(new_catalogs)
-        _write(staging, "publication.json", _publication(runtime, persisted, ".", None))
+        _publish_retained_entry(
+            staging,
+            "publication.json",
+            _publication(runtime, persisted, ".", None),
+            error_code="messaging_initial_recovery_conflict",
+            staging_prefix=".initial-publication.stage-",
+        )
         load_application(runtime, staging)
         _sync(staging)
         _publish(staging, target)
@@ -1306,7 +1974,7 @@ def prepare(
     except Exception:
         raise MessagingConfigError("messaging_prepare_rejected") from None
     finally:
-        if staging is not None:
+        if staging is not None and not retain_staging:
             shutil.rmtree(staging)
 
 
@@ -2671,6 +3339,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Owner-only named transport key sources (prepare only)",
     )
     parser.add_argument("--expected-application-sha256")
+    parser.add_argument(
+        "--initial-staging",
+        type=Path,
+        help="Exact retained private initial stage (recover only)",
+    )
+    parser.add_argument("--expected-specification-sha256")
+    parser.add_argument("--effect-not-after-ms", type=int)
+    parser.add_argument(
+        "--initial-store-recovery",
+        type=Path,
+        help="Exact owner-reviewed initial-store evidence plan (recover only)",
+    )
     parser.add_argument("--proposal", type=Path)
     parser.add_argument(
         "--representation",
@@ -2686,6 +3366,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock = None
     previous_signals = {}
     try:
+        initial_recovery = (
+            args.command == "recover" and args.initial_staging is not None
+        )
+        if (args.initial_staging is not None and args.command != "recover") or (
+            args.initial_staging is None
+            and (
+                args.expected_specification_sha256 is not None
+                or args.effect_not_after_ms is not None
+                or args.initial_store_recovery is not None
+            )
+        ):
+            raise ValueError()
         if args.command == "adopt-peer":
             if (
                 args.peer_authority is None
@@ -2759,6 +3451,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError()
         if (
             args.command not in {"prepare", "republish", "adopt-peer"}
+            and not initial_recovery
             and args.visibility_installation is None
         ):
             raise ValueError()
@@ -2781,11 +3474,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             visibility_factory = daemon._visibility_factory(
                 args.visibility_installation, clock=clock
             )
-        elif presentation_command or args.command in {
-            "prepare",
-            "republish",
-            "adopt-peer",
-        }:
+        elif (
+            initial_recovery
+            or presentation_command
+            or args.command
+            in {
+                "prepare",
+                "republish",
+                "adopt-peer",
+            }
+        ):
             # Signing an app presentation must not authenticate the base native
             # catalogs with that app's different proof key. The closed bootstrap
             # cannot send and leaves catalogs intact; visibility_presentation
@@ -2879,11 +3577,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bundle_name=args.bundle,
                 peer_being_refs=args.peer_being_ref,
             )
-        elif args.command in {"renew", "revoke", "recover"}:
+        elif args.command == "recover":
+            result = recover(
+                runtime,
+                args.app_dir,
+                expected_application_sha256=args.expected_application_sha256,
+                initial_staging=args.initial_staging,
+                expected_specification_sha256=args.expected_specification_sha256,
+                effect_not_after_ms=args.effect_not_after_ms,
+                initial_store_recovery=read_document(args.initial_store_recovery)
+                if args.initial_store_recovery is not None
+                else None,
+            )
+        elif args.command in {"renew", "revoke"}:
             operation = {
                 "renew": renew,
                 "revoke": revoke_capability,
-                "recover": recover,
             }[args.command]
             result = operation(
                 runtime,

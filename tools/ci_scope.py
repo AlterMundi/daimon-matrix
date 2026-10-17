@@ -60,6 +60,7 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "docs/existing-agent-chat.md",
         "docs/multi-agent-chat.md",
         "docs/runbooks/neutral-territory.md",
+        "docs/runbooks/operator-bootstrap.md",
         "docs/runbooks/tribu-readable-traffic.md",
         "docs/runbooks/group-admission.md",
         "docs/verification/dm025-invariants.json",
