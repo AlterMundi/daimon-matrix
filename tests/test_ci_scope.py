@@ -12,6 +12,57 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_shared_ledger_group_gate_adds_owning_consumers_without_unrelated_suites(
+        self,
+    ):
+        from tools.ci_scope import LEDGER_GROUP_FILES
+
+        changed = [
+            "src/daimon_matrix/ledger.py",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+        ]
+        self.assertEqual(profile(changed), "ledger-group-storage")
+        self.assertEqual(profile(list(LEDGER_GROUP_FILES)), "ledger-group-storage")
+        self.assertEqual(profile(["src/daimon_matrix/ledger.py"]), "full")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/keystore.py"]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn(
+            "group_ledger_checks: ${{ steps.scope.outputs.group_ledger_checks }}",
+            workflow,
+        )
+        self.assertIn("if: needs.scope.outputs.group_ledger_checks == 'true'", workflow)
+        self.assertIn("tests.test_dm022_ledger tests.test_dm031_curator", workflow)
+        self.assertIn(
+            "tests.test_dm032_curator_worker tests.test_dm054_scopes", workflow
+        )
+
+    def test_installer_only_changes_keep_installed_attachment_checks(self):
+        from tools.ci_scope import INSTALLER_FILES
+
+        self.assertEqual(profile(list(INSTALLER_FILES)), "agent-chat-installer")
+        for extra in (
+            "src/daimon_matrix/messaging_config.py",
+            "src/daimon_matrix/keystore.py",
+            "requirements-dev.txt",
+            "tests/test_unknown_contract.py",
+        ):
+            self.assertNotEqual(
+                profile([*INSTALLER_FILES, extra]), "agent-chat-installer"
+            )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  agent-chat-installer:", 1)[1].split("  peer:", 1)[0]
+        self.assertIn("needs.scope.outputs.profile == 'agent-chat-installer'", job)
+        self.assertIn("requirements-dev.txt .", job)
+        self.assertIn("tests.test_agent_chat", job)
+        self.assertIn("tests.test_ci_scope", job)
+        self.assertNotIn("tests.test_group_messaging_runtime", job)
+
     def test_migration_checks_are_installed_and_combined_admission_keeps_them(self):
         from tools.ci_scope import COMMUNICATION_MIGRATION_FILES
 
@@ -406,6 +457,21 @@ class CIScopeTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(profile([*changed, path]), "full")
+
+    def test_visibility_worker_fix_uses_existing_installed_visibility_checks(self):
+        changed = [
+            "src/daimon_matrix/daemon.py",
+            "src/daimon_matrix/native_egress.py",
+            "tests/test_mandatory_echo_integration.py",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+        ]
+        self.assertEqual(profile(changed), "visibility")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/identity.py"]), "full")
 
     def test_operator_presentation_correction_runs_installed_visibility_checks(self):
         changed = [

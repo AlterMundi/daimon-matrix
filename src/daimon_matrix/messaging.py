@@ -9,13 +9,14 @@ only canonical DM-051 envelope bytes enter the receive methods.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -35,6 +36,7 @@ from .communication import (
 )
 from .labels import LabelError, LabelIndex
 from .ledger import Ledger
+from .mandatory_echo import read_diagnostic, write_diagnostic
 from .messaging_store import (
     MessagingInboxError,
     MessagingInboxStore,
@@ -1758,6 +1760,102 @@ class GroupMessaging:
             self.lane.clock(),
         )
 
+    def initialize_reader_recovery(self, service: Any) -> None:
+        """Attach durable owner controls only at a fully qualified serving boot."""
+        if not self.controlled_readers:
+            return
+        base = json.loads(service.loaded_runtime or b"null")
+        app = json.loads(service.loaded_application or b"null")
+        base_fields = {
+            "schema",
+            "runtime_id",
+            "local_origin",
+            "runtime_bundle_sha256",
+            "startup",
+            "qualified_startup",
+            "authority_epoch",
+            "state_root_identity",
+            "stores",
+            "process_id",
+            "process_instance_id",
+        }
+        app_fields = {
+            "schema",
+            "loaded_base_sha256",
+            "loaded_view_sha256",
+            "reader_gates",
+            "application_sha256",
+            "config_sha256",
+            "publication",
+            "publication_sha256",
+            "stores",
+            "shared_stores",
+            "shared_relationships",
+            "communication_store_role",
+            "tribe",
+            "visibility",
+            "authorities",
+        }
+        startup_fields = {
+            "schema",
+            "code_digest",
+            "sdk_digest",
+            "matrix_commit",
+            "matrix_wheel_sha256",
+            "import_context_sha256",
+            "import_files_sha256",
+            "interpreter",
+            "reader",
+            "isolated",
+            "no_site",
+            "no_bytecode",
+            "process_id",
+            "startup_instance_id",
+        }
+        if (
+            not isinstance(base, dict)
+            or set(base) != base_fields
+            or not isinstance(app, dict)
+            or set(app) != app_fields
+            or base["schema"] != "dm.runtime.loaded-base/v1"
+            or app["schema"] != "dm.runtime.loaded-application/v1"
+            or not isinstance(base["qualified_startup"], dict)
+            or set(base["qualified_startup"]) != startup_fields
+        ):
+            # Bare fixtures and historical loaders cannot advertise this feature.
+            return
+        self.validate(service)
+        stable_base = {
+            key: value
+            for key, value in base.items()
+            if key not in {"process_id", "process_instance_id"}
+        }
+        stable_base["qualified_startup"] = {
+            key: value
+            for key, value in base["qualified_startup"].items()
+            if key not in {"process_id", "startup_instance_id"}
+        }
+        capability = service.capabilities[service.receiving.capability_id]
+        binding = {
+            "base": stable_base,
+            "application": {
+                key: value
+                for key, value in app.items()
+                if key
+                not in {"loaded_base_sha256", "loaded_view_sha256", "reader_gates"}
+            },
+            "controller": capability.descriptor,
+            "credential_id": self.lane.local_credential_id,
+        }
+        self.egress.initialize_reader_recovery(
+            "tribe",
+            binding=binding,
+            boot={"base": base, "application": app},
+            load=self.records.reader_control_head,
+            append=self.records.append_reader_control,
+            authorization=self.selection_authorization,
+        )
+
     def _verify_loaded_stores(self) -> None:
         """A changed physical store is uncertain storage, not a peer refusal."""
         try:
@@ -1853,6 +1951,7 @@ class GroupMessaging:
                     member["receiving_copy"] = "proved"
                     member["receiving_leg_ids"].append(leg["leg_id"])
             state, proof_hash = "pending", None
+            failure = None
             route = "available" if target in self.providers else "unavailable"
             attempt = "not-attempted"
             if author:
@@ -1872,6 +1971,14 @@ class GroupMessaging:
                     proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
                 elif self.records.get("transport", request_id) is not None:
                     attempt = "unconfirmed"
+                    # Diagnostics never establish or invalidate receiving proof.
+                    with (
+                        suppress(OSError, sqlite3.Error, ValueError),
+                        self.egress.local_storage(),
+                    ):
+                        failure = read_diagnostic(
+                            self.records.path, "route", request_id
+                        )
                 elif route == "unavailable":
                     state = "unroutable"
             transport.append(
@@ -1882,6 +1989,7 @@ class GroupMessaging:
                     "response_sha256": proof_hash,
                     "attempt_state": attempt,
                     "current_route": route,
+                    **({"last_failure": failure} if failure is not None else {}),
                 }
             )
         result = {
@@ -2339,14 +2447,30 @@ class GroupMessaging:
             try:
                 if authorize is not None:
                     authorize()
-                self._transmit(
-                    native,
-                    row,
-                    operation,
-                    receipt=False,
-                    deadline_ns=deadline_ns,
-                    authorize=authorize,
-                )
+                for attempt in range(3):
+                    outcome = self._transmit(
+                        native,
+                        row,
+                        operation,
+                        receipt=False,
+                        deadline_ns=deadline_ns,
+                        authorize=authorize,
+                    )
+                    if (
+                        outcome not in {"route_connection_failed", "route_timeout"}
+                        or attempt == 2
+                    ):
+                        break
+                    remaining = min(
+                        (deadline_ns - time.monotonic_ns()) / 1_000_000_000,
+                        (operation.deadline_ms - self.lane.clock()) / 1000,
+                    )
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.05 * 2**attempt, remaining))
+                    # Recheck authority/readers at each original-byte release.
+                    if authorize is not None:
+                        authorize()
             finally:
                 self._finish_transport(row, operation, receipt=False)
 
@@ -2396,15 +2520,15 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> str | None:
         if receipt:
             if not self._claim_transport(row, operation, receipt=True):
-                return
+                return None
             try:
                 if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
-                    return
+                    return None
                 self.egress.prepare_visibility(operation)
-                self._transmit_one(
+                return self._transmit_one(
                     native,
                     row,
                     operation,
@@ -2415,7 +2539,7 @@ class GroupMessaging:
             finally:
                 self._finish_transport(row, operation, receipt=True)
         else:
-            self._transmit_one(
+            return self._transmit_one(
                 native,
                 row,
                 operation,
@@ -2433,15 +2557,15 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None,
         authorize: Callable[[], None] | None,
-    ) -> None:
+    ) -> str | None:
         from .routes import RouteError
         from .sealed import inspect_delivery
 
         providers = self.providers.get((row["being_ref"], row["embodiment_id"]))
         if providers is None:
-            return  # The full signed audience remains present and pending.
+            return None  # The full signed audience remains present and pending.
         if self.lane.clock() >= operation.deadline_ms:
-            return
+            return None
         provider = providers["evidence" if receipt else "message"]
         document = _parse(native)
         directed = (
@@ -2450,14 +2574,16 @@ class GroupMessaging:
         controlled_data = directed or (self.controlled_readers and not receipt)
         requirements = (
             self._reader_requirements(
-                self.records.get("send", operation.operation_id),
+                self.records.get(
+                    "send", operation.operation_id, deadline_ns=deadline_ns
+                ),
                 document["resolution"]["manifest_hash"],
             )
             if controlled_data
             else None
         )
         if controlled_data and not self._direct_ready(row, requirements=requirements):
-            return
+            return None
         if receipt:
             identifier = document["receipt"]["event_id"]
             delivery_id = str(uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1"))
@@ -2494,17 +2620,17 @@ class GroupMessaging:
             request_id,
             fingerprint,
             lambda: {"request": b64url(provider.prepare_submission(submission))},
+            deadline_ns=deadline_ns,
         )
         raw = unb64url(retained["request"])
-        if receipt:
-            proof = self.records.transport_result(request_id)
-            if proof is not None:
-                result = provider.validate_prepared_response(
-                    raw, unb64url(proof["response"])
-                )
-                if dict(result) != proof["result"]:
-                    raise ValueError("tribe_receipt_return_proof_conflict")
-                return
+        proof = self.records.transport_result(request_id, deadline_ns=deadline_ns)
+        if proof is not None:
+            result = provider.validate_prepared_response(
+                raw, unb64url(proof["response"])
+            )
+            if dict(result) != proof["result"]:
+                raise ValueError("tribe_receipt_return_proof_conflict")
+            return None
 
         def retain_response(response: bytes) -> None:
             observed = {
@@ -2517,7 +2643,11 @@ class GroupMessaging:
                 uuid.uuid5(uuid.UUID(request_id), hashlib.sha256(response).hexdigest())
             )
             self.records.reserve(
-                "transport-result", proof_id, observed, lambda: observed
+                "transport-result",
+                proof_id,
+                observed,
+                lambda: observed,
+                deadline_ns=deadline_ns,
             )
 
         def authorize_write() -> None:
@@ -2537,10 +2667,24 @@ class GroupMessaging:
                 authorize=authorize_write,
                 require_bounded_write=controlled_data,
             )
-        except RouteError:
+        except RouteError as failure:
             # An unknown outcome stays pending. Retrying uses the same bytes and
-            # receipt identity; never substitute a new logical message.
-            return
+            # receipt identity; never substitute a new logical message. Preserve
+            # only the existing closed diagnostic code, never exception text or
+            # peer responses. A failed observer cannot change native outcomes.
+            with (
+                suppress(OSError, sqlite3.Error, ValueError),
+                self.egress.local_storage(deadline_ns=deadline_ns),
+            ):
+                write_diagnostic(
+                    self.records.path,
+                    "route",
+                    request_id,
+                    failure.code,
+                    self.lane.clock(),
+                )
+            return failure.code
+        return None
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
         from .sealed import inspect_delivery
@@ -2769,14 +2913,15 @@ class GroupMessaging:
     def _retained_message_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
-        admission, inbox, _obligation = self._retained_intake(context)
+        admission, inbox, obligation = self._retained_intake(context)
         identifier = inbox["message"]["event_id"]
 
         def after_response() -> None:
             self.complete_receipt(identifier)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_receipt(identifier, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_receipt(identifier, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -2786,6 +2931,7 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=obligation["deadline_ms"],
         )
 
     def _acknowledge_intake(
@@ -2827,7 +2973,8 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(message_id)
         try:
-            return self._complete_receipt(message_id, deadline_ns=deadline_ns)
+            with self.ledger.storage_budget(deadline_ns):
+                return self._complete_receipt(message_id, deadline_ns=deadline_ns)
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(message_id)
@@ -2961,13 +3108,20 @@ class GroupMessaging:
                 deadline_ms=obligation["deadline_ms"],
                 authority_head=self.ledger.local_origin["body_ref"],
             )
-            self._transmit(
+            failure_code = self._transmit(
                 native,
                 obligation["return_target"],
                 operation,
                 receipt=True,
                 deadline_ns=deadline_ns,
             )
+            if failure_code in {
+                "route_authority_blocked",
+                "route_echo_unconfirmed",
+                "route_egress_blocked",
+                "transport_response_rejected",
+            }:
+                return {"state": "blocked-return"}
             state = self._retained_return_state(result, obligation) or "pending"
         if state == "pending":
             return {"state": state}
@@ -3143,8 +3297,9 @@ class GroupMessaging:
         def after_response() -> None:
             self.complete_control(request_id)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_control(request_id, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_control(request_id, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -3154,6 +3309,7 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=context["request"]["expires_at_ms"],
         )
 
     def complete_control(
@@ -3168,27 +3324,30 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(key)
         try:
-            admission = self.records.get("intake-admission", request_id)
-            if admission is None:
-                raise ValueError("tribe_control_recovery_missing")
-            self.retained_evidence_ticket(admission["context"])
-            terminal = self.records.get("control-terminal", request_id)
-            if terminal is not None:
-                if terminal["control_sha256"] != admission["control_sha256"]:
-                    raise ValueError("tribe_control_recovery_binding_conflict")
-                return terminal
-            proof = self.records.get("control-proof", request_id)
-            assert proof is not None
-            self.communication.record_foreign_receipt(
-                proof["receipt"], recipient_being_ref=proof["recipient_being_ref"]
-            )
-            terminal = {
-                "state": "receipt-projected",
-                "control_sha256": admission["control_sha256"],
-            }
-            return self.records.reserve(
-                "control-terminal", request_id, terminal, lambda: terminal
-            )
+            with self.ledger.storage_budget(deadline_ns):
+                admission = self.records.get("intake-admission", request_id)
+                if admission is None:
+                    raise ValueError("tribe_control_recovery_missing")
+                self.retained_evidence_ticket(admission["context"])
+                terminal = self.records.get("control-terminal", request_id)
+                if terminal is not None:
+                    if terminal["control_sha256"] != admission["control_sha256"]:
+                        raise ValueError("tribe_control_recovery_binding_conflict")
+                    return terminal
+                proof = self.records.get("control-proof", request_id)
+                assert proof is not None
+                self.communication.record_foreign_receipt(
+                    proof["receipt"],
+                    recipient_being_ref=proof["recipient_being_ref"],
+                    deadline_ns=deadline_ns,
+                )
+                terminal = {
+                    "state": "receipt-projected",
+                    "control_sha256": admission["control_sha256"],
+                }
+                return self.records.reserve(
+                    "control-terminal", request_id, terminal, lambda: terminal
+                )
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(key)

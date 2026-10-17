@@ -514,7 +514,7 @@ def _run_egress_worker(
     try:
         while not stop.is_set():
             try:
-                result = controller.run_worker_batch(limit=32)
+                result = controller.run_worker_batch(limit=32, include_status=False)
                 controller.worker_succeeded()
                 delay = 0.01 if result["processed"] == 32 else EGRESS_SCAN_SECONDS
             except (NativeEgressError, OSError, ValueError):
@@ -549,6 +549,9 @@ def serve_forever(
     egress_thread: threading.Thread | None = None
     try:
         runtime.egress.validate_registry(_enabled_egress_paths(runtime))
+        if runtime.service.receiving is not None:
+            for group in runtime.service.receiving.channels.values():
+                group.initialize_reader_recovery(runtime.service)
         runtime.egress.worker_started()
         egress_thread = threading.Thread(
             target=_run_egress_worker,

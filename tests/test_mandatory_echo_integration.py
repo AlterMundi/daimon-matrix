@@ -13,6 +13,7 @@ from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -829,6 +830,90 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         self.assertEqual(bounded["pending"], 1)
         self.assertNotIn("payload", json.dumps(bounded))
         self.assertNotIn("native-request", json.dumps(bounded))
+
+    def test_idle_worker_does_not_validate_expired_history_or_compute_status(
+        self,
+    ) -> None:
+        old = self._admit("expired-history")
+        with closing(sqlite3.connect(self.path)) as database:
+            retained = database.execute(
+                "SELECT record FROM echo_v2_obligations"
+            ).fetchall()
+        self.now = old.deadline_ms
+        with (
+            patch.object(
+                self.controller,
+                "inspect",
+                side_effect=AssertionError("historical scan"),
+            ),
+            patch.object(
+                self.controller, "status", side_effect=AssertionError("status scan")
+            ),
+        ):
+            self.assertEqual(
+                self.controller.run_worker_batch(include_status=False), {"processed": 0}
+            )
+        self.assertEqual(self.transport.calls, [])
+        self.assertEqual(self.controller.inspect_retained(old)["echo_state"], "queued")
+        with closing(sqlite3.connect(self.path)) as database:
+            self.assertEqual(
+                database.execute("SELECT record FROM echo_v2_obligations").fetchall(),
+                retained,
+            )
+        self.assertEqual(self.controller.status()["quarantined"], 1)
+
+    def test_worker_filters_history_but_still_processes_new_work(self) -> None:
+        old = self._admit("expired-history")
+        self.now = old.deadline_ms
+        current = self._admit("current-work")
+        with patch.object(
+            self.controller, "inspect", wraps=self.controller.inspect
+        ) as inspect:
+            self.assertEqual(
+                self.controller.run_worker_batch(include_status=False), {"processed": 1}
+            )
+        self.assertEqual([call.args[0] for call in inspect.call_args_list], [current])
+        self.assertEqual(len(self.transport.calls), 1)
+        self.assertEqual(self.controller.inspect_retained(old)["echo_state"], "queued")
+        self.assertEqual(self.controller.inspect(current)["state"], "confirmed")
+
+    def test_worker_expiry_after_scheduling_still_blocks_transport(self) -> None:
+        binding = self._admit("expires-after-selection")
+        original = self.controller.inspect
+
+        def expire_after_check(selected: OperationBinding) -> dict[str, Any]:
+            result = original(selected)
+            self.now = binding.deadline_ms
+            return result
+
+        with (
+            patch.object(self.controller, "inspect", side_effect=expire_after_check),
+            self.assertRaises(NativeEgressError),
+        ):
+            self.controller.run_worker_batch(include_status=False)
+        self.assertEqual(self.transport.calls, [])
+
+    def test_daemon_worker_does_not_request_archival_status(self) -> None:
+        self._admit("live-worker")
+        stop = threading.Event()
+        original = self.controller.run_worker_batch
+
+        def one_batch(**kwargs: Any) -> dict[str, int | str | None]:
+            self.assertIs(kwargs["include_status"], False)
+            result = original(**kwargs)
+            stop.set()
+            return result
+
+        self.controller.worker_started()
+        with (
+            patch.object(self.controller, "run_worker_batch", side_effect=one_batch),
+            patch.object(
+                self.controller, "status", side_effect=AssertionError("historical scan")
+            ),
+        ):
+            _run_egress_worker(self.controller, stop)
+        self.assertEqual(len(self.transport.calls), 1)
+        self.assertEqual(self.controller.status()["worker_state"], "stopped")
 
     def test_daemon_worker_drains_echo_only_and_reports_lifecycle(self) -> None:
         binding = self._admit("operation-worker", b"worker-native-request")

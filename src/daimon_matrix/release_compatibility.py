@@ -53,6 +53,7 @@ _FEATURES = sorted(
         "bounded-group-fanout/v1",
         "membership-direct/v1",
         "signed-roster-cas/v1",
+        "durable-reader-recovery/v1",
     }
 )
 _CONTRACT_FIELDS = {

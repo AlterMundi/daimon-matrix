@@ -100,8 +100,8 @@ commit observation is resolved by retained-row lookup; known intake must never
 be replaced by a sticky transport refusal.
 
 Opaque carrier bookkeeping and its exact authenticated ACK follow that commit.
-The admitted HTTP handler attempts the ACK write/flush before one finite receipt
-completion attempt. A failed socket write does not prove the remote peer missed
+The admitted HTTP handler attempts the ACK write/flush before finite receipt
+completion. A failed socket write does not prove the remote peer missed
 or saw the ACK. The handler retains its existing concurrency slot and runtime
 ownership until its technical attempt ends. No worker, poller or model is added.
 
@@ -119,6 +119,16 @@ projection before ACK creation. Incorporating that already validated proof into
 `CommunicationStore` happens after the ACK attempt and can recover independently.
 Control proof does not become speech, a readable conversation item, a reciprocal
 receipt or a model turn. Transport ACK and signed semantic delivery stay distinct.
+
+Concurrent projection operations on one owned ledger serialize through SQLite
+COMMIT, pending-journal cleanup and connection close. SQLite's writer lock alone
+ends too early to protect that cleanup from a second initializer. This local gate
+is shared by all views of that ledger; completion uses its existing explicit
+deadline when waiting. Native egress's immutable request/route callbacks stay
+read-only and outside the gate to preserve lock ordering and ACK progress. Full
+signature, projection, pending-journal and rollback validation remains required.
+Closed completion diagnostics retain safe error/errno categories, never exception
+text or private paths; a missing signed receipt is never inferred from an ACK.
 
 `operator_messaging reconcile-intake` is a finite owner operation under the same
 exclusive runtime lock as the daemon. It accepts bounded `--intake-after`,
@@ -194,10 +204,24 @@ share under the qualified load. Unlimited pre-header flooding is outside that
 assumption. Accepted ACKs and signed refusals retain their exact binding until
 the HTTP/IPC writer: response headers/framing/body/flush execute inside release,
 using unbuffered writes, rather than releasing a bytes-returning placeholder.
-Technical completion runs in `finally` within the remaining handler/obligation
-budget, even if authority or a failed ACK write blocks the response. Exhausted
-budgets leave recoverable intent. HTTP handlers and workers drain under runtime
+Technical completion runs in `finally`, even if authority or a failed ACK write
+blocks the response. It freezes one separate budget of at most thirty seconds,
+clipped to the retained receipt obligation or control request's original expiry.
+Pending, in-flight and transient storage outcomes retry with bounded backoff,
+using the same signed receipt and frozen transport request. Terminal outcomes,
+blocked authority/selection/clock and invalid bindings stop continuation. The ACK
+writer keeps its original five-second budget; technical continuation does not
+renew any carrier or admission horizon. A nonblocking, closed local diagnostic
+records the completion outcome. No model, poller or extra service is started.
+Exhausted budgets leave recoverable intent. HTTP handlers and workers drain under runtime
 ownership; a stalled local completion cannot be abandoned to claim clean shutdown.
+
+Echo publication has a separate execution guard shared by ordinary advancement
+and authorized ambiguity recovery. Short journal phases use the native storage
+fence; Telegram network I/O does not hold that fence. An already suppressed or
+confirmed ACK therefore does not wait for unrelated publication. Native release
+still rechecks current authority, reader selection, exact bytes and expiry under
+the original physical writer fence. Legacy sibling visibility exclusions remain.
 
 The release descriptor includes `bounded-numeric-http/v1`,
 `owned-transport-reply/v1` and `bounded-group-fanout/v1`. Source/installed

@@ -803,31 +803,111 @@ def _status(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_DIAGNOSTIC_CODES = frozenset(
+LOCAL_EGRESS_DIAGNOSTIC_CODES = frozenset(
     {
-        "executor-failed",
-        "deadline-exceeded",
-        "http-exchange-failed",
-        "http-status-mismatch",
-        "response-validation-failed",
-        "outcome-unknown",
-        "route_echo_unconfirmed",
-        "route_authority_blocked",
-        "route_egress_blocked",
-        "transport_response_rejected",
-        "route_result_unknown",
-        "canonical_rejected",
-        "route_timeout",
-        "route_http_incomplete",
-        "route_connection_failed",
-        "route_http_response_invalid",
+        "egress_storage_busy",
+        "egress_storage_unavailable",
+        "egress_operation_ambiguous",
+        "egress_operation_missing",
+        "egress_operation_mismatch",
+        "egress_catalog_invalid",
+        "egress_catalog_mismatch",
+        "egress_permit_invalid",
+        "echo_storage_unavailable",
+        "echo_state_invalid",
+        "echo_state_missing",
+        "echo_transaction_active",
+        "echo_catalog_invalid",
+        "echo_key_invalid",
+        "echo_capacity",
     }
+)
+
+INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
+    {
+        "storage_busy",
+        "storage_unavailable",
+        "failure_unknown",
+        "egress_operation_invalid",
+        "egress_attempt_deadline",
+        "echo_projection_invalid",
+        "echo_policy_invalid",
+        "echo_proof_invalid",
+        "transport_response_conflict",
+        "transport_request_conflict",
+        "delivery_id_conflict",
+        "tribe_loaded_store_uncertain",
+        "tribe_retained_intake_verification_uncertain",
+        "tribe_control_recovery_binding_conflict",
+        "tribe_control_commit_uncertain",
+        "messaging_binding_rejected",
+        "tribe_record_corrupt",
+    }
+)
+
+
+COMPLETION_FAILURE_CODES = (
+    frozenset(
+        {
+            "ledger_storage_deadline",
+            "communication_projection_busy",
+            "communication_pending_invalid",
+            "communication_state_rollback",
+            "communication_anchor_corrupt",
+            "communication_anchor_unsafe",
+            "communication_event_rejected",
+            "foreign_receipt_binding_mismatch",
+            "foreign_receipt_store_missing",
+            "foreign_receipt_store_corrupt",
+            "terminal_receipt_conflict",
+            "semantic_leg_quarantined",
+            "sqlite_busy",
+            "sqlite_unavailable",
+            "storage_missing",
+            "storage_conflict",
+            "storage_unavailable",
+        }
+    )
+    | INTAKE_FAILURE_CODES
+)
+
+
+_DIAGNOSTIC_CODES = (
+    frozenset(
+        {
+            "executor-failed",
+            "deadline-exceeded",
+            "http-exchange-failed",
+            "http-status-mismatch",
+            "response-validation-failed",
+            "outcome-unknown",
+            "route_echo_unconfirmed",
+            "route_authority_blocked",
+            "route_egress_blocked",
+            "transport_response_rejected",
+            "route_result_unknown",
+            "canonical_rejected",
+            "route_timeout",
+            "route_http_incomplete",
+            "route_connection_failed",
+            "route_http_response_invalid",
+            "completion_budget_exhausted",
+            "completion_expired",
+            "completion_confirmed",
+            "completion_blocked",
+            "completion_invalid",
+            "completion_failed",
+        }
+    )
+    | frozenset("completion_" + code for code in COMPLETION_FAILURE_CODES)
+    | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
+    | frozenset("intake_" + code for code in INTAKE_FAILURE_CODES)
 )
 
 
 @contextmanager
 def _diagnostic_database(
-    native_path: Path | None, *, create: bool
+    native_path: Path | None, *, create: bool, timeout: float = 5
 ) -> Iterator[sqlite3.Connection | None]:
     # Observability is separate from the fixed authoritative store catalog. Older
     # SDKs can reopen the same native history without any migration or downgrade.
@@ -840,7 +920,9 @@ def _diagnostic_database(
         return
     _prepare_path(path)
     database = sqlite3.connect(
-        path.as_uri() + ("?mode=rw" if create else "?mode=ro"), uri=True, timeout=5
+        path.as_uri() + ("?mode=rw" if create else "?mode=ro"),
+        uri=True,
+        timeout=timeout,
     )
     try:
         database.row_factory = sqlite3.Row
@@ -865,10 +947,12 @@ def write_diagnostic(
     code: str,
     at_ms: int,
     attempt_id: str | None = None,
+    *,
+    timeout: float = 5,
 ) -> None:
     if not isinstance(code, str) or code not in _DIAGNOSTIC_CODES:
         code = "outcome-unknown"
-    with _diagnostic_database(native_path, create=True) as database:
+    with _diagnostic_database(native_path, create=True, timeout=timeout) as database:
         if database is None:
             return  # Anonymous synthetic journals have no durable filesystem.
         database.execute("BEGIN IMMEDIATE")
@@ -929,11 +1013,13 @@ class MandatoryEcho:
         verify_retry: Callable[[bytes, dict[str, Any], str], RetryDecision | None]
         | None = None,
         execution_guard: Callable[[], AbstractContextManager[None]] | None = None,
+        storage_guard: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> None:
         self._journal, self._transport = journal, transport
         self._resolve, self._authorize = resolve, authorize
         self._clock = clock
         self._verify_retry, self._execution_guard = verify_retry, execution_guard
+        self._storage_guard = storage_guard or nullcontext
 
     def _current(self, record: dict[str, Any]) -> None:
         try:
@@ -966,9 +1052,13 @@ class MandatoryEcho:
         Expiry must not destroy the ability to diagnose an unfinished operation.
         """
         state = _status(self._journal._load(operation_id, expected_binding_digest))
-        state["last_failure"] = read_diagnostic(
-            self._journal_path(), "echo", operation_id
-        )
+        state["last_failure"] = None
+        # The authenticated journal above remains mandatory. Its optional
+        # diagnostic sidecar must not hide otherwise valid historical proof.
+        with suppress(OSError, sqlite3.Error, ValueError):
+            state["last_failure"] = read_diagnostic(
+                self._journal_path(), "echo", operation_id
+            )
         return state
 
     def ambiguity(
@@ -1073,7 +1163,7 @@ class MandatoryEcho:
         authorization: bytes | None,
     ) -> dict[str, Any]:
         journal = self._journal
-        with journal._transaction():
+        with self._storage_guard(), journal._transaction():
             record = journal._load(operation_id, expected_binding_digest)
             self._current(record)
             state = _status(record)
@@ -1142,7 +1232,8 @@ class MandatoryEcho:
             record["revision"] += 1
             journal._write(record)
         self._checkpoint("intent_committed")
-        self._current(record)
+        with self._storage_guard():
+            self._current(record)
         try:
             raw = self._transport.send(_copy(request))
             classify_plain_response(raw, request, bot_id=policy["bot_id"])
@@ -1156,17 +1247,18 @@ class MandatoryEcho:
                 "response-validation-failed",
             }:
                 reason = "outcome-unknown"
-            write_diagnostic(
-                self._journal_path(),
-                "echo",
-                operation_id,
-                reason,
-                self._clock(),
-                attempt["attempt_id"],
-            )
+            with self._storage_guard():
+                write_diagnostic(
+                    self._journal_path(),
+                    "echo",
+                    operation_id,
+                    reason,
+                    self._clock(),
+                    attempt["attempt_id"],
+                )
             return _status(record)
         self._checkpoint("response_verified")
-        with journal._transaction():
+        with self._storage_guard(), journal._transaction():
             latest = journal._load(operation_id, expected_binding_digest)
             if latest != record:
                 raise EchoError("echo_state_conflict")
@@ -1181,4 +1273,5 @@ class MandatoryEcho:
             journal._write(latest)
         self._checkpoint("response_committed")
         self._publish_reference(latest)
-        return self.inspect(operation_id, expected_binding_digest)
+        with self._storage_guard():
+            return self.inspect(operation_id, expected_binding_digest)

@@ -1,5 +1,32 @@
 # Scoped owner capability upgrades
 
+## Ordinary reader restart is not a capability upgrade
+
+A serving SDK with `durable-reader-recovery/v1` records authenticated reader
+controls in its existing group record store. Startup recovers the latest selected
+reader vector only when the qualified code/SDK, runtime, application, stores,
+visibility, controller, identity, authority and signed roster are unchanged.
+It preserves the original expiry and retains fresh process provenance. It does
+not replay old requests, messages, models or completed onboarding stages.
+
+Use authenticated `runtime.status.receiving.recovery` to distinguish selected,
+recovered, disabled, invalidated, expired and unavailable states. Merely having
+an active service or seeing a Telegram projection does not prove receiving
+readiness. An unsupported historical SDK remains explicit; installing the
+feature does not manufacture a positive selection for an old process.
+
+Revoke and empty selections are durable tombstones. Before a supported fallback
+to an SDK without this feature, durably revoke through the existing sender
+barrier. Returning from unaccounted legacy execution requires fresh receiving
+qualification. Never search backwards for an older positive record or overwrite
+the original lifecycle evidence. An unresolved startup journal cannot serve;
+the existing service manager retries without a new worker or model activation.
+
+The offline transaction below applies only to genuinely missing capability
+methods. An unchanged ordinary restart requires no repeat of that procedure.
+
+## Missing capability methods
+
 An older authenticated V7/V8 bundle can remain loadable while omitting methods
 added later. Updating the SDK or rendering a newer client does not issue those
 methods. In particular, `scope.we`, history sync and healthy `runtime.status`
