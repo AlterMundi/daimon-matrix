@@ -193,6 +193,229 @@ class ExclusivePublicationTests(unittest.TestCase):
                 operator._publish(Path("source"), Path("target"))
 
 
+class InitialPreparationRecoveryTests(unittest.TestCase):
+    def interrupted(self, *, after_compose=True):
+        import time
+
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, specification, sources, _ = application_fixture(self)
+        target = self.root / "initial-application"
+        compose = operator._compose
+
+        def interrupt(*args, **kwargs):
+            if after_compose:
+                compose(*args, **kwargs)
+            raise OSError("initial preparation interrupted")
+
+        with (
+            patch.object(operator, "_compose", side_effect=interrupt),
+            self.assertRaisesRegex(ValueError, "messaging_prepare_rejected"),
+        ):
+            operator.prepare(runtime, target, specification, secret_sources=sources)
+        stages = list(target.parent.glob(".messaging-prepare-*"))
+        self.assertEqual(len(stages), 1)
+        stage = stages[0]
+        application = json.loads((stage / "application.json").read_bytes())
+        options = dict(
+            expected_application_sha256=config_digest(application),
+            expected_specification_sha256=config_digest(specification),
+            initial_staging=stage,
+            effect_not_after_ms=time.time_ns() // 1_000_000 + 60_000,
+        )
+        return runtime, target, stage, application, options
+
+    def test_recovery_preserves_real_client_genesis_and_existing_stores(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import _capability_journal_names
+
+        runtime, target, stage, application, options = self.interrupted()
+        key = (stage / "client.key").read_bytes()
+        stores = {
+            name: (stage / name).stat().st_ino
+            for name in application["stores"].values()
+        }
+        _, stem = _capability_journal_names(
+            runtime, application["client"]["descriptor"]
+        )
+        genesis = runtime.state_root / (stem + "-00000000000000000000.json")
+        before = genesis.read_bytes()
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            result = operator.recover(runtime, target, **options)
+        self.assertEqual(result["status"], "configured")
+        self.assertFalse(stage.exists())
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertEqual(genesis.read_bytes(), before)
+        self.assertEqual(
+            {name: (target / name).stat().st_ino for name in stores}, stores
+        )
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_legacy_partial_prefix_uses_retained_genesis_and_repairs_missing_pointer(
+        self,
+    ):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            read_capability_state,
+        )
+
+        runtime, target, stage, application, options = self.interrupted(
+            after_compose=False
+        )
+        (stage / "capability-genesis.json").unlink()
+        descriptor = application["client"]["descriptor"]
+        _, stem = _capability_journal_names(runtime, descriptor)
+        (runtime.state_root / (stem + "-floor.json")).unlink()
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual(read_capability_state(runtime, descriptor)["sequence"], 0)
+        self.assertEqual(
+            read_publication(runtime, target)[0]["client"], application["client"]
+        )
+
+    def test_recovery_refuses_foreign_specification_key_and_revoked_prefix(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            capability_state_record,
+        )
+
+        for fault in ("specification", "key", "forged-binding", "revoked"):
+            with self.subTest(fault=fault):
+                runtime, target, stage, application, options = self.interrupted()
+                if fault == "specification":
+                    options["expected_specification_sha256"] = "0" * 64
+                elif fault == "key":
+                    (stage / "client.key").write_bytes(b"x" * 32)
+                elif fault == "forged-binding":
+                    binding = json.loads((stage / "binding.json").read_bytes())
+                    binding["signature"] = "A" * len(binding["signature"])
+                    (stage / "binding.json").write_bytes(canonical_bytes(binding))
+                else:
+                    descriptor = application["client"]["descriptor"]
+                    _, stem = _capability_journal_names(runtime, descriptor)
+                    prior = (runtime.state_root / (stem + "-current.json")).read_bytes()
+                    revoked = capability_state_record(
+                        runtime,
+                        descriptor,
+                        sequence=1,
+                        predecessor_sha256=hashlib.sha256(prior).hexdigest(),
+                        action="revoke",
+                        occurred_at_ms=runtime.service.clock(),
+                    )
+                    operator._publish_capability_entry(
+                        runtime.state_root,
+                        stem + "-00000000000000000001.json",
+                        canonical_bytes(revoked),
+                    )
+                before = {
+                    p.name: p.read_bytes()
+                    for p in runtime.state_root.glob(".messaging-capability-*.json")
+                }
+                with self.assertRaises(ValueError):
+                    operator.recover(runtime, target, **options)
+                self.assertFalse(target.exists())
+                self.assertTrue(stage.is_dir())
+                self.assertEqual(
+                    {
+                        p.name: p.read_bytes()
+                        for p in runtime.state_root.glob(".messaging-capability-*.json")
+                    },
+                    before,
+                )
+
+    def test_expiry_at_publication_preserves_stage_without_publishing(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options = self.interrupted()
+        clock = [options["effect_not_after_ms"] * 1_000_000 - 1_000_000]
+        sync = operator._sync
+
+        def expires(path):
+            sync(path)
+            if path == stage.parent:
+                clock[0] = options["effect_not_after_ms"] * 1_000_000
+
+        with (
+            patch.object(operator.time, "time_ns", side_effect=lambda: clock[0]),
+            patch.object(operator, "_sync", side_effect=expires),
+            patch.object(operator, "_publish") as publish,
+            self.assertRaisesRegex(ValueError, "messaging_initial_recovery_expired"),
+        ):
+            operator.recover(runtime, target, **options)
+        publish.assert_not_called()
+        self.assertFalse(target.exists())
+        self.assertTrue(stage.is_dir())
+
+    def test_lost_publication_return_recovers_after_expiry_without_republishing(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options = self.interrupted()
+        publish = operator._publish
+
+        def lost_return(source, destination):
+            publish(source, destination)
+            raise OSError("lost initial publication return")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost_return),
+            self.assertRaises(OSError),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertTrue(target.is_dir())
+        self.assertFalse(stage.exists())
+        with patch.object(
+            operator, "_publish", side_effect=AssertionError("republication")
+        ):
+            result = operator.recover(
+                runtime, target, **{**options, "effect_not_after_ms": 0}
+            )
+        self.assertEqual(result["application_sha256"], config_digest(application))
+
+    def test_initial_recovery_cli_bootstraps_without_a_published_application(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options = self.interrupted()
+        with (
+            patch("daimon_matrix.runtime.load_runtime", return_value=runtime) as load,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            status = operator.main(
+                [
+                    "recover",
+                    "--state-root",
+                    str(runtime.state_root),
+                    "--app-dir",
+                    str(target),
+                    "--password-fd",
+                    "0",
+                    "--initial-staging",
+                    str(stage),
+                    "--expected-application-sha256",
+                    options["expected_application_sha256"],
+                    "--expected-specification-sha256",
+                    options["expected_specification_sha256"],
+                    "--effect-not-after-ms",
+                    str(options["effect_not_after_ms"]),
+                ]
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "configured")
+        self.assertFalse(load.call_args.kwargs["egress"].release_enabled)
+        self.assertIsNone(load.call_args.kwargs["egress_factory"])
+        self.assertTrue(target.is_dir())
+
+
 class ProvisioningTests(unittest.TestCase):
     def test_peer_presentation_cli_keeps_primary_catalogs_with_distinct_proof_key(self):
         from daimon_matrix import operator_messaging as operator
@@ -2597,6 +2820,66 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
                 "route": route,
             }
         )
+
+    def test_initial_group_recovery_preserves_retained_record_and_client(self):
+        import time
+
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import application_routes
+
+        specification = copy.deepcopy(self.previous)
+        del specification["client"]
+        sources = {
+            row["secret_file"]: self.app / row["secret_file"]
+            for row in application_routes(specification)
+        }
+        target = self.app.parent / "interrupted-initial-group"
+        compose = operator._compose
+        identifier, record = (
+            str(uuid.uuid4()),
+            {"summary": "retained before initial publication"},
+        )
+
+        def interrupted(*args, **kwargs):
+            view = compose(*args, **kwargs)
+            view.service.messaging.channels["tribe"].records.reserve(
+                "request", identifier, record, lambda: record
+            )
+            raise OSError("group composition return lost")
+
+        with (
+            patch.object(operator, "_compose", side_effect=interrupted),
+            self.assertRaises(ValueError),
+        ):
+            operator.prepare(
+                self.runtime, target, specification, secret_sources=sources
+            )
+        (stage,) = target.parent.glob(".messaging-prepare-*")
+        application = json.loads((stage / "application.json").read_bytes())
+        key = (stage / "client.key").read_bytes()
+        events = self.runtime.service.relationships.store.events()
+        with patch.object(
+            operator,
+            "create_messaging_capability",
+            side_effect=AssertionError("new client"),
+        ):
+            operator.recover(
+                self.runtime,
+                target,
+                initial_staging=stage,
+                expected_application_sha256=config_digest(application),
+                expected_specification_sha256=config_digest(specification),
+                effect_not_after_ms=time.time_ns() // 1_000_000 + 60_000,
+            )
+        loaded = load_application(self.runtime, target)
+        self.assertEqual(
+            loaded.service.messaging.channels["tribe"].records.get(
+                "request", identifier
+            ),
+            record,
+        )
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(self.runtime.service.relationships.store.events(), events)
 
     def accept(self):
         for event in self.fixture.events:

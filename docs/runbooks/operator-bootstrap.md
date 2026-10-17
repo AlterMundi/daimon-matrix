@@ -185,6 +185,35 @@ expiry correction and its actual Source/guest integration. A source transaction
 or green check is not evidence of receiving deployment. Preserve exact prior
 receipts and pending requests; never silently re-sign them after renewal.
 
+## Interrupted initial messaging preparation
+
+If initial publication is interrupted, retain its private `.messaging-prepare-*`
+directory, signed metadata, client material, capability journal and stores/WALs.
+Preparation makes that private material durable before its first capability
+effect. A missing final application directory does not mean nothing happened;
+do not call `prepare` again or remove the retained stage to clear uncertainty.
+
+The existing trusted-owner `recover` command accepts `--initial-staging`,
+`--expected-application-sha256`, `--expected-specification-sha256` and a fixed
+`--effect-not-after-ms`. Explicitly associate that exact stage and its signed
+application with the original reviewed request before authorizing recovery. The
+specification digest excludes only the generated `client` field. The runtime
+writer must remain held; no autonomous tool receives this operator authority.
+
+Recovery authenticates the binding, original client/key and genesis, refuses
+advanced or revoked capability history, validates existing stores using SQLite
+including WAL state, and exclusively publishes the same application. It never
+generates another client or overwrites a conflicting destination. Legacy stages
+without a private genesis copy require the actual authenticated runtime genesis.
+Lost essential private state remains an explicit recovery gap; never reconstruct
+random client material or infer an untouched attempt from an absent directory.
+
+An expired bound permits no fresh publication. A lost return after successful
+exclusive publication can inspect/recover that exact initial application after
+expiry, without republishing it. A remaining-effects approval belongs to the
+owning protected orchestration operation; this SDK API does not renew old owner
+intent bytes, authorize another membership event or create Matrix authority.
+
 ## Configured peer pull
 
 V7 moves remote peer endpoints into the closed runtime bundle. An authenticated

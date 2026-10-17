@@ -25,6 +25,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import FrameType
@@ -32,9 +33,11 @@ from typing import Any, cast
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import canonical_bytes
-from .local_api import create_messaging_capability
+from .local_api import LocalCapability, create_messaging_capability
 from .messaging_config import (
     APPLICATION_SCHEMA,
+    APPLICATION_SCHEMA_V2,
+    CAPABILITY_STATE_SCHEMA,
     MessagingConfigError,
     _capability_journal_names,
     _capability_state_chain,
@@ -43,6 +46,7 @@ from .messaging_config import (
     _public_identity,
     _read_publication,
     _read_verified_publication,
+    _selected_store_files,
     _validate_store_schema,
     application_routes,
     capability_state_record,
@@ -621,18 +625,26 @@ def _publish_capability_entry(root: Path, final_name: str, raw: bytes) -> None:
 
 
 def _initialize_capability_state(
-    runtime: HostedRuntime, descriptor: Mapping[str, Any]
+    runtime: HostedRuntime,
+    descriptor: Mapping[str, Any],
+    *,
+    genesis: Mapping[str, Any] | None = None,
 ) -> None:
     """Publish the immutable authenticated genesis outside app generations."""
     _, stem = _capability_journal_names(runtime, descriptor)
-    record = capability_state_record(
-        runtime,
-        descriptor,
-        sequence=0,
-        predecessor_sha256=None,
-        action="activate",
-        occurred_at_ms=runtime.service.clock(),
+    record = (
+        genesis
+        if genesis is not None
+        else capability_state_record(
+            runtime,
+            descriptor,
+            sequence=0,
+            predecessor_sha256=None,
+            action="activate",
+            occurred_at_ms=runtime.service.clock(),
+        )
     )
+    _validate_initial_genesis(runtime, descriptor, record)
     raw = canonical_bytes(record)
     _publish_capability_entry(
         runtime.state_root,
@@ -643,6 +655,38 @@ def _initialize_capability_state(
     _write(runtime.state_root, stem + "-floor.json", raw)
     _sync(runtime.state_root)
     read_capability_state(runtime, descriptor)
+
+
+def _validate_initial_genesis(
+    runtime: HostedRuntime, descriptor: Mapping[str, Any], record: Mapping[str, Any]
+) -> None:
+    """Authenticate an original genesis without signing a replacement record."""
+    try:
+        identity, _stem = _capability_journal_names(runtime, descriptor)
+        body = record["body"]
+        if (
+            set(record) != {"body", "binding"}
+            or type(body["occurred_at_ms"]) is not int
+            or body["occurred_at_ms"] < 0
+            or body
+            != {
+                "schema": CAPABILITY_STATE_SCHEMA,
+                "journal_identity": identity,
+                "runtime_id": runtime.service.runtime_id,
+                "sequence": 0,
+                "predecessor_sha256": None,
+                "action": "activate",
+                "capability_id": descriptor["capability_id"],
+                "client_id": descriptor["client_id"],
+                "key_id": descriptor["key_id"],
+                "descriptor_sha256": config_digest(descriptor),
+                "occurred_at_ms": body["occurred_at_ms"],
+            }
+        ):
+            raise ValueError()
+        verify_binding_within_history(runtime, body, record["binding"])
+    except Exception:
+        raise MessagingConfigError("messaging_initial_capability_conflict") from None
 
 
 def _publish_capability_pointers(
@@ -1142,15 +1186,238 @@ def _published_predecessor_descriptor(
     return cast(Mapping[str, Any], predecessor)
 
 
+def _recover_initial_capability(
+    runtime: HostedRuntime,
+    staging: Path,
+    descriptor: Mapping[str, Any],
+    check: Callable[[], None],
+) -> None:
+    """Resume only the same authenticated genesis, never an advanced/revoked client."""
+    _identity, stem = _capability_journal_names(runtime, descriptor)
+    entry = runtime.state_root / (stem + "-00000000000000000000.json")
+    retained = staging / "capability-genesis.json"
+    if retained.exists():
+        genesis = read_document(retained)
+    elif entry.exists():
+        # Legacy interrupted prepare retained no stage-local genesis. Its actual
+        # immutable journal is the only acceptable source; never infer its date.
+        genesis = read_document(entry)
+    else:
+        raise MessagingConfigError("messaging_initial_capability_unobserved")
+    _validate_initial_genesis(runtime, descriptor, genesis)
+    raw = canonical_bytes(genesis)
+    if entry.exists():
+        _identity, _stem, chain = _capability_state_chain(runtime, descriptor)
+        if len(chain) != 1 or chain[0][1] != raw:
+            raise MessagingConfigError("messaging_initial_capability_conflict")
+    elif any(runtime.state_root.glob(stem + "-*.json")):
+        # Pointers or later entries without genesis are missing history, not an
+        # invitation to recreate an old capability from a private stage.
+        raise MessagingConfigError("messaging_initial_capability_conflict")
+    missing = []
+    for suffix in ("current", "floor"):
+        pointer = runtime.state_root / (stem + "-" + suffix + ".json")
+        if pointer.exists():
+            if protected_read(pointer) != raw:
+                raise MessagingConfigError("messaging_initial_capability_conflict")
+        else:
+            missing.append(pointer.name)
+    check()
+    _publish_capability_entry(runtime.state_root, entry.name, raw)
+    for name in missing:
+        check()
+        _write(runtime.state_root, name, raw)
+    _sync(runtime.state_root)
+    read_capability_state(runtime, descriptor)
+
+
+def _recover_initial(
+    runtime: HostedRuntime,
+    target: Path,
+    staging: Path,
+    *,
+    expected_application_sha256: str,
+    expected_specification_sha256: str,
+    effect_not_after_ms: int | None,
+) -> dict[str, Any]:
+    """Authenticate an explicitly selected private stage before finishing its prefix."""
+    import fcntl
+
+    def check() -> None:
+        if (
+            type(effect_not_after_ms) is not int
+            or not 0 < time.time_ns() // 1_000_000 < effect_not_after_ms < 2**53
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_expired")
+
+    check()
+    staging = _directory(staging)
+    _directory(target.parent)
+    if (
+        staging.parent != target.parent
+        or not staging.name.startswith(".messaging-prepare-")
+        or target == runtime.state_root
+        or runtime.state_root in target.parents
+        or target.exists()
+        or target.is_symlink()
+    ):
+        raise MessagingConfigError("messaging_initial_recovery_conflict")
+    fd = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        application = read_document(staging / "application.json")
+        validate_shape(application)
+        if (
+            config_digest(application) != expected_application_sha256
+            or config_digest({k: v for k, v in application.items() if k != "client"})
+            != expected_specification_sha256
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        verify_binding(runtime, application, read_document(staging / "binding.json"))
+        for row in [application["client"], *application_routes(application)]:
+            if (
+                hashlib.sha256(
+                    protected_read(staging / row["secret_file"], size=32)
+                ).hexdigest()
+                != row["secret_sha256"]
+            ):
+                raise MessagingConfigError("messaging_key_rejected")
+        client = application["client"]
+        capability = LocalCapability.from_value(
+            client["descriptor"],
+            protected_read(staging / client["secret_file"], size=32),
+        )
+        if (
+            set(capability.methods) != MESSAGING_METHODS
+            or not capability.active_at(runtime.service.clock())
+            or capability.capability_id in runtime.service.capabilities
+            or any(
+                c.client_id == capability.client_id
+                for c in runtime.service.capabilities.values()
+            )
+            or read_document(staging / "client.json")
+            != {
+                "schema": "dm.local.client-config/v3",
+                "capability": capability.descriptor,
+                "expected_server": dict(runtime.service.origin),
+                "runtime_id": runtime.service.runtime_id,
+                "runtime_label": runtime.service.runtime_label,
+            }
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        # Validate present SQLite stores (including their WALs) before a constructor
+        # can initialize missing ones. Existing data/schema is never reset.
+        for role, filename in _selected_store_files(application).items():
+            path = staging / filename
+            if path.exists() or path.is_symlink():
+                _validate_store_schema(
+                    role,
+                    path,
+                    require_inbox_admission=application["schema"]
+                    == APPLICATION_SCHEMA_V2,
+                    allow_missing_visibility=runtime.egress.catalog_mode == "migrate",
+                )
+        if (staging / "publication.json").exists():
+            packet = read_document(staging / "publication.json")
+            if packet["body"] != {
+                "schema": "dm.messaging.publication/v1",
+                "generation": ".",
+                "application_sha256": expected_application_sha256,
+                "predecessor_sha256": None,
+            }:
+                raise MessagingConfigError("messaging_initial_recovery_conflict")
+            verify_binding(runtime, packet["body"], packet["binding"])
+        _recover_initial_capability(runtime, staging, capability.descriptor, check)
+        existing_catalogs = runtime.egress.registered_catalog_ids()
+        check()
+        _compose(runtime, staging, application, initialize=True)
+        if runtime.egress.catalog_mode == "migrate" and runtime.egress.release_enabled:
+            new_catalogs = runtime.egress.registered_catalog_ids() - existing_catalogs
+            check()
+            runtime.egress.migrate_registered_catalogs(
+                new_catalogs, version=VISIBILITY_SCHEMA_VERSION
+            )
+            runtime.egress.validate_registered_catalogs(new_catalogs)
+        if not (staging / "publication.json").exists():
+            check()
+            _write(
+                staging,
+                "publication.json",
+                _publication(runtime, application, ".", None),
+            )
+        load_application(runtime, staging)
+        _sync(staging)
+        _sync(staging.parent)
+        if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (
+            staging.lstat().st_dev,
+            staging.lstat().st_ino,
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        check()
+        _publish(staging, target)
+        try:
+            _sync(target.parent)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+        load_application(runtime, target)
+        return {
+            "status": "configured",
+            "application_sha256": expected_application_sha256,
+        }
+    finally:
+        os.close(fd)
+
+
 def recover(
     runtime: HostedRuntime,
     app_directory: Path | str,
     *,
     expected_application_sha256: str,
+    initial_staging: Path | str | None = None,
+    expected_specification_sha256: str | None = None,
+    effect_not_after_ms: int | None = None,
 ) -> dict[str, Any]:
-    """Validate exact published state and finish an interrupted renewal journal."""
+    """Recover published state or an explicitly approved initial private stage.
+
+    Initial recovery preserves the original client, signed genesis and stores.
+    The trusted owner binds the stage/application/specification to its retained
+    request and holds the runtime writer. A fresh publication needs its own fixed
+    execution bound; this does not renew an old owner request or Matrix authority.
+    """
     import fcntl
 
+    if initial_staging is not None:
+        if (
+            not isinstance(expected_specification_sha256, str)
+            or re.fullmatch("[0-9a-f]{64}", expected_specification_sha256) is None
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+        target = Path(os.path.abspath(app_directory))
+        if not target.exists():
+            return _recover_initial(
+                runtime,
+                target,
+                Path(initial_staging),
+                expected_application_sha256=expected_application_sha256,
+                expected_specification_sha256=expected_specification_sha256,
+                effect_not_after_ms=effect_not_after_ms,
+            )
+        # A lost return after exclusive publication is historical recovery of
+        # the same initial app. The old staging name no longer needs to exist.
+        application, metadata = read_publication(runtime, _directory(target))
+        publication = read_document(target / "publication.json")["body"]
+        if (
+            metadata != target
+            or publication["generation"] != "."
+            or publication["predecessor_sha256"] is not None
+            or config_digest({k: v for k, v in application.items() if k != "client"})
+            != expected_specification_sha256
+        ):
+            raise MessagingConfigError("messaging_initial_recovery_conflict")
+    elif expected_specification_sha256 is not None or effect_not_after_ms is not None:
+        raise MessagingConfigError("messaging_initial_recovery_conflict")
     target = _directory(app_directory)
     fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -1265,13 +1532,22 @@ def prepare(
         )
         persisted = read_document(staging / "application.json")
         verify_binding(runtime, persisted, read_document(staging / "binding.json"))
+        genesis = capability_state_record(
+            runtime,
+            cap.descriptor,
+            sequence=0,
+            predecessor_sha256=None,
+            action="activate",
+            occurred_at_ms=runtime.service.clock(),
+        )
+        _write(staging, "capability-genesis.json", canonical_bytes(genesis))
         # The capability journal outlives this private directory. Its original
         # client and signed application must be durable before the first effect,
         # and remain available if that effect or later composition is interrupted.
         _sync(staging)
         _sync(staging.parent)
         retain_staging = True
-        _initialize_capability_state(runtime, cap.descriptor)
+        _initialize_capability_state(runtime, cap.descriptor, genesis=genesis)
         existing_catalogs = runtime.egress.registered_catalog_ids()
         _compose(runtime, staging, persisted, initialize=True)
         if runtime.egress.catalog_mode == "migrate" and runtime.egress.release_enabled:
@@ -2678,6 +2954,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Owner-only named transport key sources (prepare only)",
     )
     parser.add_argument("--expected-application-sha256")
+    parser.add_argument(
+        "--initial-staging",
+        type=Path,
+        help="Exact retained private initial stage (recover only)",
+    )
+    parser.add_argument("--expected-specification-sha256")
+    parser.add_argument("--effect-not-after-ms", type=int)
     parser.add_argument("--proposal", type=Path)
     parser.add_argument(
         "--representation",
@@ -2693,6 +2976,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     lock = None
     previous_signals = {}
     try:
+        initial_recovery = (
+            args.command == "recover" and args.initial_staging is not None
+        )
+        if (args.initial_staging is not None and args.command != "recover") or (
+            args.initial_staging is None
+            and (
+                args.expected_specification_sha256 is not None
+                or args.effect_not_after_ms is not None
+            )
+        ):
+            raise ValueError()
         if args.command == "adopt-peer":
             if (
                 args.peer_authority is None
@@ -2766,6 +3060,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError()
         if (
             args.command not in {"prepare", "republish", "adopt-peer"}
+            and not initial_recovery
             and args.visibility_installation is None
         ):
             raise ValueError()
@@ -2788,11 +3083,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             visibility_factory = daemon._visibility_factory(
                 args.visibility_installation, clock=clock
             )
-        elif presentation_command or args.command in {
-            "prepare",
-            "republish",
-            "adopt-peer",
-        }:
+        elif (
+            initial_recovery
+            or presentation_command
+            or args.command
+            in {
+                "prepare",
+                "republish",
+                "adopt-peer",
+            }
+        ):
             # Signing an app presentation must not authenticate the base native
             # catalogs with that app's different proof key. The closed bootstrap
             # cannot send and leaves catalogs intact; visibility_presentation
@@ -2886,11 +3186,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bundle_name=args.bundle,
                 peer_being_refs=args.peer_being_ref,
             )
-        elif args.command in {"renew", "revoke", "recover"}:
+        elif args.command == "recover":
+            result = recover(
+                runtime,
+                args.app_dir,
+                expected_application_sha256=args.expected_application_sha256,
+                initial_staging=args.initial_staging,
+                expected_specification_sha256=args.expected_specification_sha256,
+                effect_not_after_ms=args.effect_not_after_ms,
+            )
+        elif args.command in {"renew", "revoke"}:
             operation = {
                 "renew": renew,
                 "revoke": revoke_capability,
-                "recover": recover,
             }[args.command]
             result = operation(
                 runtime,
