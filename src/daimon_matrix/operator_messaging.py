@@ -9,7 +9,8 @@ atomically while all stores and keys remain at their original paths. Run the CLI
 with the daemon stopped: it takes the same runtime lock and reads the password
 once. A published durability error is NOT a rollback: preserve the directory,
 inspect diagnostics for its exact application_sha256, then use recover with
---expected-application-sha256. Neither recovery nor loading initializes stores.
+--expected-application-sha256. Published recovery and loading never initialize
+stores; explicitly authorized initial-stage recovery can finish missing stores.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ from .messaging_config import (
     _read_publication,
     _read_verified_publication,
     _selected_store_files,
+    _store_path,
     _validate_store_schema,
     application_routes,
     capability_state_record,
@@ -559,10 +561,10 @@ _CAPABILITY_ENTRY_MAX_BYTES = 4 * 1024 * 1024
 
 
 def _cleanup_retained_entry_staging(
-    root: Path, final_name: str, *, error_code: str
+    root: Path, final_name: str, *, error_code: str, staging_prefix: str | None = None
 ) -> None:
     """Remove only bounded, private residue for one exact journal entry."""
-    prefix = final_name + ".stage-"
+    prefix = staging_prefix if staging_prefix is not None else final_name + ".stage-"
     pattern = re.compile(re.escape(prefix) + r"[0-9a-f]{32}$")
     candidates: list[Path] = []
     for path in root.iterdir():
@@ -594,7 +596,12 @@ def _cleanup_retained_entry_staging(
 
 
 def _publish_retained_entry(
-    root: Path, final_name: str, raw: bytes, *, error_code: str
+    root: Path,
+    final_name: str,
+    raw: bytes,
+    *,
+    error_code: str,
+    staging_prefix: str | None = None,
 ) -> None:
     """Install complete fsynced journal bytes atomically and without replacement."""
     final_path = root / final_name
@@ -607,12 +614,17 @@ def _publish_retained_entry(
     else:
         if protected_read(final_path) != raw:
             raise MessagingConfigError(error_code)
-        _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
+        _cleanup_retained_entry_staging(
+            root, final_name, error_code=error_code, staging_prefix=staging_prefix
+        )
         _sync(root)
         return
 
-    _cleanup_retained_entry_staging(root, final_name, error_code=error_code)
-    staging_name = final_name + ".stage-" + secrets.token_hex(16)
+    _cleanup_retained_entry_staging(
+        root, final_name, error_code=error_code, staging_prefix=staging_prefix
+    )
+    prefix = staging_prefix if staging_prefix is not None else final_name + ".stage-"
+    staging_name = prefix + secrets.token_hex(16)
     _write(root, staging_name, raw)
     _publish(root / staging_name, final_path)
     _sync(root)
@@ -651,8 +663,8 @@ def _initialize_capability_state(
         stem + "-00000000000000000000.json",
         raw,
     )
-    _write(runtime.state_root, stem + "-current.json", raw)
-    _write(runtime.state_root, stem + "-floor.json", raw)
+    _publish_capability_entry(runtime.state_root, stem + "-current.json", raw)
+    _publish_capability_entry(runtime.state_root, stem + "-floor.json", raw)
     _sync(runtime.state_root)
     read_capability_state(runtime, descriptor)
 
@@ -1195,7 +1207,7 @@ def _recover_initial_capability(
     """Resume only the same authenticated genesis, never an advanced/revoked client."""
     _identity, stem = _capability_journal_names(runtime, descriptor)
     entry = runtime.state_root / (stem + "-00000000000000000000.json")
-    retained = staging / "capability-genesis.json"
+    retained = staging / ".initial-capability-genesis.json"
     if retained.exists():
         genesis = read_document(retained)
     elif entry.exists():
@@ -1226,7 +1238,7 @@ def _recover_initial_capability(
     _publish_capability_entry(runtime.state_root, entry.name, raw)
     for name in missing:
         check()
-        _write(runtime.state_root, name, raw)
+        _publish_capability_entry(runtime.state_root, name, raw)
     _sync(runtime.state_root)
     read_capability_state(runtime, descriptor)
 
@@ -1305,11 +1317,20 @@ def _recover_initial(
             }
         ):
             raise MessagingConfigError("messaging_initial_recovery_conflict")
-        # Validate present SQLite stores (including their WALs) before a constructor
-        # can initialize missing ones. Existing data/schema is never reset.
-        for role, filename in _selected_store_files(application).items():
-            path = staging / filename
-            if path.exists() or path.is_symlink():
+        # Protect every store/companion before SQLite opens any file. Pending or
+        # orphan journals require a separate recovery decision, never recreation.
+        stores = {
+            role: _store_path(staging, filename)
+            for role, filename in _selected_store_files(application).items()
+        }
+        for path in stores.values():
+            if any(
+                path.with_name(path.name + suffix).exists()
+                for suffix in ("-wal", "-shm", "-journal")
+            ):
+                raise MessagingConfigError("messaging_required_store_invalid")
+        for role, path in stores.items():
+            if path.exists():
                 _validate_store_schema(
                     role,
                     path,
@@ -1327,6 +1348,10 @@ def _recover_initial(
             }:
                 raise MessagingConfigError("messaging_initial_recovery_conflict")
             verify_binding(runtime, packet["body"], packet["binding"])
+        # Legacy stages may never have reached their creation-directory fsync.
+        # Retain authenticated recovery inputs before any new durable effect.
+        _sync(staging)
+        _sync(staging.parent)
         _recover_initial_capability(runtime, staging, capability.descriptor, check)
         existing_catalogs = runtime.egress.registered_catalog_ids()
         check()
@@ -1340,10 +1365,12 @@ def _recover_initial(
             runtime.egress.validate_registered_catalogs(new_catalogs)
         if not (staging / "publication.json").exists():
             check()
-            _write(
+            _publish_retained_entry(
                 staging,
                 "publication.json",
                 _publication(runtime, application, ".", None),
+                error_code="messaging_initial_recovery_conflict",
+                staging_prefix=".initial-publication.stage-",
             )
         load_application(runtime, staging)
         _sync(staging)
@@ -1540,7 +1567,7 @@ def prepare(
             action="activate",
             occurred_at_ms=runtime.service.clock(),
         )
-        _write(staging, "capability-genesis.json", canonical_bytes(genesis))
+        _write(staging, ".initial-capability-genesis.json", canonical_bytes(genesis))
         # The capability journal outlives this private directory. Its original
         # client and signed application must be durable before the first effect,
         # and remain available if that effect or later composition is interrupted.
@@ -1556,7 +1583,13 @@ def prepare(
                 new_catalogs, version=VISIBILITY_SCHEMA_VERSION
             )
             runtime.egress.validate_registered_catalogs(new_catalogs)
-        _write(staging, "publication.json", _publication(runtime, persisted, ".", None))
+        _publish_retained_entry(
+            staging,
+            "publication.json",
+            _publication(runtime, persisted, ".", None),
+            error_code="messaging_initial_recovery_conflict",
+            staging_prefix=".initial-publication.stage-",
+        )
         load_application(runtime, staging)
         _sync(staging)
         _publish(staging, target)

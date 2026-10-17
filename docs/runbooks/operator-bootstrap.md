@@ -201,8 +201,10 @@ specification digest excludes only the generated `client` field. The runtime
 writer must remain held; no autonomous tool receives this operator authority.
 
 Recovery authenticates the binding, original client/key and genesis, refuses
-advanced or revoked capability history, validates existing stores using SQLite
-including WAL state, and exclusively publishes the same application. It never
+advanced or revoked capability history, verifies protected store paths and
+validates existing SQLite schemas. Pending or orphan WAL, shared-memory and
+rollback journals are preserved and refused; they require a separate trusted
+store-recovery decision. Recovery exclusively publishes the same application. It never
 generates another client or overwrites a conflicting destination. Legacy stages
 without a private genesis copy require the actual authenticated runtime genesis.
 Lost essential private state remains an explicit recovery gap; never reconstruct
