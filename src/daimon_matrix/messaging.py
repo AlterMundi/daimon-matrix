@@ -2507,10 +2507,10 @@ class GroupMessaging:
     ) -> str | None:
         if receipt:
             if not self._claim_transport(row, operation, receipt=True):
-                return
+                return None
             try:
                 if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
-                    return
+                    return None
                 self.egress.prepare_visibility(operation)
                 return self._transmit_one(
                     native,
@@ -2547,9 +2547,9 @@ class GroupMessaging:
 
         providers = self.providers.get((row["being_ref"], row["embodiment_id"]))
         if providers is None:
-            return  # The full signed audience remains present and pending.
+            return None  # The full signed audience remains present and pending.
         if self.lane.clock() >= operation.deadline_ms:
-            return
+            return None
         provider = providers["evidence" if receipt else "message"]
         document = _parse(native)
         directed = (
@@ -2567,7 +2567,7 @@ class GroupMessaging:
             else None
         )
         if controlled_data and not self._direct_ready(row, requirements=requirements):
-            return
+            return None
         if receipt:
             identifier = document["receipt"]["event_id"]
             delivery_id = str(uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1"))
@@ -2615,7 +2615,7 @@ class GroupMessaging:
                 )
                 if dict(result) != proof["result"]:
                     raise ValueError("tribe_receipt_return_proof_conflict")
-                return
+                return None
 
         def retain_response(response: bytes) -> None:
             observed = {
@@ -2669,6 +2669,7 @@ class GroupMessaging:
                     self.lane.clock(),
                 )
             return failure.code
+        return None
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
         from .sealed import inspect_delivery
