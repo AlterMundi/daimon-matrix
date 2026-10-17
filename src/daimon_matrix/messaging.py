@@ -2628,7 +2628,11 @@ class GroupMessaging:
                 uuid.uuid5(uuid.UUID(request_id), hashlib.sha256(response).hexdigest())
             )
             self.records.reserve(
-                "transport-result", proof_id, observed, lambda: observed
+                "transport-result",
+                proof_id,
+                observed,
+                lambda: observed,
+                deadline_ns=deadline_ns,
             )
 
         def authorize_write() -> None:
@@ -2655,7 +2659,7 @@ class GroupMessaging:
             # peer responses. A failed observer cannot change native outcomes.
             with (
                 suppress(OSError, sqlite3.Error, ValueError),
-                self.egress.local_storage(),
+                self.egress.local_storage(deadline_ns=deadline_ns),
             ):
                 write_diagnostic(
                     self.records.path,

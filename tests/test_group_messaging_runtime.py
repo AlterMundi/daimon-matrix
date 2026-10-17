@@ -7,7 +7,7 @@ import threading
 import time
 import unittest
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -27,6 +27,7 @@ from daimon_matrix.routes import (
     DirectHTTPProvider,
     OpaqueInbox,
     RouteAmbiguous,
+    RouteError,
     TransportIngress,
 )
 from tests import test_dm051_sealed as sealing_fixtures
@@ -1364,6 +1365,69 @@ class GroupRuntimeTests(unittest.TestCase):
                 "terminal"
             ]
         )
+
+    def test_completion_and_diagnostics_keep_the_attempt_budget_after_release(self):
+        sender, receiver = self.groups
+        with patch.object(sender, "_fanout") as fanout:
+            sender.send(
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="bounded completion storage",
+            )
+        native, rows, operation = fanout.call_args.args
+        row = next(x for x in rows if x["being_ref"] == receiver.lane.being_ref)
+        provider = sender.providers[(row["being_ref"], row["embodiment_id"])]["message"]
+        for completion in (True, False):
+            with self.subTest(completion=completion), ExitStack() as scope:
+                deadline = time.monotonic_ns() + 1_000_000_000
+
+                def completed_transport(
+                    _raw, *, deadline=deadline, completion=completion, **kwargs
+                ):
+                    # Another local writer takes the fence after physical
+                    # release but before completion; its wait has a budget too.
+                    scope.enter_context(self.held_fence(sender.egress))
+                    scope.enter_context(
+                        patch("time.monotonic_ns", return_value=deadline + 1)
+                    )
+                    if completion:
+                        kwargs["response_sink"](b"synthetic validated response")
+                    else:
+                        raise RouteError("route_timeout")
+
+                scope.enter_context(
+                    patch.object(provider, "send_prepared", completed_transport)
+                )
+                scope.enter_context(
+                    patch.object(
+                        provider, "validate_prepared_response", return_value={}
+                    )
+                )
+                start = time.monotonic()
+                if completion:
+                    with self.assertRaisesRegex(
+                        NativeEgressError, "egress_attempt_deadline"
+                    ):
+                        sender._transmit_one(
+                            native,
+                            row,
+                            operation,
+                            receipt=False,
+                            deadline_ns=deadline,
+                            authorize=None,
+                        )
+                else:
+                    sender._transmit_one(
+                        native,
+                        row,
+                        operation,
+                        receipt=False,
+                        deadline_ns=deadline,
+                        authorize=None,
+                    )
+                self.assertLess(time.monotonic() - start, 1)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
 
     def test_bounded_release_rechecks_time_after_local_verification(self):
         controller, binding, raw = self._bounded_write_operation()
