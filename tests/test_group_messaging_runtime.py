@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 import unittest
@@ -296,6 +297,68 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_local_busy_database_keeps_safe_cause_without_peer_effect_or_replay(self):
+        sender, receiver = self.groups
+        original_release = sender.egress.release_bounded
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="a local storage refusal is not a transport rejection",
+        )
+
+        def busy_release(*args, **kwargs):
+            with closing(sqlite3.connect(sender.records.path)) as blocker:
+                blocker.execute("BEGIN EXCLUSIVE")
+                try:
+                    return original_release(*args, **kwargs)
+                finally:
+                    blocker.rollback()
+
+        with patch.object(sender.egress, "release_bounded", side_effect=busy_release):
+            result = sender.send(**request)
+        remote = next(x for x in result["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["state"], "pending")
+        self.assertEqual(remote["last_failure"]["code"], "route_egress_storage_busy")
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["semantic"]["terminal"])
+        self.fixture.now += 60_000
+        with patch.object(
+            sender.egress, "release_bounded", side_effect=AssertionError("replay")
+        ):
+            retained = sender.inspect(client_id="test", send_id=request["send_id"])
+        self.assertEqual(retained["message_id"], result["message_id"])
+        remote = next(
+            x for x in retained["transport"] if x["state"] != "author-retained"
+        )
+        self.assertEqual(remote["last_failure"]["code"], "route_egress_storage_busy")
+
+    def test_local_egress_diagnostics_disclose_only_allowlisted_codes(self):
+        sender, receiver = self.groups
+        for cause, expected in (
+            ("egress_operation_ambiguous", "route_egress_operation_ambiguous"),
+            ("echo_state_invalid", "route_echo_state_invalid"),
+            ("arbitrary-private-error-text", "route_egress_blocked"),
+        ):
+            with self.subTest(cause=cause):
+                with patch.object(
+                    sender.egress,
+                    "release_bounded",
+                    side_effect=NativeEgressError(cause),
+                ):
+                    result = sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="retain bounded local diagnostics",
+                    )
+                remote = next(
+                    x for x in result["transport"] if x["state"] != "author-retained"
+                )
+                self.assertEqual(remote["last_failure"]["code"], expected)
+                self.assertEqual(receiver.page(after=0, limit=10), [])
+                self.assertNotIn("arbitrary-private-error-text", str(result))
+
     def test_corrupt_diagnostic_sidecar_preserves_delivery_and_verified_visibility(
         self,
     ):

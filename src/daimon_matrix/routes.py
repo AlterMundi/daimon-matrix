@@ -34,6 +34,7 @@ from urllib.parse import urlsplit
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
+from .mandatory_echo import LOCAL_EGRESS_DIAGNOSTIC_CODES
 from .native_egress import (
     MandatoryEgressController,
     NativeEgressError,
@@ -2036,12 +2037,18 @@ class AuthenticatedProvider:
             raise RouteAmbiguous(exception.code, fallback_allowed=False) from exception
         except NativeEgressError as exception:
             # A local visibility/authority failure is not route unavailability.
+            cause = str(exception)
             code = {
                 "egress_echo_not_confirmed": "route_echo_unconfirmed",
                 "egress_authority_blocked": "route_authority_blocked",
                 "echo_authorization_blocked": "route_authority_blocked",
                 "egress_attempt_deadline": "route_timeout",
-            }.get(str(exception), "route_egress_blocked")
+            }.get(
+                cause,
+                "route_" + cause
+                if cause in LOCAL_EGRESS_DIAGNOSTIC_CODES
+                else "route_egress_blocked",
+            )
             raise RouteAmbiguous(code, fallback_allowed=False) from exception
         except TimeoutError as exception:
             raise RouteAmbiguous("route_timeout") from exception

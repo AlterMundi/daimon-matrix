@@ -1680,7 +1680,12 @@ class MandatoryEgressController:
             ):
                 raise NativeEgressError("egress_storage_unavailable")
             yield database
-        except sqlite3.Error:
+        except sqlite3.Error as exception:
+            if getattr(exception, "sqlite_errorcode", 0) & 0xFF in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }:
+                raise NativeEgressError("egress_storage_busy") from None
             raise NativeEgressError("egress_storage_unavailable") from None
         finally:
             if database is not None:

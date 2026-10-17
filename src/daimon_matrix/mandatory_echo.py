@@ -803,6 +803,27 @@ def _status(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+LOCAL_EGRESS_DIAGNOSTIC_CODES = frozenset(
+    {
+        "egress_storage_busy",
+        "egress_storage_unavailable",
+        "egress_operation_ambiguous",
+        "egress_operation_missing",
+        "egress_operation_mismatch",
+        "egress_catalog_invalid",
+        "egress_catalog_mismatch",
+        "egress_permit_invalid",
+        "echo_storage_unavailable",
+        "echo_state_invalid",
+        "echo_state_missing",
+        "echo_transaction_active",
+        "echo_catalog_invalid",
+        "echo_key_invalid",
+        "echo_capacity",
+    }
+)
+
+
 _DIAGNOSTIC_CODES = frozenset(
     {
         "executor-failed",
@@ -822,7 +843,7 @@ _DIAGNOSTIC_CODES = frozenset(
         "route_connection_failed",
         "route_http_response_invalid",
     }
-)
+) | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
 
 
 @contextmanager
