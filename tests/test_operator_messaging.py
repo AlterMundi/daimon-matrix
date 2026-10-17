@@ -840,6 +840,34 @@ class ProvisioningTests(unittest.TestCase):
                     loaded.service.capabilities,
                 )
 
+    def test_initial_prepare_preserves_private_stage_after_capability_effect(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import read_capability_state
+
+        runtime, spec, sources, _ = application_fixture(self)
+        target = self.root / "interrupted-initial-application"
+        with (
+            patch.object(operator, "_compose", side_effect=OSError("interrupted")),
+            self.assertRaisesRegex(ValueError, "messaging_prepare_rejected"),
+        ):
+            operator.prepare(runtime, target, spec, secret_sources=sources)
+
+        self.assertFalse(target.exists())
+        stages = list(target.parent.glob(".messaging-prepare-*"))
+        self.assertEqual(
+            len(stages), 1, "durable genesis must retain its original client"
+        )
+        application = json.loads((stages[0] / "application.json").read_bytes())
+        client = application["client"]
+        self.assertEqual(
+            hashlib.sha256((stages[0] / "client.key").read_bytes()).hexdigest(),
+            client["secret_sha256"],
+        )
+        self.assertEqual(
+            read_capability_state(runtime, client["descriptor"])["capability_id"],
+            client["descriptor"]["capability_id"],
+        )
+
     def test_genesis_journal_publication_is_atomic_and_exact_retry_converges(self):
         from daimon_matrix import operator_messaging as operator
         from daimon_matrix.local_api import create_messaging_capability
@@ -1738,7 +1766,7 @@ class ProvisioningTests(unittest.TestCase):
         sync = operator._sync
 
         def fail_parent(path):
-            if path == target.parent:
+            if path == target.parent and target.exists():
                 raise OSError("synthetic fsync failure")
             sync(path)
 

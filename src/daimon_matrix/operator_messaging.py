@@ -1208,6 +1208,7 @@ def prepare(
     No grant, identity, transport key or foreign ledger is invented here.
     """
     staging = None
+    retain_staging = False
     try:
         target = Path(os.path.abspath(app_directory))
         _directory(target.parent)
@@ -1264,6 +1265,12 @@ def prepare(
         )
         persisted = read_document(staging / "application.json")
         verify_binding(runtime, persisted, read_document(staging / "binding.json"))
+        # The capability journal outlives this private directory. Its original
+        # client and signed application must be durable before the first effect,
+        # and remain available if that effect or later composition is interrupted.
+        _sync(staging)
+        _sync(staging.parent)
+        retain_staging = True
         _initialize_capability_state(runtime, cap.descriptor)
         existing_catalogs = runtime.egress.registered_catalog_ids()
         _compose(runtime, staging, persisted, initialize=True)
@@ -1306,7 +1313,7 @@ def prepare(
     except Exception:
         raise MessagingConfigError("messaging_prepare_rejected") from None
     finally:
-        if staging is not None:
+        if staging is not None and not retain_staging:
             shutil.rmtree(staging)
 
 
