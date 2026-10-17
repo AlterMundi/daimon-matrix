@@ -395,7 +395,8 @@ class InitialPreparationRecoveryTests(unittest.TestCase):
             self.assertRaisesRegex(OSError, "retained parent sync interrupted"),
         ):
             operator.recover(runtime, target, **options)
-        capability.assert_not_called()
+        capability.assert_called_once()
+        self.assertEqual(capability.call_args.kwargs, {"repair": False})
         compose.assert_not_called()
         self.assertFalse(floor.exists())
         self.assertTrue(
@@ -616,6 +617,301 @@ class InitialPreparationRecoveryTests(unittest.TestCase):
         self.assertFalse(load.call_args.kwargs["egress"].release_enabled)
         self.assertIsNone(load.call_args.kwargs["egress_factory"])
         self.assertTrue(target.is_dir())
+
+
+class InitialStoreRecoveryTests(unittest.TestCase):
+    interrupted = InitialPreparationRecoveryTests.interrupted
+
+    def pending_store(self, *, complete=False, foreign=False):
+        import subprocess
+        import sys
+
+        from daimon_matrix.messaging_config import _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY
+
+        runtime, target, stage, application, options = self.interrupted()
+        path = stage / application["stores"]["opaque-message"]
+        if complete:
+            with contextlib.closing(sqlite3.connect(path)) as database:
+                database.execute("UPDATE inbox_meta SET next_sequence=42")
+                database.execute(
+                    "INSERT INTO inbox_claims VALUES('retained','hash',?)",
+                    (b'{"retained":true}',),
+                )
+                database.commit()
+        else:
+            path.unlink()
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(fd)
+        statements = _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY["opaque"].split(";")
+        program = """import json,sqlite3,sys
+spec=json.loads(sys.argv[2])
+db=sqlite3.connect(sys.argv[1],isolation_level=None)
+db.execute('PRAGMA journal_mode=DELETE')
+db.execute('PRAGMA synchronous=FULL')
+if not spec['complete']:
+ db.executescript(spec['prefix'])
+ db.execute('INSERT INTO inbox_meta VALUES(1,1)')
+if spec['foreign']:db.execute('CREATE TABLE unexpected(value TEXT)')
+db.execute('PRAGMA cache_size=2')
+db.execute('BEGIN IMMEDIATE')
+if spec['complete']:
+ db.execute('UPDATE inbox_meta SET next_sequence=99')
+ for number in range(200):
+  db.execute('INSERT INTO inbox_claims VALUES(?,?,?)',(str(number),'hash',b'x'*4096))
+else:db.execute(spec['next'])
+print('PENDING',flush=True)
+sys.stdin.buffer.read(1)
+"""
+        specification = dict(
+            complete=complete,
+            foreign=foreign,
+            prefix=";".join(statements[:3]) + ";",
+            next=statements[3],
+        )
+        with subprocess.Popen(
+            [sys.executable, "-I", "-c", program, str(path), json.dumps(specification)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as writer:
+            self.assertEqual(writer.stdout.readline().strip(), "PENDING")
+            writer.kill()
+            writer.wait(timeout=5)
+        journal = path.with_name(path.name + "-journal")
+        self.assertTrue(journal.exists())
+        if complete:
+            self.assertEqual(
+                journal.read_bytes()[:8], bytes.fromhex("d9d505f920a163d7")
+            )
+
+        def evidence(file):
+            info = file.stat()
+            return dict(
+                identity=[info.st_dev, info.st_ino],
+                sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
+            )
+
+        plan = dict(
+            schema="dm.messaging.initial-store-recovery/v1",
+            application_sha256=options["expected_application_sha256"],
+            specification_sha256=options["expected_specification_sha256"],
+            stage_identity=[stage.stat().st_dev, stage.stat().st_ino],
+            role="opaque-message",
+            main=evidence(path),
+            journal=evidence(journal),
+        )
+        return (
+            runtime,
+            target,
+            stage,
+            application,
+            {**options, "initial_store_recovery": plan},
+            path,
+            journal,
+        )
+
+    def test_killed_constructor_prefix_recovers_same_store_and_client(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options, path, journal = (
+            self.pending_store()
+        )
+        key = (stage / "client.key").read_bytes()
+        inode = path.stat().st_ino
+        before = path.read_bytes(), journal.read_bytes()
+        operator.recover(runtime, target, **options)
+        recovered = target / path.name
+        self.assertEqual(recovered.stat().st_ino, inode)
+        self.assertFalse(recovered.with_name(recovered.name + "-journal").exists())
+        area = target / ".initial-store-recovery"
+        self.assertEqual(
+            (
+                (area / "main.before").read_bytes(),
+                (area / "journal.before").read_bytes(),
+            ),
+            before,
+        )
+        self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+        self.assertIsNotNone(load_application(runtime, target).service.messaging)
+
+    def test_real_hot_journal_preserves_committed_rows(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, _application, options, path, _journal = (
+            self.pending_store(complete=True)
+        )
+        operator.recover(runtime, target, **options)
+        with contextlib.closing(sqlite3.connect(target / path.name)) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT singleton,next_sequence FROM inbox_meta"
+                ).fetchall(),
+                [(1, 42)],
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT claim_id,result_json FROM inbox_claims"
+                ).fetchall(),
+                [("retained", b'{"retained":true}')],
+            )
+
+    def test_foreign_schema_refuses_without_changing_original_pair(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, _stage, _application, options, path, journal = (
+            self.pending_store(foreign=True)
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_rejected"
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse(target.exists())
+
+    def test_changed_plan_or_revoked_client_refuses_before_store_effects(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.messaging_config import (
+            _capability_journal_names,
+            capability_state_record,
+        )
+
+        runtime, target, stage, application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        changed = copy.deepcopy(options)
+        changed["initial_store_recovery"]["main"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_rejected"
+        ):
+            operator.recover(runtime, target, **changed)
+        descriptor = application["client"]["descriptor"]
+        _, stem = _capability_journal_names(runtime, descriptor)
+        previous = (runtime.state_root / (stem + "-current.json")).read_bytes()
+        revoked = capability_state_record(
+            runtime,
+            descriptor,
+            sequence=1,
+            predecessor_sha256=hashlib.sha256(previous).hexdigest(),
+            action="revoke",
+            occurred_at_ms=runtime.service.clock(),
+        )
+        operator._publish_capability_entry(
+            runtime.state_root,
+            stem + "-00000000000000000001.json",
+            canonical_bytes(revoked),
+        )
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_capability_conflict"
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse((stage / ".initial-store-recovery").exists())
+
+    def test_lost_store_recovery_return_reconciles_retained_intent(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, application, options, _path, journal = (
+            self.pending_store()
+        )
+        original = operator._sync
+
+        def lost(path_to_sync):
+            original(path_to_sync)
+            if (
+                path_to_sync == stage
+                and (stage / ".initial-store-recovery/intent.json").exists()
+                and not journal.exists()
+            ):
+                raise OSError("lost store recovery return")
+
+        with (
+            patch.object(operator, "_sync", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost store recovery return"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertFalse(target.exists())
+        with self.assertRaisesRegex(
+            ValueError, "messaging_initial_store_recovery_required"
+        ):
+            operator.recover(
+                runtime,
+                target,
+                **{k: v for k, v in options.items() if k != "initial_store_recovery"},
+            )
+        operator.recover(runtime, target, **options)
+        self.assertEqual(read_publication(runtime, target)[0], application)
+
+    def test_expiry_after_intent_preserves_original_pair_without_publication(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        clock = [options["effect_not_after_ms"] * 1_000_000 - 1_000_000]
+        original = operator._publish_retained_entry
+
+        def expire(root, name, raw, **kwargs):
+            original(root, name, raw, **kwargs)
+            if root == stage / ".initial-store-recovery" and name == "intent.json":
+                clock[0] = options["effect_not_after_ms"] * 1_000_000
+
+        with (
+            patch.object(operator.time, "time_ns", side_effect=lambda: clock[0]),
+            patch.object(operator, "_publish_retained_entry", side_effect=expire),
+            self.assertRaisesRegex(ValueError, "messaging_initial_recovery_expired"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        self.assertFalse(target.exists())
+
+    def test_lost_intent_install_resyncs_before_original_recovery(self):
+        from daimon_matrix import operator_messaging as operator
+
+        runtime, target, stage, _application, options, path, journal = (
+            self.pending_store()
+        )
+        before = path.read_bytes(), journal.read_bytes()
+        area = stage / ".initial-store-recovery"
+        publish = operator._publish
+
+        def lost(source, destination):
+            publish(source, destination)
+            if destination == area / "intent.json":
+                raise OSError("lost recovery intent installation")
+
+        with (
+            patch.object(operator, "_publish", side_effect=lost),
+            self.assertRaisesRegex(OSError, "lost recovery intent installation"),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertEqual((path.read_bytes(), journal.read_bytes()), before)
+        synced = []
+        sync = operator._sync
+        complete = operator._complete_initial_opaque
+
+        def record(directory):
+            sync(directory)
+            synced.append(directory)
+
+        def check_durability(database, check):
+            if database.execute("PRAGMA database_list").fetchone()[2] == str(path):
+                self.assertIn(area, synced)
+                self.assertIn(stage, synced[synced.index(area) + 1 :])
+            return complete(database, check)
+
+        with (
+            patch.object(operator, "_sync", side_effect=record),
+            patch.object(
+                operator, "_complete_initial_opaque", side_effect=check_durability
+            ),
+        ):
+            operator.recover(runtime, target, **options)
+        self.assertTrue(target.exists())
 
 
 class ProvisioningTests(unittest.TestCase):
@@ -3024,6 +3320,8 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         )
 
     def test_initial_group_recovery_preserves_retained_record_and_client(self):
+        import subprocess
+        import sys
         import time
 
         from daimon_matrix import operator_messaging as operator
@@ -3060,6 +3358,41 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         application = json.loads((stage / "application.json").read_bytes())
         key = (stage / "client.key").read_bytes()
         events = self.runtime.service.relationships.store.events()
+        store = stage / application["stores"]["opaque-message"]
+        program = """import sqlite3,sys
+db=sqlite3.connect(sys.argv[1],isolation_level=None)
+db.execute('BEGIN IMMEDIATE')
+db.execute('UPDATE inbox_meta SET next_sequence=99')
+print('PENDING',flush=True)
+sys.stdin.buffer.read(1)
+"""
+        with subprocess.Popen(
+            [sys.executable, "-I", "-c", program, str(store)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as writer:
+            self.assertEqual(writer.stdout.readline().strip(), "PENDING")
+            writer.kill()
+            writer.wait(timeout=5)
+
+        def evidence(path):
+            info = path.stat()
+            return dict(
+                identity=[info.st_dev, info.st_ino],
+                sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+
+        plan = dict(
+            schema="dm.messaging.initial-store-recovery/v1",
+            application_sha256=config_digest(application),
+            specification_sha256=config_digest(specification),
+            stage_identity=[stage.stat().st_dev, stage.stat().st_ino],
+            role="opaque-message",
+            main=evidence(store),
+            journal=evidence(store.with_name(store.name + "-journal")),
+        )
         with patch.object(
             operator,
             "create_messaging_capability",
@@ -3072,6 +3405,7 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
                 expected_application_sha256=config_digest(application),
                 expected_specification_sha256=config_digest(specification),
                 effect_not_after_ms=time.time_ns() // 1_000_000 + 60_000,
+                initial_store_recovery=plan,
             )
         loaded = load_application(self.runtime, target)
         self.assertEqual(
@@ -3081,6 +3415,9 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
             record,
         )
         self.assertEqual((target / "client.key").read_bytes(), key)
+        self.assertEqual(
+            (target / store.name).stat().st_ino, plan["main"]["identity"][1]
+        )
         self.assertEqual(self.runtime.service.relationships.store.events(), events)
 
     def accept(self):

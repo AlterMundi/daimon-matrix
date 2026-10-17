@@ -216,6 +216,35 @@ expiry, without republishing it. A remaining-effects approval belongs to the
 owning protected orchestration operation; this SDK API does not renew old owner
 intent bytes, authorize another membership event or create Matrix authority.
 
+### Explicit initial opaque-store recovery
+
+`recover --initial-store-recovery PLAN.json` adds one reviewed store decision to
+initial-stage recovery. The plan is a closed `dm.messaging.initial-store-recovery/v1`
+document with `application_sha256`, `specification_sha256`, `stage_identity`
+(`[device,inode]`), `role` (`opaque-message` or `opaque-evidence`) and `main` and
+`journal` records, each containing `identity` and `sha256`. It authorizes no other
+store, client, stage or publication. The existing runtime writer and finite
+effect bound still apply. WAL/SHM, super-journals and missing-main inputs are
+unsupported. Each original file is bounded to 4 MiB.
+
+The owner authenticates the original stage/client/genesis, retains the exact raw
+pair and a signed recovery intent in `.initial-store-recovery`, and rehearses on
+disposable copies before touching the original. An exact maintained constructor
+prefix with consistent initial rows is recoverable; arbitrary schema subsets,
+foreign objects, changed constraints or queue traffic in a partial initial schema
+are refused. Complete stores preserve their committed rows. SQLite performs its
+own rollback and an atomic completion of the maintained opaque schema on the
+same original database inode; the operator never deletes its journal or replaces
+it with the rehearsal copy. Retained intent and the expected logical result allow
+an interrupted or lost-return recovery to resume without restoring old bytes.
+The raw preimages remain private evidence even after SQLite consumes a journal.
+
+A retained recovery area requires the same explicit plan on subsequent initial
+recovery. Successful store repair is not publication: capability, effect-bound,
+store-schema and exclusive-publication checks still run. This option does not
+renew any expired orchestration request. See the
+[SQLite rollback contract](https://www.sqlite.org/lockingv3.html#dealing_with_hot_journals).
+
 ## Configured peer pull
 
 V7 moves remote peer endpoints into the closed runtime bundle. An authenticated

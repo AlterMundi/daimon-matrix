@@ -1114,6 +1114,18 @@ _LEGACY_INBOX_SCHEMA_SQL = _STORE_SCHEMA_SQL["inbox"].replace(
 )
 
 
+def _store_catalog(db: Any) -> list[tuple[Any, ...]]:
+    """Compare schema definitions without ignoring literals or constraints."""
+    import re
+
+    return [
+        (kind, table, name, re.findall(r"'(?:''|[^'])*'|\w+|[^\s]", sql or ""))
+        for kind, table, name, sql in db.execute(
+            "SELECT type, tbl_name, name, sql FROM sqlite_schema ORDER BY name"
+        )
+    ]
+
+
 def _validate_store_schema(
     name: str,
     path: Path,
@@ -1122,22 +1134,10 @@ def _validate_store_schema(
     allow_missing_visibility: bool = False,
 ) -> None:
     """Inspect published state without DDL, recovery, or sidecar creation."""
-    import re
     import sqlite3
     from contextlib import closing
 
     from .relationship_store import SCHEMA_VERSION
-
-    def catalog(db: sqlite3.Connection) -> list[tuple[Any, ...]]:
-        # Preserve quoted literals and token boundaries, ignoring only spacing.
-        # Table SQL binds CHECK/PK/UNIQUE/NOT NULL, AUTOINCREMENT, WITHOUT ROWID;
-        # catalog index entries also require the backing unique/ordinary indexes.
-        return [
-            (kind, table, name, re.findall(r"'(?:''|[^'])*'|\w+|[^\s]", sql or ""))
-            for kind, table, name, sql in db.execute(
-                "SELECT type, tbl_name, name, sql FROM sqlite_schema ORDER BY name"
-            )
-        ]
 
     try:
         # These stores use DELETE journals. Never ignore pending WAL/journal state
@@ -1165,15 +1165,15 @@ def _validate_store_schema(
             # DDL is confined to anonymous in-memory references, never a store.
             # No store constructor is used even for these references.
             expected.executescript(_STORE_SCHEMA_SQL[schema])
-            expected_catalogs = [catalog(expected)]
+            expected_catalogs = [_store_catalog(expected)]
             if allow_missing_visibility and schema in {"outbox", "opaque", "records"}:
                 legacy.executescript(_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY[schema])
-                expected_catalogs.append(catalog(legacy))
+                expected_catalogs.append(_store_catalog(legacy))
             elif schema == "inbox" and not require_inbox_admission:
                 legacy.executescript(_LEGACY_INBOX_SCHEMA_SQL)
-                expected_catalogs.append(catalog(legacy))
+                expected_catalogs.append(_store_catalog(legacy))
             if (
-                catalog(db) not in expected_catalogs
+                _store_catalog(db) not in expected_catalogs
                 or db.execute("PRAGMA user_version").fetchone() != (0,)
                 or db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
             ):
