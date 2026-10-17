@@ -846,27 +846,29 @@ INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
 )
 
 
-_DIAGNOSTIC_CODES = frozenset(
-    {
-        "executor-failed",
-        "deadline-exceeded",
-        "http-exchange-failed",
-        "http-status-mismatch",
-        "response-validation-failed",
-        "outcome-unknown",
-        "route_echo_unconfirmed",
-        "route_authority_blocked",
-        "route_egress_blocked",
-        "transport_response_rejected",
-        "route_result_unknown",
-        "canonical_rejected",
-        "route_timeout",
-        "route_http_incomplete",
-        "route_connection_failed",
-        "route_http_response_invalid",
-    }
-) | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES) | frozenset(
-    "intake_" + code for code in INTAKE_FAILURE_CODES
+_DIAGNOSTIC_CODES = (
+    frozenset(
+        {
+            "executor-failed",
+            "deadline-exceeded",
+            "http-exchange-failed",
+            "http-status-mismatch",
+            "response-validation-failed",
+            "outcome-unknown",
+            "route_echo_unconfirmed",
+            "route_authority_blocked",
+            "route_egress_blocked",
+            "transport_response_rejected",
+            "route_result_unknown",
+            "canonical_rejected",
+            "route_timeout",
+            "route_http_incomplete",
+            "route_connection_failed",
+            "route_http_response_invalid",
+        }
+    )
+    | frozenset("route_" + code for code in LOCAL_EGRESS_DIAGNOSTIC_CODES)
+    | frozenset("intake_" + code for code in INTAKE_FAILURE_CODES)
 )
 
 
