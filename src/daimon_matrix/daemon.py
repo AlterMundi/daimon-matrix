@@ -549,6 +549,9 @@ def serve_forever(
     egress_thread: threading.Thread | None = None
     try:
         runtime.egress.validate_registry(_enabled_egress_paths(runtime))
+        if runtime.service.receiving is not None:
+            for group in runtime.service.receiving.channels.values():
+                group.initialize_reader_recovery(runtime.service)
         runtime.egress.worker_started()
         egress_thread = threading.Thread(
             target=_run_egress_worker,

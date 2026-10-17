@@ -1181,6 +1181,7 @@ class HostedWeave:
                 )
                 if expected_roster is not None and command.get("phase") == "select"
                 else None,
+                recovery_roster_sha256=expected_roster,
             )
         except ServiceError:
             raise
@@ -1188,7 +1189,8 @@ class HostedWeave:
             code = str(exception)
             raise ServiceError(
                 code,
-                retryable=code == "egress_attempt_deadline",
+                retryable=code
+                in {"egress_attempt_deadline", "reader_recovery_persistence_uncertain"},
             ) from None
         except RelationshipStoreError as exception:
             cause = exception.__cause__
@@ -2504,7 +2506,21 @@ class HostedWeave:
                     result["receiving"] = {
                         "schema": "dm.runtime.reader-status/v1",
                         "contract": "dm.runtime.reader-selection/v1",
-                        "features": ["signed-roster-cas/v1"],
+                        "features": ["signed-roster-cas/v1"]
+                        + (
+                            ["durable-reader-recovery/v1"]
+                            if all(
+                                group.egress.reader_recovery_status(channel_id)[
+                                    "supported"
+                                ]
+                                for channel_id, group in self.receiving.channels.items()
+                            )
+                            else []
+                        ),
+                        "recovery": {
+                            channel_id: group.egress.reader_recovery_status(channel_id)
+                            for channel_id, group in self.receiving.channels.items()
+                        },
                         "rosters": {
                             channel_id: self._receiving_roster_status(group)
                             for channel_id, group in self.receiving.channels.items()

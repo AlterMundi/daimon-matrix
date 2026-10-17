@@ -18,9 +18,9 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager, suppress
 from contextvars import ContextVar
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, TypeVar
@@ -812,6 +812,7 @@ class MandatoryEgressController:
         self._reader_instance_id = str(uuid.uuid4())
         self._reader_instance_pid = os.getpid()
         self._reader_selections: dict[str, _ReaderSelection] = {}
+        self._reader_recovery: dict[str, dict[str, Any]] = {}
         # Runtime-global group transport capacity, shared even if owner-local
         # composition reconstructs an application object over the same catalog.
         # These are admission bounds, never publication/authority permissions.
@@ -917,6 +918,7 @@ class MandatoryEgressController:
         deadline_ns: int,
         selection_authorization: Callable[[], AbstractContextManager[None]]
         | None = None,
+        recovery_roster_sha256: str | None = None,
     ) -> dict[str, Any]:
         """CAS controller observations under the actual physical-write fence.
 
@@ -1044,7 +1046,12 @@ class MandatoryEgressController:
                     selection_scope.enter_context(selection_authorization())
                 self._remaining_attempt_seconds(deadline_ns)
                 return self._select_readers_locked(
-                    value, readers, command_sha256, request_sha256
+                    value,
+                    readers,
+                    command_sha256,
+                    request_sha256,
+                    recovery_roster_sha256,
+                    deadline_ns,
                 )
         finally:
             self._fence.release()
@@ -1055,6 +1062,8 @@ class MandatoryEgressController:
         readers: list[dict[str, Any]],
         command_sha256: str,
         request_sha256: str,
+        recovery_roster_sha256: str | None = None,
+        deadline_ns: int | None = None,
     ) -> dict[str, Any]:
         """Called only with the physical fence and optional roster view held."""
         current = self._reader_snapshot(value["channel_id"])
@@ -1079,7 +1088,7 @@ class MandatoryEgressController:
             raise NativeEgressError("reader_revocation_required")
         if any(row["expires_at_ms"] <= self._clock() for row in readers):
             raise NativeEgressError("reader_selection_expired")
-        self._reader_selections[value["channel_id"]] = _ReaderSelection(
+        candidate = _ReaderSelection(
             context_sha256=previous.context_sha256,
             controlled=previous.controlled,
             head=_digest(
@@ -1101,7 +1110,226 @@ class MandatoryEgressController:
                 for row in readers
             ),
         )
+        recovery = self._reader_recovery.get(value["channel_id"])
+        if recovery is not None:
+            document = {
+                "action": "control",
+                "binding_sha256": recovery["binding_sha256"],
+                "boot": recovery["boot"],
+                "command": dict(value),
+                "request_sha256": request_sha256,
+                "roster_sha256": recovery_roster_sha256,
+            }
+            try:
+                recovery["latest"] = recovery["append"](
+                    value["channel_id"],
+                    recovery["latest"],
+                    document,
+                    deadline_ns=deadline_ns,
+                )
+            except Exception:
+                # Commit may have succeeded before its result was lost. Reconcile
+                # that exact command, never append a new operation to hide it.
+                retained = None
+                with suppress(Exception):
+                    retained = recovery["load"](
+                        value["channel_id"], deadline_ns=deadline_ns
+                    )
+                if retained is not None and all(
+                    retained.get(key) == item for key, item in document.items()
+                ):
+                    recovery["latest"] = retained
+                else:
+                    # Reserve the attempted operation, not an invented revoke
+                    # for the previously selected operation. Its exact retry
+                    # must remain possible if persistence failed before commit.
+                    self._reader_selections[value["channel_id"]] = replace(
+                        previous,
+                        phase="revoke",
+                        readers=(),
+                        operation_id=value["operation_id"],
+                        release_digest=value["release_digest"],
+                        request_sha256=None,
+                        control_sha256=None,
+                    )
+                    recovery["status"] = "persistence-uncertain"
+                    raise NativeEgressError(
+                        "reader_recovery_persistence_uncertain"
+                    ) from None
+            recovery["status"] = "selected" if readers else "disabled"
+        self._reader_selections[value["channel_id"]] = candidate
         return self._reader_snapshot(value["channel_id"])
+
+    def initialize_reader_recovery(
+        self,
+        channel_id: str,
+        *,
+        binding: Mapping[str, Any],
+        boot: Mapping[str, Any],
+        load: Callable[..., dict[str, Any] | None],
+        append: Callable[..., dict[str, Any]],
+        authorization: Callable[[str], AbstractContextManager[None]],
+    ) -> None:
+        """One bounded startup restoration, before workers/listeners exist.
+
+        This is not request replay or renewed qualification. Only the latest
+        signed local intent, same static boot, roster and original expiry qualify.
+        Every live control subsequently persists through the same physical fence.
+        """
+        with self._fence:
+            if channel_id in self._reader_recovery:
+                if not self._reader_recovery[channel_id]["startup_complete"]:
+                    raise NativeEgressError("reader_recovery_startup_uncertain")
+                return
+            previous = self._reader_selections[channel_id]
+            if previous.phase != "unselected" or not previous.controlled:
+                raise NativeEgressError("reader_recovery_startup_required")
+            state: dict[str, Any] = {
+                "binding_sha256": _digest(canonical_bytes(binding)),
+                "boot": json.loads(canonical_bytes(boot)),
+                "append": append,
+                "load": load,
+                "latest": None,
+                "status": "unselected",
+                "startup_complete": False,
+            }
+            self._reader_recovery[channel_id] = state
+            deadline_ns = time.monotonic_ns() + 2_000_000_000
+            try:
+                latest = load(channel_id, deadline_ns=deadline_ns)
+                state["latest"] = latest
+                if latest is None:
+                    state["startup_complete"] = True
+                    return
+                # Rebounds retain their original command and fixed reader vector;
+                # they do not search backwards for an eligible control.
+                command = latest["command"]
+                if (
+                    latest["action"] == "invalidate"
+                    or command["phase"] != "select"
+                    or not command["readers"]
+                ):
+                    state["status"] = "disabled"
+                    state["startup_complete"] = True
+                    return
+                if (
+                    latest["binding_sha256"] != state["binding_sha256"]
+                    or not isinstance(latest["roster_sha256"], str)
+                    or any(
+                        row["expires_at_ms"] <= self._clock()
+                        for row in command["readers"]
+                    )
+                ):
+                    raise NativeEgressError("reader_recovery_incompatible")
+                with authorization(latest["roster_sha256"]):
+                    rebound = append(
+                        channel_id,
+                        latest,
+                        {
+                            **{
+                                key: latest[key]
+                                for key in (
+                                    "binding_sha256",
+                                    "command",
+                                    "request_sha256",
+                                    "roster_sha256",
+                                )
+                            },
+                            "action": "rebound",
+                            "boot": state["boot"],
+                        },
+                        deadline_ns=deadline_ns,
+                    )
+                    # New process/head, historical request and reader proof kept
+                    # separately. Old-process RPCs still fail their process CAS.
+                    self._reader_selections[channel_id] = replace(
+                        previous,
+                        phase="select",
+                        operation_id=command["operation_id"],
+                        release_digest=command["release_digest"],
+                        head=_digest(canonical_bytes([previous.head, rebound])),
+                        readers=tuple(
+                            MappingProxyType(
+                                {
+                                    **row,
+                                    "wire_read": tuple(row["wire_read"]),
+                                    "authority_epochs": tuple(row["authority_epochs"]),
+                                }
+                            )
+                            for row in command["readers"]
+                        ),
+                    )
+                    state["latest"] = rebound
+                    state["status"] = "recovered"
+                    state["startup_complete"] = True
+            except Exception as failure:
+                # Consuming incompatibility prevents a later return to an older
+                # generation from resurrecting its formerly positive intent.
+                state["status"] = "recovery-unavailable"
+                latest = state["latest"]
+                incompatible = isinstance(failure, ValueError) and str(failure) in {
+                    "reader_recovery_incompatible",
+                    "reader_roster_conflict",
+                }
+                if latest is not None and incompatible:
+                    try:
+                        state["latest"] = append(
+                            channel_id,
+                            latest,
+                            {
+                                **{
+                                    key: latest[key]
+                                    for key in (
+                                        "binding_sha256",
+                                        "command",
+                                        "request_sha256",
+                                        "roster_sha256",
+                                    )
+                                },
+                                "action": "invalidate",
+                                "boot": state["boot"],
+                            },
+                            deadline_ns=deadline_ns,
+                        )
+                        state["startup_complete"] = True
+                        state["status"] = "invalidated"
+                    except Exception:
+                        state["status"] = "persistence-uncertain"
+                        raise NativeEgressError(
+                            "reader_recovery_invalidation_uncertain"
+                        ) from None
+                else:
+                    # Do not serve with an unknown/stale durable head: even a
+                    # subsequent explicit revoke would be unable to CAS it.
+                    # Preserve intent and let the existing service restart retry.
+                    raise NativeEgressError(
+                        "reader_recovery_startup_uncertain"
+                    ) from None
+
+    def reader_recovery_status(self, channel_id: str) -> dict[str, Any]:
+        state = self._reader_recovery.get(channel_id)
+        latest = None if state is None else state["latest"]
+        expiry = (
+            None
+            if latest is None or not latest["command"]["readers"]
+            else min(row["expires_at_ms"] for row in latest["command"]["readers"])
+        )
+        status = "unavailable" if state is None else state["status"]
+        if (
+            status in {"selected", "recovered"}
+            and expiry is not None
+            and self._clock() >= expiry
+        ):
+            status = "expired"
+        return {
+            "supported": state is not None,
+            "state": status,
+            "eligible_until_ms": expiry,
+            "revision": None if latest is None else latest["revision"],
+            "record_sha256": None
+            if latest is None
+            else _digest(canonical_bytes(latest)),
+        }
 
     def reader_ready(
         self,

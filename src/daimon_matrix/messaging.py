@@ -9,6 +9,7 @@ only canonical DM-051 envelope bytes enter the receive methods.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -1757,6 +1758,102 @@ class GroupMessaging:
             self.lane.local_credential_id,
             self.lane.local_embodiment_id,
             self.lane.clock(),
+        )
+
+    def initialize_reader_recovery(self, service: Any) -> None:
+        """Attach durable owner controls only at a fully qualified serving boot."""
+        if not self.controlled_readers:
+            return
+        base = json.loads(service.loaded_runtime or b"null")
+        app = json.loads(service.loaded_application or b"null")
+        base_fields = {
+            "schema",
+            "runtime_id",
+            "local_origin",
+            "runtime_bundle_sha256",
+            "startup",
+            "qualified_startup",
+            "authority_epoch",
+            "state_root_identity",
+            "stores",
+            "process_id",
+            "process_instance_id",
+        }
+        app_fields = {
+            "schema",
+            "loaded_base_sha256",
+            "loaded_view_sha256",
+            "reader_gates",
+            "application_sha256",
+            "config_sha256",
+            "publication",
+            "publication_sha256",
+            "stores",
+            "shared_stores",
+            "shared_relationships",
+            "communication_store_role",
+            "tribe",
+            "visibility",
+            "authorities",
+        }
+        startup_fields = {
+            "schema",
+            "code_digest",
+            "sdk_digest",
+            "matrix_commit",
+            "matrix_wheel_sha256",
+            "import_context_sha256",
+            "import_files_sha256",
+            "interpreter",
+            "reader",
+            "isolated",
+            "no_site",
+            "no_bytecode",
+            "process_id",
+            "startup_instance_id",
+        }
+        if (
+            not isinstance(base, dict)
+            or set(base) != base_fields
+            or not isinstance(app, dict)
+            or set(app) != app_fields
+            or base["schema"] != "dm.runtime.loaded-base/v1"
+            or app["schema"] != "dm.runtime.loaded-application/v1"
+            or not isinstance(base["qualified_startup"], dict)
+            or set(base["qualified_startup"]) != startup_fields
+        ):
+            # Bare fixtures and historical loaders cannot advertise this feature.
+            return
+        self.validate(service)
+        stable_base = {
+            key: value
+            for key, value in base.items()
+            if key not in {"process_id", "process_instance_id"}
+        }
+        stable_base["qualified_startup"] = {
+            key: value
+            for key, value in base["qualified_startup"].items()
+            if key not in {"process_id", "startup_instance_id"}
+        }
+        capability = service.capabilities[service.receiving.capability_id]
+        binding = {
+            "base": stable_base,
+            "application": {
+                key: value
+                for key, value in app.items()
+                if key
+                not in {"loaded_base_sha256", "loaded_view_sha256", "reader_gates"}
+            },
+            "controller": capability.descriptor,
+            "credential_id": self.lane.local_credential_id,
+        }
+        self.egress.initialize_reader_recovery(
+            "tribe",
+            binding=binding,
+            boot={"base": base, "application": app},
+            load=self.records.reader_control_head,
+            append=self.records.append_reader_control,
+            authorization=self.selection_authorization,
         )
 
     def _verify_loaded_stores(self) -> None:

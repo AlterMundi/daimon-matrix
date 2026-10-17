@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -11,11 +12,12 @@ import socket
 import sqlite3
 import struct
 import sys
+import tempfile
 import threading
 import time
 import unittest
 import uuid
-from contextlib import closing, contextmanager, suppress
+from contextlib import closing, contextmanager, nullcontext, suppress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,7 @@ from daimon_matrix.local_api import (
     create_request,
     request_hash,
 )
+from daimon_matrix.messaging_store import TribeRecordStore
 from daimon_matrix.native_egress import NativeEgressError, synthetic_visibility
 from daimon_matrix.release_compatibility import describe_reader
 from daimon_matrix.runtime import RuntimeError as RuntimeLoadError
@@ -835,6 +838,151 @@ class ReceivingCompositionTests(unittest.TestCase):
     with_receiving_controller = True
     setUp = group_fixtures.GroupRuntimeTests.setUp
 
+    def test_signed_composition_recovers_before_worker_start_and_invalidates_drift(
+        self,
+    ):
+        from daimon_matrix.daemon import serve_forever
+        from daimon_matrix.messaging import GroupMessaging
+
+        _base, _app, initial = (
+            group_fixtures.GroupRuntimeTests._signed_group_application(
+                self, record_key_check=False
+            )
+        )
+
+        def boot(view, *, publication=None):
+            base = json.loads(view.service.loaded_runtime)
+            base["process_instance_id"] = str(uuid.uuid4())
+            base["qualified_startup"] = {
+                "schema": "cluster-onboarding-loaded-startup/v1",
+                "code_digest": "a" * 64,
+                "sdk_digest": "b" * 64,
+                "matrix_commit": "c" * 40,
+                "matrix_wheel_sha256": "d" * 64,
+                "import_context_sha256": "e" * 64,
+                "import_files_sha256": "f" * 64,
+                "interpreter": {"implementation": "cpython", "version": [3, 13, 5]},
+                "reader": describe_reader(),
+                "isolated": True,
+                "no_site": True,
+                "no_bytecode": True,
+                "process_id": os.getpid(),
+                "startup_instance_id": str(uuid.uuid4()),
+            }
+            app = json.loads(view.service.loaded_application)
+            app["loaded_base_sha256"] = hashlib.sha256(
+                canonical_bytes(base)
+            ).hexdigest()
+            if publication is not None:
+                app["publication_sha256"] = publication
+            app["loaded_view_sha256"] = hashlib.sha256(
+                canonical_bytes(
+                    {
+                        k: v
+                        for k, v in app.items()
+                        if k not in {"loaded_view_sha256", "reader_gates"}
+                    }
+                )
+            ).hexdigest()
+            return replace(
+                view,
+                service=replace(
+                    view.service,
+                    loaded_runtime=canonical_bytes(base),
+                    loaded_application=canonical_bytes(app),
+                ),
+            )
+
+        class BeforeWorker(Exception):
+            pass
+
+        def start(view):
+            # Reach the real common startup seam, then stop before worker or
+            # socket creation. No model, Telegram request or transport replay.
+            with (
+                patch.object(view.egress, "worker_started", side_effect=BeforeWorker),
+                self.assertRaises(BeforeWorker),
+            ):
+                serve_forever(view)
+
+        first = boot(initial)
+        start(first)
+        group = first.service.receiving.channels["tribe"]
+        controller = group.egress
+        select(controller, command(controller))
+        value = command(
+            controller,
+            phase="select",
+            readers=[reader(expires_at_ms=self.fixture.now + 10_000)],
+        )
+        controller.select_readers(
+            value,
+            request_sha256="e" * 64,
+            deadline_ns=budget(),
+            recovery_roster_sha256=group.receiving_roster()["roster_sha256"],
+        )
+
+        def successor(previous, *, publication=None):
+            current = type(controller)(
+                policy=controller._policy,
+                proof_key=controller._proof_key,
+                transport=controller._transport,
+                clock=group.lane.clock,
+                catalog_mode="migrate",
+                installation_digest=controller._installation_digest,
+                owner_actor=controller._owner_actor,
+                verify_owner_binding=controller._verify_owner_binding,
+            )
+            # Reuse the fixture's unchanged base catalog registrations; the
+            # controlled group is reconstructed over its signed record store.
+            current._catalogs = dict(controller._catalogs)
+            current._paths = {
+                key: set(value) for key, value in controller._paths.items()
+            }
+            replacement = GroupMessaging(
+                lane=group.lane,
+                policy=group.policy,
+                communication=group.communication,
+                providers=group.providers,
+                config_digest=group.config_digest,
+                egress=current,
+                controlled_readers=True,
+                loaded_store_bindings=group._loaded_store_bindings,
+            )
+            return boot(
+                replace(
+                    previous,
+                    egress=current,
+                    service=replace(
+                        previous.service,
+                        receiving=replace(
+                            previous.service.receiving, channels={"tribe": replacement}
+                        ),
+                        messaging=replace(
+                            previous.service.messaging,
+                            channels={"tribe": replacement},
+                            deliveries={"tribe": replacement},
+                        ),
+                    ),
+                ),
+                publication=publication,
+            )
+
+        second = successor(first)
+        start(second)
+        self.assertTrue(second.egress.reader_ready("tribe", reader()))
+        self.assertEqual(
+            second.egress.reader_recovery_status("tribe")["state"], "recovered"
+        )
+        with self.assertRaisesRegex(NativeEgressError, "reader_process_conflict"):
+            select(second.egress, value, "e" * 64)
+        changed = successor(second, publication="9" * 64)
+        start(changed)
+        self.assertFalse(changed.egress.reader_ready("tribe", reader()))
+        self.assertEqual(
+            group.records.reader_control_head("tribe")["action"], "invalidate"
+        )
+
     def test_signed_application_composes_explicit_controlled_group(self):
         group_fixtures.GroupRuntimeTests.test_group_only_application_uses_supported_signed_provisioning(
             self
@@ -1199,6 +1347,256 @@ class ReaderSelectionTests(unittest.TestCase):
                 required_authority_epochs=("b" * 64,),
             )
         )
+
+
+class DurableReaderRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.now = 1_000
+
+        def sign(value):
+            return hmac.digest(
+                b"synthetic-record-key", canonical_bytes(value), "sha256"
+            ).hex()
+
+        def verify(value, binding):
+            if not hmac.compare_digest(sign(value), binding):
+                raise ValueError("synthetic_binding_invalid")
+
+        self.records = TribeRecordStore(
+            Path(self.directory.name) / "records.db",
+            sign=sign,
+            verify=verify,
+            clock=lambda: self.now,
+        )
+        self.binding = {
+            key: "unchanged"
+            for key in (
+                "code",
+                "sdk",
+                "authority",
+                "credential",
+                "stores",
+                "publication",
+                "visibility",
+            )
+        }
+        self.roster = "b" * 64
+
+    def restart(self, *, binding=None):
+        controller = synthetic_visibility(clock=lambda: self.now)
+        controller.register_reader_channel("tribe", "0" * 64, controlled=True)
+
+        def authorized(expected):
+            if expected != self.roster:
+                raise ValueError("reader_roster_conflict")
+            return nullcontext()
+
+        controller.initialize_reader_recovery(
+            "tribe",
+            binding=self.binding if binding is None else binding,
+            boot={"process": controller._reader_instance_id},
+            load=self.records.reader_control_head,
+            append=self.records.append_reader_control,
+            authorization=authorized,
+        )
+        return controller
+
+    def enabled(self):
+        controller = self.restart()
+        select(controller, command(controller))
+        value = command(controller, phase="select", readers=[reader()])
+        controller.select_readers(
+            value,
+            request_sha256="e" * 64,
+            deadline_ns=budget(),
+            recovery_roster_sha256=self.roster,
+        )
+        return controller, value
+
+    def test_restart_restores_fixed_vector_and_new_provenance_without_old_request(self):
+        old, request = self.enabled()
+        prior = old.reader_snapshot("tribe", deadline_ns=budget())
+        current = self.restart()
+        gate = current.reader_snapshot("tribe", deadline_ns=budget())
+        self.assertEqual(gate["readers"], prior["readers"])
+        self.assertEqual(gate["phase"], "select")
+        self.assertNotEqual(gate["process_instance_id"], prior["process_instance_id"])
+        self.assertNotEqual(gate["head"], prior["head"])
+        self.assertIsNone(gate["request_sha256"])
+        self.assertEqual(current.reader_recovery_status("tribe")["state"], "recovered")
+        with self.assertRaisesRegex(NativeEgressError, "reader_process_conflict"):
+            select(current, request, "e" * 64)
+        self.assertEqual(self.records.reader_control_head("tribe")["action"], "rebound")
+
+    def test_latest_revoke_and_empty_select_survive_restart_and_warm_composition(self):
+        current, _ = self.enabled()
+        select(current, command(current))
+        # The same startup initializer cannot re-enable a later live revoke.
+        current.initialize_reader_recovery(
+            "tribe",
+            binding=self.binding,
+            boot={},
+            load=self.records.reader_control_head,
+            append=self.records.append_reader_control,
+            authorization=lambda _: nullcontext(),
+        )
+        self.assertFalse(current.reader_ready("tribe", reader()))
+        self.assertFalse(self.restart().reader_ready("tribe", reader()))
+        select(current, command(current, phase="select"))
+        self.assertFalse(self.restart().reader_ready("tribe", reader()))
+
+    def test_incompatible_or_expired_latest_selection_is_consumed_not_resurrected(self):
+        for changed in (*self.binding, "roster", "expiry"):
+            with self.subTest(changed=changed):
+                self.records = TribeRecordStore(
+                    Path(self.directory.name) / (changed + ".db")
+                )
+                self.now, self.roster = 1_000, "b" * 64
+                self.enabled()
+                binding = dict(self.binding)
+                if changed == "roster":
+                    self.roster = "c" * 64
+                elif changed == "expiry":
+                    self.now = 20_000
+                else:
+                    binding[changed] = "changed"
+                self.assertFalse(
+                    self.restart(binding=binding).reader_ready("tribe", reader())
+                )
+                self.assertEqual(
+                    self.records.reader_control_head("tribe")["action"], "invalidate"
+                )
+                self.now, self.roster = 1_000, "b" * 64
+                self.assertFalse(self.restart().reader_ready("tribe", reader()))
+
+    def test_signed_order_ignores_sql_sequence_and_rejects_document_tampering(self):
+        self.enabled()
+        with sqlite3.connect(self.records.path) as database:
+            database.execute(
+                "UPDATE tribe_records SET sequence=sequence+100 "
+                "WHERE kind='reader-control'"
+            )
+        self.assertTrue(self.restart().reader_ready("tribe", reader()))
+        with sqlite3.connect(self.records.path) as database:
+            database.execute(
+                "UPDATE tribe_records SET document=? "
+                "WHERE kind='reader-control' "
+                "AND sequence=(SELECT MAX(sequence) FROM tribe_records)",
+                (b"{}",),
+            )
+        with self.assertRaisesRegex(
+            NativeEgressError, "reader_recovery_startup_uncertain"
+        ):
+            self.restart()
+
+    def test_failed_persistence_disables_and_exact_retry_is_one_record(
+        self,
+    ):
+        current, value = self.enabled()
+        before = self.records.reader_control_head("tribe")
+        select(current, value, "e" * 64)
+        self.assertEqual(self.records.reader_control_head("tribe"), before)
+        state = current._reader_recovery["tribe"]
+
+        def failed(*_, **__):
+            raise OSError("synthetic_io_failure")
+
+        state["append"] = failed
+        with self.assertRaisesRegex(
+            NativeEgressError, "reader_recovery_persistence_uncertain"
+        ):
+            select(current, command(current))
+        self.assertFalse(current.reader_ready("tribe", reader()))
+        self.assertEqual(
+            current.reader_recovery_status("tribe")["state"], "persistence-uncertain"
+        )
+
+    def test_new_operation_retries_before_commit_or_reconciles_lost_commit_result(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                self.records = TribeRecordStore(
+                    Path(self.directory.name) / (str(committed) + ".db")
+                )
+                current, _ = self.enabled()
+                value = command(current, operation_id=str(uuid.uuid4()))
+                state = current._reader_recovery["tribe"]
+                append = state["append"]
+
+                def interrupted(*args, committed=committed, append=append, **kwargs):
+                    if committed:
+                        append(*args, **kwargs)
+                    raise OSError("synthetic_lost_commit")
+
+                state["append"] = interrupted
+                if committed:
+                    result = select(current, value, "f" * 64)
+                    self.assertEqual(result["operation_id"], value["operation_id"])
+                else:
+                    with self.assertRaisesRegex(
+                        NativeEgressError, "reader_recovery_persistence_uncertain"
+                    ):
+                        select(current, value, "f" * 64)
+                self.assertFalse(current.reader_ready("tribe", reader()))
+                state["append"] = append
+                result = select(current, value, "f" * 64)
+                self.assertEqual(result["operation_id"], value["operation_id"])
+                self.assertEqual(
+                    self.records.reader_control_head("tribe")["revision"], 3
+                )
+
+    def test_transient_startup_io_preserves_intent_but_failed_tombstone_refuses_boot(
+        self,
+    ):
+        self.enabled()
+        before = self.records.reader_control_head("tribe")
+
+        def failed(*_, **__):
+            raise OSError("synthetic_io_failure")
+
+        current = synthetic_visibility(clock=lambda: self.now)
+        current.register_reader_channel("tribe", "0" * 64, controlled=True)
+        with self.assertRaisesRegex(
+            NativeEgressError, "reader_recovery_startup_uncertain"
+        ):
+            current.initialize_reader_recovery(
+                "tribe",
+                binding=self.binding,
+                boot={},
+                load=failed,
+                append=self.records.append_reader_control,
+                authorization=lambda _: nullcontext(),
+            )
+        self.assertFalse(current.reader_ready("tribe", reader()))
+        self.assertEqual(self.records.reader_control_head("tribe"), before)
+        self.assertTrue(self.restart().reader_ready("tribe", reader()))
+        changed = synthetic_visibility(clock=lambda: self.now)
+        changed.register_reader_channel("tribe", "0" * 64, controlled=True)
+        with self.assertRaisesRegex(
+            NativeEgressError, "reader_recovery_invalidation_uncertain"
+        ):
+            changed.initialize_reader_recovery(
+                "tribe",
+                binding={"different": True},
+                boot={},
+                load=self.records.reader_control_head,
+                append=failed,
+                authorization=lambda _: nullcontext(),
+            )
+        self.assertFalse(changed.reader_ready("tribe", reader()))
+
+    def test_contended_store_does_not_extend_the_native_control_deadline(self):
+        current, _ = self.enabled()
+        with closing(sqlite3.connect(self.records.path)) as other:
+            other.execute("BEGIN IMMEDIATE")
+            start = time.monotonic()
+            with self.assertRaisesRegex(
+                NativeEgressError, "reader_recovery_persistence_uncertain"
+            ):
+                select(current, command(current, operation_id=str(uuid.uuid4())))
+            self.assertLess(time.monotonic() - start, 1)
+        self.assertFalse(current.reader_ready("tribe", reader()))
 
 
 class ReaderHTTPTests(unittest.TestCase):
