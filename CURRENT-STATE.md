@@ -1,12 +1,68 @@
 # Current state
 
 Architecture and profile navigation: [docs/current-architecture.md](docs/current-architecture.md).
-Current entries below supersede dated RC and experiment statements.
+The newest dated receiving entry selects current deployment; older entries
+retain their historical evidence and do not select a runtime.
 [Architecture alignment milestone6](https://github.com/AlterMundi/daimon-matrix/milestone/6)
 and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
 the reviewed next changes; they do not activate automatic peer attention.
 
-## Deployed membership group — 2026-10-13
+## Accepted receiving and maintained updates — 2026-10-18
+
+CompAII, Eko and Oliva load receiving helper `6dffe887`, with unchanged Matrix
+`9b2b8ec2c455d3bf316bc00dc9e1bac44e9d5094`, SDK
+`53c4ee0195b56b709832c3a0d1830f002336c737aa42b364b58b4a4ac4c2766b` and wheel
+`5137b7a7`. Root coordinator `2c883c9f` is a separately qualified host helper;
+it does not relabel the loaded bodies. PR #364 merged the repair into main as
+`76596f9`. Historical stacked PRs are not additional pending releases.
+
+[Actual receiving and communication proof](https://github.com/AlterMundi/daimon-matrix/issues/374#issuecomment-6251542792):
+the maintained operation completed all three controlled loads, native tooling and
+positive reader selections. Parent `077e3756` follows explicit cohort `080a445c`;
+the original fixed worker is restored active. New native-tool message
+`dfafe493-0ceb-41e8-91f5-e0b893cb33d9` has Eko/Oliva intake ACKs and automatic signed
+delivered receipts, Source's authored copy, and one confirmed Tribu echo. The
+six-body audience retains three unavailable siblings without claiming delivery.
+No model turn or uncertain-message replay was needed for this technical proof.
+
+The unchanged SDK reuses its [earlier six native/semantic/ACK legs and three echoes](https://github.com/AlterMundi/daimon-matrix/issues/363#issuecomment-6240871838)
+and [exact installed 435-case qualification](https://github.com/AlterMundi/daimon-matrix/actions/runs/39065681258).
+Earlier uncertain publications remain unresolved and intact; another message's
+success does not discharge them.
+
+[Cluster PR276](https://github.com/nicoechaniz/daimon-cluster/pull/276) supplies
+current authenticated observation and durable SDK publication;
+[PR277](https://github.com/nicoechaniz/daimon-cluster/pull/277) the maintained
+prepare/apply/status coordinator; [PR278](https://github.com/nicoechaniz/daimon-cluster/pull/278)
+transaction preflight and existing-lock worker drain;
+[PR279](https://github.com/nicoechaniz/daimon-cluster/pull/279) exact acknowledged
+control reuse; [PR280](https://github.com/nicoechaniz/daimon-cluster/pull/280)
+linked activation-only recovery and closed subprocess diagnostics. All are merged
+through `ed78705f`; final CI 39138465505 passed 538 cases/2 skips. Follow the
+[owning runbook](https://github.com/nicoechaniz/daimon-cluster/blob/main/docs/runbooks/tribu-sdk-successor.md),
+not dated phase scripts or archived pair enrollment.
+
+Preparation leaves services active. Apply resumes only missing effects; a scoped
+worker pause preserves and restores its original state, including crash recovery
+before preflight. Linked reassessment keeps failed intent, current empty gates,
+original lifecycle/tooling provenance, unchanged authority/artifacts/contract and
+original expiry/window. Historical job acceptance is never fabricated. The old
+invalid Source transaction and generic first-positive-control failure are retained
+separately. The latter's original timeout/launch class remains unknown; new closed
+diagnostics preserve that distinction in future calls. Cold native observations
+still have variable cost; no instantaneous-cutover claim is made.
+
+Compatible old-body/new-observer composition and prior valid restart/rollback
+proof remain available. No production backward cutover, obsolete authority,
+expired request or old journal restoration occurred. Warn before actual service
+interruption; global Stop always requires a fresh explicit human request. No
+native Codex/Telegram restart or autonomous peer attention follows.
+
+Broader milestone6/#336, I/O acceptance, external embodiments and full future-member
+admission remain unfinished. Matrix PR #369 and Cluster PR265 are parked. Tribe
+remains one membership group with deliberately directed conversations separately.
+
+## Historical deployed membership group — 2026-10-13
 
 CompAII, Eko and Oliva now participate in one membership-based messaging group,
 using SDK `a1a70b6420692d19f85ad0edb945cba00c3f5459` (PRs #330/#332). Group-only
