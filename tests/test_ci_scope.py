@@ -24,7 +24,7 @@ class CIScopeTests(unittest.TestCase):
             "tests/test_group_messaging_runtime.py",
         ]
         self.assertEqual(profile(changed), "ledger-group-storage")
-        self.assertEqual(profile(list(LEDGER_GROUP_FILES)), "ledger-group-storage")
+        self.assertEqual(profile(list(LEDGER_GROUP_FILES)), "ledger-group-integration")
         self.assertEqual(profile(["src/daimon_matrix/ledger.py"]), "full")
         self.assertEqual(profile([*changed, "src/daimon_matrix/keystore.py"]), "full")
         workflow = (
@@ -39,6 +39,41 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn(
             "tests.test_dm032_curator_worker tests.test_dm054_scopes", workflow
         )
+
+    def test_combined_storage_admission_and_hook_keep_all_affected_contracts(self):
+        paths = [
+            "src/daimon_matrix/ledger.py",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+            ".githooks/pre-push",
+        ]
+        self.assertEqual(profile(paths), "ledger-group-storage")
+        self.assertEqual(profile([".githooks/pre-push"]), "full")
+        self.assertEqual(profile([*paths, ".githooks/unknown"]), "full")
+        self.assertEqual(profile([*paths, "requirements-dev.txt"]), "full")
+        self.assertEqual(
+            profile([*paths, "src/daimon_matrix/operator_messaging.py"]),
+            "ledger-group-integration",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            with (
+                patch("tools.ci_scope.select", return_value="ledger-group-integration"),
+                patch.object(sys, "argv", ["ci_scope", "--base", "base"]),
+                patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}),
+            ):
+                main()
+            selected = dict(
+                line.split("=", 1) for line in output.read_text().splitlines()
+            )
+            self.assertEqual(selected["profile"], "tribe-group")
+            for name in (
+                "group_admission_checks",
+                "group_receiving_checks",
+                "group_ledger_checks",
+            ):
+                self.assertEqual(selected[name], "true")
 
     def test_installer_only_changes_keep_installed_attachment_checks(self):
         from tools.ci_scope import INSTALLER_FILES

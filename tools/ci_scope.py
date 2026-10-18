@@ -301,6 +301,7 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
 
 LEDGER_GROUP_FILES = RECEIVING_CONTROL_FILES | frozenset(
     {
+        ".githooks/pre-push",
         "src/daimon_matrix/ledger.py",
         "tests/test_dm022_ledger.py",
         "tests/test_dm031_curator.py",
@@ -322,7 +323,16 @@ def profile(paths: list[str]) -> str:
         }
         <= changed
     ):
-        return "ledger-group-storage"
+        return (
+            "ledger-group-integration"
+            if changed
+            & {
+                "src/daimon_matrix/operator_messaging.py",
+                "src/daimon_matrix/operator_communication_migration.py",
+                "schemas/hosted/v1/local-api.schema.json",
+            }
+            else "ledger-group-storage"
+        )
     if "tools/install_agent_chat.py" in changed and changed <= INSTALLER_FILES:
         return "agent-chat-installer"
     migration = changed & {
@@ -485,6 +495,7 @@ def main() -> None:
             in {
                 "bounded-group-transport",
                 "ledger-group-storage",
+                "ledger-group-integration",
                 "receiving-control",
                 "group-admission",
                 "communication-migration",
@@ -498,11 +509,15 @@ def main() -> None:
         value += "\ngroup_receipt_checks=false"
     if selected == "communication-migration":
         value += "\ngroup_migration_only=true"
-    if selected in {"receiving-control", "ledger-group-storage"}:
+    if selected in {
+        "receiving-control",
+        "ledger-group-storage",
+        "ledger-group-integration",
+    }:
         value += "\ngroup_receiving_checks=true"
-    if selected == "ledger-group-storage":
+    if selected in {"ledger-group-storage", "ledger-group-integration"}:
         value += "\ngroup_ledger_checks=true"
-    if selected == "group-admission":
+    if selected in {"group-admission", "ledger-group-integration"}:
         value += "\ngroup_admission_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
