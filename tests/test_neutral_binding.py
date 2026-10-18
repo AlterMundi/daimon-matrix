@@ -905,7 +905,10 @@ class SkillDiscoveryTests(unittest.TestCase):
                 )
             for adapter in ["chat_skill_openai", "chat_skill_hermes"]:
                 self.assertEqual(
-                    artifacts[adapter], b"policy:\n  allow_implicit_invocation: false\n"
+                    artifacts[adapter],
+                    b"policy:\n  allow_implicit_invocation: true\n"
+                    if adapter == "chat_skill_openai"
+                    else b"policy:\n  allow_implicit_invocation: false\n",
                 )
             baseline_file.write_bytes((out / "codex_config.toml").read_bytes())
             output_before = {

@@ -17,15 +17,20 @@ foreground attention to a selected peer/thread/task until completion or
 revocation. A received message does not authorize a response: reading and
 replying are separate actions governed by the human's established request.
 
-Use Hermes tools `messaging_channels`, `messaging_inbox`, `messaging_send`,
-`messaging_reply`, `messaging_delivery` when available. Otherwise execute the
-installed helper listed in the current body's harness-local `connection.json`. Its `command`
-is an argv array: run it without a shell, appending `channels` or
-`call messaging_inbox` (or another operation). Pass the JSON arguments on stdin,
-never put message text or credentials in command-line arguments.
+Use the current body's native `messaging_inbox`, `messaging_send`,
+`messaging_reply` and `messaging_delivery` tools for ordinary human requests.
+Codex uses the registered Matrix MCP; Hermes uses its configured plugin. The
+configured channels come from those tools and the receiving binding. No routine
+source/configuration rediscovery or preliminary console call is needed.
 
-- First read `channels`; use only configured channel IDs. An empty channel list
-  means the peer is not enrolled, not permission to fall back to Tribe/Telegram.
+If expected native tools are missing, report that integration gap and repair the
+maintained receiving adapter. Do not silently substitute console messaging.
+The existing `connection.json` helper is for identified diagnosis/recovery only:
+its `command` is an argv array; append `channels` or `call <operation>` and pass
+JSON on stdin, without a shell. Never put message text or credentials in argv.
+An empty configured channel list is an enrollment gap, not permission to bypass
+Matrix or mandatory visibility. Skill discovery grants no autonomous effects.
+
 - Inbox arguments: `channel_id`, optional integer `after` (default 0) and `limit`
   (1..100). Results contain `items`; each item's `message.event_id` is the ID
   used for a reply. Preserve the returned cursor when paginating.

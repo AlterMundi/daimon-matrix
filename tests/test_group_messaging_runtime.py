@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 import unittest
 import uuid
-from contextlib import closing
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from unittest.mock import patch
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.communication import CommunicationStore
 from daimon_matrix.daemon import create_messaging_http_server
+from daimon_matrix.mandatory_echo import read_diagnostic
 from daimon_matrix.messaging import GroupMessaging, MessagingTribePolicy
 from daimon_matrix.native_egress import (
     VISIBILITY_SCHEMA_VERSION,
@@ -21,11 +23,957 @@ from daimon_matrix.native_egress import (
     NativeEgressError,
     synthetic_visibility,
 )
-from daimon_matrix.routes import DirectHTTPProvider, OpaqueInbox, TransportIngress
+from daimon_matrix.routes import (
+    DirectHTTPProvider,
+    OpaqueInbox,
+    RouteAmbiguous,
+    RouteError,
+    TransportIngress,
+    TransportReply,
+)
 from tests import test_dm051_sealed as sealing_fixtures
 
 
+class DirectLaneTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = sealing_fixtures.TribeConversationLaneTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+
+    def prepare(self, **changes):
+        f = self.fixture
+        return f.sender_lane.prepare(
+            text="explicit member direct",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={"kind": "being", "being_ref": f.member.state.being_ref},
+            **changes,
+        )
+
+    def test_direct_has_only_recipient_keys_and_author_retains_its_ledger_event(self):
+        from daimon_matrix.tribe_conversation import TRIBE_DIRECT_SCHEMA
+
+        f = self.fixture
+        prepared = self.prepare()
+        self.assertEqual(prepared["payload"]["schema"], TRIBE_DIRECT_SCHEMA)
+        self.assertEqual(
+            [row["being_ref"] for row in prepared["rows"]], [f.member.state.being_ref]
+        )
+        self.assertIsNotNone(f.founder_ledger.event(prepared["message"]["event_id"]))
+        validated = f.receiver_lane.validate_intake(prepared["payload"])
+        self.assertEqual(validated.message, prepared["message"])
+        self.assertEqual(
+            prepared["message"]["payload"]["body"]["destination"][
+                "authority_manifest_hash"
+            ],
+            f.member.authority.manifest.digest,
+        )
+
+    def test_explicit_body_direct_receives_signed_receipt_without_author_semantic_copy(
+        self,
+    ):
+        f = self.fixture
+        result = f.sender_lane.converse(
+            text="one selected body",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={
+                "kind": "body",
+                "being_ref": f.member.state.being_ref,
+                "embodiment_id": f.member.origin["embodiment_id"],
+            },
+            deliver=lambda _body, payload: f.receiver_lane.intake(payload),
+        )
+        self.assertEqual(len(result["deliveries"]), 1)
+        self.assertEqual(result["deliveries"][0]["state"], "delivered")
+
+    def test_receipt_authoring_preserves_storage_deadline_but_rejects_ledger_errors(
+        self,
+    ):
+        from daimon_matrix.ledger import LedgerError, LedgerStorageBusy
+        from daimon_matrix.tribe_conversation import TribeConversationError
+
+        lane = self.fixture.receiver_lane
+        validated = lane.validate_intake(self.prepare()["payload"])
+        arguments = dict(
+            membership_ref=validated.membership_ref, now=validated.validated_at_ms
+        )
+        with (
+            patch.object(
+                lane.ledger, "append_local_idempotent", side_effect=LedgerStorageBusy()
+            ),
+            self.assertRaises(LedgerStorageBusy),
+        ):
+            lane._author_receipt(validated.message, validated.resolution, **arguments)
+        with (
+            patch.object(
+                lane.ledger,
+                "append_local_idempotent",
+                side_effect=LedgerError("invalid receipt"),
+            ),
+            self.assertRaisesRegex(
+                TribeConversationError, "tribe_lane_receipt_rejected"
+            ),
+        ):
+            lane._author_receipt(validated.message, validated.resolution, **arguments)
+
+    def test_direct_cannot_be_relabelled_as_old_group_wire(self):
+        from daimon_matrix.tribe_conversation import (
+            TRIBE_CONVERSATION_SCHEMA,
+            open_event,
+        )
+
+        prepared = self.prepare()
+        prepared["payload"]["schema"] = TRIBE_CONVERSATION_SCHEMA
+        with patch(
+            "daimon_matrix.tribe_conversation.open_event", wraps=open_event
+        ) as decrypted:
+            with self.assertRaises(ValueError):
+                self.fixture.receiver_lane.validate_intake(prepared["payload"])
+            # The old complete-membership proof map must reject the omitted
+            # author before touching recipient keys, not after decryption.
+            decrypted.assert_not_called()
+
+    def enroll_second_member_body(self, label="member"):
+        import copy
+
+        from daimon_matrix.authority_epochs import (
+            RootHistoryAuthority,
+            create_embodiment_enrollment,
+        )
+        from daimon_matrix.identity import (
+            create_embodiment_credential,
+            create_incarnation_authorization,
+            x25519_public,
+        )
+        from daimon_matrix.synthetic_relationships import _seed, _transport
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        f = self.fixture
+        old = f.journey.identities[label].authority
+        roots = tuple(_seed(f"{label}:root:{index}") for index in range(3))
+        signing = _seed(f"{label}-second:signing")
+        origin = dict(
+            body_ref=f"codex:synthetic:{label}-second",
+            embodiment_id=f"embodiment:{label}-second",
+            incarnation_id=f"incarnation:{label}-second:0",
+            principal_id=f"{label}-second@loopback",
+        )
+        credential = create_embodiment_credential(
+            old.state,
+            roots,
+            signing,
+            x25519_public(_seed(f"{label}-second:encryption")),
+            embodiment_id=origin["embodiment_id"],
+            body_ref=origin["body_ref"],
+            purposes=["dm.we", "messages"],
+            valid_from_ms=0,
+            valid_until_ms=2**53 - 1,
+            transport_principals=[
+                {
+                    **_transport(f"{label}-second", origin["principal_id"]),
+                    "scheme": "dm-peer-v1",
+                }
+            ],
+        )
+        incarnation = create_incarnation_authorization(
+            credential,
+            signing,
+            incarnation_id=origin["incarnation_id"],
+            incarnation_sequence=0,
+            started_at_ms=0,
+        )
+        manifest = copy.deepcopy(old.manifest.value)
+        manifest["revision"] += 1
+        manifest["embodiments"].append(
+            dict(
+                body_ref=origin["body_ref"],
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                status="active",
+                embodiment_credential_id=credential["artifact_id"],
+                incarnation_authorization_id=incarnation["artifact_id"],
+            )
+        )
+        manifest["embodiments"].sort(
+            key=lambda row: (row["embodiment_id"], row["incarnation_id"])
+        )
+        current = RootAuthority(
+            BeingManifest.from_value(manifest),
+            old.state,
+            {**old.credentials, credential["artifact_id"]: credential},
+            {**old.incarnations, incarnation["artifact_id"]: incarnation},
+        )
+        enrollment = create_embodiment_enrollment(
+            old.manifest,
+            current.manifest,
+            root_seeds=roots,
+            request_id=str(uuid.uuid4()),
+            body_ref=origin["body_ref"],
+            embodiment_id=origin["embodiment_id"],
+            incarnation_id=origin["incarnation_id"],
+            embodiment_credential_id=credential["artifact_id"],
+            incarnation_authorization_id=incarnation["artifact_id"],
+            principal_id=origin["principal_id"],
+            issued_at_ms=f.now,
+        )
+        f.journey.authorities[old.state.being_ref] = RootHistoryAuthority(
+            current, [old], [enrollment]
+        )
+        return current, origin
+
+    def test_group_with_bodyless_active_member_retains_complete_membership_proofs(self):
+        import copy
+
+        from daimon_matrix.authority_epochs import (
+            RootHistoryAuthority,
+            create_embodiment_retirement,
+        )
+        from daimon_matrix.identity import create_revocation, verify_successor
+        from daimon_matrix.synthetic_relationships import _seed
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        f = self.fixture
+        # A sibling permits group preparation even when the other being has
+        # retired its last body. Signed membership itself remains active.
+        self.enroll_second_member_body("founder")
+        old = f.member.authority
+        roots = tuple(_seed(f"member:root:{index}") for index in range(3))
+        control = create_revocation(
+            old.state,
+            roots,
+            embodiment_id=f.member.origin["embodiment_id"],
+            cutoff_incarnation_sequence=0,
+            revocation_generation=1,
+        )
+        state = verify_successor(control, old.state)
+        manifest = copy.deepcopy(old.manifest.value)
+        manifest.update(control_head=state.head, revision=manifest["revision"] + 1)
+        for row in manifest["embodiments"]:
+            row["status"] = "retired"
+        current = RootAuthority(
+            BeingManifest.from_value(manifest), state, old.credentials, old.incarnations
+        )
+        transition = create_embodiment_retirement(
+            old.manifest,
+            current.manifest,
+            revocations=[control],
+            root_seeds=roots,
+            issued_at_ms=f.now,
+        )
+        f.journey.authorities[old.state.being_ref] = RootHistoryAuthority(
+            current, [old], [transition]
+        )
+        # Preserve the v1 sealing contract: a proof without any recipient body
+        # rejects preparation, rather than emitting a frame its reader rejects.
+        request_id = str(uuid.uuid4())
+        with self.assertRaises(ValueError):
+            f.sender_lane.prepare(
+                text="bodyless member cannot be silently omitted",
+                request_id=request_id,
+                tribe_ref=f.tribe_ref,
+            )
+        self.assertIsNone(f.sender_lane.records.get("native", request_id))
+
+    def test_retry_retains_original_root_audience_and_next_direct_selects_new_bodies(
+        self,
+    ):
+        f = self.fixture
+        arguments = dict(
+            text="freeze before extra body",
+            request_id=str(uuid.uuid4()),
+            tribe_ref=f.tribe_ref,
+            destination={"kind": "being", "being_ref": f.member.state.being_ref},
+        )
+        previous = f.sender_lane.prepare(**arguments)
+        current, origin = self.enroll_second_member_body()
+        f.now += 1
+        retried = f.sender_lane.prepare(**arguments)
+        self.assertEqual(retried, previous)
+        self.assertEqual(
+            f.receiver_lane.validate_intake(retried["payload"]).message,
+            previous["message"],
+        )
+        next_message = f.sender_lane.prepare(
+            **{**arguments, "request_id": str(uuid.uuid4())}
+        )
+        self.assertEqual(
+            {row["embodiment_id"] for row in next_message["rows"]},
+            {f.member.origin["embodiment_id"], origin["embodiment_id"]},
+        )
+        self.assertEqual(
+            next_message["message"]["payload"]["body"]["destination"][
+                "authority_manifest_hash"
+            ],
+            current.manifest.digest,
+        )
+        self.assertEqual(
+            f.receiver_lane.validate_intake(next_message["payload"]).message,
+            next_message["message"],
+        )
+        selected = f.sender_lane.prepare(
+            **{
+                **arguments,
+                "request_id": str(uuid.uuid4()),
+                "destination": {
+                    "kind": "body",
+                    "being_ref": f.member.state.being_ref,
+                    "embodiment_id": origin["embodiment_id"],
+                },
+            }
+        )
+        self.assertEqual(
+            [row["embodiment_id"] for row in selected["rows"]],
+            [origin["embodiment_id"]],
+        )
+
+
 class GroupRuntimeTests(unittest.TestCase):
+    def test_local_busy_database_keeps_safe_cause_without_peer_effect_or_replay(self):
+        sender, receiver = self.groups
+        original_release = sender.egress.release_bounded
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="a local storage refusal is not a transport rejection",
+        )
+
+        def busy_release(*args, **kwargs):
+            with closing(sqlite3.connect(sender.records.path)) as blocker:
+                blocker.execute("BEGIN EXCLUSIVE")
+                try:
+                    return original_release(*args, **kwargs)
+                finally:
+                    blocker.rollback()
+
+        with patch.object(sender.egress, "release_bounded", side_effect=busy_release):
+            result = sender.send(**request)
+        remote = next(x for x in result["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["state"], "pending")
+        self.assertEqual(remote["last_failure"]["code"], "route_egress_storage_busy")
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["semantic"]["terminal"])
+        self.fixture.now += 60_000
+        with patch.object(
+            sender.egress, "release_bounded", side_effect=AssertionError("replay")
+        ):
+            retained = sender.inspect(client_id="test", send_id=request["send_id"])
+        self.assertEqual(retained["message_id"], result["message_id"])
+        remote = next(
+            x for x in retained["transport"] if x["state"] != "author-retained"
+        )
+        self.assertEqual(remote["last_failure"]["code"], "route_egress_storage_busy")
+
+    def test_local_egress_diagnostics_disclose_only_allowlisted_codes(self):
+        sender, receiver = self.groups
+        for cause, expected in (
+            ("egress_operation_ambiguous", "route_egress_operation_ambiguous"),
+            ("echo_state_invalid", "route_echo_state_invalid"),
+            ("arbitrary-private-error-text", "route_egress_blocked"),
+        ):
+            with self.subTest(cause=cause):
+                with patch.object(
+                    sender.egress,
+                    "release_bounded",
+                    side_effect=NativeEgressError(cause),
+                ):
+                    result = sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="retain bounded local diagnostics",
+                    )
+                remote = next(
+                    x for x in result["transport"] if x["state"] != "author-retained"
+                )
+                self.assertEqual(remote["last_failure"]["code"], expected)
+                self.assertEqual(receiver.page(after=0, limit=10), [])
+                self.assertNotIn("arbitrary-private-error-text", str(result))
+
+    def test_corrupt_diagnostic_sidecar_preserves_delivery_and_verified_visibility(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        request = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="an optional diagnostic cannot hide retained delivery evidence",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ):
+            original = sender.send(**request)
+        sidecar = sender.records.path.with_name(
+            sender.records.path.name + ".transport-diagnostics.sqlite"
+        )
+        sidecar.write_bytes(b"invalid synthetic SQLite diagnostic")
+        with (
+            patch.object(
+                provider, "send_prepared", side_effect=AssertionError("retry")
+            ),
+            patch.object(
+                sender.egress,
+                "prepare_visibility",
+                side_effect=AssertionError("visibility replay"),
+            ),
+        ):
+            retained = sender.inspect(client_id="test", send_id=request["send_id"])
+        remote = next(
+            row for row in retained["transport"] if row["state"] != "author-retained"
+        )
+        self.assertEqual(retained["message_id"], original["message_id"])
+        self.assertEqual(remote["state"], "pending")
+        self.assertNotIn("last_failure", remote)
+        self.assertFalse(retained["semantic"]["terminal"])
+        self.assertEqual(retained["visibility"]["echo_state"], "confirmed")
+        self.assertIsNone(retained["visibility"]["echo_last_failure"])
+
+    def test_group_route_failure_remains_inspectable_after_expiry_without_retry(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retain the safe cause of an uncertain group copy",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ) as dispatch:
+            first = sender.send(**arguments)
+            self.assertEqual(dispatch.call_count, 3)
+            self.assertTrue(
+                all(
+                    call.args == dispatch.call_args.args
+                    for call in dispatch.call_args_list
+                )
+            )
+        remote = next(x for x in first["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["state"], "pending")
+        self.assertEqual(remote["last_failure"]["code"], "route_timeout")
+        observed = remote["last_failure"]["observed_at_ms"]
+        self.fixture.now += 60_000
+        with patch.object(
+            provider, "send_prepared", side_effect=AssertionError("retry")
+        ):
+            retained = sender.inspect(client_id="test", send_id=arguments["send_id"])
+        remote = next(
+            x for x in retained["transport"] if x["state"] != "author-retained"
+        )
+        self.assertEqual(remote["last_failure"]["observed_at_ms"], observed)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(retained["semantic"]["terminal"])
+
+    def test_group_exact_retry_success_supersedes_safe_failure_without_reauthoring(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="the exact retry can prove the original group copy",
+        )
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous("route_timeout")
+        ):
+            first = sender.send(**arguments)
+        recovered = self.send_and_settle(sender, **arguments)
+        self.assertEqual(recovered["message_id"], first["message_id"])
+        self.assertTrue(recovered["semantic"]["terminal"])
+        remote = next(
+            x for x in recovered["transport"] if x["state"] != "author-retained"
+        )
+        self.assertNotIn("last_failure", remote)
+        request_id = str(
+            uuid.uuid5(
+                uuid.UUID(arguments["send_id"]),
+                f"tribe-transport/v1:{receiver.lane.being_ref}:{receiver.lane.local_embodiment_id}",
+            )
+        )
+        self.assertEqual(
+            read_diagnostic(sender.records.path, "route", request_id)["code"],
+            "route_timeout",
+        )
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_group_diagnostics_never_include_arbitrary_route_error_text(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        private = "arbitrary-peer-text-with-private-details"
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteAmbiguous(private)
+        ):
+            result = sender.send(
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="only closed diagnostic codes",
+            )
+        remote = next(x for x in result["transport"] if x["state"] != "author-retained")
+        self.assertEqual(remote["last_failure"]["code"], "outcome-unknown")
+        self.assertNotIn(private, str(result))
+
+    def test_group_unavailable_diagnostics_preserve_uncertain_transport_outcome(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        for observer in ("write_diagnostic", "read_diagnostic"):
+            with (
+                self.subTest(observer=observer),
+                patch.object(
+                    provider,
+                    "send_prepared",
+                    side_effect=RouteAmbiguous("route_timeout"),
+                ),
+                patch(
+                    "daimon_matrix.messaging." + observer,
+                    side_effect=OSError("synthetic observer unavailable"),
+                ),
+            ):
+                result = sender.send(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="diagnostics are not delivery proof",
+                )
+            remote = next(
+                x for x in result["transport"] if x["state"] != "author-retained"
+            )
+            self.assertEqual(remote["state"], "pending")
+            self.assertEqual(remote["attempt_state"], "unconfirmed")
+            self.assertNotIn("last_failure", remote)
+            self.assertFalse(result["semantic"]["terminal"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
+    def test_delivery_inspection_does_not_claim_or_retry_an_unconfirmed_echo(self):
+        sender, _receiver = self.groups
+        for boundary in ("carrier", "echo"):
+            with self.subTest(boundary=boundary):
+                request = dict(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="technical visibility observation",
+                )
+                target, method = (
+                    (sender.records, "admit")
+                    if boundary == "carrier"
+                    else (sender.egress, "prepare_visibility")
+                )
+                with (
+                    patch.object(
+                        target,
+                        method,
+                        side_effect=RuntimeError("interrupted visibility"),
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "interrupted visibility"),
+                ):
+                    sender.send(**request)
+                with patch.object(
+                    sender.egress,
+                    "prepare_visibility",
+                    side_effect=AssertionError("inspection retried echo"),
+                ):
+                    result = sender.inspect(
+                        client_id="test", send_id=request["send_id"]
+                    )
+                if boundary == "carrier":
+                    self.assertIsNone(result["visibility"])
+                else:
+                    self.assertNotEqual(result["visibility"]["echo_state"], "confirmed")
+                self.assertIsNone(result["response_context"])
+
+    def test_group_mention_and_connected_reply_show_one_logical_destination(self):
+        from daimon_matrix.telegram_mirror import render_readable_parts
+
+        sender, receiver = self.groups
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="hello @member, this is visible to the group",
+        )
+        first = self.send_and_settle(sender, **arguments)
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(native["projection"]["recipients"], ["Tribu"])
+        self.assertTrue(
+            render_readable_parts(native["projection"])[0]
+            .splitlines()[0]
+            .endswith(" → Tribu")
+        )
+        expected = {sender.lane.being_ref, receiver.lane.being_ref}
+        self.assertEqual({row["being_ref"] for row in first["audience"]}, expected)
+        self.assertTrue(first["semantic"]["terminal"])
+        self.assertEqual(first["visibility"]["echo_state"], "confirmed")
+        self.assertEqual(
+            first["visibility"]["confirmed_parts"], first["visibility"]["part_count"]
+        )
+        self.assertEqual(
+            first["message_hash"],
+            sender.ledger.event(first["message_id"])["content_hash"],
+        )
+        self.assertIsNone(first["response_context"])
+        reply_id = str(uuid.uuid4())
+        response = self.send_and_settle(
+            receiver,
+            client_id="test",
+            send_id=reply_id,
+            thread_id=arguments["thread_id"],
+            text="connected group response",
+            response_to=(receiver, first["message_id"]),
+        )
+        reply_projection = receiver.records.get("native", reply_id)["projection"]
+        self.assertEqual(reply_projection["recipients"], ["Tribu"])
+        self.assertEqual(reply_projection["reply_to"]["event_id"], first["message_id"])
+        self.assertEqual(reply_projection["reply_to"]["text"], arguments["text"])
+        self.assertEqual({row["being_ref"] for row in response["audience"]}, expected)
+        self.assertTrue(response["semantic"]["terminal"])
+        self.assertEqual(
+            response["response_context"],
+            {
+                "message_id": first["message_id"],
+                "message_hash": first["message_hash"],
+                "sender_being_ref": first["author"]["being_ref"],
+                "sender_embodiment_id": first["author"]["embodiment_id"],
+            },
+        )
+        self.assertEqual(response["thread_id"], first["thread_id"])
+        with patch.object(
+            receiver.egress,
+            "prepare_visibility",
+            side_effect=AssertionError("inspection must not publish"),
+        ):
+            retained = receiver.inspect(client_id="test", send_id=reply_id)
+        self.assertEqual(retained["visibility"], response["visibility"])
+        self.assertEqual(retained["response_context"], response["response_context"])
+
+    def test_expanded_group_reply_omits_automatic_old_quote_and_keeps_exact_retry(self):
+        from daimon_matrix.telegram_mirror import render_readable_parts
+
+        sender = self.groups[0]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="original audience only",
+        )
+        first = self.send_and_settle(self.groups[1], **arguments)
+        # Extend the real signed Root inventory, without new real identities or
+        # extra transport setup. The additional body remains honestly offline.
+        _, origin = DirectLaneTests.enroll_second_member_body(self)
+        self.fixture.now += 1
+        reply_arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=arguments["thread_id"],
+            text="new speech to the current group",
+            response_to=(sender, first["message_id"]),
+        )
+        reply = self.send_and_settle(sender, **reply_arguments)
+        self.assertIn(
+            origin["embodiment_id"], {row["embodiment_id"] for row in reply["audience"]}
+        )
+        self.assertNotIn(
+            origin["embodiment_id"], {row["embodiment_id"] for row in first["audience"]}
+        )
+        native = sender.records.get("native", reply_arguments["send_id"])
+        parent = native["projection"]["reply_to"]
+        self.assertEqual(parent["event_id"], first["message_id"])
+        self.assertNotIn("text", parent)
+        self.assertNotIn("sender", parent)
+        self.assertNotIn(
+            arguments["text"], "".join(render_readable_parts(native["projection"]))
+        )
+        speech_count = len(sender.egress._transport.requests)
+        retry = self.send_and_settle(sender, **reply_arguments)
+        self.assertEqual(retry["message_id"], reply["message_id"])
+        self.assertEqual(retry["audience"], reply["audience"])
+        self.assertEqual(
+            sender.records.get("native", reply_arguments["send_id"]), native
+        )
+        self.assertEqual(len(sender.egress._transport.requests), speech_count)
+
+    def test_exact_group_retry_preserves_predecessor_projection_and_frozen_audience(
+        self,
+    ):
+        sender = self.groups[0]
+        arguments = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retained predecessor group publication",
+        )
+        original_admit = sender.records.admit
+        old_recipients = ["historical founder body", "historical member body"]
+
+        def predecessor_admit(*args, **kwargs):
+            # Owner-local fixture: mint the old producer's projection through
+            # the real native/echo transaction before running the new retry.
+            if kwargs.get("path_id") == "tribe-message-request":
+                kwargs["projection"] = {
+                    **kwargs["projection"],
+                    "recipients": old_recipients,
+                }
+            return original_admit(*args, **kwargs)
+
+        with patch.object(sender.records, "admit", side_effect=predecessor_admit):
+            first = self.send_and_settle(sender, **arguments)
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(native["projection"]["recipients"], old_recipients)
+        pages = [group.page(after=0, limit=10) for group in self.groups]
+        retried = self.send_and_settle(sender, **arguments)
+        self.assertEqual(retried["message_id"], first["message_id"])
+        self.assertEqual(retried["audience"], first["audience"])
+        self.assertTrue(retried["semantic"]["terminal"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertEqual(
+            [group.page(after=0, limit=10) for group in self.groups], pages
+        )
+
+    def test_direct_catalog_reopen_and_migration_preserve_native_echo_and_ack(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        delivered = self.direct_arguments(sender, receiver)
+        result = self.send_and_settle(sender, **delivered)
+        self.assertTrue(result["semantic"]["terminal"])
+        sender.direct_reader_ready = None
+        blocked = self.direct_arguments(sender, receiver)
+        denied = self.send_and_settle(sender, **blocked)
+        self.assertEqual(denied["transport"][0]["attempt_state"], "not-attempted")
+        retained = {
+            arguments["send_id"]: (
+                sender.records.get("native", arguments["send_id"]),
+                sender.inspect(client_id="test", send_id=arguments["send_id"]),
+            )
+            for arguments in (delivered, blocked)
+        }
+        for mode in ("validate", "migrate"):
+            with self.subTest(mode=mode):
+                lane = self.fixture.lane_for(
+                    "founder",
+                    self.fixture.founder_ledger,
+                    self.fixture.sender_custody,
+                    self.fixture.journey.store,
+                )
+                lane.records.clock = lane.clock
+                controller = MandatoryEgressController(
+                    policy=sender.egress._policy,
+                    proof_key=sender.egress._proof_key,
+                    transport=sender.egress._transport,
+                    clock=lane.clock,
+                    catalog_mode=mode,
+                )
+                reopened = GroupMessaging(
+                    lane=lane,
+                    policy=sender.policy,
+                    communication=sender.communication,
+                    providers=sender.providers,
+                    config_digest=sender.config_digest,
+                    egress=controller,
+                )
+                if mode == "migrate":
+                    controller.migrate_registered_catalogs(
+                        version=VISIBILITY_SCHEMA_VERSION
+                    )
+                controller.validate_registered_catalogs()
+                controller.validate_registry(
+                    {"tribe-message-request", "tribe-receipt-request"}
+                )
+                for send_id, (native, evidence) in retained.items():
+                    self.assertEqual(reopened.records.get("native", send_id), native)
+                    self.assertEqual(
+                        reopened.inspect(client_id="test", send_id=send_id), evidence
+                    )
+
+    def test_owner_service_forwards_typed_direct_and_rejects_null_or_nongroup_lane(
+        self,
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from daimon_matrix.service import HostedWeave, ServiceError
+
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        context = SimpleNamespace(
+            client_channels={"test": frozenset({"tribe"})}, deliveries={"tribe": sender}
+        )
+        service = SimpleNamespace(
+            _messaging_context=lambda: context,
+            _messaging_guard=lambda *args: lambda: None,
+        )
+        arguments = {**self.direct_arguments(sender, receiver), "channel_id": "tribe"}
+        arguments.pop("client_id")
+        result = HostedWeave._messaging_send(service, arguments, client_id="test")
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        result = sender.inspect(client_id="test", send_id=result["send_id"])
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(
+            [row["being_ref"] for row in result["audience"]], [receiver.lane.being_ref]
+        )
+        count = len(sender.ledger.events())
+        with self.assertRaises(ServiceError):
+            HostedWeave._messaging_send(
+                service,
+                {**arguments, "send_id": str(uuid.uuid4()), "destination": None},
+                client_id="test",
+            )
+        self.assertEqual(len(sender.ledger.events()), count)
+        other = SimpleNamespace(send=Mock())
+        context.deliveries["tribe"] = other
+        with self.assertRaises(ServiceError):
+            HostedWeave._messaging_send(service, arguments, client_id="test")
+        other.send.assert_not_called()
+
+    def direct_arguments(self, sender, receiver, *, kind="being", **changes):
+        destination = {"kind": kind, "being_ref": receiver.lane.being_ref}
+        if kind == "body":
+            destination["embodiment_id"] = receiver.lane.local_embodiment_id
+        return dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="explicit direct over the enrolled shared carrier",
+            destination=destination,
+            **changes,
+        )
+
+    def test_direct_default_denies_unknown_reader_without_losing_frozen_leg_or_echo(
+        self,
+    ):
+        sender, receiver = self.groups
+        arguments = self.direct_arguments(sender, receiver)
+        blocked = self.send_and_settle(sender, **arguments)
+        self.assertEqual(blocked["schema"], "dm.tribe.direct-delivery/v1")
+        self.assertEqual(len(blocked["audience"]), 1)
+        self.assertEqual(blocked["transport"][0]["attempt_state"], "not-attempted")
+        self.assertFalse(blocked["transport"][0]["reader_readiness"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertEqual(
+            native["projection"]["recipients"], ["Direct · " + receiver.lane.being_ref]
+        )
+        sender.direct_reader_ready = lambda row: (
+            row["being_ref"] == receiver.lane.being_ref
+        )
+        delivered = self.send_and_settle(sender, **arguments)
+        self.assertEqual(delivered["message_id"], blocked["message_id"])
+        self.assertEqual(delivered["audience"], blocked["audience"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertTrue(delivered["semantic"]["terminal"])
+        self.assertEqual(delivered["semantic"]["legs"][0]["state"], "delivered")
+        self.assertEqual(delivered["author_retention"]["state"], "authored-local")
+        self.assertEqual(sender.page(after=0, limit=10), [])
+        sender.direct_reader_ready = None
+        historical = self.send_and_settle(sender, **arguments)
+        self.assertEqual(
+            historical["transport"][0]["attempt_state"], "recipient-intake"
+        )
+        self.assertFalse(historical["transport"][0]["reader_readiness"])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_direct_reader_withdrawal_between_bounded_attempts_stops_release(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+
+        def unavailable_then_withdraw(*args, **kwargs):
+            sender.direct_reader_ready = None
+            raise RouteAmbiguous("route_connection_failed")
+
+        with patch.object(
+            provider, "send_prepared", side_effect=unavailable_then_withdraw
+        ) as dispatch:
+            result = sender.send(**self.direct_arguments(sender, receiver))
+        dispatch.assert_called_once()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["transport"][0]["reader_readiness"])
+        self.assertFalse(result["semantic"]["terminal"])
+
+    def test_direct_reader_invalidation_at_actual_write_retains_uncertain_attempt(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        round_trip = provider._round_trip
+        original = round_trip.bounded_open
+
+        def withdraw_after_connect(deadline):
+            exchange = original(deadline)
+            sender.direct_reader_ready = None
+            return exchange
+
+        provider._round_trip = replace(round_trip, bounded_open=withdraw_after_connect)
+        arguments = self.direct_arguments(sender, receiver)
+        result = self.send_and_settle(sender, **arguments)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertEqual(result["transport"][0]["attempt_state"], "unconfirmed")
+        self.assertFalse(result["transport"][0]["reader_readiness"])
+        provider._round_trip = round_trip
+        sender.direct_reader_ready = lambda row: True
+        retried = self.send_and_settle(sender, **arguments)
+        self.assertEqual(retried["message_id"], result["message_id"])
+        self.assertTrue(retried["semantic"]["terminal"])
+
+    def test_direct_cannot_use_legacy_opaque_provider_to_bypass_the_write_guard(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        with patch.object(provider, "_round_trip") as opaque:
+            result = self.send_and_settle(
+                sender, **self.direct_arguments(sender, receiver)
+            )
+            opaque.assert_not_called()
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertEqual(result["transport"][0]["attempt_state"], "unconfirmed")
+        self.assertFalse(result["semantic"]["terminal"])
+
+    def test_body_direct_reply_targets_parent_author_without_quote_or_broadcast(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = receiver.direct_reader_ready = lambda row: True
+        arguments = self.direct_arguments(sender, receiver, kind="body")
+        first = self.send_and_settle(sender, **arguments)
+        reply_id = str(uuid.uuid4())
+        reply = self.send_and_settle(
+            receiver,
+            client_id="test",
+            send_id=reply_id,
+            thread_id=arguments["thread_id"],
+            text="direct response",
+            response_to=(receiver, first["message_id"]),
+        )
+        self.assertTrue(reply["semantic"]["terminal"])
+        self.assertEqual(reply["destination"]["kind"], "body")
+        self.assertEqual(
+            reply["destination"]["embodiment_id"], sender.lane.local_embodiment_id
+        )
+        self.assertEqual(
+            [row["being_ref"] for row in reply["audience"]], [sender.lane.being_ref]
+        )
+        projection = receiver.records.get("native", reply_id)["projection"]
+        self.assertNotIn("text", projection["reply_to"])
+        self.assertEqual(projection["reply_to"]["event_id"], first["message_id"])
+
     def test_owned_ack_and_refusal_recheck_authority_before_actual_http_writer(self):
         sender, receiver = self.groups
         ingress = receiver.intake_ingresses["message"]
@@ -85,7 +1033,7 @@ class GroupRuntimeTests(unittest.TestCase):
         checked = []
 
         def authorize():
-            if sender.egress._fence.locked():
+            if sender.egress._fence._is_owned():
                 self.fixture.now += 60_000
                 checked.append(True)
 
@@ -291,21 +1239,630 @@ class GroupRuntimeTests(unittest.TestCase):
     def test_bounded_release_deadline_includes_existing_fence_wait(self):
         controller, binding, raw = self._bounded_write_operation()
         controller.advance_one(binding)
-        controller._fence.acquire()
         effects = []
+        with (
+            self.held_fence(controller),
+            self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+        ):
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 20_000_000,
+            )
+        self.assertEqual(effects, [])
+        self.assertEqual(controller._live_permits, set())
+        self.assertIsNone(controller._attempt_deadline.get())
+
+    @contextmanager
+    def held_fence(self, controller):
+        entered, release = threading.Event(), threading.Event()
+
+        def hold():
+            with controller._fence:
+                entered.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold)
+        worker.start()
         try:
-            with self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"):
+            self.assertTrue(entered.wait(5))
+            yield
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_slow_own_echo_does_not_block_a_committed_incoming_ack(self):
+        receiver, sender = self.groups
+        from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
+
+        # The deployed representation suppresses ACK-only echo. A legacy full
+        # representation correctly waits for its own required publication.
+        receiver.egress._policy["representation"] = READABLE_REPRESENTATION
+        controller, binding, _raw = self._bounded_write_operation()
+        committed, publishing, finish, returned = (threading.Event() for _ in range(4))
+        failures, results = [], []
+        send_echo = controller._transport.send
+        commit = receiver.records.commit_intake
+
+        def slow_echo(request):
+            publishing.set()
+            if not finish.wait(5):
+                raise AssertionError("synthetic echo completion missing")
+            return send_echo(request)
+
+        def after_commit(**arguments):
+            value = commit(**arguments)
+            committed.set()
+            if not publishing.wait(5):
+                raise AssertionError("synthetic publication missing")
+            return value
+
+        def publish():
+            try:
+                if not committed.wait(5):
+                    raise AssertionError("synthetic incoming commit missing")
+                controller.advance_one(binding)
+            except BaseException as failure:
+                failures.append(failure)
+
+        def send():
+            try:
+                results.append(
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="ACK while another echo is pending",
+                    )
+                )
+            except BaseException as failure:
+                failures.append(failure)
+            finally:
+                returned.set()
+
+        publisher, incoming = (
+            threading.Thread(target=publish),
+            threading.Thread(target=send),
+        )
+        with (
+            patch.object(controller._transport, "send", side_effect=slow_echo),
+            patch.object(receiver.records, "commit_intake", side_effect=after_commit),
+        ):
+            try:
+                publisher.start()
+                incoming.start()
+                self.assertTrue(publishing.wait(5))
+                self.assertTrue(
+                    returned.wait(2),
+                    "incoming ACK waits for unrelated Telegram publication",
+                )
+                remote = next(
+                    row
+                    for row in results[0]["transport"]
+                    if row["being_ref"] == receiver.lane.being_ref
+                )
+                self.assertEqual(remote["state"], "recipient-intake")
+            finally:
+                finish.set()
+                publisher.join(5)
+                incoming.join(5)
+                for server in self.servers:
+                    server._threads.join()
+        self.assertFalse(publisher.is_alive())
+        self.assertFalse(incoming.is_alive())
+        self.assertEqual(failures, [])
+
+    def test_http_completion_retries_the_same_frozen_receipt_after_transient_failure(
+        self,
+    ):
+        sender, receiver = self.groups
+        provider = receiver.providers[
+            (sender.lane.being_ref, sender.lane.local_embodiment_id)
+        ]["evidence"]
+        original = provider.send_prepared
+        requests = []
+
+        def once_unavailable(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(provider, "send_prepared", side_effect=once_unavailable):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="finite automatic technical receipt recovery",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        receipt = receiver.records.get("receipt", result["message_id"])
+        self.assertIsNotNone(receipt)
+        terminal = receiver.records.get("receipt-terminal", result["message_id"])
+        self.assertEqual(terminal["state"], "recipient-intake")
+
+    def test_completion_budget_is_separate_frozen_and_stops_on_expiry_or_block(self):
+        now = [1000]
+        deadlines, outcomes = [], []
+
+        def complete(deadline):
+            deadlines.append(deadline)
+            if len(deadlines) == 1:
+                failure = sqlite3.OperationalError("private diagnostic must not leak")
+                failure.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                raise failure
+            return {"state": "receipt-projected"}
+
+        reply = TransportReply(
+            b"ack",
+            lambda: None,
+            after_response_bounded=complete,
+            completion_expires_at_ms=2000,
+            completion_clock=lambda: now[0],
+            completion_diagnostic=outcomes.append,
+        )
+        reply.complete(deadline_ns=time.monotonic_ns() - 1)
+        self.assertEqual(len(deadlines), 2)
+        self.assertEqual(deadlines[0], deadlines[1])
+        self.assertEqual(outcomes, ["completion_confirmed"])
+        deadlines.clear()
+        now[0] = 2000
+        reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+        self.assertEqual(deadlines, [])
+        self.assertEqual(outcomes[-1], "completion_budget_exhausted")
+        now[0] = 1000
+        blocked = replace(
+            reply, after_response_bounded=lambda _: {"state": "blocked-selection"}
+        )
+        blocked.complete(deadline_ns=time.monotonic_ns() - 1)
+        self.assertEqual(outcomes[-1], "completion_blocked")
+
+    def test_http_completion_retries_wrapped_sqlite_busy_without_resending_control(
+        self,
+    ):
+        sender, _receiver = self.groups
+        original = sender._retained_evidence_ticket
+        failures, attempts = [], []
+
+        def busy_once_after_ack(context):
+            request_id = context["request"]["request_id"]
+            if sender.records.get("intake-ack", request_id) is not None:
+                attempts.append(request_id)
+                if not failures:
+                    failures.append(request_id)
+                    error = sqlite3.OperationalError("private storage diagnostic")
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                    # The public retained-ticket seam adds this real wrapper.
+                    raise error
+            return original(context)
+
+        with patch.object(
+            sender, "_retained_evidence_ticket", side_effect=busy_once_after_ack
+        ):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="recover only retained control projection",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(failures), 1)
+        self.assertGreaterEqual(len(attempts), 2)
+        self.assertEqual(set(attempts), set(failures))
+        self.assertIsNotNone(sender.records.get("control-terminal", failures[0]))
+
+    def test_completion_does_not_retry_authority_or_unknown_wrappers_with_busy_cause(
+        self,
+    ):
+        from daimon_matrix.ledger import LedgerStorageBusy
+        from daimon_matrix.routes import _transient_completion_failure
+
+        busy = sqlite3.OperationalError("private storage diagnostic")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        for failure in [
+            RouteAmbiguous("route_authority_blocked"),
+            ValueError("unknown wrapper"),
+        ]:
+            failure.__cause__ = busy
+            calls, diagnostics = [], []
+
+            def complete(_, error=failure, observed=calls):
+                observed.append(True)
+                raise error
+
+            reply = TransportReply(
+                b"ack",
+                lambda: None,
+                after_response_bounded=complete,
+                completion_expires_at_ms=2000,
+                completion_clock=lambda: 1000,
+                completion_diagnostic=diagnostics.append,
+            )
+            reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(_transient_completion_failure(failure))
+        self.assertTrue(_transient_completion_failure(LedgerStorageBusy()))
+
+    def test_bounded_data_retry_uses_exact_request_and_one_native_intake(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        original = provider.send_prepared
+        requests = []
+
+        def lose_first(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                # The receiver commits but its original HTTP reply is lost.
+                original(raw, **arguments)
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(provider, "send_prepared", side_effect=lose_first):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="one owned carrier with exact-byte retry",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        # A retained proved ACK already prevents a second network attempt.
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_bounded_data_retry_recovers_unobserved_attempt_with_exact_bytes(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        original = provider.send_prepared
+        requests = []
+
+        def fail_before_first_write(raw, **arguments):
+            requests.append(raw)
+            if len(requests) == 1:
+                raise RouteAmbiguous("route_connection_failed")
+            return original(raw, **arguments)
+
+        with patch.object(
+            provider, "send_prepared", side_effect=fail_before_first_write
+        ):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="retry the same unobserved carrier",
+            )
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+
+    def test_data_retry_stops_at_attempt_cap_and_original_expiry(self):
+        sender, receiver = self.groups
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        for expire in (False, True):
+            with self.subTest(expire=expire):
+                calls = []
+
+                def unavailable(raw, expires=expire, attempts=calls, **_):
+                    attempts.append(raw)
+                    if expires:
+                        self.fixture.now += 60_000
+                    raise RouteAmbiguous("route_connection_failed")
+
+                with patch.object(provider, "send_prepared", side_effect=unavailable):
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="bounded exact retry",
+                    )
+                self.assertEqual(len(calls), 1 if expire else 3)
+                self.assertEqual(len(set(calls)), 1)
+
+    def test_completion_diagnostic_retains_closed_failure_cause_without_text(self):
+        import errno
+
+        from daimon_matrix.communication import CommunicationError
+        from daimon_matrix.mandatory_echo import write_diagnostic
+
+        sqlite_failure = sqlite3.OperationalError("private path")
+        sqlite_failure.sqlite_errorcode = sqlite3.SQLITE_IOERR
+        causes = [
+            (
+                CommunicationError("communication_pending_invalid"),
+                "completion_communication_pending_invalid",
+            ),
+            (
+                FileNotFoundError(errno.ENOENT, "private path"),
+                "completion_storage_missing",
+            ),
+            (
+                FileExistsError(errno.EEXIST, "private path"),
+                "completion_storage_conflict",
+            ),
+            (sqlite_failure, "completion_sqlite_unavailable"),
+            (ValueError("private path"), "completion_failed"),
+        ]
+        for failure, expected in causes:
+            with self.subTest(expected=expected):
+                wrapper = ValueError("private wrapper")
+                wrapper.__cause__ = failure
+                codes = []
+
+                def complete(_, error=wrapper):
+                    raise error
+
+                reply = TransportReply(
+                    b"ack",
+                    lambda: None,
+                    after_response_bounded=complete,
+                    completion_expires_at_ms=2000,
+                    completion_clock=lambda: 1000,
+                    completion_diagnostic=codes.append,
+                )
+                reply.complete(deadline_ns=time.monotonic_ns() + 10**9)
+                self.assertEqual(codes, [expected])
+                native = self.groups[0].intake_ingresses["message"].inbox.path
+                write_diagnostic(
+                    native, "intake-completion", "test-completion", expected, 1000
+                )
+                self.assertEqual(
+                    read_diagnostic(native, "intake-completion", "test-completion")[
+                        "code"
+                    ],
+                    expected,
+                )
+
+    def test_http_completion_does_not_retry_a_blocked_receipt_return(self):
+        sender, receiver = self.groups
+        provider = receiver.providers[
+            (sender.lane.being_ref, sender.lane.local_embodiment_id)
+        ]["evidence"]
+        with patch.object(
+            provider, "send_prepared", side_effect=RouteError("route_authority_blocked")
+        ) as transport:
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="blocked authority leaves retained receipt without retry",
+            )
+        transport.assert_called_once()
+        self.assertFalse(result["semantic"]["terminal"])
+        obligation = receiver.records.get("receipt-obligation", result["message_id"])
+        diagnostic = read_diagnostic(
+            receiver.intake_ingresses["message"].inbox.path,
+            "intake-completion",
+            obligation["first_request_id"],
+        )
+        self.assertEqual(diagnostic["code"], "completion_blocked")
+
+    def test_transport_reservation_and_release_share_the_catalog_fence(self):
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        records = self.groups[0].records
+        entered, finish, releasing, completed = (threading.Event() for _ in range(4))
+        effects, failures = [], []
+        request_id = str(uuid.uuid4())
+        request = {"request": "exact frozen transport bytes"}
+
+        def factory():
+            entered.set()
+            if not finish.wait(5):
+                raise AssertionError("reservation completion missing")
+            return request
+
+        def reserve():
+            try:
+                records.reserve("transport", request_id, request, factory)
+            except BaseException as failure:
+                failures.append(failure)
+
+        def release():
+            releasing.set()
+            try:
                 controller.release_bounded(
                     binding,
                     raw,
                     effects.append,
-                    deadline_ns=time.monotonic_ns() + 20_000_000,
+                    deadline_ns=time.monotonic_ns() + 5_000_000_000,
                 )
+            except BaseException as failure:
+                failures.append(failure)
+            finally:
+                completed.set()
+
+        writer = threading.Thread(target=reserve)
+        releaser = threading.Thread(target=release)
+        try:
+            writer.start()
+            self.assertTrue(entered.wait(5))
+            releaser.start()
+            self.assertTrue(releasing.wait(5))
+            # With the former unfenced reservation this release fails SQLITE_BUSY.
+            self.assertFalse(completed.wait(0.05))
         finally:
-            controller._fence.release()
-        self.assertEqual(effects, [])
-        self.assertEqual(controller._live_permits, set())
-        self.assertIsNone(controller._attempt_deadline.get())
+            finish.set()
+            writer.join(5)
+            if releaser.ident is not None:
+                releaser.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(releaser.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(effects, [raw])
+        self.assertEqual(records.get("transport", request_id), request)
+        self.assertEqual(controller.inspect_retained(binding)["completed_releases"], 1)
+
+    def test_record_guard_obeys_explicit_and_inherited_attempt_deadlines(self):
+        controller, binding, _raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        records = self.groups[0].records
+        request_id = str(uuid.uuid4())
+        with (
+            self.held_fence(controller),
+            self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+        ):
+            records.reserve(
+                "transport",
+                request_id,
+                {},
+                lambda: {},
+                deadline_ns=time.monotonic_ns() + 20_000_000,
+            )
+        self.assertIsNone(records.get("transport", request_id))
+        inherited = time.monotonic_ns() - 1
+        token = controller._attempt_deadline.set(inherited)
+        try:
+            with (
+                self.assertRaisesRegex(NativeEgressError, "egress_attempt_deadline"),
+                controller.local_storage(
+                    deadline_ns=time.monotonic_ns() + 1_000_000_000
+                ),
+            ):
+                self.fail("expired inherited budget was extended")
+        finally:
+            controller._attempt_deadline.reset(token)
+        self.assertEqual(controller.inspect_retained(binding)["completed_releases"], 0)
+
+    def test_slow_split_response_does_not_hold_the_local_catalog_fence(self):
+        sender, receiver = self.groups
+        controller, binding, raw = self._bounded_write_operation()
+        controller.advance_one(binding)
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        profile = provider._round_trip
+        entered, finish = threading.Event(), threading.Event()
+        effects, failures, results = [], [], []
+
+        def open_exchange(deadline):
+            exchange = profile.bounded_open(deadline)
+
+            def read():
+                entered.set()
+                if not finish.wait(5):
+                    raise AssertionError("response release missing")
+                return exchange.read()
+
+            return replace(exchange, read=read)
+
+        provider._round_trip = replace(profile, bounded_open=open_exchange)
+
+        def send():
+            try:
+                results.append(
+                    sender.send(
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="delayed split response",
+                    )
+                )
+            except BaseException as failure:
+                failures.append(failure)
+
+        worker = threading.Thread(target=send)
+        try:
+            worker.start()
+            self.assertTrue(entered.wait(5))
+            controller.release_bounded(
+                binding,
+                raw,
+                effects.append,
+                deadline_ns=time.monotonic_ns() + 1_000_000_000,
+            )
+            self.assertEqual(effects, [raw])
+            self.assertTrue(worker.is_alive())
+        finally:
+            finish.set()
+            worker.join(5)
+            for server in [*self.servers, self.servers[0]]:
+                server._threads.join()
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        self.assertTrue(
+            sender.inspect(client_id="test", send_id=results[0]["send_id"])["semantic"][
+                "terminal"
+            ]
+        )
+
+    def test_completion_and_diagnostics_keep_the_attempt_budget_after_release(self):
+        sender, receiver = self.groups
+        with patch.object(sender, "_fanout") as fanout:
+            sender.send(
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=str(uuid.uuid4()),
+                text="bounded completion storage",
+            )
+        native, rows, operation = fanout.call_args.args
+        row = next(x for x in rows if x["being_ref"] == receiver.lane.being_ref)
+        provider = sender.providers[(row["being_ref"], row["embodiment_id"])]["message"]
+        for completion in (True, False):
+            with self.subTest(completion=completion), ExitStack() as scope:
+                deadline = time.monotonic_ns() + 1_000_000_000
+
+                def completed_transport(
+                    _raw, *, deadline=deadline, completion=completion, **kwargs
+                ):
+                    # Another local writer takes the fence after physical
+                    # release but before completion; its wait has a budget too.
+                    scope.enter_context(self.held_fence(sender.egress))
+                    scope.enter_context(
+                        patch("time.monotonic_ns", return_value=deadline + 1)
+                    )
+                    if completion:
+                        kwargs["response_sink"](b"synthetic validated response")
+                    else:
+                        raise RouteError("route_timeout")
+
+                scope.enter_context(
+                    patch.object(provider, "send_prepared", completed_transport)
+                )
+                scope.enter_context(
+                    patch.object(
+                        provider, "validate_prepared_response", return_value={}
+                    )
+                )
+                start = time.monotonic()
+                if completion:
+                    with self.assertRaisesRegex(
+                        NativeEgressError, "egress_attempt_deadline"
+                    ):
+                        sender._transmit_one(
+                            native,
+                            row,
+                            operation,
+                            receipt=False,
+                            deadline_ns=deadline,
+                            authorize=None,
+                        )
+                else:
+                    sender._transmit_one(
+                        native,
+                        row,
+                        operation,
+                        receipt=False,
+                        deadline_ns=deadline,
+                        authorize=None,
+                    )
+                self.assertLess(time.monotonic() - start, 1)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
 
     def test_bounded_release_rechecks_time_after_local_verification(self):
         controller, binding, raw = self._bounded_write_operation()
@@ -370,6 +1927,7 @@ class GroupRuntimeTests(unittest.TestCase):
                 providers={},
                 config_digest="0" * 64,
                 egress=controller,
+                controlled_readers=getattr(self, "controlled_readers", False),
             )
             ingresses = {}
             origin_body = lane.ledger.local_origin["body_ref"]
@@ -679,12 +2237,55 @@ class GroupRuntimeTests(unittest.TestCase):
             receiver.reconcile_intake()["items"][0]["state"], "recipient-intake"
         )
 
+    def test_control_ack_failure_retains_closed_receiver_diagnostic(self):
+        sender, _receiver = self.groups
+        busy = sqlite3.OperationalError("private storage details")
+        busy.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        for failure, expected in (
+            (NativeEgressError("echo_catalog_invalid"), "intake_echo_catalog_invalid"),
+            (NativeEgressError("private diagnostic text"), "intake_failure_unknown"),
+            (busy, "intake_storage_busy"),
+        ):
+            with self.subTest(expected=expected):
+                inbox = sender.intake_ingresses["evidence"].inbox
+                with patch.object(
+                    inbox, "_finalize_retained_intake", side_effect=failure
+                ):
+                    result = self.send_and_settle(
+                        sender,
+                        client_id="test",
+                        send_id=str(uuid.uuid4()),
+                        thread_id=str(uuid.uuid4()),
+                        text="retain the ACK failure without claiming delivery",
+                    )
+                self.assertFalse(result["semantic"]["terminal"])
+                admission = sender.records.intake_page()["items"][-1]["admission"]
+                request_id = admission["context"]["request"]["request_id"]
+                self.assertIsNotNone(sender.records.get("control-proof", request_id))
+                self.assertIsNone(sender.records.get("intake-ack", request_id))
+                self.assertIsNone(sender.records.get("control-terminal", request_id))
+                diagnostic = read_diagnostic(
+                    inbox.path, "intake-ack-transaction", request_id
+                )
+                self.assertEqual(diagnostic["code"], expected)
+                sidecar = inbox.path.with_name(
+                    inbox.path.name + ".transport-diagnostics.sqlite"
+                )
+                self.assertNotIn(b"private diagnostic text", sidecar.read_bytes())
+                self.assertNotIn(b"private storage details", sidecar.read_bytes())
+
     def test_postcommit_ticket_verification_failure_is_uncertain_not_refused(self):
         sender, receiver = self.groups
-        with patch.object(
-            receiver,
-            "_retained_message_ticket",
-            side_effect=ValueError("synthetic retained verification failure"),
+        with (
+            patch.object(
+                receiver,
+                "_retained_message_ticket",
+                side_effect=ValueError("synthetic retained verification failure"),
+            ),
+            patch(
+                "daimon_matrix.routes.write_diagnostic",
+                side_effect=OSError("unavailable diagnostic storage"),
+            ),
         ):
             first = self.send_and_settle(
                 sender,
@@ -1124,7 +2725,52 @@ class GroupRuntimeTests(unittest.TestCase):
                 canonical_bytes(restarted.prepare(**params)), canonical_bytes(original)
             )
 
+    def test_group_can_be_provisioned_from_its_founder_before_any_invitation(self):
+        import copy
+
+        from daimon_matrix.messaging_config import (
+            MessagingConfigError,
+            read_publication,
+            validate_shape,
+        )
+
+        runtime, app, view = GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False, founder_only=True
+        )
+        document, _ = read_publication(runtime, app)
+        import json
+
+        import jsonschema
+
+        public_schema = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "schemas/messaging/v3/application.schema.json"
+            ).read_text()
+        )
+        jsonschema.Draft202012Validator(public_schema).validate(document)
+        self.assertEqual(len(document["authorities"]), 1)
+        self.assertEqual(len(document["roster"]), 1)
+        self.assertEqual(
+            document["roster"][0]["being_ref"], self.fixture.founder.state.being_ref
+        )
+        self.assertEqual(
+            [e["kind"] for e in document["relationship_events"]],
+            ["matrix/tribe-declaration"],
+        )
+        self.assertEqual(set(view.service.messaging.channels), {"tribe"})
+        for field in ("authorities", "roster"):
+            invalid = copy.deepcopy(document)
+            invalid[field] = []
+            with self.assertRaises(MessagingConfigError):
+                validate_shape(invalid)
+
     def test_group_only_application_uses_supported_signed_provisioning(self):
+        GroupRuntimeTests._signed_group_application(self)
+
+    def _signed_group_application(
+        self, *, record_key_check=True, application_directory=None, founder_only=False
+    ):
         import hashlib
 
         from daimon_matrix.messaging_config import (
@@ -1144,11 +2790,34 @@ class GroupRuntimeTests(unittest.TestCase):
         _runtime_fixture, runtime, _reads = loaded(
             self, fixture.founder, clock=lambda: fixture.now
         )
+        if getattr(self, "with_receiving_controller", False):
+            from daimon_matrix.local_api import create_capability
+
+            controller = create_capability(
+                b"o" * 32,
+                client_id=f"client:host:{runtime.service.runtime_label}:receiving-controller",
+                methods=["runtime.reader-selection"],
+                not_before_ms=fixture.now - 1,
+                not_after_ms=fixture.now + 60_000,
+            )
+            # Explicit trusted owner composition. Signed optional-role issuance
+            # and loader validation are qualified by the successor fixtures.
+            runtime = replace(
+                runtime,
+                service=replace(
+                    runtime.service,
+                    capabilities={
+                        **runtime.service.capabilities,
+                        controller.capability_id: controller,
+                    },
+                ),
+            )
         relationships = RelationshipStore(
             runtime.state_root / "relationships.sqlite",
             authority_resolver=fixture.sender_lane.authority_resolver,
         )
-        for event in fixture.events:
+        selected_events = [fixture.declaration] if founder_only else fixture.events
+        for event in selected_events:
             relationships.ingest(event)
         runtime.service.communication.upgrade_receipts_v2()
         runtime.service.communication.upgrade_legs_v3()
@@ -1166,7 +2835,10 @@ class GroupRuntimeTests(unittest.TestCase):
         port = 48765
         sources, roster = {}, []
         directory = runtime.state_root.parent
-        for index, identity in enumerate((fixture.founder, fixture.member)):
+        identities = (
+            (fixture.founder,) if founder_only else (fixture.founder, fixture.member)
+        )
+        for index, identity in enumerate(identities):
             path = directory / f"group-body-{index}.key"
             path.write_bytes(bytes([index + 1]) * 32)
             path.chmod(0o600)
@@ -1192,10 +2864,10 @@ class GroupRuntimeTests(unittest.TestCase):
             "schema": APPLICATION_SCHEMA_V3,
             "listen": {"host": "127.0.0.1", "port": port},
             "authorities": [
-                public_document(fixture.founder, "founder"),
-                public_document(fixture.member, "member"),
+                public_document(identity, "founder" if index == 0 else "member")
+                for index, identity in enumerate(identities)
             ],
-            "relationship_events": fixture.events,
+            "relationship_events": selected_events,
             "relationship_mode": {
                 "mode": "shared",
                 "runtime_id": runtime.service.runtime_id,
@@ -1216,7 +2888,7 @@ class GroupRuntimeTests(unittest.TestCase):
             "stores": {name: name + ".sqlite" for name in GROUP_STORE_NAMES},
         }
         validate_shape(spec, specification=True)
-        app = directory / "group-application"
+        app = application_directory or directory / "group-application"
         prepare(runtime, app, spec, secret_sources=sources)
         view = load_application(runtime, app)
         self.assertEqual(set(view.service.messaging.channels), {"tribe"})
@@ -1229,6 +2901,57 @@ class GroupRuntimeTests(unittest.TestCase):
         import sqlite3
 
         group = view.service.messaging.channels["tribe"]
+        self.assertEqual(
+            group.controlled_readers,
+            bool(getattr(self, "with_receiving_controller", False)),
+        )
+        from daimon_matrix.chat_host import application_view
+        from daimon_matrix.operator_capabilities import STATUS_OBSERVER_METHODS
+        from daimon_matrix.service import MESSAGING_METHODS
+
+        with patch(
+            "daimon_matrix.chat_host._visibility_factory",
+            return_value=lambda _context: runtime.egress,
+        ):
+            hosted = application_view(runtime, app, directory / "visibility.json")
+        status = [
+            cap
+            for cap in hosted.service.capabilities.values()
+            if cap.client_id == f"client:host:{runtime.service.runtime_label}:status"
+        ]
+        self.assertEqual(len(status), 1)
+        self.assertEqual(set(status[0].methods), STATUS_OBSERVER_METHODS)
+        if group.controlled_readers:
+            self.assertIs(view.service.receiving.channels["tribe"], group)
+            state = group.egress.reader_snapshot(
+                "tribe", deadline_ns=time.monotonic_ns() + 1_000_000_000
+            )
+            self.assertEqual(state["phase"], "unselected")
+            self.assertEqual(state["readers"], [])
+            self.assertTrue(
+                hosted.service.messaging.channels["tribe"].controlled_readers
+            )
+            self.assertEqual(
+                hosted.service.receiving.capability_id, controller.capability_id
+            )
+            for key, selected in hosted.service.capabilities.items():
+                if key == controller.capability_id:
+                    continue
+                if (
+                    selected.client_id
+                    == f"client:host:{runtime.service.runtime_label}:status"
+                ):
+                    self.assertLessEqual(set(selected.methods), STATUS_OBSERVER_METHODS)
+                else:
+                    self.assertLessEqual(set(selected.methods), MESSAGING_METHODS)
+        else:
+            self.assertIsNone(view.service.receiving)
+            self.assertIsNone(hosted.service.receiving)
+            for cap in hosted.service.capabilities.values():
+                if cap is not status[0]:
+                    self.assertLessEqual(set(cap.methods), MESSAGING_METHODS)
+        if not record_key_check:
+            return runtime, app, view
         request_id, moved_id = str(uuid.uuid4()), str(uuid.uuid4())
         document = {"client_id": "test", "text": "signed record"}
         group.records.reserve("request", request_id, document, lambda: document)
@@ -1239,6 +2962,7 @@ class GroupRuntimeTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "messaging_binding_rejected"):
             group.records.get("request", moved_id)
+        return runtime, app, view
 
 
 class DurableIntakeStoreTests(unittest.TestCase):

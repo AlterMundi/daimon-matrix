@@ -19,6 +19,10 @@ jobs:
       profile: ${{ steps.scope.outputs.profile }}
       native_checks: ${{ steps.scope.outputs.native_checks }}
       group_receipt_checks: ${{ steps.scope.outputs.group_receipt_checks }}
+      group_receiving_checks: ${{ steps.scope.outputs.group_receiving_checks }}
+      group_admission_checks: ${{ steps.scope.outputs.group_admission_checks }}
+      group_migration_only: ${{ steps.scope.outputs.group_migration_only }}
+      group_ledger_checks: ${{ steps.scope.outputs.group_ledger_checks }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -86,6 +90,29 @@ jobs:
           name: receiving-release-contract-${{ github.sha }}
           path: dist/
           if-no-files-found: error
+
+  agent-chat-installer:
+    name: installed agent-chat installer (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'agent-chat-installer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-build.txt
+            requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt .
+      - run: python tools/check_frozen_invariants.py --skip-generated
+      - run: python -m ruff format --check tools/install_agent_chat.py tools/ci_scope.py tests/test_agent_chat.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/install_agent_chat.py tools/ci_scope.py tests/test_agent_chat.py tests/test_ci_scope.py
+      - run: MYPYPATH=src python -m mypy tools/install_agent_chat.py
+      - run: python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_agent_chat -v
 
   peer:
     name: native peer tools (3.13.5)
@@ -192,6 +219,7 @@ jobs:
         run: >-
           python -W error::ResourceWarning -m unittest
           tests.test_ci_scope tests.test_labels tests.test_agent_chat
+          tests.test_neutral_binding.SkillDiscoveryTests.test_cli_emits_packaged_chat_and_composed_profile_without_changing_inputs
           tests.test_telegram_mirror tests.test_telegram_executor_portability
           tests.test_mandatory_echo tests.test_mandatory_echo_integration
           tests.test_chat_link tests.test_chat_host -v
@@ -276,8 +304,8 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt wasmtime==45.0.0
       - run: python tools/check_frozen_invariants.py --skip-generated
       - run: python tools/generate_dm041_vectors.py --check
-      - run: python -m ruff check src tools/ci_scope.py tests/test_ci_scope.py tests/test_group_messaging_runtime.py tests/test_dm053_routes.py tests/test_release_compatibility.py
-      - run: python -m ruff format --check src tools/ci_scope.py tests/test_ci_scope.py tests/test_group_messaging_runtime.py tests/test_dm053_routes.py tests/test_release_compatibility.py
+      - run: python -m ruff check src tools/ci_scope.py tests/test_ci_scope.py tests/test_group_messaging_runtime.py tests/test_dm053_routes.py tests/test_release_compatibility.py tests/test_receiving_runtime.py tests/test_dm079_capability_profiles.py tests/test_operator_runtime_upgrade.py
+      - run: python -m ruff format --check src tools/ci_scope.py tests/test_ci_scope.py tests/test_group_messaging_runtime.py tests/test_dm053_routes.py tests/test_release_compatibility.py tests/test_receiving_runtime.py tests/test_dm079_capability_profiles.py tests/test_operator_runtime_upgrade.py
       - run: MYPYPATH=src python -m mypy src
       - run: python tools/reproducible_build.py --output dist
       - run: python tools/scan_secrets.py dist
@@ -287,6 +315,7 @@ jobs:
           "$RUNNER_TEMP/dm-group/bin/python" -m pip install -r requirements-vectors.txt mcp==2.0.0 wasmtime==45.0.0 dist/*.whl
           echo "$RUNNER_TEMP/dm-group/bin" >> "$GITHUB_PATH"
       - name: Group delivery and corrected membership contracts
+        if: needs.scope.outputs.group_migration_only != 'true'
         # The prior installed qualification exercised all 432 affected contracts;
         # preserve its passing evidence and recheck the changed expectations plus
         # the complete group journey instead of repeating unrelated journeys.
@@ -295,12 +324,32 @@ jobs:
           tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
           tests.test_native_messaging.NativeMessagingDaemonLifecycleTests.test_shutdown_waits_for_inflight_messaging_intake
           tests.test_group_messaging_runtime
+          tests.test_agent_chat
+          tests.test_neutral_binding.SkillDiscoveryTests.test_cli_emits_packaged_chat_and_composed_profile_without_changing_inputs
           tests.test_dm053_routes.BoundedTransportTests
           tests.test_dm053_routes.InboxAndProtocolTests
           tests.test_release_compatibility
           tests.test_mandatory_echo.EchoTests.test_closed_policy_projection_and_control_registry
           tests.test_telegram_mirror.CompactEchoRenderTests
           tests.test_single_active_tribe -v
+      - name: Shared ledger storage and local consumers
+        if: needs.scope.outputs.group_ledger_checks == 'true'
+        # The local storage gate changes Ledger callers, not unrelated memory,
+        # CAD, migration or protocol journeys. Retain existing evidence there.
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_dm022_ledger tests.test_dm031_curator
+          tests.test_dm032_curator_worker tests.test_dm054_scopes -v
+      - name: Echo execution and retained sibling visibility boundaries
+        # The execution/storage split changes these release paths as well as
+        # group ACKs. Reuse the rest of the existing visibility qualification.
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_sibling_mirror_confirms_conversations_and_exempts_sync
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_sibling_opt_in_blocks_native_effect_when_mirror_fails
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_signed_owner_retry_binds_exact_state_and_replays_without_post
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_signed_owner_retry_rejects_wrong_exact_fields_expiry_and_signature
+          tests.test_mandatory_echo_integration.MandatoryEchoIntegrationTests.test_shared_execution_fence_admits_one_identical_owner_retry -v
       - name: Changed receipt codec and membership rules
         if: needs.scope.outputs.group_receipt_checks != 'false'
         # The closed bounded-transport profile reuses PR350's installed proof;
@@ -312,6 +361,28 @@ jobs:
           tests.test_dm082_relationships.RelationshipContractTests.test_expired_cards_remove_grants_but_preserve_signed_membership
           tests.test_dm082_relationships.RelationshipContractTests.test_one_sided_consent_and_unaccepted_grant_are_inert
           tests.test_dm082_relationships.RelationshipContractTests.test_tribe_admission_does_not_require_bilateral_consent_or_grants -v
+      - name: Changed group admission, visibility and native API contracts
+        if: needs.scope.outputs.group_admission_checks == 'true'
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_operator_messaging tests.test_closed_visibility_provisioning
+          tests.test_dm025_cli_mcp -v
+      - name: Installed resumable communication migration
+        if: needs.scope.outputs.group_migration_only == 'true' || needs.scope.outputs.group_admission_checks == 'true'
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_ci_scope tests.test_dm041_hermes_body.PublicContractTests
+          tests.test_operator_communication_migration -v
+      - name: Installed receiving control and unchanged legacy capability loading
+        if: needs.scope.outputs.group_receiving_checks == 'true'
+        run: >-
+          python -W error::ResourceWarning -m unittest
+          tests.test_receiving_runtime
+          tests.test_dm079_capability_profiles
+          tests.test_operator_runtime_upgrade.CurrentCapabilityUpgradeTests
+          tests.test_dm024_runtime.RuntimeBundleTests
+          tests.test_dm024_service.HostedServiceTests
+          tests.test_dm025_client.LocalClientTests -v
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: membership-group-${{ github.sha }}

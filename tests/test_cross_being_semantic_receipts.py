@@ -2,12 +2,19 @@
 
 import copy
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from daimon_matrix.communication import CommunicationStore, select_persisted_schema
+from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.communication import (
+    CommunicationError,
+    CommunicationStore,
+    select_persisted_schema,
+)
 from daimon_matrix.synthetic_relationships import _uuid
 from daimon_matrix.weave import create_event
 from tests import test_native_messaging as native
@@ -35,7 +42,7 @@ class ForeignReceiptTests(unittest.TestCase):
         )
         self.message, self.resolution, _ = self.sender.ledger.events()
 
-    def receipt(self, *, payload=None, sequence=1):
+    def receipt(self, *, payload=None, sequence=1, previous=None):
         body = {
             "schema": "dm.communication.receipt/v2",
             "message_being_ref": self.message["being_ref"],
@@ -58,7 +65,7 @@ class ForeignReceiptTests(unittest.TestCase):
             authority=self.pair.recipient.authority,
             origin=self.pair.recipient.origin,
             sequence=sequence,
-            previous_event_id=None,
+            previous_event_id=previous,
             causal_parents=[],
             event_id=_uuid("receipt-" + str(sequence)),
             kind="experience.observed",
@@ -71,6 +78,152 @@ class ForeignReceiptTests(unittest.TestCase):
 
     def store(self):
         return self.semantic_store
+
+    def test_receipt_growth_verifies_each_exact_event_once_per_connection(self):
+        from daimon_matrix.communication import verify_event
+
+        previous = None
+        for index in range(4):
+            if index:
+                self.sender.prepare(
+                    client_id="owner",
+                    send_id=_uuid(f"memo-send-{index}"),
+                    thread_id=_uuid(f"memo-thread-{index}"),
+                    text="more completed history",
+                )
+                events = self.sender.ledger.events()
+                self.message = next(
+                    e for e in reversed(events) if e["subject"] == "communication"
+                )
+                self.resolution = next(
+                    e
+                    for e in reversed(events)
+                    if e["subject"] == "communication-resolution"
+                )
+            receipt = self.receipt(sequence=index + 1, previous=previous)
+            previous = receipt["event_id"]
+            with (
+                patch(
+                    "daimon_matrix.communication.verify_event", wraps=verify_event
+                ) as verify,
+                patch.object(
+                    self.store(), "_validate_store", wraps=self.store()._validate_store
+                ) as validate,
+            ):
+                result = self.store().record_foreign_receipt(
+                    receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+                )
+            self.assertTrue(result["terminal"])
+            exact = [canonical_bytes(call.args[0]) for call in verify.call_args_list]
+            self.assertEqual(len(exact), len(set(exact)))
+            self.assertGreaterEqual(len(exact), 3 * (index + 1))
+            self.assertEqual(validate.call_count, 2)
+
+    def test_verification_memo_rechecks_event_and_mutable_authority(self):
+        from dataclasses import replace
+
+        from daimon_matrix.communication import CommunicationError, _event, verify_event
+        from daimon_matrix.weave import RootAuthorityInventory
+
+        authority = copy.deepcopy(self.pair.sender.authority)
+        inventory = RootAuthorityInventory(
+            authority, {authority.state.being_ref: authority}
+        )
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.verify_event", wraps=verify_event
+            ) as verify,
+        ):
+            first = _event(self.message, inventory)
+            first["payload"]["body"].clear()
+            self.assertEqual(_event(self.message, inventory), self.message)
+            self.assertEqual(verify.call_count, 1)
+
+            for section, field in (("payload", "body"), ("signature", "value")):
+                bad = copy.deepcopy(self.message)
+                bad[section][field] = {} if section == "payload" else "A" * 86
+                with self.assertRaises(CommunicationError):
+                    _event(bad, inventory)
+
+            # Same object/head/manifest and event ID, different nested authority.
+            credential = next(iter(authority.credentials.values()))
+            saved = copy.deepcopy(credential)
+            credential["signatures"][0]["value"] = "A" * 86
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            credential.clear()
+            credential.update(saved)
+            changed = replace(
+                authority,
+                state=replace(authority.state, sequence=authority.state.sequence + 1),
+            )
+            inventory.authorities[authority.state.being_ref] = changed
+            previous = verify.call_count
+            _event(self.message, inventory)
+            self.assertEqual(verify.call_count, previous + 1)
+            changed.state.revocations[credential["body"]["embodiment_id"]] = {
+                "cutoff_incarnation_sequence": -1,
+                "revocation_generation": 1,
+            }
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            inventory.authorities.clear()
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+        # A second connection starts empty even when all public bytes match.
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.verify_event", wraps=verify_event
+            ) as verify,
+        ):
+            _event(self.message, self.pair.sender.authority)
+            self.assertEqual(verify.call_count, 1)
+
+    def test_verification_memo_uses_one_authority_selection(self):
+        from daimon_matrix.communication import CommunicationError, _event
+        from daimon_matrix.weave import RootAuthorityInventory
+
+        authority = self.pair.sender.authority
+        bad = copy.deepcopy(authority)
+        next(iter(bad.credentials.values()))["signatures"][0]["value"] = "A" * 86
+        inventory = RootAuthorityInventory(
+            authority, {authority.state.being_ref: authority}
+        )
+        with (
+            self.store()._database(),
+            patch.object(
+                RootAuthorityInventory, "select", side_effect=[bad, authority]
+            ) as select,
+        ):
+            with self.assertRaises(CommunicationError):
+                _event(self.message, inventory)
+            self.assertEqual(select.call_count, 1)
+
+    def test_public_authority_snapshot_avoids_reserialization_without_type_coercion(
+        self,
+    ):
+        from daimon_matrix.communication import (
+            _authority_fingerprint,
+            _same_public_material,
+        )
+
+        authority = copy.deepcopy(self.pair.sender.authority)
+        with (
+            self.store()._database(),
+            patch(
+                "daimon_matrix.communication.canonical_bytes", wraps=canonical_bytes
+            ) as encode,
+        ):
+            first = _authority_fingerprint(authority)
+            self.assertEqual(_authority_fingerprint(authority), first)
+            self.assertEqual(encode.call_count, 1)
+            authority.manifest.value["revision"] = True
+            self.assertNotEqual(_authority_fingerprint(authority), first)
+            self.assertEqual(encode.call_count, 2)
+        self.assertFalse(_same_public_material({"a": [1]}, {"a": [True]}))
+        self.assertFalse(_same_public_material({"a": [1]}, {"a": [1.0]}))
 
     def test_deferred_receipt_preserves_observation_before_current_signing_time(self):
         original_observation = self.pair.now
@@ -369,6 +522,200 @@ class ForeignReceiptTests(unittest.TestCase):
                 self.receipt(), recipient_being_ref=self.pair.recipient.state.being_ref
             )["terminal"]
         )
+
+    def test_concurrent_projection_waits_for_post_commit_pending_cleanup(self):
+        store = self.store()
+        other = CommunicationStore(
+            copy.copy(self.sender.ledger),
+            receipts_v2=True,
+            foreign_authority_resolver=lambda ref: self.pair.public[ref],
+            clock=lambda: self.pair.now,
+        )
+        committed, release, entering, finished = (threading.Event() for _ in range(4))
+        errors = []
+        results = []
+        receipt = self.receipt()
+        remove = store._pending_remove
+
+        def paused_cleanup():
+            committed.set()
+            if not release.wait(5):
+                raise TimeoutError("fixture cleanup not released")
+            remove()
+
+        def project(target):
+            try:
+                if target is other:
+                    entering.set()
+                results.append(
+                    target.record_foreign_receipt(
+                        receipt, recipient_being_ref=self.pair.recipient.state.being_ref
+                    )
+                )
+            except Exception as error:
+                errors.append(error)
+            finally:
+                if target is other:
+                    finished.set()
+
+        first = threading.Thread(target=project, args=(store,))
+        second = threading.Thread(target=project, args=(other,))
+        with patch.object(store, "_pending_remove", side_effect=paused_cleanup):
+            first.start()
+            try:
+                self.assertTrue(committed.wait(5))
+                self.assertTrue(store._pending_path().exists())
+                started = time.monotonic()
+                with self.assertRaisesRegex(
+                    CommunicationError, "communication_projection_busy"
+                ):
+                    other.record_foreign_receipt(
+                        receipt,
+                        recipient_being_ref=self.pair.recipient.state.being_ref,
+                        deadline_ns=time.monotonic_ns() + 20_000_000,
+                    )
+                self.assertLess(time.monotonic() - started, 0.2)
+                second.start()
+                self.assertTrue(entering.wait(2))
+                # An initializer must not recover the active writer's sidecar.
+                self.assertFalse(finished.wait(0.2))
+                self.assertTrue(store._pending_path().exists())
+            finally:
+                release.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["terminal"] for result in results))
+        self.assertFalse(store._pending_path().exists())
+
+    def test_native_callbacks_are_read_only_and_do_not_wait_for_projection_gate(self):
+        import sqlite3
+
+        entered, release = threading.Event(), threading.Event()
+        store = self.store()
+
+        def hold_projection():
+            with store._database():
+                entered.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=hold_projection)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with patch.object(
+                store, "_projection", side_effect=AssertionError("lock inversion")
+            ):
+                with self.assertRaisesRegex(
+                    CommunicationError, "communication_egress_missing"
+                ):
+                    store._resolve_egress("missing")
+                with self.assertRaisesRegex(
+                    CommunicationError, "route_attempt_not_known"
+                ):
+                    store.egress_attempt("missing")
+                with (
+                    store._egress_database() as database,
+                    self.assertRaises(sqlite3.OperationalError),
+                ):
+                    database.execute("DELETE FROM communication_messages")
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_native_callbacks_preserve_owner_path_checks_without_creating_files(self):
+        import sqlite3
+
+        from daimon_matrix.ledger import LedgerStateError
+
+        store = self.store()
+        path = store.ledger.path
+        path.chmod(0o644)
+        try:
+            with self.assertRaisesRegex(LedgerStateError, "ledger_file_not_owner_only"):
+                store._resolve_egress("missing")
+        finally:
+            path.chmod(0o600)
+        link = path.with_name("linked-ledger")
+        link.symlink_to(path)
+        view = copy.copy(store)
+        view.ledger = copy.copy(store.ledger)
+        view.ledger.path = link
+        with self.assertRaisesRegex(LedgerStateError, "ledger_file_not_owner_only"):
+            view.egress_attempt("missing")
+        view.ledger.path = path.with_name("absent-ledger")
+        with self.assertRaises(sqlite3.OperationalError):
+            view.egress_attempt("missing")
+        self.assertFalse(view.ledger.path.exists())
+
+    def test_ledger_event_and_rpc_wait_for_the_same_projection_gate(self):
+        from daimon_matrix.ledger import Ledger, LedgerStorageBusy
+
+        store = self.store()
+        original = store.ledger
+        other = Ledger(
+            original.path,
+            authority=original.authority,
+            local_origin=original.local_origin,
+            clock=original.clock,
+        )
+        entered, finished = threading.Event(), threading.Event()
+        results, errors = [], []
+
+        def read_and_begin_rpc():
+            entered.set()
+            try:
+                results.append(other.event(self.message["event_id"]))
+                results.append(
+                    other.begin_rpc(
+                        client_id="owner",
+                        request_id=_uuid("gate-rpc"),
+                        request_hash="a" * 64,
+                        method="runtime.status",
+                    )
+                )
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=read_and_begin_rpc)
+        with store._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            # A real SQLite contender would fail after30ms. Shared local
+            # ownership must wait outside SQLite until the projection closes.
+            with patch("daimon_matrix.ledger.BUSY_TIMEOUT_MS", 30):
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(2))
+                    budget_errors = []
+
+                    def bounded_read():
+                        try:
+                            with other.storage_budget(time.monotonic_ns() + 20_000_000):
+                                other.event(self.message["event_id"])
+                        except Exception as error:
+                            budget_errors.append(error)
+
+                    bounded = threading.Thread(target=bounded_read)
+                    bounded.start()
+                    bounded.join(2)
+                    self.assertFalse(bounded.is_alive())
+                    self.assertEqual(len(budget_errors), 1)
+                    self.assertIsInstance(budget_errors[0], LedgerStorageBusy)
+                    self.assertFalse(finished.wait(0.2))
+                finally:
+                    database.rollback()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results[0], self.message)
+        self.assertEqual(len(results), 2)
 
     def test_foreign_reducer_recovers_anchor_before_database_commit(self):
         from unittest.mock import patch

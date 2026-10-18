@@ -54,11 +54,17 @@ _OPERATION = {"operation_id": _UUID}
 
 
 def _object_schema(
-    properties: Mapping[str, Any], required: Sequence[str] = ()
+    properties: Mapping[str, Any],
+    required: Sequence[str] = (),
+    *,
+    include_operation_id: bool = True,
 ) -> dict[str, Any]:
     return {
         "type": "object",
-        "properties": {**copy.deepcopy(dict(properties)), **copy.deepcopy(_OPERATION)},
+        "properties": {
+            **copy.deepcopy(dict(properties)),
+            **(copy.deepcopy(_OPERATION) if include_operation_id else {}),
+        },
         "required": list(required),
         "additionalProperties": False,
     }
@@ -807,6 +813,44 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
                 "channel_id": _CHANNEL_ID,
                 "send_id": _UUID,
                 "thread_id": _UUID,
+                "destination": {
+                    "description": (
+                        "Explicit direct within the configured membership group. "
+                        "Omit for group speech, including mentions. Complete speech "
+                        "remains visible in Tribu. Use verified being/body IDs; "
+                        "this grants no new human permission."
+                    ),
+                    "type": "object",
+                    "oneOf": [
+                        _object_schema(
+                            {
+                                "kind": {"const": "being"},
+                                "being_ref": {
+                                    "type": "string",
+                                    "pattern": r"^dm:being:v1:[A-Za-z0-9_-]{43}$",
+                                },
+                            },
+                            ("kind", "being_ref"),
+                            include_operation_id=False,
+                        ),
+                        _object_schema(
+                            {
+                                "kind": {"const": "body"},
+                                "being_ref": {
+                                    "type": "string",
+                                    "pattern": r"^dm:being:v1:[A-Za-z0-9_-]{43}$",
+                                },
+                                "embodiment_id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 240,
+                                },
+                            },
+                            ("kind", "being_ref", "embodiment_id"),
+                            include_operation_id=False,
+                        ),
+                    ],
+                },
                 "text": {
                     **_MESSAGE_TEXT,
                     "description": (
@@ -1059,7 +1103,14 @@ def _messaging_tool_params(
     for field, value in arguments.items():
         rule = schema["properties"][field]
         valid = True
-        if rule["type"] == "integer":
+        if field == "destination":
+            from .tribe_conversation import direct_destination
+
+            try:
+                direct_destination(value)
+            except ValueError:
+                valid = False
+        elif rule["type"] == "integer":
             valid = type(value) is int and rule["minimum"] <= value <= rule["maximum"]
         else:
             valid = isinstance(value, str)

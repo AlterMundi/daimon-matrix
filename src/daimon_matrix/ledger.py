@@ -8,13 +8,16 @@ import json
 import os
 import sqlite3
 import stat
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
+from weakref import WeakValueDictionary
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .weave import (
@@ -39,6 +42,13 @@ UUIDFactory = Callable[[], uuid.UUID]
 
 class LedgerError(RuntimeError):
     """Base class for stable ledger failures."""
+
+
+class LedgerStorageBusy(LedgerError):
+    """The existing caller's elapsed budget expired waiting for local storage."""
+
+    def __init__(self) -> None:
+        super().__init__("ledger_storage_deadline")
 
 
 class LedgerGapError(LedgerError):
@@ -145,6 +155,23 @@ def _prepare_path(path: Path) -> None:
             os.close(descriptor)
 
 
+_storage_gates: WeakValueDictionary[Path, threading.RLock] = WeakValueDictionary()
+_storage_gates_lock = threading.Lock()
+_storage_deadline: ContextVar[int | None] = ContextVar(
+    "ledger_storage_deadline", default=None
+)
+
+
+def _storage_gate(path: Path) -> threading.RLock:
+    with _storage_gates_lock:
+        key = path.resolve()
+        gate = _storage_gates.get(key)
+        if gate is None:
+            gate = threading.RLock()
+            _storage_gates[key] = gate
+        return gate
+
+
 class Ledger:
     """One embodiment's ledger; never shared as a writable database."""
 
@@ -158,6 +185,7 @@ class Ledger:
         uuid_factory: UUIDFactory = uuid.uuid4,
     ) -> None:
         self.path = Path(os.path.abspath(path))
+        self._storage_gate = _storage_gate(self.path)
         self.authority = authority
         self.local_origin = copy.deepcopy(dict(local_origin))
         self.clock = clock
@@ -188,12 +216,53 @@ class Ledger:
         return connection
 
     @contextmanager
-    def _database(self) -> Iterator[sqlite3.Connection]:
-        database = self._connect()
+    def storage_budget(self, deadline_ns: int | None) -> Iterator[int | None]:
+        """Propagate an existing budget without holding storage across effects."""
+        inherited = _storage_deadline.get()
+        if inherited is not None:
+            deadline_ns = (
+                inherited if deadline_ns is None else min(inherited, deadline_ns)
+            )
+        token = _storage_deadline.set(deadline_ns)
         try:
-            yield database
+            yield deadline_ns
         finally:
-            database.close()
+            _storage_deadline.reset(token)
+
+    @contextmanager
+    def local_storage(self, *, deadline_ns: int | None = None) -> Iterator[None]:
+        """One owned physical ledger, ordered through commit-sidecar cleanup.
+
+        Native egress's immutable catalog callbacks use explicit read-only
+        connections outside this gate. Never hold it during network effects.
+        """
+        with self.storage_budget(deadline_ns) as deadline:
+            acquired = False
+            try:
+                if deadline is None:
+                    acquired = self._storage_gate.acquire()
+                else:
+                    remaining = (deadline - time.monotonic_ns()) / 1_000_000_000
+                    if remaining <= 0 or not self._storage_gate.acquire(
+                        timeout=remaining
+                    ):
+                        raise LedgerStorageBusy()
+                    acquired = True
+                    if time.monotonic_ns() >= deadline:
+                        raise LedgerStorageBusy()
+                yield
+            finally:
+                if acquired:
+                    self._storage_gate.release()
+
+    @contextmanager
+    def _database(self) -> Iterator[sqlite3.Connection]:
+        with self.local_storage():
+            database = self._connect()
+            try:
+                yield database
+            finally:
+                database.close()
 
     def initialize(self) -> None:
         with self._database() as database:

@@ -846,6 +846,66 @@ class ClientSchemaTests(unittest.TestCase):
                 not_after_ms=1,
             )
 
+    def test_host_reader_selection_schema_accepts_native_requests_and_is_closed(
+        self,
+    ) -> None:
+        import copy
+
+        from daimon_matrix.local_api import create_request
+        from tests.test_receiving_runtime import reader
+
+        schema = json.loads(
+            (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
+        )
+        validator = Draft202012Validator(schema)
+        capability = create_capability(
+            b"r" * 32,
+            client_id="client:host:synthetic:receiving-controller",
+            methods=["runtime.reader-selection"],
+            not_before_ms=0,
+            not_after_ms=100,
+        )
+
+        def request(params: dict[str, Any]) -> dict[str, Any]:
+            return create_request(
+                capability,
+                request_id="fe5c6192-66cc-4105-b60c-3d871c5a47fe",
+                issued_at_ms=10,
+                method="runtime.reader-selection",
+                params=params,
+                nonce=b"n" * 16,
+            )
+
+        revoked: dict[str, Any] = {
+            "process_instance_id": "92449f17-b5c4-4fbe-b393-d71899304f63",
+            "channel_id": "tribe",
+            "expected_head": "a" * 64,
+            "operation_id": "91a4462c-1b62-4bd2-849d-68ce87649465",
+            "release_digest": "b" * 64,
+            "phase": "revoke",
+            "readers": [],
+        }
+        selected = {
+            **revoked,
+            "phase": "select",
+            "readers": [reader()],
+            "expected_roster_sha256": "c" * 64,
+        }
+        validator.validate(request(revoked))
+        validator.validate(request(selected))
+        invalid = [
+            {key: value for key, value in revoked.items() if key != "expected_head"},
+            {**revoked, "unknown": True},
+            {**revoked, "readers": [reader()]},
+            {**selected, "readers": [reader(expires_at_ms=True)]},
+            {**selected, "readers": [reader(wire_read=["unsupported-wire"])]},
+        ]
+        extra = copy.deepcopy(selected)
+        extra["readers"][0]["unknown"] = True
+        for params in [*invalid, extra]:
+            with self.subTest(params=params), self.assertRaises(ValidationError):
+                validator.validate(request(params))
+
     def test_published_client_schemas_are_closed_and_valid(self) -> None:
         for name in ("client.schema.json", "mcp-tools.schema.json"):
             schema = json.loads(

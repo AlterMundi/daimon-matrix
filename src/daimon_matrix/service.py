@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import os
 import re
+import sqlite3
+import stat
+import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
@@ -68,7 +76,7 @@ from .relationships import (
     relationship_event_subject,
     validate_relationship_event_payload,
 )
-from .routes import RouteCoordinator, RouteError
+from .routes import RouteAmbiguous, RouteCoordinator, RouteError
 from .scopes import ScopeError, ScopeResolver
 from .sealed import SealedDeliveryError
 from .sources import SourceError, SourceServiceContext
@@ -106,6 +114,7 @@ METHODS: Final = frozenset(
         "we.sync.validate-receipt",
     }
 )
+RECEIVING_CONTROL_METHODS: Final = frozenset({"runtime.reader-selection"})
 PEER_METHODS: Final = frozenset({"we.converse", "we.sync.peer-pull"})
 MESSAGING_METHODS: Final = frozenset(
     {"messaging.inbox", "messaging.send", "messaging.delivery", "messaging.reply"}
@@ -212,6 +221,7 @@ RELATIONSHIP_METHODS: Final = frozenset(
 SERVICE_METHODS: Final = (
     BODY_METHODS
     | METHODS
+    | RECEIVING_CONTROL_METHODS
     | COMMUNICATION_METHODS
     | CURATOR_METHODS
     | MEMORY_METHODS
@@ -437,6 +447,96 @@ class MessagingServiceContext:
 
 
 @dataclass(frozen=True)
+class ReceivingServiceContext:
+    """Verified owner composition of one independently keyed control surface."""
+
+    capability_id: str
+    channels: Mapping[str, GroupMessaging]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "channels", MappingProxyType(dict(self.channels)))
+
+
+@dataclass(frozen=True)
+class LoadedStoreBinding:
+    """One boot-validated store locator, not a hash of mutable database data."""
+
+    path: Path
+    identity: tuple[int, int, int, int]
+    observation: bytes
+
+    @staticmethod
+    def file_identity(path: Path) -> tuple[int, int, int, int]:
+        info = path.lstat()
+        if (
+            not path.is_absolute()
+            or path.resolve() != path
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ServiceError("loaded_store_binding_invalid")
+        return info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)
+
+    @classmethod
+    def capture(
+        cls, path: Path, *, metadata: Mapping[str, str] | None = None
+    ) -> LoadedStoreBinding:
+        """Read schema metadata after the owning loader's validation, without DDL.
+
+        The caller retains native lifecycle ownership around validation/capture.
+        This observes the layout; it does not replace the owning store validator.
+        """
+        try:
+            before = cls.file_identity(path)
+            if any(
+                path.with_name(path.name + suffix).exists()
+                for suffix in ("-journal", "-wal", "-shm")
+            ):
+                raise ServiceError("loaded_store_capture_busy")
+            versions = {}
+            with closing(
+                sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
+            ) as db:
+                layout = db.execute(
+                    "SELECT type, tbl_name, name, sql FROM sqlite_schema ORDER BY name"
+                ).fetchall()
+                for role, table in (metadata or {}).items():
+                    if table not in {"metadata", "communication_meta"}:
+                        raise ServiceError("loaded_store_metadata_invalid")
+                    row = db.execute(
+                        f"SELECT value FROM {table} WHERE key='schema_version'"
+                    ).fetchone()
+                    if row is None or str(int(row[0])) != row[0]:
+                        raise ServiceError("loaded_store_metadata_invalid")
+                    versions[role] = int(row[0])
+            if cls.file_identity(path) != before:
+                raise ServiceError("loaded_store_replaced")
+            observed = {
+                "locator_sha256": hashlib.sha256(
+                    canonical_bytes(str(path))
+                ).hexdigest(),
+                "device": before[0],
+                "inode": before[1],
+                "owner_uid": before[2],
+                "mode": before[3],
+                "layout_sha256": hashlib.sha256(canonical_bytes(layout)).hexdigest(),
+                "schema_versions": versions,
+            }
+            return cls(path, before, canonical_bytes(observed))
+        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+            raise ServiceError("loaded_store_capture_rejected") from error
+
+    def verify(self) -> None:
+        try:
+            if self.file_identity(self.path) != self.identity:
+                raise ServiceError("loaded_store_replaced")
+        except OSError as error:
+            raise ServiceError("loaded_store_replaced") from error
+
+
+@dataclass(frozen=True)
 class HostedWeave:
     """One root-authorized ledger, signer, and authenticated local API."""
 
@@ -458,9 +558,18 @@ class HostedWeave:
     we_lane: WeConversation | None = None
     labels: LabelIndex | None = None
     messaging: MessagingServiceContext | None = None
+    receiving: ReceivingServiceContext | None = None
+    loaded_runtime: bytes | None = None
+    loaded_application: bytes | None = None
+    loaded_stores: Mapping[str, LoadedStoreBinding] = dataclass_field(
+        default_factory=dict
+    )
     visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "loaded_stores", MappingProxyType(dict(self.loaded_stores))
+        )
         if (
             re.fullmatch(r"dm:runtime:v1:[A-Za-z0-9_-]{43}", self.runtime_id) is None
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", self.runtime_label)
@@ -486,6 +595,27 @@ class HostedWeave:
             seen_clients.add(marker)
         if self.messaging is not None:
             self._messaging_context(startup=True)
+        if self.receiving is not None:
+            controller = self.capabilities.get(self.receiving.capability_id)
+            if (
+                controller is None
+                or controller.client_id
+                != f"client:host:{self.runtime_label}:receiving-controller"
+                or set(controller.methods) != RECEIVING_CONTROL_METHODS
+                or self.messaging is None
+                or not self.receiving.channels
+            ):
+                raise ServiceError("reader_controller_binding_invalid")
+            for channel_id, group in self.receiving.channels.items():
+                if (
+                    not isinstance(group, GroupMessaging)
+                    or not group.controlled_readers
+                    or self.messaging.channels.get(channel_id) is not group
+                    or self.messaging.deliveries.get(channel_id) is not group
+                    or channel_id != "tribe"
+                ):
+                    raise ServiceError("reader_controller_binding_invalid")
+                group.validate(self)
         self.ledger.authority.validate_origin(
             self.ledger.local_origin, require_active=True
         )
@@ -569,6 +699,30 @@ class HostedWeave:
         client_id = capability.client_id
         request_id = request["request_id"]
         method = request["method"]
+        try:
+            for binding in self.loaded_stores.values():
+                binding.verify()
+        except ServiceError as error:
+            # Refuse before opening/reinitializing any replaced journal. This
+            # current refusal does not claim that an earlier request had no effect.
+            return create_response(
+                capability,
+                request_id=request_id,
+                request_digest=digest,
+                server=self.origin,
+                completed_at_ms=now,
+                error={"code": error.code, "retryable": False},
+            )
+        if method == "runtime.reader-selection" and (
+            capability.client_id
+            != f"client:host:{self.runtime_label}:receiving-controller"
+            or set(capability.methods) != RECEIVING_CONTROL_METHODS
+            or (
+                self.receiving is not None
+                and capability.capability_id != self.receiving.capability_id
+            )
+        ):
+            raise LocalApiError("authentication_failed")
         if method in MESSAGING_METHODS:
             guard = None if self.messaging is None else self.messaging.capability_guard
             if (
@@ -625,6 +779,18 @@ class HostedWeave:
                 expected_server=cached_server,
                 expected_runtime=self.runtime_identity,
             )
+            if method == "runtime.reader-selection" or (
+                method == "runtime.status"
+                and (
+                    self.receiving is not None
+                    or self.loaded_runtime is not None
+                    or (
+                        isinstance(verified.get("result"), Mapping)
+                        and {"receiving", "loaded_runtime"} & verified["result"].keys()
+                    )
+                )
+            ):
+                return self._receiving_response(verified, request, capability)
             if method == "messaging.inbox":
                 return self._messaging_response(verified, request, capability)
             if method in {"messaging.send", "messaging.delivery", "messaging.reply"}:
@@ -926,7 +1092,142 @@ class HostedWeave:
         if method == "messaging.inbox":
             # finish_rpc can select a concurrent finisher's earlier response.
             return self._messaging_response(verified, request, capability)
+        if method == "runtime.reader-selection" or (
+            method == "runtime.status"
+            and (
+                self.receiving is not None
+                or self.loaded_runtime is not None
+                or (
+                    isinstance(verified.get("result"), Mapping)
+                    and {"receiving", "loaded_runtime"} & verified["result"].keys()
+                )
+            )
+        ):
+            return self._receiving_response(verified, request, capability)
         return verified
+
+    def _receiving_response(
+        self,
+        verified: dict[str, Any],
+        request: Mapping[str, Any],
+        capability: LocalCapability,
+    ) -> dict[str, Any]:
+        # Historical success never grants current readiness. Reconcile the
+        # exact process/head/request against the live physical-write fence.
+        try:
+            current = (
+                self._dispatch(
+                    "runtime.status",
+                    request["params"],
+                    client_id=capability.client_id,
+                    request_id=request["request_id"],
+                    request_hash=verified["request_hash"],
+                )
+                if request["method"] == "runtime.status"
+                else self._reader_selection(
+                    request["params"], request_hash=verified["request_hash"]
+                )
+            )
+            if verified["ok"] and current == verified["result"]:
+                return verified
+            outcome = {"result": current}
+        except ServiceError as exception:
+            outcome = {
+                "error": {"code": exception.code, "retryable": exception.retryable}
+            }
+        return self._response(
+            capability,
+            request_id=request["request_id"],
+            request_digest=verified["request_hash"],
+            server=self.origin,
+            completed_at_ms=self.clock(),
+            **outcome,
+        )
+
+    def _reader_selection(self, params: Any, *, request_hash: str) -> dict[str, Any]:
+        for binding in self.loaded_stores.values():
+            binding.verify()
+        context = self.receiving
+        if context is None:
+            raise ServiceError("reader_controller_unavailable")
+        if not isinstance(params, dict) or not isinstance(
+            params.get("channel_id"), str
+        ):
+            raise ServiceError("reader_selection_invalid")
+        group = context.channels.get(params["channel_id"])
+        if group is None or self.messaging is None:
+            raise ServiceError("reader_controller_binding_invalid")
+        if (
+            self.messaging.channels.get(params["channel_id"]) is not group
+            or self.messaging.deliveries.get(params["channel_id"]) is not group
+            or not group.controlled_readers
+        ):
+            raise ServiceError("reader_controller_binding_invalid")
+        try:
+            group.validate(self)
+            command = dict(params)
+            expected_roster = command.pop("expected_roster_sha256", None)
+            if "expected_roster_sha256" in params and (
+                not isinstance(expected_roster, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_roster) is None
+            ):
+                raise ServiceError("reader_selection_invalid")
+            return group.egress.select_readers(
+                command,
+                request_sha256=request_hash,
+                deadline_ns=time.monotonic_ns() + 2_000_000_000,
+                selection_authorization=(
+                    lambda: group.selection_authorization(expected_roster)
+                )
+                if expected_roster is not None and command.get("phase") == "select"
+                else None,
+                recovery_roster_sha256=expected_roster,
+            )
+        except ServiceError:
+            raise
+        except NativeEgressError as exception:
+            code = str(exception)
+            raise ServiceError(
+                code,
+                retryable=code
+                in {"egress_attempt_deadline", "reader_recovery_persistence_uncertain"},
+            ) from None
+        except RelationshipStoreError as exception:
+            cause = exception.__cause__
+            retryable = isinstance(cause, sqlite3.Error) and getattr(
+                cause, "sqlite_errorcode", 0
+            ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            raise ServiceError(
+                "reader_roster_unavailable", retryable=retryable
+            ) from None
+        except ValueError as exception:
+            if str(exception) == "reader_roster_conflict":
+                raise ServiceError("reader_roster_conflict") from None
+            raise ServiceError("reader_controller_binding_invalid") from None
+
+    @staticmethod
+    def _receiving_roster_status(group: GroupMessaging) -> dict[str, Any]:
+        """An unavailable roster never hides the independent revocation head."""
+        try:
+            return group.receiving_roster()
+        except RelationshipStoreError as exception:
+            cause = exception.__cause__
+            retryable = isinstance(cause, sqlite3.Error) and getattr(
+                cause, "sqlite_errorcode", 0
+            ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+            return dict(
+                schema="dm.runtime.tribe-roster-unavailable/v1",
+                error="reader_roster_unavailable",
+                retryable=retryable,
+            )
+        except RouteAmbiguous:
+            raise ServiceError("reader_roster_invalid") from None
+        except ValueError:
+            return dict(
+                schema="dm.runtime.tribe-roster-unavailable/v1",
+                error="reader_roster_invalid",
+                retryable=False,
+            )
 
     def _messaging_response(
         self,
@@ -1180,7 +1481,10 @@ class HostedWeave:
             raise ServiceError("messaging_rejected") from None
 
     def _messaging_send(self, params: Any, *, client_id: str) -> dict[str, Any]:
-        value = _closed(params, {"channel_id", "send_id", "thread_id", "text"})
+        fields = {"channel_id", "send_id", "thread_id", "text"}
+        if isinstance(params, Mapping) and "destination" in params:
+            fields.add("destination")
+        value = _closed(params, fields)
         channel_id = value["channel_id"]
         if (
             not isinstance(channel_id, str)
@@ -1195,12 +1499,21 @@ class HostedWeave:
             context = self._messaging_context()
             if channel_id not in context.client_channels.get(client_id, frozenset()):
                 raise ValueError
-            return context.deliveries[channel_id].send(
+            delivery = context.deliveries[channel_id]
+            directed: dict[str, Any] = {}
+            if "destination" in value:
+                if not isinstance(delivery, GroupMessaging):
+                    raise ValueError("tribe_direct_channel_required")
+                from .tribe_conversation import direct_destination
+
+                directed["destination"] = direct_destination(value["destination"])
+            return delivery.send(
                 client_id=client_id,
                 send_id=send_id,
                 thread_id=thread_id,
                 text=text,
                 authorize=self._messaging_guard(context, client_id, channel_id),
+                **directed,
             )
         except Exception:
             raise ServiceError("messaging_rejected") from None
@@ -1249,6 +1562,8 @@ class HostedWeave:
         request_id: str,
         request_hash: str,
     ) -> dict[str, Any]:
+        if method == "runtime.reader-selection":
+            return self._reader_selection(params, request_hash=request_hash)
         if method == "messaging.inbox":
             return self._messaging_inbox(params, client_id=client_id)
         if method == "messaging.send":
@@ -2124,6 +2439,8 @@ class HostedWeave:
             )
         if method == "runtime.status":
             _closed(params, set())
+            for binding in self.loaded_stores.values():
+                binding.verify()
             self.ledger.integrity_check()
             accepted = tuple(
                 getattr(
@@ -2144,7 +2461,7 @@ class HostedWeave:
                 if self.visibility_status is None
                 else dict(self.visibility_status())
             )
-            return {
+            result = {
                 "schema": "dm.runtime.status/v1",
                 "being_ref": self.ledger.authority.manifest.being_ref,
                 "manifest_hash": self.ledger.authority.manifest.digest,
@@ -2160,6 +2477,74 @@ class HostedWeave:
                     "epoch_count": len(accepted),
                 },
             }
+            if self.loaded_runtime is not None:
+                loaded = json.loads(self.loaded_runtime)
+                if loaded["process_id"] != os.getpid():
+                    raise ServiceError("loaded_runtime_process_changed")
+                result["loaded_runtime"] = loaded
+            if self.loaded_application is not None:
+                application = json.loads(self.loaded_application)
+                if (
+                    self.loaded_runtime is None
+                    or application["loaded_base_sha256"]
+                    != hashlib.sha256(self.loaded_runtime).hexdigest()
+                ):
+                    raise ServiceError("loaded_application_base_changed")
+                result["loaded_application"] = application
+            if self.receiving is not None:
+                deadline = time.monotonic_ns() + 2_000_000_000
+                try:
+                    for channel_id, group in self.receiving.channels.items():
+                        if (
+                            self.messaging is None
+                            or self.messaging.channels.get(channel_id) is not group
+                            or self.messaging.deliveries.get(channel_id) is not group
+                            or not group.controlled_readers
+                        ):
+                            raise ServiceError("reader_controller_binding_invalid")
+                        group.validate(self)
+                    result["receiving"] = {
+                        "schema": "dm.runtime.reader-status/v1",
+                        "contract": "dm.runtime.reader-selection/v1",
+                        "features": ["signed-roster-cas/v1"]
+                        + (
+                            ["durable-reader-recovery/v1"]
+                            if all(
+                                group.egress.reader_recovery_status(channel_id)[
+                                    "supported"
+                                ]
+                                for channel_id, group in self.receiving.channels.items()
+                            )
+                            else []
+                        ),
+                        "recovery": {
+                            channel_id: group.egress.reader_recovery_status(channel_id)
+                            for channel_id, group in self.receiving.channels.items()
+                        },
+                        "rosters": {
+                            channel_id: self._receiving_roster_status(group)
+                            for channel_id, group in self.receiving.channels.items()
+                        },
+                        "channels": {
+                            channel_id: group.egress.reader_snapshot(
+                                channel_id, deadline_ns=deadline
+                            )
+                            for channel_id, group in self.receiving.channels.items()
+                        },
+                    }
+                except NativeEgressError as exception:
+                    raise ServiceError(str(exception), retryable=True) from None
+                except RelationshipStoreError as exception:
+                    cause = exception.__cause__
+                    retryable = isinstance(cause, sqlite3.Error) and getattr(
+                        cause, "sqlite_errorcode", 0
+                    ) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                    raise ServiceError(
+                        "reader_roster_unavailable", retryable=retryable
+                    ) from None
+                except ValueError:
+                    raise ServiceError("reader_roster_invalid") from None
+            return result
         if method == "we.heads":
             _closed(params, set())
             return SyncEngine(self.ledger).heads()
@@ -2638,11 +3023,13 @@ __all__ = [
     "OBSERVE_METHODS",
     "OPERATOR_CAPABILITY_PROFILES",
     "PEER_METHODS",
+    "RECEIVING_CONTROL_METHODS",
     "RELATIONSHIP_METHODS",
     "SCOPE_METHODS",
     "SERVICE_METHODS",
     "SOURCE_METHODS",
     "HostedWeave",
     "MessagingServiceContext",
+    "ReceivingServiceContext",
     "ServiceError",
 ]

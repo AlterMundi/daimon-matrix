@@ -18,14 +18,32 @@ import stat
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, Final
 
+from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
-from .ledger import Ledger, LedgerStateError
+from .ledger import (
+    Ledger,
+    LedgerStateError,
+    LedgerStorageBusy,
+    _assert_owner_directory,
+    _assert_owner_file,
+)
 from .native_egress import MandatoryEgressController, OperationBinding
-from .weave import Event, EventAuthority, WeaveProtocolError, verify_event
+from .weave import (
+    BoundHistoryAuthority,
+    Event,
+    EventAuthority,
+    ProvisionalAuthority,
+    RootAuthority,
+    RootAuthorityInventory,
+    WeaveProtocolError,
+    verify_event,
+)
 
 MESSAGE_PAYLOAD_SCHEMA: Final = "dm.communication.message/v1"
 RESOLUTION_PAYLOAD_SCHEMA: Final = "dm.communication.resolution/v1"
@@ -190,9 +208,134 @@ def _canonical(value: Any, error: str) -> bytes:
         raise CommunicationError(error) from exception
 
 
+@dataclass
+class _VerifiedEvents:
+    entries: dict[tuple[bytes, bytes], tuple[Event, int]]
+    size: int = 0
+    authorities: dict[int, tuple[EventAuthority, Any, bytes]] = dataclass_field(
+        default_factory=dict
+    )
+
+
+_verified_events: ContextVar[_VerifiedEvents | None] = ContextVar(
+    "communication_verified_events", default=None
+)
+
+
+def _same_public_material(left: Any, right: Any) -> bool:
+    # JSON booleans and numbers compare equal in Python but have different
+    # canonical bytes. Only exact plain JSON types qualify for the fast path.
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(
+            type(key) is str and _same_public_material(value, right[key])
+            for key, value in left.items()
+        )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _same_public_material(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return type(left) in (str, int, bool, type(None)) and left == right
+
+
+def _authority_fingerprint(authority: EventAuthority) -> bytes | None:
+    # These exact implementations verify only this public material. Unknown
+    # implementations may have additional policy or effects and are never cached.
+    if type(authority) not in (RootAuthority, ProvisionalAuthority):
+        return None
+    material: dict[str, Any] = {
+        "manifest": authority.manifest.value,
+        "digest": authority.manifest.digest,
+        "trust_mode": authority.manifest.trust_mode,
+    }
+    if type(authority) is RootAuthority:
+        material.update(
+            state={
+                field.name: getattr(authority.state, field.name)
+                for field in fields(authority.state)
+            },
+            credentials=authority.credentials,
+            incarnations=authority.incarnations,
+        )
+    elif type(authority) is ProvisionalAuthority:
+        material["public_keys"] = authority.public_keys
+    else:
+        return None
+    memo = _verified_events.get()
+    retained = None if memo is None else memo.authorities.get(id(authority))
+    if (
+        retained is not None
+        and retained[0] is authority
+        and _same_public_material(retained[1], material)
+    ):
+        # Full structural equality against an independent deep snapshot checks
+        # nested mutations on every lookup without reserializing unchanged keys.
+        return retained[2]
+    snapshot = copy.deepcopy(material)
+    raw = canonical_bytes(snapshot)
+    fingerprint = hashlib.sha256(raw).digest()
+    if memo is not None and len(raw) <= 1 << 20:
+        if len(memo.authorities) >= 16:
+            memo.authorities.clear()
+        memo.authorities[id(authority)] = (
+            authority,
+            snapshot,
+            fingerprint,
+        )
+    return fingerprint
+
+
 def _event(value: Any, authority: EventAuthority) -> Event:
     try:
-        return verify_event(value, authority)
+        memo = _verified_events.get()
+        if (
+            memo is None
+            or not isinstance(value, Mapping)
+            or type(authority)
+            not in (
+                RootAuthority,
+                ProvisionalAuthority,
+                RootAuthorityInventory,
+                BoundHistoryAuthority,
+                RootHistoryAuthority,
+            )
+        ):
+            return verify_event(value, authority)
+        # Select on every lookup: removing an epoch or inventory entry must still
+        # refuse, even if its event verified earlier in this connection.
+        selector = getattr(authority, "select", None)
+        selected = selector(value) if callable(selector) else authority
+        fingerprint = _authority_fingerprint(selected)
+        if fingerprint is None:
+            return verify_event(value, authority)
+        raw = canonical_bytes(value)
+        key = (hashlib.sha256(raw).digest(), fingerprint)
+        cached = memo.entries.get(key)
+        if cached is not None:
+            return copy.deepcopy(cached[0])
+        verified = verify_event(value, selected)
+        # Nested authority mappings are mutable. Recompute, rather than trusting
+        # object identity, the control head, or a store mutation counter.
+        if (
+            _authority_fingerprint(selected) == fingerprint
+            and canonical_bytes(verified) == raw
+            and len(raw) <= 8 << 20
+        ):
+            while memo.entries and (
+                len(memo.entries) >= 2048 or memo.size + len(raw) > 8 << 20
+            ):
+                _, size = memo.entries.pop(next(iter(memo.entries)))
+                memo.size -= size
+            memo.entries[key] = (copy.deepcopy(verified), len(raw))
+            memo.size += len(raw)
+        return verified
+    except CanonicalError:
+        # Preserve the existing verifier's rejection behavior for malformed data.
+        try:
+            return verify_event(value, authority)
+        except WeaveProtocolError as exception:
+            raise CommunicationError("communication_event_rejected") from exception
     except WeaveProtocolError as exception:
         raise CommunicationError("communication_event_rejected") from exception
 
@@ -553,9 +696,46 @@ class CommunicationStore:
         )
 
     @contextmanager
+    def _projection(self, *, deadline_ns: int | None = None) -> Iterator[None]:
+        try:
+            with self.ledger.local_storage(deadline_ns=deadline_ns):
+                yield
+        except LedgerStorageBusy as failure:
+            raise CommunicationError(
+                "communication_projection_busy", retryable=True
+            ) from failure
+
+    @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
-        with self.ledger._database() as database:
+        # Do not release this gate at COMMIT: pending cleanup and close are part
+        # of the same projection operation. No network runs inside this scope.
+        with self._projection():
+            token = _verified_events.set(_VerifiedEvents({}))
+            try:
+                with self.ledger._database() as database:
+                    yield database
+            finally:
+                _verified_events.reset(token)
+
+    @contextmanager
+    def _egress_database(self) -> Iterator[sqlite3.Connection]:
+        # Native egress invokes these immutable lookups under its physical fence.
+        # They must never acquire the projection gate (the opposite lock order),
+        # initialize the store, recover sidecars or change authority/projections.
+        path = self.ledger.path
+        _assert_owner_directory(path.parent)
+        ancestor = path.parent
+        while ancestor != ancestor.parent:
+            if ancestor.is_symlink():
+                raise LedgerStateError("ledger_ancestor_symlink")
+            ancestor = ancestor.parent
+        _assert_owner_file(path)
+        database = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
+        database.row_factory = sqlite3.Row
+        try:
             yield database
+        finally:
+            database.close()
 
     def bind_egress(
         self,
@@ -585,7 +765,7 @@ class CommunicationStore:
         return any(authorize(binding) for authorize in self._egress_authorizers)
 
     def _resolve_egress(self, locator: str) -> bytes:
-        with self._database() as database:
+        with self._egress_database() as database:
             row = database.execute(
                 "SELECT request FROM communication_egress_requests WHERE attempt_id=?",
                 (locator,),
@@ -595,7 +775,7 @@ class CommunicationStore:
         return bytes(row[0])
 
     def egress_attempt(self, attempt_id: str) -> dict[str, str]:
-        with self._database() as database:
+        with self._egress_database() as database:
             row = database.execute(
                 "SELECT provider_ref, route_ref FROM communication_attempts "
                 "WHERE attempt_id=?",
@@ -2903,9 +3083,23 @@ class CommunicationStore:
         return event, leg
 
     def record_foreign_receipt(
-        self, receipt: Mapping[str, Any], *, recipient_being_ref: str
+        self,
+        receipt: Mapping[str, Any],
+        *,
+        recipient_being_ref: str,
+        deadline_ns: int | None = None,
     ) -> dict[str, Any]:
         """Trusted intake only: independently enrolled recipient, not model input."""
+        # Group/base views can have different egress controllers. Propagate the
+        # caller's budget explicitly rather than depending on either controller.
+        with self._projection(deadline_ns=deadline_ns):
+            return self._record_foreign_receipt(
+                receipt, recipient_being_ref=recipient_being_ref
+            )
+
+    def _record_foreign_receipt(
+        self, receipt: Mapping[str, Any], *, recipient_being_ref: str
+    ) -> dict[str, Any]:
         self.initialize()
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")

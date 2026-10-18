@@ -44,6 +44,290 @@ class CommunicationMigrationTests(LogicalCommunicationFixture):
     def backup(self, name: str = "migration") -> Path:
         return self.ledger_a.path.parent / name
 
+    def interrupted_apply(self, boundary: str) -> dict[str, Any]:
+        self.append_message([self.target("embodiment:daimonmatrix")])
+        preview = plan(self.ledger_a.path)
+        copy = operator._copy_database
+        write = operator._write
+
+        def interrupted_copy(source: Path, destination: Path) -> None:
+            copy(source, destination)
+            if boundary == "snapshot" and destination.name == "source.sqlite":
+                raise OSError("injected_retained_boundary")
+
+        def interrupted_write(path: Path, value: dict[str, Any]) -> None:
+            if boundary == "before-completion" and path.name == "completed.json":
+                raise OSError("injected_retained_boundary")
+            write(path, value)
+            if (boundary == "prepared" and path.name == "prepared.json") or (
+                boundary == "completion" and path.name == "completed.json"
+            ):
+                raise OSError("injected_retained_boundary")
+
+        with (
+            patch.object(operator, "_copy_database", interrupted_copy),
+            patch.object(operator, "_write", interrupted_write),
+        ):
+            if boundary == "receipts":
+                with (
+                    patch.object(
+                        self.store,
+                        "upgrade_legs_v3",
+                        side_effect=OSError("injected_retained_boundary"),
+                    ),
+                    self.assertRaisesRegex(OSError, "injected_retained_boundary"),
+                ):
+                    apply(self.store, self.backup(), preview["plan_sha256"])
+            else:
+                with self.assertRaisesRegex(OSError, "injected_retained_boundary"):
+                    apply(self.store, self.backup(), preview["plan_sha256"])
+        return preview
+
+    def resume_boundary(self, boundary: str) -> None:
+        preview = self.interrupted_apply(boundary)
+        identity = self.ledger_a.path.stat()
+        events = self.ledger_a.events()
+        anchor = self.store.anchor_path.read_bytes()
+        result = apply(self.store, self.backup(), preview["plan_sha256"])
+        self.assertEqual(result["source_plan_sha256"], preview["plan_sha256"])
+        self.assertEqual(
+            result["state_sha256"], plan(self.ledger_a.path)["state_sha256"]
+        )
+        self.assertEqual(plan(self.ledger_a.path)["source_version"], 4)
+        self.assertEqual(self.ledger_a.events(), events)
+        self.assertEqual(self.store.anchor_path.read_bytes(), anchor)
+        self.assertEqual(
+            (self.ledger_a.path.stat().st_dev, self.ledger_a.path.stat().st_ino),
+            (identity.st_dev, identity.st_ino),
+        )
+        # Completion is retained evidence, including after subsequent work.
+        self.append_message([self.target("embodiment:legion")])
+        later = plan(self.ledger_a.path)
+        with (
+            patch.object(self.store, "upgrade_receipts_v2", side_effect=AssertionError),
+            patch.object(self.store, "upgrade_legs_v3", side_effect=AssertionError),
+            patch.object(operator, "_copy_database", side_effect=AssertionError),
+        ):
+            self.assertEqual(
+                apply(self.store, self.backup(), preview["plan_sha256"]), result
+            )
+        self.assertEqual(plan(self.ledger_a.path), later)
+
+    def test_same_apply_resumes_snapshot_preparation(self) -> None:
+        self.resume_boundary("snapshot")
+
+    def test_same_apply_resumes_prepared_without_live_ddl(self) -> None:
+        self.resume_boundary("prepared")
+
+    def test_same_apply_resumes_intermediate_receipts_without_restoring(self) -> None:
+        self.resume_boundary("receipts")
+
+    def test_same_apply_retains_completed_ddl_after_lost_result(self) -> None:
+        self.resume_boundary("before-completion")
+
+    def test_same_apply_recovers_committed_completion_reply(self) -> None:
+        self.resume_boundary("completion")
+
+    def test_pending_continuation_preserves_later_accepted_history(self) -> None:
+        preview = self.interrupted_apply("receipts")
+        self.append_message([self.target("embodiment:legion")])
+        later = plan(self.ledger_a.path)
+        with self.assertRaisesRegex(
+            MigrationError, "migration_(continuation_state_changed|anchor_changed)"
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"])
+        self.assertEqual(plan(self.ledger_a.path), later)
+        self.assertFalse((self.backup() / "completed.json").exists())
+
+    def test_continuation_refuses_another_plan_or_replaced_physical_store(self) -> None:
+        preview = self.interrupted_apply("receipts")
+        before = plan(self.ledger_a.path)
+        with self.assertRaisesRegex(
+            MigrationError, "migration_continuation_intent_changed"
+        ):
+            apply(self.store, self.backup(), "0" * 64)
+        self.assertEqual(plan(self.ledger_a.path), before)
+        original = self.ledger_a.path.with_name("original-retained.sqlite")
+        self.ledger_a.path.rename(original)
+        try:
+            self.ledger_a.path.write_bytes(original.read_bytes())
+            self.ledger_a.path.chmod(0o600)
+            with self.assertRaisesRegex(
+                MigrationError, "migration_continuation_intent_changed"
+            ):
+                apply(self.store, self.backup(), preview["plan_sha256"])
+            self.assertEqual(plan(self.ledger_a.path), before)
+        finally:
+            self.ledger_a.path.unlink()
+            original.rename(self.ledger_a.path)
+
+    def test_preparation_directory_and_partial_snapshot_recover_without_new_intent(
+        self,
+    ) -> None:
+        preview = plan(self.ledger_a.path)
+        self.backup().mkdir(mode=0o700)
+        copy = operator._copy_database
+
+        def partial(source: Path, destination: Path) -> None:
+            if destination.name == "source.sqlite":
+                destination.write_bytes(b"")
+                destination.chmod(0o600)
+                raise OSError("injected_empty_snapshot")
+            copy(source, destination)
+
+        with (
+            patch.object(operator, "_copy_database", partial),
+            self.assertRaisesRegex(OSError, "empty_snapshot"),
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"])
+        intent = (self.backup() / "intent.json").read_bytes()
+        self.assertEqual(plan(self.ledger_a.path), preview)
+        result = apply(self.store, self.backup(), preview["plan_sha256"])
+        self.assertEqual((self.backup() / "intent.json").read_bytes(), intent)
+        self.assertEqual(result["status"], "migrated")
+
+    def test_unbound_or_unsafe_artifacts_are_not_overwritten(self) -> None:
+        preview = plan(self.ledger_a.path)
+        self.backup().mkdir(mode=0o700)
+        unknown = self.backup() / "source.sqlite"
+        unknown.write_bytes(b"not this operation's backup")
+        unknown.chmod(0o600)
+        with self.assertRaisesRegex(
+            MigrationError, "migration_preparation_intent_missing"
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"])
+        self.assertEqual(unknown.read_bytes(), b"not this operation's backup")
+        self.assertEqual(plan(self.ledger_a.path), preview)
+
+    def test_deadline_during_preparation_cannot_start_live_ddl(self) -> None:
+        preview = plan(self.ledger_a.path)
+        monotonic = [1]
+        write = operator._write
+
+        def expire_after_preparation(path: Path, value: dict[str, Any]) -> None:
+            write(path, value)
+            if path.name == "prepared.json":
+                monotonic[0] = 10
+
+        with (
+            patch.object(time, "monotonic_ns", lambda: monotonic[0]),
+            patch.object(operator, "_write", expire_after_preparation),
+            self.assertRaisesRegex(MigrationError, "migration_deadline_expired"),
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"], deadline_ns=10)
+        self.assertEqual(plan(self.ledger_a.path), preview)
+        result = apply(
+            self.store,
+            self.backup(),
+            preview["plan_sha256"],
+            deadline_ns=time.monotonic_ns() + 5_000_000_000,
+        )
+        self.assertEqual(result["status"], "migrated")
+
+    def test_deadline_after_completion_keeps_exact_recoverable_result(self) -> None:
+        preview = plan(self.ledger_a.path)
+        monotonic = [1]
+        write = operator._write
+
+        def expire_after_completion(path: Path, value: dict[str, Any]) -> None:
+            write(path, value)
+            if path.name == "completed.json":
+                monotonic[0] = 10
+
+        with (
+            patch.object(time, "monotonic_ns", lambda: monotonic[0]),
+            patch.object(operator, "_write", expire_after_completion),
+            self.assertRaisesRegex(MigrationError, "migration_deadline_expired"),
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"], deadline_ns=10)
+        retained = (self.backup() / "completed.json").read_bytes()
+        self.assertEqual(plan(self.ledger_a.path)["source_version"], 4)
+        with patch.object(self.store, "upgrade_legs_v3", side_effect=AssertionError):
+            result = apply(self.store, self.backup(), preview["plan_sha256"])
+        self.assertEqual(json.loads(retained), result)
+        self.assertEqual((self.backup() / "completed.json").read_bytes(), retained)
+
+    def test_deadline_after_cached_completion_does_not_report_late_success(
+        self,
+    ) -> None:
+        preview = self.interrupted_apply("completion")
+        monotonic = [1]
+        completed = operator._completed
+
+        def expire_after_observation(
+            backup: Path, prepared: dict[str, Any]
+        ) -> dict[str, Any] | None:
+            result = completed(backup, prepared)
+            monotonic[0] = 10
+            return result
+
+        with (
+            patch.object(time, "monotonic_ns", lambda: monotonic[0]),
+            patch.object(operator, "_completed", expire_after_observation),
+            self.assertRaisesRegex(MigrationError, "migration_deadline_expired"),
+        ):
+            apply(self.store, self.backup(), preview["plan_sha256"], deadline_ns=10)
+        self.assertEqual(
+            apply(self.store, self.backup(), preview["plan_sha256"])["status"],
+            "migrated",
+        )
+
+    def test_deadline_after_current_plan_cannot_report_late_success(self) -> None:
+        apply(self.store, self.backup(), plan(self.ledger_a.path)["plan_sha256"])
+        current = plan(self.ledger_a.path)
+        monotonic = [1]
+
+        def expire_after_plan(path: Path) -> dict[str, Any]:
+            result = plan(path)
+            monotonic[0] = 10
+            return result
+
+        with (
+            patch.object(time, "monotonic_ns", lambda: monotonic[0]),
+            patch.object(operator, "plan", expire_after_plan),
+            self.assertRaisesRegex(MigrationError, "migration_deadline_expired"),
+        ):
+            apply(
+                self.store,
+                self.backup("unused"),
+                current["plan_sha256"],
+                deadline_ns=10,
+            )
+        self.assertFalse(self.backup("unused").exists())
+
+    def test_lost_prepared_sync_must_finish_before_live_upgrade(self) -> None:
+        preview = plan(self.ledger_a.path)
+        sync = operator._sync
+        barrier: list[str] = []
+        fail = [True]
+
+        def retain(path: Path) -> None:
+            if path == self.backup() and (path / "prepared.json").exists():
+                if fail[0]:
+                    raise OSError("injected_prepared_sync")
+                barrier.append("durable")
+            sync(path)
+
+        upgrade = self.store.upgrade_receipts_v2
+
+        def live() -> None:
+            self.assertIn("durable", barrier)
+            upgrade()
+
+        with (
+            patch.object(operator, "_sync", retain),
+            patch.object(self.store, "upgrade_receipts_v2", live),
+        ):
+            for _ in range(2):
+                with self.assertRaisesRegex(OSError, "injected_prepared_sync"):
+                    apply(self.store, self.backup(), preview["plan_sha256"])
+                self.assertEqual(plan(self.ledger_a.path), preview)
+            prepared = (self.backup() / "prepared.json").read_bytes()
+            fail[0] = False
+            result = apply(self.store, self.backup(), preview["plan_sha256"])
+            self.assertEqual(result["status"], "migrated")
+            self.assertEqual((self.backup() / "prepared.json").read_bytes(), prepared)
+
     def test_preview_does_not_write_and_requires_exact_approval(self) -> None:
         before = self.ledger_a.path.read_bytes()
         preview = plan(self.ledger_a.path)
@@ -374,6 +658,8 @@ class MigrationOperatorProcessTests(RuntimeFixture):
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout)["status"], "migrated")
+        repeated = subprocess.run(args, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(repeated.stdout), json.loads(completed.stdout))
         reopened = load_runtime(
             root,
             "runtime.json",

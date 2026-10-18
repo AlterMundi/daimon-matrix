@@ -63,3 +63,56 @@ onboarding; this repair never invents membership or imports another body.
 This procedure installs no model attention, autonomous peer reply, inbox reader
 or scheduler. Existing human authorization covers the finite deployment; it
 adds no repeated approval or new identity ceremony.
+
+## Resume a missing observation or retained intake
+
+`systemctl is-active` proves unit state, not socket readiness or successful native
+startup. Await the selected sockets, then use the current authenticated base and
+group APIs with their connected-process observer and the existing loaded verifier.
+Resume a missing observation without repeating a completed lifecycle transition.
+Do not reconstruct archived pair enrollment to observe a selected membership group.
+A scoped maintenance driver restores every service it paused on success or failure.
+
+When signed intake is already committed, recover the original retained operation
+under exclusive native runtime ownership. `GroupMessaging.reconcile_intake` is a
+finite technical operation: an expired control can retain its historical ACK and
+project its verified receipt without network egress, new message IDs or models.
+Native intake, retained control and signed semantic completion remain distinct.
+
+Use the receiving deployment's actual composition. A dual base/group host loads
+its closed base controller first, then its independently signed application via
+`chat_host.application_view`; the group's proof key cannot authenticate the base
+catalogs. The current standalone `operator_messaging reconcile-intake` command
+uses one visibility factory and is not a qualified recovery command for that dual
+profile. Reuse the host's supported composition under the writer lock rather than
+loading a second runtime beside its daemon. Local recovery of an expired control
+does not prove that the original live HTTP ACK failure has been corrected.
+
+The receiver retains authenticated intake failures as a closed diagnostic code
+and stage in its existing transport-diagnostics sidecar. Stages distinguish
+admission verification, the opaque ACK transaction and the signed ACK record.
+These local observations neither change the wire reply nor prove remote delivery;
+unknown exception text is never retained and a diagnostic-write failure does not
+replace the original intake result.
+
+## Bounded local completion and transport retries
+
+Ledger and its CommunicationStore views share one per-path storage gate through
+transaction close and pending-sidecar cleanup. Other Ledger operations, including
+read APIs that initialize retained metadata, use that same gate. Completion carries
+its original monotonic deadline into local storage; this does not hold a lock over
+network effects. Native immutable egress callbacks use their explicit read-only
+connections outside the gate.
+
+An automatic completion retries proved SQLite BUSY/LOCKED, including beneath the
+known retained-intake verification wrapper. Unknown errors, authority failures and
+other wrappers remain terminal; a transient local storage deadline is not a signed
+receipt rejection. Closed diagnostics distinguish these outcomes without retaining
+exception text.
+
+The original data fanout permits at most three attempts for connection failure or
+timeout, using the exact retained request bytes, identifiers, route and original
+carrier/deadline. A verified retained ACK prevents another network release.
+Authority and current reader readiness are checked again before every write.
+Expired inspection and exact later observation never create another send. This is
+finite technical transport work, not inbox attention or autonomous model activity.

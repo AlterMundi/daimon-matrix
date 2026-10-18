@@ -6,9 +6,11 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
+import tempfile
 import time
 from contextlib import closing
 from pathlib import Path
@@ -111,16 +113,194 @@ def _sync(path: Path) -> None:
 
 
 def _write(path: Path, value: dict[str, Any]) -> None:
+    """Retain one exact journal entry atomically, including lost fsync replies."""
     data = canonical_bytes(value)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    if path.exists() or path.is_symlink():
+        _file(path)
+        if path.read_bytes() != data:
+            raise MigrationError("migration_journal_changed")
+        _sync(path.parent)
+        return
+    descriptor, name = tempfile.mkstemp(prefix=".migration-", dir=path.parent)
+    temporary = Path(name)
     try:
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
             os.fsync(descriptor)
+        from .operator_messaging import _publish
+
+        try:
+            _publish(temporary, path)
+        except ValueError:
+            if not path.exists():
+                raise MigrationError("migration_journal_publication_failed") from None
+            _file(path)
+            if path.read_bytes() != data:
+                raise MigrationError("migration_journal_changed") from None
     finally:
         os.close(descriptor)
+        temporary.unlink(missing_ok=True)
     _sync(path.parent)
+
+
+def _document(path: Path) -> dict[str, Any]:
+    _file(path)
+    if path.stat().st_size > 64 * 1024:
+        raise MigrationError("migration_journal_invalid")
+    try:
+        value = json.loads(path.read_bytes())
+        if not isinstance(value, dict):
+            raise ValueError
+        return value
+    except (ValueError, UnicodeError):
+        raise MigrationError("migration_journal_invalid") from None
+
+
+def _identity(path: Path) -> list[int]:
+    _file(path)
+    info = path.stat()
+    return [info.st_dev, info.st_ino]
+
+
+def _intent(path: Path, backup: Path, expected_plan: str) -> dict[str, Any]:
+    daemon._state_root(backup)
+    value = _document(backup / "intent.json")
+    original = value.get("plan")
+    if (
+        set(value) != {"schema", "plan", "source_identity", "anchor_sha256"}
+        or value["schema"] != "dm.communication-migration-intent/v1"
+        or not isinstance(original, dict)
+        or original.get("plan_sha256") != expected_plan
+        or hashlib.sha256(
+            canonical_bytes({k: v for k, v in original.items() if k != "plan_sha256"})
+        ).hexdigest()
+        != expected_plan
+        or value["source_identity"] != _identity(path)
+    ):
+        raise MigrationError("migration_continuation_intent_changed")
+    return value
+
+
+def _prepared(backup: Path, intent: dict[str, Any]) -> dict[str, Any]:
+    value = _document(backup / "prepared.json")
+    states = value.get("allowed_states")
+    original = intent["plan"]
+    versions = {str(original["source_version"]), str(original["target_version"])}
+    if original["source_version"] == 1:
+        versions.add("2")
+    for name in ("source.sqlite", "source.anchor"):
+        _file(backup / name)
+    if (
+        value.get("schema") != SCHEMA
+        or value.get("plan") != original
+        or value.get("intent_sha256")
+        != hashlib.sha256(canonical_bytes(intent)).hexdigest()
+        or not isinstance(states, dict)
+        or set(states) != versions
+        or any(
+            not isinstance(pin, str) or re.fullmatch("[0-9a-f]{64}", pin) is None
+            for pin in states.values()
+        )
+        or states[str(original["source_version"])] != original["state_sha256"]
+        or hashlib.sha256((backup / "source.sqlite").read_bytes()).hexdigest()
+        != value.get("source_file_sha256")
+        or hashlib.sha256((backup / "source.anchor").read_bytes()).hexdigest()
+        != value.get("anchor_sha256")
+        or value.get("anchor_sha256") != intent["anchor_sha256"]
+    ):
+        raise MigrationError("migration_prepared_intent_changed")
+    return value
+
+
+def _result(prepared: dict[str, Any]) -> dict[str, Any]:
+    original = prepared["plan"]
+    return {
+        "schema": SCHEMA,
+        "status": "migrated",
+        "source_version": original["source_version"],
+        "target_version": original["target_version"],
+        "state_sha256": prepared["allowed_states"][str(original["target_version"])],
+        "source_plan_sha256": original["plan_sha256"],
+    }
+
+
+def _completed(backup: Path, prepared: dict[str, Any]) -> dict[str, Any] | None:
+    path = backup / "completed.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    result = _result(prepared)
+    if _document(path) != result:
+        raise MigrationError("migration_completion_changed")
+    _sync(backup)
+    return result
+
+
+def _budget(deadline_ns: int | None) -> None:
+    if deadline_ns is not None:
+        if type(deadline_ns) is not int:
+            raise MigrationError("migration_deadline_invalid")
+        if time.monotonic_ns() >= deadline_ns:
+            raise MigrationError("migration_deadline_expired")
+
+
+def _continue(
+    store: CommunicationStore,
+    backup: Path,
+    intent: dict[str, Any],
+    *,
+    deadline_ns: int | None,
+) -> dict[str, Any]:
+    _budget(deadline_ns)
+    prepared = _prepared(backup, intent)
+    completed = _completed(backup, prepared)
+    if completed is not None:
+        # Historical completion is not current health. Subsequent accepted work
+        # is preserved; this branch neither reruns DDL nor restores a snapshot.
+        _budget(deadline_ns)
+        return completed
+
+    # A readable record may precede a lost directory-fsync reply. Reestablish
+    # durable prepared evidence before permitting any pending live DDL.
+    for path in (backup / "prepared.json", backup, backup.parent):
+        _sync(path)
+
+    def unchanged() -> dict[str, Any]:
+        _budget(deadline_ns)
+        if _identity(store.ledger.path) != intent["source_identity"]:
+            raise MigrationError("migration_continuation_intent_changed")
+        _file(store.anchor_path)
+        if (
+            hashlib.sha256(store.anchor_path.read_bytes()).hexdigest()
+            != intent["anchor_sha256"]
+        ):
+            raise MigrationError("migration_anchor_changed")
+        current = plan(store.ledger.path)
+        if current["state_sha256"] != prepared["allowed_states"].get(
+            str(current["source_version"])
+        ):
+            raise MigrationError("migration_continuation_state_changed")
+        _budget(deadline_ns)
+        return current
+
+    unchanged()
+    select_persisted_schema(store, store.ledger)
+    _budget(deadline_ns)
+    if not store.receipts_v2:
+        store.upgrade_receipts_v2()
+        unchanged()
+    if not store.legs_v3:
+        store.upgrade_legs_v3()
+    after = unchanged()
+    result = _result(prepared)
+    if (
+        after["source_version"] != result["target_version"]
+        or after["state_sha256"] != result["state_sha256"]
+    ):
+        raise MigrationError("migration_result_mismatch")
+    _write(backup / "completed.json", result)
+    _budget(deadline_ns)
+    return result
 
 
 def _copy_database(source: Path, destination: Path) -> None:
@@ -149,28 +329,96 @@ def _copy_anchor(source: Path, destination: Path) -> None:
 
 
 def apply(
-    store: CommunicationStore, backup: Path, expected_plan: str
+    store: CommunicationStore,
+    backup: Path,
+    expected_plan: str,
+    *,
+    deadline_ns: int | None = None,
 ) -> dict[str, Any]:
     """Caller retains the runtime lock and has stopped every other writer.
 
     Rehearse both upgrades on a private SQLite snapshot first. A durable journal
     records exactly the source, intermediate and target states before live DDL.
+    Repeat this same call/plan/directory to recover retained preparation or
+    continue an exact intermediate state; never restore to make it retryable.
     """
+    _budget(deadline_ns)
+    if backup.exists() or backup.is_symlink():
+        daemon._state_root(backup)
+        if (backup / "intent.json").exists():
+            intent = _intent(store.ledger.path, backup, expected_plan)
+            if (backup / "prepared.json").exists():
+                return _continue(store, backup, intent, deadline_ns=deadline_ns)
+            if plan(store.ledger.path) != intent["plan"]:
+                raise MigrationError("migration_continuation_state_changed")
+        elif any(not path.name.startswith(".migration-") for path in backup.iterdir()):
+            # Older unbound journals remain recoverable through the explicit
+            # legacy recover command, not inferred as a new approved operation.
+            raise MigrationError("migration_preparation_intent_missing")
     before = plan(store.ledger.path)
     if before["plan_sha256"] != expected_plan:
         raise MigrationError("migration_plan_changed")
     if not before["steps"]:
+        _budget(deadline_ns)
         return before
+    _budget(deadline_ns)
     if any(parent.is_symlink() for parent in backup.parents):
         raise MigrationError("migration_ancestor_symlink")
-    backup.mkdir(mode=0o700)
+    backup.mkdir(mode=0o700, exist_ok=True)
+    daemon._state_root(backup)
     _sync(backup.parent)
+    _file(store.anchor_path)
+    intent = dict(
+        schema="dm.communication-migration-intent/v1",
+        plan=before,
+        source_identity=_identity(store.ledger.path),
+        anchor_sha256=hashlib.sha256(store.anchor_path.read_bytes()).hexdigest(),
+    )
+    _write(backup / "intent.json", intent)
     source = backup / "source.sqlite"
     rehearsal = backup / "rehearsal.sqlite"
-    _copy_database(store.ledger.path, source)
+    if source.exists() or source.is_symlink():
+        _file(source)
+        try:
+            original = state_digest(source) == before["state_sha256"]
+        except (sqlite3.Error, MigrationError):
+            original = False
+        if not original:
+            # Only a derived partial snapshot, before any prepared live effect.
+            # The actual source must still equal the immutable approved plan.
+            source.unlink()
+    if not source.exists():
+        _copy_database(store.ledger.path, source)
+    _sync(source)
+    _sync(backup)
+    # Rehearsal is disposable derived state. No authority/store restoration is
+    # performed; prepared/live continuation never takes this branch.
+    for path in [
+        rehearsal,
+        *[
+            rehearsal.with_name(rehearsal.name + suffix)
+            for suffix in (
+                "-wal",
+                "-shm",
+                "-journal",
+                ".communication-anchor.json",
+                ".communication-anchor.json.pending",
+            )
+        ],
+    ]:
+        if path.exists() or path.is_symlink():
+            _file(path)
+            path.unlink()
     _copy_database(source, rehearsal)
     anchor = backup / "source.anchor"
-    _copy_anchor(store.anchor_path, anchor)
+    if anchor.exists() or anchor.is_symlink():
+        _file(anchor)
+        if anchor.read_bytes() != store.anchor_path.read_bytes():
+            anchor.unlink()
+    if not anchor.exists():
+        _copy_anchor(store.anchor_path, anchor)
+    _sync(anchor)
+    _sync(backup)
     rehearsal_anchor = rehearsal.with_name(
         rehearsal.name + ".communication-anchor.json"
     )
@@ -210,32 +458,10 @@ def apply(
         "allowed_states": states,
         "source_file_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "anchor_sha256": hashlib.sha256(anchor.read_bytes()).hexdigest(),
+        "intent_sha256": hashlib.sha256(canonical_bytes(intent)).hexdigest(),
     }
     _write(backup / "prepared.json", journal)
-    if plan(store.ledger.path) != before:
-        raise MigrationError("migration_plan_changed")
-    if store.anchor_path.read_bytes() != anchor.read_bytes():
-        raise MigrationError("migration_anchor_changed")
-    select_persisted_schema(store, store.ledger)
-    if not store.receipts_v2:
-        store.upgrade_receipts_v2()
-    store.upgrade_legs_v3()
-    after = plan(store.ledger.path)
-    if (
-        after["source_version"] != before["target_version"]
-        or after["state_sha256"] != states[target_version]
-    ):
-        raise MigrationError("migration_result_mismatch")
-    result = {
-        "schema": SCHEMA,
-        "status": "migrated",
-        "source_version": before["source_version"],
-        "target_version": before["target_version"],
-        "state_sha256": after["state_sha256"],
-        "source_plan_sha256": expected_plan,
-    }
-    _write(backup / "completed.json", result)
-    return result
+    return _continue(store, backup, intent, deadline_ns=deadline_ns)
 
 
 def recover(path: Path, backup: Path, expected_state: str) -> dict[str, Any]:
@@ -318,12 +544,20 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if args.expected_plan_sha256 is None:
                     raise MigrationError("migration_plan_approval_required")
-                preview = plan(path)
-                if preview["plan_sha256"] != args.expected_plan_sha256:
-                    raise MigrationError("migration_plan_changed")
-                if not preview["steps"]:
-                    result = preview
+                observed: dict[str, Any] | None = None
+                if (args.backup_dir / "intent.json").exists():
+                    intent = _intent(path, args.backup_dir, args.expected_plan_sha256)
+                    if (args.backup_dir / "prepared.json").exists():
+                        observed = _completed(
+                            args.backup_dir, _prepared(args.backup_dir, intent)
+                        )
                 else:
+                    preview = plan(path)
+                    if preview["plan_sha256"] != args.expected_plan_sha256:
+                        raise MigrationError("migration_plan_changed")
+                    if not preview["steps"]:
+                        observed = preview
+                if observed is None:
                     if args.password_fd is None:
                         raise MigrationError("migration_password_required")
                     runtime = load_runtime(
@@ -340,6 +574,8 @@ def main(argv: list[str] | None = None) -> int:
                     if store is None:
                         raise MigrationError("migration_communication_missing")
                     result = apply(store, args.backup_dir, args.expected_plan_sha256)
+                else:
+                    result = observed
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as error:

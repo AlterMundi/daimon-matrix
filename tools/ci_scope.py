@@ -7,6 +7,16 @@ import os
 import subprocess
 from pathlib import Path
 
+INSTALLER_FILES = frozenset(
+    {
+        "tools/install_agent_chat.py",
+        "tests/test_agent_chat.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
 PEER_FILES = frozenset(
     {
         "tools/chat_link.py",
@@ -47,10 +57,17 @@ MIRROR_FILES = frozenset(
 VISIBILITY_FILES = MESSAGING_FILES | frozenset(
     {
         "docs/mandatory-telegram-visibility.md",
+        "docs/existing-agent-chat.md",
+        "docs/multi-agent-chat.md",
+        "docs/runbooks/neutral-territory.md",
         "docs/runbooks/tribu-readable-traffic.md",
+        "docs/runbooks/group-admission.md",
+        "docs/verification/dm025-invariants.json",
+        "schemas/hosted/v1/local-api.schema.json",
         "schemas/messaging/v2/echo-proof.schema.json",
         "schemas/messaging/v2/visibility-policy.schema.json",
         "src/daimon_matrix/agent_chat_assets/SKILL.md",
+        "src/daimon_matrix/agent_chat.py",
         "src/daimon_matrix/daemon.py",
         "src/daimon_matrix/labels.py",
         "src/daimon_matrix/mandatory_echo.py",
@@ -60,15 +77,20 @@ VISIBILITY_FILES = MESSAGING_FILES | frozenset(
         "src/daimon_matrix/native_egress.py",
         "src/daimon_matrix/routes.py",
         "src/daimon_matrix/neutral_skill_assets/daimon-chat/SKILL.md",
+        "src/daimon_matrix/neutral_skill_assets/daimon-chat/agents/openai.yaml",
         "src/daimon_matrix/operator_messaging.py",
         "src/daimon_matrix/runtime.py",
         "src/daimon_matrix/telegram_mirror.py",
         "tests/test_agent_chat.py",
+        "tests/test_neutral_binding.py",
         "tests/test_dm053_routes.py",
         "tests/test_labels.py",
         "tests/test_mandatory_echo.py",
+        "tests/test_mandatory_echo_integration.py",
         "tests/test_messaging_runtime.py",
         "tests/test_operator_messaging.py",
+        "tests/test_dm025_cli_mcp.py",
+        "tests/test_closed_visibility_provisioning.py",
         "tests/test_telegram_mirror.py",
         "tools/install_agent_chat.py",
     }
@@ -147,9 +169,26 @@ AUTHORITY_ADOPTION_FILES = frozenset(
 )
 
 
+COMMUNICATION_MIGRATION_FILES = frozenset(
+    {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+        "docs/runbooks/group-admission.md",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
+
 TRIBE_GROUP_FILES = (
     VISIBILITY_FILES
     | AUTHORITY_ADOPTION_FILES
+    | COMMUNICATION_MIGRATION_FILES
     | frozenset(
         {
             "specs/tribe-conversation.md",
@@ -244,8 +283,72 @@ BOUNDED_GROUP_FILES = frozenset(
 )
 
 
+RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
+    {
+        "docs/runbooks/operator-bootstrap.md",
+        "docs/runbooks/operator-capability-upgrade.md",
+        "src/daimon_matrix/client.py",
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+        "tests/test_dm024_runtime.py",
+        "tests/test_dm025_client.py",
+    }
+)
+
+
+LEDGER_GROUP_FILES = RECEIVING_CONTROL_FILES | frozenset(
+    {
+        ".githooks/pre-push",
+        "src/daimon_matrix/ledger.py",
+        "tests/test_dm022_ledger.py",
+        "tests/test_dm031_curator.py",
+        "tests/test_dm032_curator_worker.py",
+        "tests/test_dm054_scopes.py",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed <= LEDGER_GROUP_FILES
+        and {
+            "src/daimon_matrix/ledger.py",
+            "src/daimon_matrix/communication.py",
+            "src/daimon_matrix/messaging.py",
+            "tests/test_group_messaging_runtime.py",
+        }
+        <= changed
+    ):
+        return (
+            "ledger-group-integration"
+            if changed
+            & {
+                "src/daimon_matrix/operator_messaging.py",
+                "src/daimon_matrix/operator_communication_migration.py",
+                "schemas/hosted/v1/local-api.schema.json",
+            }
+            else "ledger-group-storage"
+        )
+    if "tools/install_agent_chat.py" in changed and changed <= INSTALLER_FILES:
+        return "agent-chat-installer"
+    migration = changed & {
+        "src/daimon_matrix/operator_communication_migration.py",
+        "tests/test_operator_communication_migration.py",
+    }
+    if migration and changed <= COMMUNICATION_MIGRATION_FILES:
+        return "communication-migration"
+    if changed <= RECEIVING_CONTROL_FILES and changed & {
+        "src/daimon_matrix/operator_capabilities.py",
+        "src/daimon_matrix/operator_runtime_upgrade.py",
+        "tests/test_dm079_capability_profiles.py",
+        "tests/test_operator_runtime_upgrade.py",
+        "tests/test_receiving_runtime.py",
+    }:
+        return "receiving-control"
     if (
         changed <= BOUNDED_GROUP_FILES
         and {
@@ -271,6 +374,18 @@ def profile(paths: list[str]) -> str:
         }
         and changed <= TRIBE_GROUP_FILES
     ):
+        if changed & {
+            "src/daimon_matrix/operator_communication_migration.py",
+            "tests/test_operator_communication_migration.py",
+            "src/daimon_matrix/operator_messaging.py",
+            "src/daimon_matrix/messaging_config.py",
+            "tests/test_operator_messaging.py",
+            "tests/test_closed_visibility_provisioning.py",
+            "tests/test_dm025_cli_mcp.py",
+            "schemas/hosted/v1/local-api.schema.json",
+            "docs/verification/dm025-invariants.json",
+        }:
+            return "group-admission"
         return "tribe-group"
     if (
         changed <= AUTHORITY_ADOPTION_FILES
@@ -315,6 +430,7 @@ def profile(paths: list[str]) -> str:
         <= changed
         or changed
         & {
+            "src/daimon_matrix/agent_chat.py",
             "src/daimon_matrix/operator_messaging.py",
             "src/daimon_matrix/native_egress.py",
             "src/daimon_matrix/routes.py",
@@ -375,14 +491,34 @@ def main() -> None:
             "visibility"
             if selected == "mirror"
             else "tribe-group"
-            if selected == "bounded-group-transport"
+            if selected
+            in {
+                "bounded-group-transport",
+                "ledger-group-storage",
+                "ledger-group-integration",
+                "receiving-control",
+                "group-admission",
+                "communication-migration",
+            }
             else selected
         )
         + "\nnative_checks="
         + ("false" if selected == "mirror" else "true")
     )
-    if selected == "bounded-group-transport":
+    if selected in {"bounded-group-transport", "communication-migration"}:
         value += "\ngroup_receipt_checks=false"
+    if selected == "communication-migration":
+        value += "\ngroup_migration_only=true"
+    if selected in {
+        "receiving-control",
+        "ledger-group-storage",
+        "ledger-group-integration",
+    }:
+        value += "\ngroup_receiving_checks=true"
+    if selected in {"ledger-group-storage", "ledger-group-integration"}:
+        value += "\ngroup_ledger_checks=true"
+    if selected in {"group-admission", "ledger-group-integration"}:
+        value += "\ngroup_admission_checks=true"
     print(value.splitlines()[0])
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:

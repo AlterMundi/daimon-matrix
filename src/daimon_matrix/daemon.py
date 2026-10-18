@@ -16,7 +16,7 @@ import struct
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -514,7 +514,7 @@ def _run_egress_worker(
     try:
         while not stop.is_set():
             try:
-                result = controller.run_worker_batch(limit=32)
+                result = controller.run_worker_batch(limit=32, include_status=False)
                 controller.worker_succeeded()
                 delay = 0.01 if result["processed"] == 32 else EGRESS_SCAN_SECONDS
             except (NativeEgressError, OSError, ValueError):
@@ -549,6 +549,9 @@ def serve_forever(
     egress_thread: threading.Thread | None = None
     try:
         runtime.egress.validate_registry(_enabled_egress_paths(runtime))
+        if runtime.service.receiving is not None:
+            for group in runtime.service.receiving.channels.values():
+                group.initialize_reader_recovery(runtime.service)
         runtime.egress.worker_started()
         egress_thread = threading.Thread(
             target=_run_egress_worker,
@@ -744,7 +747,11 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    qualified_startup: Mapping[str, Any] | None = None,
+) -> int:
     args = _parser().parse_args(argv)
     if args.adopt_owner_visibility and (
         args.closed_visibility or args.provision_visibility or args.ready_fd is not None
@@ -782,6 +789,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _password_reader(args.password_fd),
                 clock=clock,
                 egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+                qualified_startup=qualified_startup,
             )
         else:
             runtime = load_runtime(
@@ -789,6 +797,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.bundle,
                 _password_reader(args.password_fd),
                 clock=clock,
+                qualified_startup=qualified_startup,
                 egress_factory=_visibility_factory(
                     args.visibility_installation,
                     clock=clock,

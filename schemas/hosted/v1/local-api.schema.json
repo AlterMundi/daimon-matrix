@@ -10,6 +10,143 @@
   ],
   "$defs": {
     "capabilityV2": {"type": "object", "additionalProperties": false, "required": ["schema", "capability_id", "client_id", "key_id", "methods", "status", "validity"], "properties": {"schema": {"const": "dm.local.capability/v2"}, "capability_id": {"type": "string", "pattern": "^dm:local-capability:v2:[A-Za-z0-9_-]{43}$"}, "client_id": {"type": "string", "pattern": "^[A-Za-z0-9._@:-]{1,128}$"}, "key_id": {"type": "string", "pattern": "^dm:local-key:v1:[A-Za-z0-9_-]{43}$"}, "methods": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"enum": ["messaging.send", "messaging.inbox", "messaging.reply", "messaging.delivery"]}}, "status": {"enum": ["active", "revoked"]}, "validity": {"type": "object", "additionalProperties": false, "required": ["mode", "not_before_ms"], "properties": {"mode": {"const": "until-revoked"}, "not_before_ms": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}}}},
+    "readerSelectionParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process_instance_id",
+        "channel_id",
+        "expected_head",
+        "operation_id",
+        "release_digest",
+        "phase",
+        "readers"
+      ],
+      "properties": {
+        "process_instance_id": {
+          "type": "string"
+        },
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_head": {
+          "$ref": "#/$defs/hash"
+        },
+        "operation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "release_digest": {
+          "$ref": "#/$defs/hash"
+        },
+        "phase": {
+          "enum": [
+            "revoke",
+            "select"
+          ]
+        },
+        "readers": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "being_ref",
+              "embodiment_id",
+              "credential_id",
+              "incarnation_id",
+              "authority_manifest_hash",
+              "receiving_selection_sha256",
+              "loaded_view_sha256",
+              "expires_at_ms",
+              "wire_read",
+              "authority_epochs"
+            ],
+            "properties": {
+              "being_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "embodiment_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "credential_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "incarnation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "authority_manifest_hash": {
+                "$ref": "#/$defs/hash"
+              },
+              "receiving_selection_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "loaded_view_sha256": {
+                "$ref": "#/$defs/hash"
+              },
+              "expires_at_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "wire_read": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "dm.tribe.conversation/v1",
+                    "dm.tribe.direct-conversation/v1"
+                  ]
+                }
+              },
+              "authority_epochs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            }
+          }
+        },
+        "expected_roster_sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "revoke"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "readers": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
     "uint": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "auth": {
@@ -63,6 +200,7 @@
         {"properties": {"method": {"const": "communication.route-ack"}, "params": {"$ref": "#/$defs/communicationRouteAckParams"}}},
         {"properties": {"method": {"const": "route.inspect"}, "params": {"$ref": "#/$defs/routeInspectParams"}}},
         {"properties": {"method": {"const": "route.submit"}, "params": {"$ref": "#/$defs/routeSubmitParams"}}},
+        {"properties": {"method": {"const": "runtime.reader-selection"}, "params": {"$ref": "#/$defs/readerSelectionParams"}}},
         {"properties": {"method": {"const": "scope.me"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "scope.resolve"}, "params": {"$ref": "#/$defs/scopeResolveParams"}}},
         {"properties": {"method": {"const": "scope.tribe"}, "params": {"$ref": "#/$defs/scopeTribeParams"}}},

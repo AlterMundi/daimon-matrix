@@ -8,7 +8,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -65,13 +65,28 @@ class TribeRecordStore:
             )
 
     @contextmanager
-    def _database(self) -> Iterator[sqlite3.Connection]:
-        _prepare_path(self.path)
-        with closing(sqlite3.connect(self.path, isolation_level=None)) as database:
-            database.row_factory = sqlite3.Row
-            database.execute("PRAGMA journal_mode=DELETE")
-            database.execute("PRAGMA synchronous=FULL")
-            yield database
+    def _database(
+        self, *, timeout: float = 5.0, deadline_ns: int | None = None
+    ) -> Iterator[sqlite3.Connection]:
+        guard = (
+            nullcontext()
+            if self.egress is None
+            else self.egress.local_storage(deadline_ns=deadline_ns)
+        )
+        with guard as inherited:
+            _prepare_path(self.path)
+            # A bounded attempt must not add SQLite's per-statement busy wait.
+            with closing(
+                sqlite3.connect(
+                    self.path,
+                    isolation_level=None,
+                    timeout=timeout if inherited is None and deadline_ns is None else 0,
+                )
+            ) as database:
+                database.row_factory = sqlite3.Row
+                database.execute("PRAGMA journal_mode=DELETE")
+                database.execute("PRAGMA synchronous=FULL")
+                yield database
 
     def _checked(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         raw = bytes(row["document"])
@@ -100,6 +115,8 @@ class TribeRecordStore:
         record_id: str,
         request: Any,
         factory: Callable[[], dict[str, Any]],
+        *,
+        deadline_ns: int | None = None,
     ) -> dict[str, Any]:
         if kind not in {
             "send",
@@ -121,7 +138,7 @@ class TribeRecordStore:
         if str(uuid.UUID(record_id)) != record_id:
             raise ValueError("tribe_record_id_invalid")
         request_hash = hashlib.sha256(canonical_bytes(request)).hexdigest()
-        with self._database() as database:
+        with self._database(deadline_ns=deadline_ns) as database:
             database.execute("BEGIN IMMEDIATE")
             try:
                 result = self._reserve_in_transaction(
@@ -187,6 +204,111 @@ class TribeRecordStore:
         # carrier's random ciphertext, so retries do not create another inbox row.
         document = {"message": message, "resolution": resolution}
         return self.reserve("inbox", message["event_id"], document, lambda: document)
+
+    def _reader_head(
+        self,
+        database: sqlite3.Connection,
+        channel_id: str,
+        *,
+        deadline_ns: int | None = None,
+    ) -> dict[str, Any] | None:
+        # SQL sequence is not signed. Authenticate the revision/predecessor
+        # chain, including tombstones; never search for an older matching select.
+        documents = []
+        for row in database.execute(
+            "SELECT * FROM tribe_records WHERE kind='reader-control'"
+        ):
+            self._reader_budget(deadline_ns)
+            document = self._checked(row)
+            if (
+                set(document)
+                != {
+                    "schema",
+                    "channel_id",
+                    "revision",
+                    "predecessor_sha256",
+                    "action",
+                    "binding_sha256",
+                    "boot",
+                    "command",
+                    "request_sha256",
+                    "roster_sha256",
+                }
+                or document["schema"] != "dm.receiving.reader-control-record/v1"
+                or document["action"] not in {"control", "rebound", "invalidate"}
+            ):
+                raise ValueError("reader_journal_record_invalid")
+            if document.get("channel_id") == channel_id:
+                documents.append(document)
+        documents.sort(key=lambda item: item["revision"])
+        previous = None
+        for revision, document in enumerate(documents, 1):
+            if (
+                type(document["revision"]) is not int
+                or document["revision"] != revision
+                or document["predecessor_sha256"]
+                != (
+                    None
+                    if previous is None
+                    else hashlib.sha256(canonical_bytes(previous)).hexdigest()
+                )
+            ):
+                raise ValueError("reader_journal_chain_invalid")
+            previous = document
+        return previous
+
+    @staticmethod
+    def _reader_budget(deadline_ns: int | None) -> None:
+        if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+            raise ValueError("reader_journal_deadline_expired")
+
+    def reader_control_head(
+        self, channel_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any] | None:
+        self._reader_budget(deadline_ns)
+        with self._database(timeout=0, deadline_ns=deadline_ns) as database:
+            return self._reader_head(database, channel_id, deadline_ns=deadline_ns)
+
+    def append_reader_control(
+        self,
+        channel_id: str,
+        previous: dict[str, Any] | None,
+        document: dict[str, Any],
+        *,
+        deadline_ns: int | None = None,
+    ) -> dict[str, Any]:
+        """Durable authenticated local intent; no inbox or visibility operation."""
+        self._reader_budget(deadline_ns)
+        with self._database(timeout=0, deadline_ns=deadline_ns) as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                if (
+                    self._reader_head(database, channel_id, deadline_ns=deadline_ns)
+                    != previous
+                ):
+                    raise ValueError("reader_journal_head_conflict")
+                value = {
+                    **document,
+                    "schema": "dm.receiving.reader-control-record/v1",
+                    "channel_id": channel_id,
+                    "revision": 1 if previous is None else previous["revision"] + 1,
+                    "predecessor_sha256": None
+                    if previous is None
+                    else hashlib.sha256(canonical_bytes(previous)).hexdigest(),
+                }
+                fingerprint = hashlib.sha256(canonical_bytes(value)).hexdigest()
+                record_id = str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, "dm.reader-control:" + fingerprint)
+                )
+                result = self._reserve_in_transaction(
+                    database, "reader-control", record_id, fingerprint, lambda: value
+                )
+                self._reader_budget(deadline_ns)
+                database.commit()
+                return result
+            except BaseException:
+                database.rollback()
+                raise
 
     def _pending_capacity(self, database: sqlite3.Connection) -> dict[str, int]:
         """Credit requires a verified signed completion bound to its source hash.
@@ -457,8 +579,10 @@ class TribeRecordStore:
                     database.rollback()
                 raise
 
-    def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
-        with self._database() as database:
+    def get(
+        self, kind: str, record_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._database(deadline_ns=deadline_ns) as database:
             row = database.execute(
                 "SELECT * FROM tribe_records WHERE kind=? AND record_id=?",
                 (kind, record_id),
@@ -513,8 +637,10 @@ class TribeRecordStore:
             "has_more": len(headers) > len(selected),
         }
 
-    def transport_result(self, request_id: str) -> dict[str, Any] | None:
-        with self._database() as database:
+    def transport_result(
+        self, request_id: str, *, deadline_ns: int | None = None
+    ) -> dict[str, Any] | None:
+        with self._database(deadline_ns=deadline_ns) as database:
             row = database.execute(
                 "SELECT * FROM tribe_records WHERE kind='transport-result' "
                 "AND json_extract(CAST(document AS TEXT),'$.request_id')=? "

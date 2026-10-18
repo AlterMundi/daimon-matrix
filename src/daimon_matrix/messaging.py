@@ -9,14 +9,19 @@ only canonical DM-051 envelope bytes enter the receive methods.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .service import LoadedStoreBinding
 
 from .authority_epochs import RootHistoryAuthority
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
@@ -31,6 +36,7 @@ from .communication import (
 )
 from .labels import LabelError, LabelIndex
 from .ledger import Ledger
+from .mandatory_echo import read_diagnostic, write_diagnostic
 from .messaging_store import (
     MessagingInboxError,
     MessagingInboxStore,
@@ -38,7 +44,11 @@ from .messaging_store import (
     TribeControlCapacityError,
 )
 from .native_egress import MandatoryEgressController, OperationBinding
-from .relationship_store import RelationshipStore, RelationshipView
+from .relationship_store import (
+    RelationshipStore,
+    RelationshipStoreError,
+    RelationshipView,
+)
 from .routes import (
     ROUTE_SUBMISSION_SCHEMA,
     AuthenticatedProvider,
@@ -63,7 +73,11 @@ from .sealed import (
     seal_event,
     sender_descriptor,
 )
-from .tribe_conversation import TribeConversation, ValidatedTribeIntake
+from .tribe_conversation import (
+    TribeConversation,
+    ValidatedTribeIntake,
+    direct_destination,
+)
 from .weave import EventSigner, RootAuthority, verify_event
 
 EVIDENCE_SCHEMA = "dm.communication.evidence-package/v1"
@@ -1691,12 +1705,30 @@ class GroupMessaging:
         config_digest: str,
         egress: MandatoryEgressController,
         labels: LabelIndex | None = None,
+        direct_reader_ready: Callable[[Mapping[str, Any]], bool] | None = None,
+        controlled_readers: bool = False,
+        loaded_store_bindings: tuple[LoadedStoreBinding, ...] = (),
     ) -> None:
+        if type(controlled_readers) is not bool or (
+            controlled_readers and direct_reader_ready is not None
+        ):
+            raise ValueError("tribe_reader_composition_invalid")
+        self._controlled_readers = controlled_readers
+        self._loaded_store_bindings = tuple(loaded_store_bindings)
         self.lane, self.policy = lane, policy
         self.ledger, self.signer = lane.ledger, lane.signer
         self.inbox = self.records = lane.records
         self.communication, self.providers = communication, dict(providers)
         self.config_digest, self.egress, self.labels = config_digest, egress, labels
+        egress.register_reader_channel(
+            "tribe", config_digest, controlled=controlled_readers
+        )
+        self._default_reader_guard = lambda row: egress.reader_ready("tribe", row)
+        self.direct_reader_ready = (
+            self._default_reader_guard
+            if direct_reader_ready is None
+            else direct_reader_ready
+        )
         self.intake_ingresses: dict[str, Any] = {}
         self._receipt_lock = threading.Lock()
         self._receipt_inflight: set[str] = set()
@@ -1711,7 +1743,14 @@ class GroupMessaging:
             authorize=self._authorize,
         )
 
+    @property
+    def controlled_readers(self) -> bool:
+        """Verified owner startup selects this mode; requests cannot change it."""
+        return self._controlled_readers
+
     def validate(self, service: Any) -> None:
+        for binding in self._loaded_store_bindings:
+            binding.verify()
         if self.ledger is not service.ledger or self.signer is not service.signer:
             raise ValueError("tribe_runtime_binding")
         self.lane._operational(
@@ -1721,8 +1760,114 @@ class GroupMessaging:
             self.lane.clock(),
         )
 
+    def initialize_reader_recovery(self, service: Any) -> None:
+        """Attach durable owner controls only at a fully qualified serving boot."""
+        if not self.controlled_readers:
+            return
+        base = json.loads(service.loaded_runtime or b"null")
+        app = json.loads(service.loaded_application or b"null")
+        base_fields = {
+            "schema",
+            "runtime_id",
+            "local_origin",
+            "runtime_bundle_sha256",
+            "startup",
+            "qualified_startup",
+            "authority_epoch",
+            "state_root_identity",
+            "stores",
+            "process_id",
+            "process_instance_id",
+        }
+        app_fields = {
+            "schema",
+            "loaded_base_sha256",
+            "loaded_view_sha256",
+            "reader_gates",
+            "application_sha256",
+            "config_sha256",
+            "publication",
+            "publication_sha256",
+            "stores",
+            "shared_stores",
+            "shared_relationships",
+            "communication_store_role",
+            "tribe",
+            "visibility",
+            "authorities",
+        }
+        startup_fields = {
+            "schema",
+            "code_digest",
+            "sdk_digest",
+            "matrix_commit",
+            "matrix_wheel_sha256",
+            "import_context_sha256",
+            "import_files_sha256",
+            "interpreter",
+            "reader",
+            "isolated",
+            "no_site",
+            "no_bytecode",
+            "process_id",
+            "startup_instance_id",
+        }
+        if (
+            not isinstance(base, dict)
+            or set(base) != base_fields
+            or not isinstance(app, dict)
+            or set(app) != app_fields
+            or base["schema"] != "dm.runtime.loaded-base/v1"
+            or app["schema"] != "dm.runtime.loaded-application/v1"
+            or not isinstance(base["qualified_startup"], dict)
+            or set(base["qualified_startup"]) != startup_fields
+        ):
+            # Bare fixtures and historical loaders cannot advertise this feature.
+            return
+        self.validate(service)
+        stable_base = {
+            key: value
+            for key, value in base.items()
+            if key not in {"process_id", "process_instance_id"}
+        }
+        stable_base["qualified_startup"] = {
+            key: value
+            for key, value in base["qualified_startup"].items()
+            if key not in {"process_id", "startup_instance_id"}
+        }
+        capability = service.capabilities[service.receiving.capability_id]
+        binding = {
+            "base": stable_base,
+            "application": {
+                key: value
+                for key, value in app.items()
+                if key
+                not in {"loaded_base_sha256", "loaded_view_sha256", "reader_gates"}
+            },
+            "controller": capability.descriptor,
+            "credential_id": self.lane.local_credential_id,
+        }
+        self.egress.initialize_reader_recovery(
+            "tribe",
+            binding=binding,
+            boot={"base": base, "application": app},
+            load=self.records.reader_control_head,
+            append=self.records.append_reader_control,
+            authorization=self.selection_authorization,
+        )
+
+    def _verify_loaded_stores(self) -> None:
+        """A changed physical store is uncertain storage, not a peer refusal."""
+        try:
+            for binding in self._loaded_store_bindings:
+                binding.verify()
+        except (ValueError, OSError) as failure:
+            raise RouteAmbiguous("tribe_loaded_store_uncertain") from failure
+
     def _authorize(self, binding: OperationBinding) -> bool:
         try:
+            for store in self._loaded_store_bindings:
+                store.verify()
             self.lane._operational(
                 self.lane.being_ref,
                 self.lane.local_credential_id,
@@ -1806,6 +1951,7 @@ class GroupMessaging:
                     member["receiving_copy"] = "proved"
                     member["receiving_leg_ids"].append(leg["leg_id"])
             state, proof_hash = "pending", None
+            failure = None
             route = "available" if target in self.providers else "unavailable"
             attempt = "not-attempted"
             if author:
@@ -1825,6 +1971,14 @@ class GroupMessaging:
                     proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
                 elif self.records.get("transport", request_id) is not None:
                     attempt = "unconfirmed"
+                    # Diagnostics never establish or invalidate receiving proof.
+                    with (
+                        suppress(OSError, sqlite3.Error, ValueError),
+                        self.egress.local_storage(),
+                    ):
+                        failure = read_diagnostic(
+                            self.records.path, "route", request_id
+                        )
                 elif route == "unavailable":
                     state = "unroutable"
             transport.append(
@@ -1835,12 +1989,19 @@ class GroupMessaging:
                     "response_sha256": proof_hash,
                     "attempt_state": attempt,
                     "current_route": route,
+                    **({"last_failure": failure} if failure is not None else {}),
                 }
             )
-        return {
+        result = {
             "schema": "dm.tribe.delivery/v1",
             "send_id": send_id,
             "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "author": {
+                "being_ref": message["being_ref"],
+                "embodiment_id": message["origin"]["embodiment_id"],
+            },
+            "response_context": message["payload"]["body"].get("response_context"),
             "thread_id": message["payload"]["intent"]["thread_id"],
             "tribe_ref": self.policy.tribe_ref,
             "audience": message["payload"]["body"]["audience"],
@@ -1851,7 +2012,200 @@ class GroupMessaging:
                 "expires_at_ms": plan["expires_at_ms"],
                 "expired": self.lane.clock() >= plan["expires_at_ms"],
             },
+            # Inspect the existing obligation without preparing visibility or
+            # releasing native bytes. An authored event alone is not echo proof.
+            "visibility": (
+                self.egress.inspect_retained(
+                    self.egress.binding("tribe-carriers", send_id)
+                )
+                if self.records.get("native", send_id) is not None
+                else None
+            ),
         }
+        destination = message["payload"]["body"].get("destination")
+        if destination is not None:
+            result.update(
+                schema="dm.tribe.direct-delivery/v1",
+                destination=destination,
+                author_retention={
+                    "being_ref": message["being_ref"],
+                    "embodiment_id": message["origin"]["embodiment_id"],
+                    "message_id": message["event_id"],
+                    "state": "authored-local",
+                },
+            )
+        if destination is not None or self.controlled_readers:
+            requirements = self._reader_requirements(plan, message["manifest_hash"])
+            for row, outcome in zip(
+                message["payload"]["body"]["audience"], transport, strict=True
+            ):
+                outcome["reader_readiness"] = self._direct_ready(
+                    row,
+                    requirements=requirements,
+                )
+        return result
+
+    def _reader_requirements(
+        self,
+        plan: Mapping[str, Any] | None,
+        sender_manifest_hash: str,
+        *,
+        events: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, tuple[str, ...]]:
+        # Send lookup uses the retained plan before the physical-write fence.
+        # The controller also reuses this proof verification while holding its
+        # local roster authorization view and selection fence (no network I/O).
+        if plan is None:
+            raise ValueError("tribe_readiness_evidence_missing")
+        epochs = {sender_manifest_hash, *plan["epochs"].values()}
+        events = self.lane.relationships.events() if events is None else events
+        for proof in [plan["sender_proof"], *plan["proofs"].values()]:
+            matching = [
+                event
+                for event in events
+                if (event["event_id"], event["content_hash"])
+                == (proof["membership_event_id"], proof["membership_event_hash"])
+            ]
+            if len(matching) != 1:
+                raise ValueError("tribe_readiness_evidence_missing")
+            try:
+                event = self.lane.relationships._validated_event(matching[0])
+            except RelationshipStoreError:
+                raise ValueError("tribe_readiness_evidence_invalid") from None
+            epochs.add(event["manifest_hash"])
+        return (
+            "dm.tribe.direct-conversation/v1"
+            if "destination" in plan
+            else "dm.tribe.conversation/v1",
+            tuple(sorted(epochs)),
+        )
+
+    def _receiving_roster(self, view: RelationshipView, now: int) -> dict[str, Any]:
+        """Derive only public audience/proof facts from the held verified view."""
+        from .tribe_conversation import MembershipAuthorizer
+
+        snapshot = view.snapshot(self.policy.tribe_ref)
+        members = snapshot.value["members"]
+        rows = list(self.lane.audience(snapshot))
+        if not 1 <= len(rows) <= 256:
+            raise ValueError("tribe_readiness_roster_invalid")
+        own = [
+            row
+            for row in members
+            if row["principal_id"] == self.lane.being_ref and row["state"] == "active"
+        ]
+        if len(own) != 1:
+            raise ValueError("tribe_readiness_roster_invalid")
+        authorizer = MembershipAuthorizer(view.all_events)
+        proofs = authorizer.proofs(members=members, tribe_ref=self.policy.tribe_ref)
+        sender = authorizer.proof(
+            membership_ref=own[0]["membership_ref"],
+            tribe_ref=self.policy.tribe_ref,
+            principal_id=self.lane.being_ref,
+        )
+        epochs = {
+            row["being_ref"]: self.lane._active(row["being_ref"]).manifest.digest
+            for row in rows
+        }
+        plan = dict(epochs=epochs, proofs=proofs, sender_proof=sender)
+        _, required = self._reader_requirements(
+            plan, self.lane.authority.manifest.digest, events=view.all_events
+        )
+        if len(required) > 256 or len(proofs) > 256:
+            raise ValueError("tribe_readiness_roster_invalid")
+        proof_rows = []
+        for proof in proofs.values():
+            event = next(
+                event
+                for event in view.all_events
+                if (event["event_id"], event["content_hash"])
+                == (proof["membership_event_id"], proof["membership_event_hash"])
+            )
+            proof_rows.append(
+                {
+                    **proof,
+                    "signer_being_ref": event["being_ref"],
+                    "signer_manifest_hash": event["manifest_hash"],
+                }
+            )
+        body = dict(
+            schema="dm.runtime.tribe-roster/v1",
+            tribe_ref=self.policy.tribe_ref,
+            lineage_head_ref=snapshot.value["lineage_head_ref"],
+            audience=sorted(
+                [
+                    {**row, "authority_manifest_hash": epochs[row["being_ref"]]}
+                    for row in rows
+                ],
+                key=lambda row: (row["being_ref"], row["embodiment_id"]),
+            ),
+            membership_proofs=sorted(proof_rows, key=lambda row: row["membership_ref"]),
+            required_authority_epochs=list(required),
+        )
+        return {
+            **body,
+            "roster_sha256": hashlib.sha256(canonical_bytes(body)).hexdigest(),
+            "evaluated_at_ms": now,
+        }
+
+    def receiving_roster(self) -> dict[str, Any]:
+        """Current verified roster, separate from immutable boot/gate evidence."""
+        self._verify_loaded_stores()
+        now = self.lane.clock()
+        with self.lane.relationships.authorization_view(
+            at_ms=now, card_verifier=self.lane.card_verifier, busy_timeout_ms=0
+        ) as view:
+            roster = self._receiving_roster(view, now)
+            self._verify_loaded_stores()
+            return roster
+
+    @contextmanager
+    def selection_authorization(self, expected_roster_sha256: str) -> Iterator[None]:
+        """Called under physical fence; hold the local roster through selection.
+
+        Lock order is physical fence -> relationship transaction, matching
+        release authorization. Do no network calls or owner RPC in this scope.
+        Contended history fails immediately rather than extending the budget.
+        """
+        self._verify_loaded_stores()
+        now = self.lane.clock()
+        with self.lane.relationships.authorization_view(
+            at_ms=now, card_verifier=self.lane.card_verifier, busy_timeout_ms=0
+        ) as view:
+            if (
+                self._receiving_roster(view, now)["roster_sha256"]
+                != expected_roster_sha256
+            ):
+                raise ValueError("reader_roster_conflict")
+            self._verify_loaded_stores()
+            yield
+
+    def _direct_ready(
+        self,
+        row: Mapping[str, Any],
+        *,
+        requirements: tuple[str, tuple[str, ...]] | None = None,
+    ) -> bool:
+        # A route or prepared wheel never establishes a loaded compatible reader.
+        # This owner-local guard is supplied by the receiving cohort controller;
+        # refreshable evidence is not part of immutable retry/config bindings.
+        try:
+            if (
+                self.controlled_readers
+                or self.direct_reader_ready is self._default_reader_guard
+            ):
+                return requirements is not None and self.egress.reader_ready(
+                    "tribe",
+                    row,
+                    required_wire=requirements[0],
+                    required_authority_epochs=requirements[1],
+                )
+            return (
+                self.direct_reader_ready is not None
+                and self.direct_reader_ready(row) is True
+            )
+        except (OSError, ValueError):
+            return False
 
     def send(
         self,
@@ -1862,16 +2216,10 @@ class GroupMessaging:
         text: str,
         response_to: tuple[Any, str] | None = None,
         authorize: Callable[[], None] | None = None,
+        destination: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if authorize is not None:
             authorize()
-        parameters = {
-            "client_id": client_id,
-            "thread_id": thread_id,
-            "text": text,
-            "response_to": None if response_to is None else response_to[1],
-        }
-        self.records.reserve("request", send_id, parameters, lambda: parameters)
         response = None
         if response_to is not None:
             if response_to[0] is not self:
@@ -1885,6 +2233,33 @@ class GroupMessaging:
                 "sender_being_ref": parent["being_ref"],
                 "sender_embodiment_id": parent["origin"]["embodiment_id"],
             }
+            parent_destination = parent["payload"]["body"].get("destination")
+            reply_destination = None
+            if parent_destination is not None:
+                reply_destination = {
+                    "kind": parent_destination["kind"],
+                    "being_ref": parent["being_ref"],
+                }
+                if parent_destination["kind"] == "body":
+                    reply_destination["embodiment_id"] = parent["origin"][
+                        "embodiment_id"
+                    ]
+            if (
+                destination is not None
+                and direct_destination(destination) != reply_destination
+            ):
+                raise ValueError("tribe_reply_destination_mismatch")
+            destination = reply_destination
+        if destination is not None:
+            destination = direct_destination(destination)
+        parameters = {
+            "client_id": client_id,
+            "thread_id": thread_id,
+            "text": text,
+            "response_to": None if response_to is None else response_to[1],
+            **({"destination": dict(destination)} if destination is not None else {}),
+        }
+        self.records.reserve("request", send_id, parameters, lambda: parameters)
         if self.records.get("send", send_id) is None:
             snapshot = self.lane.snapshot(self.policy.tribe_ref, self.lane.clock())
             if not any(
@@ -1906,6 +2281,7 @@ class GroupMessaging:
                 "private": "private",
             }[self.policy.classification],
             response_context=response,
+            destination=destination,
         )
         message, resolution = prepared["message"], prepared["resolution"]
         identifiers = {
@@ -1917,29 +2293,36 @@ class GroupMessaging:
             message_event_id=message["event_id"],
             resolution_event_id=resolution["event_id"],
         )
-        own_receipt = self.lane._author_receipt(
-            message,
-            resolution,
-            membership_ref=self.policy.membership_ref,
-            now=self.lane.clock(),
-            authored_local=True,
-        )
-        self.communication.record_receipt(own_receipt["event_id"])
+        if destination is None:
+            own_receipt = self.lane._author_receipt(
+                message,
+                resolution,
+                membership_ref=self.policy.membership_ref,
+                now=self.lane.clock(),
+                authored_local=True,
+            )
+            self.communication.record_receipt(own_receipt["event_id"])
         if self.lane.clock() >= prepared["expires_at_ms"]:
             return self._result(message, send_id)
         native = canonical_bytes(prepared["payload"])
         sender = _sender_display(
             self.labels, message["origin"], message["being_ref"], body_fallback=True
         )
-        recipients = [
-            _sender_display(
-                self.labels,
-                {"embodiment_id": row["embodiment_id"]},
-                row["being_ref"],
-                body_fallback=True,
-            )
-            for row in prepared["rows"]
-        ]
+        # This producer has already authenticated the membership group and
+        # frozen its full body audience. Present its logical destination, not
+        # its physical fanout; mentions in the text do not narrow that audience.
+        # Retained native projections below preserve historical publication.
+        recipients = ["Tribu"]
+        if destination is not None:
+            recipients = [
+                "Direct · "
+                + _sender_display(
+                    self.labels,
+                    destination,
+                    destination["being_ref"],
+                    body_fallback=destination["kind"] == "body",
+                )
+            ]
         projection: dict[str, Any] = {
             "event_id": message["event_id"],
             "event_digest": message["content_hash"],
@@ -1965,6 +2348,21 @@ class GroupMessaging:
                     "text": parent["payload"]["body"]["text"][:160],
                 },
             )
+            parent_audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in parent["payload"]["body"]["audience"]
+            }
+            audience = {
+                (row["being_ref"], row["membership_ref"], row["embodiment_id"])
+                for row in message["payload"]["body"]["audience"]
+            }
+            if destination is not None or not audience <= parent_audience:
+                # Correlation is authorized by the verified parent; copying
+                # parent plaintext requires its separate disclosure provenance.
+                # A later group audience may include newly admitted members or
+                # bodies that were never recipients of that original message.
+                projection["reply_to"].pop("text")
+                projection["reply_to"].pop("sender")
         retained_native = self.records.get("native", send_id)
         if retained_native is not None:
             projection = retained_native["projection"]
@@ -1985,7 +2383,18 @@ class GroupMessaging:
             if leg["state"] == "delivered"
         }
         eligible = []
+        requirements = (
+            self._reader_requirements(
+                self.records.get("send", send_id), message["manifest_hash"]
+            )
+            if destination is not None or self.controlled_readers
+            else None
+        )
         for row in prepared["rows"]:
+            if (
+                destination is not None or self.controlled_readers
+            ) and not self._direct_ready(row, requirements=requirements):
+                continue
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
                 self.lane.local_embodiment_id,
@@ -2038,14 +2447,30 @@ class GroupMessaging:
             try:
                 if authorize is not None:
                     authorize()
-                self._transmit(
-                    native,
-                    row,
-                    operation,
-                    receipt=False,
-                    deadline_ns=deadline_ns,
-                    authorize=authorize,
-                )
+                for attempt in range(3):
+                    outcome = self._transmit(
+                        native,
+                        row,
+                        operation,
+                        receipt=False,
+                        deadline_ns=deadline_ns,
+                        authorize=authorize,
+                    )
+                    if (
+                        outcome not in {"route_connection_failed", "route_timeout"}
+                        or attempt == 2
+                    ):
+                        break
+                    remaining = min(
+                        (deadline_ns - time.monotonic_ns()) / 1_000_000_000,
+                        (operation.deadline_ms - self.lane.clock()) / 1000,
+                    )
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(0.05 * 2**attempt, remaining))
+                    # Recheck authority/readers at each original-byte release.
+                    if authorize is not None:
+                        authorize()
             finally:
                 self._finish_transport(row, operation, receipt=False)
 
@@ -2095,15 +2520,15 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> str | None:
         if receipt:
             if not self._claim_transport(row, operation, receipt=True):
-                return
+                return None
             try:
                 if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
-                    return
+                    return None
                 self.egress.prepare_visibility(operation)
-                self._transmit_one(
+                return self._transmit_one(
                     native,
                     row,
                     operation,
@@ -2114,7 +2539,7 @@ class GroupMessaging:
             finally:
                 self._finish_transport(row, operation, receipt=True)
         else:
-            self._transmit_one(
+            return self._transmit_one(
                 native,
                 row,
                 operation,
@@ -2132,17 +2557,33 @@ class GroupMessaging:
         receipt: bool,
         deadline_ns: int | None,
         authorize: Callable[[], None] | None,
-    ) -> None:
+    ) -> str | None:
         from .routes import RouteError
         from .sealed import inspect_delivery
 
         providers = self.providers.get((row["being_ref"], row["embodiment_id"]))
         if providers is None:
-            return  # The full signed audience remains present and pending.
+            return None  # The full signed audience remains present and pending.
         if self.lane.clock() >= operation.deadline_ms:
-            return
+            return None
         provider = providers["evidence" if receipt else "message"]
         document = _parse(native)
+        directed = (
+            not receipt and document.get("schema") == "dm.tribe.direct-conversation/v1"
+        )
+        controlled_data = directed or (self.controlled_readers and not receipt)
+        requirements = (
+            self._reader_requirements(
+                self.records.get(
+                    "send", operation.operation_id, deadline_ns=deadline_ns
+                ),
+                document["resolution"]["manifest_hash"],
+            )
+            if controlled_data
+            else None
+        )
+        if controlled_data and not self._direct_ready(row, requirements=requirements):
+            return None
         if receipt:
             identifier = document["receipt"]["event_id"]
             delivery_id = str(uuid.uuid5(uuid.UUID(identifier), "tribe-receipt/v1"))
@@ -2179,17 +2620,17 @@ class GroupMessaging:
             request_id,
             fingerprint,
             lambda: {"request": b64url(provider.prepare_submission(submission))},
+            deadline_ns=deadline_ns,
         )
         raw = unb64url(retained["request"])
-        if receipt:
-            proof = self.records.transport_result(request_id)
-            if proof is not None:
-                result = provider.validate_prepared_response(
-                    raw, unb64url(proof["response"])
-                )
-                if dict(result) != proof["result"]:
-                    raise ValueError("tribe_receipt_return_proof_conflict")
-                return
+        proof = self.records.transport_result(request_id, deadline_ns=deadline_ns)
+        if proof is not None:
+            result = provider.validate_prepared_response(
+                raw, unb64url(proof["response"])
+            )
+            if dict(result) != proof["result"]:
+                raise ValueError("tribe_receipt_return_proof_conflict")
+            return None
 
         def retain_response(response: bytes) -> None:
             observed = {
@@ -2202,8 +2643,20 @@ class GroupMessaging:
                 uuid.uuid5(uuid.UUID(request_id), hashlib.sha256(response).hexdigest())
             )
             self.records.reserve(
-                "transport-result", proof_id, observed, lambda: observed
+                "transport-result",
+                proof_id,
+                observed,
+                lambda: observed,
+                deadline_ns=deadline_ns,
             )
+
+        def authorize_write() -> None:
+            if authorize is not None:
+                authorize()
+            if controlled_data and not self._direct_ready(
+                row, requirements=requirements
+            ):
+                raise RouteError("tribe_reader_unconfirmed")
 
         try:
             provider.send_prepared(
@@ -2211,19 +2664,38 @@ class GroupMessaging:
                 carrier_binding=operation,
                 response_sink=retain_response,
                 attempt_deadline_ns=deadline_ns,
-                authorize=authorize,
+                authorize=authorize_write,
+                require_bounded_write=controlled_data,
             )
-        except RouteError:
+        except RouteError as failure:
             # An unknown outcome stays pending. Retrying uses the same bytes and
-            # receipt identity; never substitute a new logical message.
-            return
+            # receipt identity; never substitute a new logical message. Preserve
+            # only the existing closed diagnostic code, never exception text or
+            # peer responses. A failed observer cannot change native outcomes.
+            with (
+                suppress(OSError, sqlite3.Error, ValueError),
+                self.egress.local_storage(deadline_ns=deadline_ns),
+            ):
+                write_diagnostic(
+                    self.records.path,
+                    "route",
+                    request_id,
+                    failure.code,
+                    self.lane.clock(),
+                )
+            return failure.code
+        return None
 
     def inspect_carrier(self, raw: bytes, *, at_ms: int) -> Mapping[str, Any]:
         from .sealed import inspect_delivery
-        from .tribe_conversation import TRIBE_CONVERSATION_SCHEMA, TRIBE_INTAKE_SCHEMA
+        from .tribe_conversation import (
+            TRIBE_CONVERSATION_SCHEMA,
+            TRIBE_DIRECT_SCHEMA,
+            TRIBE_INTAKE_SCHEMA,
+        )
 
         document = _parse(raw)
-        if document.get("schema") == TRIBE_CONVERSATION_SCHEMA:
+        if document.get("schema") in {TRIBE_CONVERSATION_SCHEMA, TRIBE_DIRECT_SCHEMA}:
             if (
                 set(document) != {"schema", "envelope", "resolution", "tribe_ref"}
                 or not isinstance(document["envelope"], str)
@@ -2265,6 +2737,7 @@ class GroupMessaging:
         }
 
     def _known_admission(self, request_id: str) -> dict[str, Any] | None:
+        self._verify_loaded_stores()
         try:
             return self.records.get("intake-admission", request_id)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -2429,6 +2902,7 @@ class GroupMessaging:
     def retained_message_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
+        self._verify_loaded_stores()
         try:
             return self._retained_message_ticket(context)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -2439,14 +2913,15 @@ class GroupMessaging:
     def _retained_message_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
-        admission, inbox, _obligation = self._retained_intake(context)
+        admission, inbox, obligation = self._retained_intake(context)
         identifier = inbox["message"]["event_id"]
 
         def after_response() -> None:
             self.complete_receipt(identifier)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_receipt(identifier, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_receipt(identifier, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -2456,11 +2931,13 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=obligation["deadline_ms"],
         )
 
     def _acknowledge_intake(
         self, admission: Mapping[str, Any], context: Mapping[str, Any], response: bytes
     ) -> None:
+        self._verify_loaded_stores()
         value = _parse(response)
         if (
             value["status"] != "accepted"
@@ -2488,6 +2965,7 @@ class GroupMessaging:
         self, message_id: str, *, deadline_ns: int | None = None
     ) -> dict[str, Any]:
         """One finite retained technical attempt under the runtime owner."""
+        self._verify_loaded_stores()
         if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
             return {"state": "pending", "code": "attempt_budget_exhausted"}
         with self._receipt_lock:
@@ -2495,7 +2973,8 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(message_id)
         try:
-            return self._complete_receipt(message_id, deadline_ns=deadline_ns)
+            with self.ledger.storage_budget(deadline_ns):
+                return self._complete_receipt(message_id, deadline_ns=deadline_ns)
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(message_id)
@@ -2629,13 +3108,20 @@ class GroupMessaging:
                 deadline_ms=obligation["deadline_ms"],
                 authority_head=self.ledger.local_origin["body_ref"],
             )
-            self._transmit(
+            failure_code = self._transmit(
                 native,
                 obligation["return_target"],
                 operation,
                 receipt=True,
                 deadline_ns=deadline_ns,
             )
+            if failure_code in {
+                "route_authority_blocked",
+                "route_echo_unconfirmed",
+                "route_egress_blocked",
+                "transport_response_rejected",
+            }:
+                return {"state": "blocked-return"}
             state = self._retained_return_state(result, obligation) or "pending"
         if state == "pending":
             return {"state": state}
@@ -2664,6 +3150,7 @@ class GroupMessaging:
         starting further items. Local storage completion retains ownership;
         this method never abandons an active writer.
         """
+        self._verify_loaded_stores()
         if (
             type(max_bytes) is not int
             or not 1 <= max_bytes <= 32 * 1024 * 1024
@@ -2778,6 +3265,7 @@ class GroupMessaging:
     def retained_evidence_ticket(
         self, context: Mapping[str, Any]
     ) -> DurableIntakeTicket:
+        self._verify_loaded_stores()
         try:
             return self._retained_evidence_ticket(context)
         except (ValueError, OSError, sqlite3.Error) as failure:
@@ -2809,8 +3297,9 @@ class GroupMessaging:
         def after_response() -> None:
             self.complete_control(request_id)
 
-        def after_response_bounded(deadline: int) -> None:
-            self.complete_control(request_id, deadline_ns=deadline)
+        def after_response_bounded(deadline: int) -> Mapping[str, Any]:
+            with self.egress.attempt_budget(deadline):
+                return self.complete_control(request_id, deadline_ns=deadline)
 
         return DurableIntakeTicket(
             received_at_ms=admission["received_at_ms"],
@@ -2820,11 +3309,13 @@ class GroupMessaging:
             ),
             after_response=after_response,
             after_response_bounded=after_response_bounded,
+            completion_expires_at_ms=context["request"]["expires_at_ms"],
         )
 
     def complete_control(
         self, request_id: str, *, deadline_ns: int | None = None
     ) -> dict[str, Any]:
+        self._verify_loaded_stores()
         if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
             return {"state": "pending", "code": "attempt_budget_exhausted"}
         key = "control:" + request_id
@@ -2833,32 +3324,36 @@ class GroupMessaging:
                 return {"state": "in-flight"}
             self._receipt_inflight.add(key)
         try:
-            admission = self.records.get("intake-admission", request_id)
-            if admission is None:
-                raise ValueError("tribe_control_recovery_missing")
-            self.retained_evidence_ticket(admission["context"])
-            terminal = self.records.get("control-terminal", request_id)
-            if terminal is not None:
-                if terminal["control_sha256"] != admission["control_sha256"]:
-                    raise ValueError("tribe_control_recovery_binding_conflict")
-                return terminal
-            proof = self.records.get("control-proof", request_id)
-            assert proof is not None
-            self.communication.record_foreign_receipt(
-                proof["receipt"], recipient_being_ref=proof["recipient_being_ref"]
-            )
-            terminal = {
-                "state": "receipt-projected",
-                "control_sha256": admission["control_sha256"],
-            }
-            return self.records.reserve(
-                "control-terminal", request_id, terminal, lambda: terminal
-            )
+            with self.ledger.storage_budget(deadline_ns):
+                admission = self.records.get("intake-admission", request_id)
+                if admission is None:
+                    raise ValueError("tribe_control_recovery_missing")
+                self.retained_evidence_ticket(admission["context"])
+                terminal = self.records.get("control-terminal", request_id)
+                if terminal is not None:
+                    if terminal["control_sha256"] != admission["control_sha256"]:
+                        raise ValueError("tribe_control_recovery_binding_conflict")
+                    return terminal
+                proof = self.records.get("control-proof", request_id)
+                assert proof is not None
+                self.communication.record_foreign_receipt(
+                    proof["receipt"],
+                    recipient_being_ref=proof["recipient_being_ref"],
+                    deadline_ns=deadline_ns,
+                )
+                terminal = {
+                    "state": "receipt-projected",
+                    "control_sha256": admission["control_sha256"],
+                }
+                return self.records.reserve(
+                    "control-terminal", request_id, terminal, lambda: terminal
+                )
         finally:
             with self._receipt_lock:
                 self._receipt_inflight.remove(key)
 
     def receive_message(self, raw: bytes) -> None:
+        self._verify_loaded_stores()
         result = self.lane.intake(_parse(raw))
         self.records.reserve("receipt", result["message_id"], result, lambda: result)
         message = self.message(result["message_id"])
@@ -2922,5 +3417,6 @@ class GroupMessaging:
         return dict(verified), str(row["being_ref"])
 
     def receive_evidence(self, raw: bytes) -> None:
+        self._verify_loaded_stores()
         verified, being = self._validated_evidence(raw)
         self.communication.record_foreign_receipt(verified, recipient_being_ref=being)

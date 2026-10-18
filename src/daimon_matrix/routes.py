@@ -9,6 +9,7 @@ decide semantic delivery.
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import hmac
 import html
@@ -34,6 +35,13 @@ from urllib.parse import urlsplit
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
 from .communication import CommunicationError, CommunicationStore
+from .ledger import LedgerStorageBusy
+from .mandatory_echo import (
+    COMPLETION_FAILURE_CODES,
+    INTAKE_FAILURE_CODES,
+    LOCAL_EGRESS_DIAGNOSTIC_CODES,
+    write_diagnostic,
+)
 from .native_egress import (
     MandatoryEgressController,
     NativeEgressError,
@@ -68,6 +76,30 @@ _ID_CHARS: Final = frozenset(
 
 Clock = Callable[[], int]
 RoundTrip = Callable[[bytes], bytes]
+
+
+def _intake_failure_code(failure: Exception) -> str:
+    """Closed local diagnostics; exception text never becomes retained payload."""
+    current: BaseException | None = failure
+    result = "intake_failure_unknown"
+    for _ in range(5):
+        if current is None:
+            break
+        if isinstance(current, sqlite3.Error):
+            code = getattr(current, "sqlite_errorcode", None)
+            if isinstance(code, int) and code & 255 in (
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            ):
+                return "intake_storage_busy"
+            return "intake_storage_unavailable"
+        code = current.code if isinstance(current, RouteError) else str(current)
+        if code in INTAKE_FAILURE_CODES:
+            result = "intake_" + code
+        if isinstance(current, OSError):
+            result = "intake_storage_unavailable"
+        current = current.__cause__
+    return result
 
 
 @dataclass(frozen=True)
@@ -248,7 +280,66 @@ class DurableIntakeTicket:
     metadata: Mapping[str, Any]
     acknowledge: Callable[[bytes], None]
     after_response: Callable[[], None]
-    after_response_bounded: Callable[[int], None] | None = None
+    after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None
+    completion_expires_at_ms: int | None = None
+
+
+def _transient_completion_failure(failure: Exception) -> bool:
+    """Only proved busy storage behind a known transparent wrapper can retry."""
+    current: BaseException | None = failure
+    for _ in range(5):
+        if isinstance(current, sqlite3.Error):
+            return getattr(current, "sqlite_errorcode", 0) & 255 in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }
+        if isinstance(current, LedgerStorageBusy):
+            return True
+        if isinstance(current, NativeEgressError):
+            return str(current) in {"egress_storage_busy", "egress_attempt_deadline"}
+        if isinstance(current, CommunicationError):
+            return current.code == "communication_projection_busy"
+        if (
+            isinstance(current, RouteAmbiguous)
+            and current.code == "tribe_retained_intake_verification_uncertain"
+        ):
+            current = current.__cause__
+            continue
+        return False
+    return False
+
+
+def _completion_failure_code(failure: Exception) -> str:
+    """Retain only closed codes; exception strings and private paths stay local."""
+    current: BaseException | None = failure
+    result = "completion_failed"
+    for _ in range(5):
+        if current is None:
+            break
+        if isinstance(current, LedgerStorageBusy):
+            return "completion_ledger_storage_deadline"
+        if isinstance(current, sqlite3.Error):
+            busy = getattr(current, "sqlite_errorcode", 0) & 255 in {
+                sqlite3.SQLITE_BUSY,
+                sqlite3.SQLITE_LOCKED,
+            }
+            return "completion_sqlite_busy" if busy else "completion_sqlite_unavailable"
+        if isinstance(current, OSError):
+            return "completion_" + {
+                errno.ENOENT: "storage_missing",
+                errno.EEXIST: "storage_conflict",
+            }.get(current.errno or 0, "storage_unavailable")
+        code = (
+            current.code
+            if isinstance(current, (CommunicationError, RouteError))
+            else str(current)
+            if isinstance(current, NativeEgressError)
+            else None
+        )
+        if code in COMPLETION_FAILURE_CODES:
+            result = "completion_" + str(code)
+        current = current.__cause__
+    return result
 
 
 @dataclass(frozen=True)
@@ -258,7 +349,10 @@ class TransportReply:
     response: bytes
     after_response: Callable[[], None]
     release_writer: Callable[[Callable[[bytes], None], int], None] | None = None
-    after_response_bounded: Callable[[int], None] | None = None
+    after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None
+    completion_expires_at_ms: int | None = None
+    completion_clock: Clock = lambda: time.time_ns() // 1_000_000
+    completion_diagnostic: Callable[[str], None] | None = None
 
     def write_to(self, writer: Callable[[bytes], None], *, deadline_ns: int) -> None:
         if self.release_writer is None:
@@ -266,6 +360,50 @@ class TransportReply:
         self.release_writer(writer, deadline_ns)
 
     def complete(self, *, deadline_ns: int) -> None:
+        if self.completion_expires_at_ms is not None:
+            # ACK writing retains its original five-second socket budget.
+            # Only admitted technical work gets a separate, once-frozen budget.
+            started = time.monotonic_ns()
+            remaining_ms = self.completion_expires_at_ms - self.completion_clock()
+            deadline_ns = started + min(30_000, max(0, remaining_ms)) * 1_000_000
+            code = "completion_budget_exhausted"
+            delay = 0.05
+            while time.monotonic_ns() < deadline_ns:
+                if self.completion_clock() >= self.completion_expires_at_ms:
+                    code = "completion_expired"
+                    break
+                try:
+                    outcome = (
+                        self.after_response_bounded(deadline_ns)
+                        if self.after_response_bounded is not None
+                        else None
+                    )
+                    if outcome is None:
+                        code = "completion_invalid"
+                        break
+                    state = outcome.get("state")
+                    if state not in {"pending", "in-flight"}:
+                        code = (
+                            "completion_confirmed"
+                            if state in {"recipient-intake", "receipt-projected"}
+                            else "completion_expired"
+                            if state == "expired"
+                            else "completion_blocked"
+                        )
+                        break
+                except Exception as failure:
+                    if not _transient_completion_failure(failure):
+                        code = _completion_failure_code(failure)
+                        break
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    break
+                time.sleep(min(delay, remaining))
+                delay = min(1.0, delay * 2)
+            if self.completion_diagnostic is not None:
+                with suppress(ValueError, OSError, sqlite3.Error):
+                    self.completion_diagnostic(code)
+            return
         if time.monotonic_ns() >= deadline_ns:
             return  # Durable intent remains pending; no new work is started.
         if self.after_response_bounded is not None:
@@ -1114,6 +1252,7 @@ class TransportIngress:
         intake_validator: IntakeValidator | None = None,
         intake_admission: IntakeAdmission | None = None,
         intake_gate: IntakeGate | None = None,
+        store_guard: Callable[[], None] | None = None,
         carrier_inspector: Callable[..., Mapping[str, Any]] = inspect_delivery,
     ) -> None:
         for value in (
@@ -1188,6 +1327,7 @@ class TransportIngress:
         self.intake_validator = intake_validator
         self.intake_admission = intake_admission
         self.intake_gate = intake_gate
+        self.store_guard = store_guard
         self.carrier_inspector = carrier_inspector
 
     def _authorize_egress(self, binding: OperationBinding) -> bool:
@@ -1265,6 +1405,12 @@ class TransportIngress:
             if not hmac.compare_digest(presented, expected):
                 raise RouteError("transport_request_rejected")
             request_hash = hashlib.sha256(canonical_bytes(unsigned)).hexdigest()
+            # Authentication precedes local storage observation. A changed
+            # loaded store is uncertain before semantic admission or refusal
+            # persistence; it must never become a sticky peer refusal.
+            if self.store_guard is not None:
+                self.store_guard()
+            intake_stage = "intake-validation"
             try:
                 submission = _submission(value["submission"])
                 if submission["recipient_id"] != self.recipient_id:
@@ -1294,6 +1440,7 @@ class TransportIngress:
                     assert self.fence_ref is not None
                     self.intake_gate(self.presence_ref, self.fence_ref)
                 if self.intake_admission is not None:
+                    intake_stage = "intake-admission"
                     ticket = self.intake_admission(
                         {
                             "request": dict(value),
@@ -1320,6 +1467,7 @@ class TransportIngress:
                         carrier_inspector=self.carrier_inspector,
                     )
                 else:
+                    intake_stage = "intake-ack-transaction"
                     intake = self.inbox._finalize_retained_intake(
                         request_id=request_id,
                         request_hash=request_hash,
@@ -1329,6 +1477,7 @@ class TransportIngress:
                         received_at_ms=ticket.received_at_ms,
                         response_factory=response_factory,
                     )
+                    intake_stage = "intake-ack-record"
                     ticket.acknowledge(intake["_egress_response"])
             except (
                 RouteError,
@@ -1338,6 +1487,17 @@ class TransportIngress:
                 OSError,
                 sqlite3.Error,
             ) as failure:
+                if intake_stage != "intake-validation":
+                    # Transaction cleanup precedes this independent sidecar.
+                    # Observability must not replace the retained-intake result.
+                    with suppress(ValueError, OSError, sqlite3.Error):
+                        write_diagnostic(
+                            self.inbox.path,
+                            intake_stage,
+                            request_id,
+                            _intake_failure_code(failure),
+                            self.clock(),
+                        )
                 if ticket is not None:
                     raise RouteAmbiguous(
                         "transport_intake_recovery_pending"
@@ -1418,6 +1578,9 @@ class TransportIngress:
                     after_response_bounded=(
                         None if ticket is None else ticket.after_response_bounded
                     ),
+                    completion_expires_at_ms=(
+                        None if ticket is None else ticket.completion_expires_at_ms
+                    ),
                 )
             return self.egress.release(
                 self.egress.binding(self.egress_catalog_id, request_id),
@@ -1442,7 +1605,8 @@ class TransportIngress:
         response: bytes,
         *,
         after_response: Callable[[], None],
-        after_response_bounded: Callable[[int], None] | None = None,
+        after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None,
+        completion_expires_at_ms: int | None = None,
     ) -> TransportReply:
         binding = self.egress.binding(self.egress_catalog_id, request_id)
         # Preserve the selected visibility prerequisite, including legacy
@@ -1456,7 +1620,20 @@ class TransportIngress:
             )
 
         return TransportReply(
-            bytes(response), after_response, release, after_response_bounded
+            bytes(response),
+            after_response,
+            release,
+            after_response_bounded,
+            completion_expires_at_ms,
+            self.clock,
+            lambda code: write_diagnostic(
+                self.inbox.path,
+                "intake-completion",
+                request_id,
+                code,
+                self.clock(),
+                timeout=0,
+            ),
         )
 
     def intake_binding(self) -> dict[str, Any]:
@@ -1872,9 +2049,12 @@ class AuthenticatedProvider:
         carrier_binding: OperationBinding | None = None,
         attempt_deadline_ns: int | None = None,
         authorize: Callable[[], None] | None = None,
+        require_bounded_write: bool = False,
     ) -> Mapping[str, Any]:
         """Transmit exact bytes; optionally retain the authenticated response."""
         started_ns = time.monotonic_ns()
+        if type(require_bounded_write) is not bool:
+            raise RouteError("route_bounded_transport_required")
         if attempt_deadline_ns is not None and (
             type(attempt_deadline_ns) is not int or attempt_deadline_ns <= started_ns
         ):
@@ -1890,8 +2070,21 @@ class AuthenticatedProvider:
         if carrier_binding is not None:
             group = _decode_canonical(carrier, "route_group_carrier_mismatch")
             if carrier_binding.path_id == "tribe-message-request":
-                if group.get("schema") != "dm.tribe.conversation/v1":
+                if group.get("schema") not in {
+                    "dm.tribe.conversation/v1",
+                    "dm.tribe.direct-conversation/v1",
+                }:
                     raise RouteError("route_group_carrier_mismatch")
+                if (
+                    require_bounded_write
+                    or group["schema"] == "dm.tribe.direct-conversation/v1"
+                ) and (
+                    type(self._round_trip) is not _SplitRoundTrip
+                    or self._round_trip.bounded_open is None
+                ):
+                    # The new reader guard must execute inside the actual write
+                    # fence. Legacy opaque callbacks are not this qualification.
+                    raise RouteError("route_bounded_transport_required")
                 sealed = unb64url(cast(str, group["envelope"]))
                 metadata = inspect_delivery(sealed, at_ms=self._clock())
                 sender = _decode_canonical(sealed, "route_group_carrier_mismatch")[
@@ -2013,12 +2206,18 @@ class AuthenticatedProvider:
             raise RouteAmbiguous(exception.code, fallback_allowed=False) from exception
         except NativeEgressError as exception:
             # A local visibility/authority failure is not route unavailability.
+            cause = str(exception)
             code = {
                 "egress_echo_not_confirmed": "route_echo_unconfirmed",
                 "egress_authority_blocked": "route_authority_blocked",
                 "echo_authorization_blocked": "route_authority_blocked",
                 "egress_attempt_deadline": "route_timeout",
-            }.get(str(exception), "route_egress_blocked")
+            }.get(
+                cause,
+                "route_" + cause
+                if cause in LOCAL_EGRESS_DIAGNOSTIC_CODES
+                else "route_egress_blocked",
+            )
             raise RouteAmbiguous(code, fallback_allowed=False) from exception
         except TimeoutError as exception:
             raise RouteAmbiguous("route_timeout") from exception
@@ -2232,7 +2431,7 @@ def _http_round_trip(
     timeout_seconds: float,
     response_timeout_seconds: float,
     total_timeout_seconds: float | None = None,
-) -> RoundTrip:
+) -> _SplitRoundTrip:
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}

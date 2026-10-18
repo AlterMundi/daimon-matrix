@@ -2116,14 +2116,14 @@ class GatewayBoundaryTests(unittest.TestCase):
 
 
 class BoundedTransportTests(unittest.TestCase):
-    def test_tls_setup_stall_cannot_escape_the_connect_or_total_deadline(self):
+    def test_tls_setup_stall_cannot_escape_the_connect_or_total_deadline(self) -> None:
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
         listener.settimeout(5)
         stop, accepted = threading.Event(), threading.Event()
 
-        def serve():
+        def serve() -> None:
             connection, _ = listener.accept()
             with connection:
                 accepted.set()
@@ -2138,6 +2138,7 @@ class BoundedTransportTests(unittest.TestCase):
                 response_timeout_seconds=1,
                 total_timeout_seconds=0.1,
             )
+            assert profile.bounded_open is not None
             with self.assertRaises(TimeoutError):
                 profile.bounded_open(
                     _AttemptDeadline(time.monotonic_ns() + 100_000_000)
@@ -2149,26 +2150,26 @@ class BoundedTransportTests(unittest.TestCase):
             worker.join(5)
         self.assertFalse(worker.is_alive())
 
-    def test_server_deadline_starts_before_drip_headers_and_body(self):
+    def test_server_deadline_starts_before_drip_headers_and_body(self) -> None:
         for phase in ("headers", "body"):
             with self.subTest(phase=phase):
-                calls = []
+                calls: list[bytes] = []
 
                 class Adapter:
-                    def handle(self, raw, record=calls):
+                    def handle(self, raw: bytes, record: list[bytes] = calls) -> bytes:
                         record.append(raw)
                         return b"{}"
 
                 with patch.object(owner_http, "MESSAGING_HANDLER_SECONDS", 0.08):
                     server = owner_http.create_messaging_http_server(
                         ("127.0.0.1", 0),
-                        evidence_ingress=Adapter(),
-                        message_ingress=Adapter(),
+                        evidence_ingress=cast(TransportIngress, Adapter()),
+                        message_ingress=cast(TransportIngress, Adapter()),
                     )
                     worker = threading.Thread(target=server.serve_forever)
                     worker.start()
                     connection = socket.create_connection(
-                        server.server_address, timeout=2
+                        cast(tuple[str, int], server.server_address), timeout=2
                     )
                     try:
                         prefix = b"POST /dm-messaging/v1/message HTTP/1.1\r\n"
@@ -2201,15 +2202,15 @@ class BoundedTransportTests(unittest.TestCase):
                     self.assertTrue(observed_close)
                     self.assertEqual(calls, [])
 
-    def test_message_handlers_preserve_an_independent_evidence_share(self):
+    def test_message_handlers_preserve_an_independent_evidence_share(self) -> None:
         entered = threading.Event()
         release = threading.Event()
-        calls = []
+        calls: list[bytes] = []
         lock = threading.Lock()
-        errors = []
+        errors: list[BaseException] = []
 
         class MessageAdapter:
-            def handle(self, raw):
+            def handle(self, raw: bytes) -> bytes:
                 with lock:
                     calls.append(raw)
                     if len(calls) == 2:
@@ -2219,21 +2220,21 @@ class BoundedTransportTests(unittest.TestCase):
                 return b"{}"
 
         class EvidenceAdapter:
-            def handle(self, raw):
+            def handle(self, raw: bytes) -> bytes:
                 return b'{"proof":true}'
 
         with patch.object(owner_http, "MAX_IN_FLIGHT", 4):
             server = owner_http.create_messaging_http_server(
                 ("127.0.0.1", 0),
-                evidence_ingress=EvidenceAdapter(),
-                message_ingress=MessageAdapter(),
+                evidence_ingress=cast(TransportIngress, EvidenceAdapter()),
+                message_ingress=cast(TransportIngress, MessageAdapter()),
             )
             worker = threading.Thread(target=server.serve_forever)
             worker.start()
 
-            def request(path):
+            def request(path: str) -> tuple[int, bytes]:
                 connection = http.client.HTTPConnection(
-                    *server.server_address, timeout=3
+                    *cast(tuple[str, int], server.server_address), timeout=3
                 )
                 try:
                     connection.request(
@@ -2244,7 +2245,7 @@ class BoundedTransportTests(unittest.TestCase):
                 finally:
                     connection.close()
 
-            def message():
+            def message() -> None:
                 try:
                     self.assertEqual(request("/dm-messaging/v1/message")[0], 200)
                 except BaseException as failure:
@@ -2270,15 +2271,15 @@ class BoundedTransportTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertFalse(worker.is_alive())
 
-    def test_http_connection_close_preserves_owned_large_response_reader(self):
+    def test_http_connection_close_preserves_owned_large_response_reader(self) -> None:
         expected = b"synthetic response" * 2048
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
         listener.settimeout(5)
-        errors = []
+        errors: list[BaseException] = []
 
-        def serve():
+        def serve() -> None:
             try:
                 connection, _ = listener.accept()
                 with connection:
@@ -2315,6 +2316,7 @@ class BoundedTransportTests(unittest.TestCase):
                 response_timeout_seconds=1,
                 total_timeout_seconds=1,
             )
+            assert profile.bounded_open is not None
             exchange = profile.bounded_open(
                 _AttemptDeadline(time.monotonic_ns() + 1_000_000_000)
             )
@@ -2328,7 +2330,7 @@ class BoundedTransportTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
 
-    def test_numeric_profile_never_hides_hostname_resolution_in_a_timeout(self):
+    def test_numeric_profile_never_hides_hostname_resolution_in_a_timeout(self) -> None:
         with self.assertRaisesRegex(
             RouteError, "bounded_transport_numeric_endpoint_required"
         ):
@@ -2354,7 +2356,7 @@ class BoundedTransportTests(unittest.TestCase):
                 total_timeout_seconds=1,
             )
 
-    def test_child_deadline_cannot_renew_a_carrier_or_total_budget(self):
+    def test_child_deadline_cannot_renew_a_carrier_or_total_budget(self) -> None:
         original = _AttemptDeadline.start(
             30,
             deadline_ms=1005,
@@ -2370,11 +2372,11 @@ class BoundedTransportTests(unittest.TestCase):
                 started_ns=time.monotonic_ns(),
             ).remaining()
 
-    def test_buffered_reader_drip_cannot_refresh_the_total_deadline(self):
+    def test_buffered_reader_drip_cannot_refresh_the_total_deadline(self) -> None:
         writer, reader = socket.socketpair()
         stop = threading.Event()
 
-        def drip():
+        def drip() -> None:
             with writer:
                 while not stop.wait(0.005):
                     with contextlib.suppress(OSError):
@@ -2397,7 +2399,9 @@ class BoundedTransportTests(unittest.TestCase):
             thread.join(5)
         self.assertFalse(thread.is_alive())
 
-    def test_blocked_complete_write_finishes_ownership_before_returning_timeout(self):
+    def test_blocked_complete_write_finishes_ownership_before_returning_timeout(
+        self,
+    ) -> None:
         writer, receiver = socket.socketpair()
         try:
             writer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
@@ -2417,20 +2421,20 @@ class BoundedTransportTests(unittest.TestCase):
             writer.close()
             receiver.close()
 
-    def test_http_drip_headers_and_body_share_one_attempt_deadline(self):
+    def test_http_drip_headers_and_body_share_one_attempt_deadline(self) -> None:
         for phase in ("status", "headers", "body", "interim"):
             with self.subTest(phase=phase):
                 self._drip_http(phase)
 
-    def _drip_http(self, phase):
+    def _drip_http(self, phase: str) -> None:
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
         listener.settimeout(5)
         stop = threading.Event()
-        errors = []
+        errors: list[BaseException] = []
 
-        def serve():
+        def serve() -> None:
             try:
                 connection, _ = listener.accept()
                 with connection:
@@ -2467,6 +2471,7 @@ class BoundedTransportTests(unittest.TestCase):
                 total_timeout_seconds=0.1,
             )
             deadline = _AttemptDeadline(time.monotonic_ns() + 100_000_000)
+            assert profile.bounded_open is not None
             exchange = profile.bounded_open(deadline)
             exchange.write(b"synthetic")
             with self.assertRaises(TimeoutError):

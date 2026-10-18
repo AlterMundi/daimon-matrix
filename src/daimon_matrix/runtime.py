@@ -8,8 +8,10 @@ import json
 import os
 import re
 import stat
+import sys
+import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
@@ -67,6 +69,7 @@ from .relationships import (
     SnapshotVerifier,
     VerifiedTribeSnapshot,
 )
+from .release_compatibility import describe_reader
 from .routes import (
     DirectHTTPProvider,
     HubProvider,
@@ -81,7 +84,12 @@ from .routes import (
 from .scopes import BodyReader, ScopeError, ScopeExchangeStore, ScopeResolver
 from .sealed import SIGNATURE_DOMAIN as DELIVERY_SIGNATURE_DOMAIN
 from .sealed import DeliveryCustody, RecipientTarget, SealedDeliveryError
-from .service import OPERATOR_CAPABILITY_PROFILES, SERVICE_METHODS, HostedWeave
+from .service import (
+    OPERATOR_CAPABILITY_PROFILES,
+    SERVICE_METHODS,
+    HostedWeave,
+    LoadedStoreBinding,
+)
 from .sources import SourceCAS, SourceError, SourceRegistry, SourceServiceContext
 from .species import SpeciesCAS, SpeciesError, SpeciesRegistry, SpeciesServiceContext
 from .sync import SyncEngine
@@ -454,6 +462,7 @@ def load_runtime(
     curator_effect_observer: EffectTruthObserver | None = None,
     relationship_authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
     | None = None,
+    qualified_startup: Mapping[str, Any] | None = None,
 ) -> HostedRuntime:
     """Verify all public/secret bindings before exposing a hosted service.
 
@@ -463,6 +472,87 @@ def load_runtime(
     Existing local/source authorities cannot be replaced through this seam.
     """
     supplied_relationship_authorities = dict(relationship_authorities or {})
+    # This is trusted owner boot evidence, never a bundle or RPC parameter.
+    # Freeze it now so caller mutation cannot rewrite a loaded generation.
+    startup_observation = None
+    if qualified_startup is not None:
+        startup_fields = {
+            "schema",
+            "process_id",
+            "startup_instance_id",
+            "code_digest",
+            "matrix_commit",
+            "sdk_digest",
+            "matrix_wheel_sha256",
+            "import_files_sha256",
+            "import_context_sha256",
+            "isolated",
+            "no_site",
+            "no_bytecode",
+            "interpreter",
+            "reader",
+        }
+        try:
+            startup_observation = json.loads(canonical_bytes(qualified_startup))
+            if (
+                set(startup_observation) != startup_fields
+                or startup_observation["schema"]
+                != "cluster-onboarding-loaded-startup/v1"
+                or type(startup_observation["process_id"]) is not int
+                or startup_observation["process_id"] != os.getpid()
+                or str(uuid.UUID(startup_observation["startup_instance_id"]))
+                != startup_observation["startup_instance_id"]
+                or not sys.flags.isolated
+                or not sys.flags.no_site
+                or not sys.flags.dont_write_bytecode
+                or any(
+                    startup_observation[field] is not True
+                    for field in ("isolated", "no_site", "no_bytecode")
+                )
+                or any(
+                    not isinstance(startup_observation[field], str)
+                    or re.fullmatch(r"[0-9a-f]{64}", startup_observation[field]) is None
+                    for field in startup_fields
+                    - {
+                        "schema",
+                        "process_id",
+                        "startup_instance_id",
+                        "matrix_commit",
+                        "isolated",
+                        "no_site",
+                        "no_bytecode",
+                        "interpreter",
+                        "reader",
+                    }
+                )
+                or not isinstance(startup_observation["matrix_commit"], str)
+                or re.fullmatch(r"[0-9a-f]{40}", startup_observation["matrix_commit"])
+                is None
+                or startup_observation["import_context_sha256"]
+                != hashlib.sha256(
+                    json.dumps(
+                        {
+                            "path": sys.path,
+                            "dont_write_bytecode": sys.dont_write_bytecode,
+                            "pycache_prefix": sys.pycache_prefix,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                or startup_observation["interpreter"]
+                != {
+                    "implementation": sys.implementation.name,
+                    "version": list(sys.version_info[:3]),
+                    "executable_sha256": hashlib.sha256(
+                        Path("/proc/self/exe").read_bytes()
+                    ).hexdigest(),
+                }
+                or startup_observation["reader"] != describe_reader()
+            ):
+                raise ValueError("startup")
+        except (CanonicalError, KeyError, TypeError, ValueError, OSError) as error:
+            raise RuntimeError("qualified_startup_rejected") from error
     if egress is not None and egress_factory is not None:
         raise RuntimeError("runtime_visibility_configuration_conflict")
 
@@ -716,7 +806,12 @@ def load_runtime(
         try:
             if profile_schema == HOST_CAPABILITY_PROFILE_SCHEMA:
                 expected_profile = host_capability_profile(role)
-                expected_methods = HOST_CAPABILITY_PROFILES[role]
+                from .operator_capabilities import OPTIONAL_HOST_CAPABILITY_PROFILES
+
+                expected_methods = {
+                    **HOST_CAPABILITY_PROFILES,
+                    **OPTIONAL_HOST_CAPABILITY_PROFILES,
+                }[role]
                 expected_client_id = f"client:host:{runtime_label}:{role}"
                 expected_slot = host_capability_slot(runtime_label, role)
                 clients = host_clients
@@ -757,9 +852,10 @@ def load_runtime(
     }
     if (
         set(operator_clients) != set(OPERATOR_PROFILE_NAMES)
-        or set(host_clients) != set(HOST_PROFILE_NAMES)
+        or not set(HOST_PROFILE_NAMES) <= set(host_clients)
+        or not set(host_clients) <= set(HOST_PROFILE_NAMES) | {"receiving-controller"}
         or len({capability.key_id for capability, _, _ in all_clients.values()})
-        != len(OPERATOR_PROFILE_NAMES) + len(HOST_PROFILE_NAMES)
+        != len(all_clients)
     ):
         raise RuntimeError("invalid_operator_capability_profile")
     for role, (capability, key, profile_value) in all_clients.items():
@@ -1302,6 +1398,11 @@ def load_runtime(
         except ValueError as exception:
             raise RuntimeError("runtime_peer_transport_rejected") from exception
 
+    initial_stores = {
+        path: LoadedStoreBinding.file_identity(path) if path.exists() else None
+        for path in (ledger_path, relationship_store_path)
+        if path is not None
+    }
     ledger = Ledger(
         ledger_path,
         authority=authority,
@@ -1569,8 +1670,70 @@ def load_runtime(
         peer_context=peer_context,
         we_lane=we_lane,
         visibility_status=visibility.status,
+        loaded_runtime=canonical_bytes(
+            {
+                "schema": "dm.runtime.loaded-base/v1",
+                "process_id": os.getpid(),
+                "process_instance_id": str(uuid.uuid4()),
+                "runtime_bundle_sha256": hashlib.sha256(
+                    canonical_bytes(raw_bundle)
+                ).hexdigest(),
+                "startup": {
+                    "isolated": bool(sys.flags.isolated),
+                    "no_site": bool(sys.flags.no_site),
+                    "no_bytecode": bool(sys.flags.dont_write_bytecode),
+                },
+                # Flags and loaded values alone never qualify an import tree,
+                # selected SDK or loaded receiving application/store set.
+                "qualified_startup": startup_observation,
+            }
+        ),
     )
     ledger.integrity_check()
+    loaded_stores = {
+        "ledger": LoadedStoreBinding.capture(
+            ledger_path,
+            metadata={"ledger": "metadata", "communication": "communication_meta"},
+        )
+    }
+    if relationship_store_path is not None:
+        loaded_stores["relationships"] = LoadedStoreBinding.capture(
+            relationship_store_path, metadata={"relationships": "metadata"}
+        )
+    for binding in loaded_stores.values():
+        previous = initial_stores[binding.path]
+        if previous is not None and binding.identity != previous:
+            raise RuntimeError("runtime_store_replaced")
+    loaded_base = json.loads(service.loaded_runtime or b"null")
+    loaded_base.update(
+        {
+            "runtime_id": runtime_id,
+            "local_origin": local_origin,
+            "authority_epoch": {
+                "active_manifest_hash": active.manifest.digest,
+                "accepted_manifest_hashes": list(
+                    getattr(
+                        authority, "accepted_manifest_hashes", (active.manifest.digest,)
+                    )
+                ),
+            },
+            "state_root_identity": {
+                "device": root_info.st_dev,
+                "inode": root_info.st_ino,
+            },
+            "stores": {
+                role: json.loads(binding.observation)
+                for role, binding in loaded_stores.items()
+            },
+        }
+    )
+    service = replace(
+        service,
+        loaded_runtime=canonical_bytes(loaded_base),
+        loaded_stores=loaded_stores,
+    )
+    for binding in loaded_stores.values():
+        binding.verify()
     final_root = root.lstat()
     identity = (root_info.st_dev, root_info.st_ino)
     if (final_root.st_dev, final_root.st_ino) != identity:

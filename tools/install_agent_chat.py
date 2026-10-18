@@ -7,11 +7,20 @@ Does not generate identities, start daemons, or overwrite existing profiles.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
+import select
+import shutil
+import stat
+import subprocess
 import sys
+import time
+import tomllib
 import uuid
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +56,637 @@ def _put(path: Path, raw: bytes) -> None:
         os.fsync(stream.fileno())
 
 
+def register_codex_mcp(
+    attachment: Path,
+    command: list[str],
+    *,
+    previous_sha256: str | None = None,
+    deadline_ns: int | None = None,
+) -> dict[str, Any]:
+    """Configure this owner's existing Matrix role through Codex's writer.
+
+    This starts no model or service and makes no catalog/readiness claim.
+    Replacing an existing role needs its exact prior command digest; unrelated
+    configuration and optional role settings must remain untouched.
+    """
+    _registration_budget(deadline_ns)
+    attachment = Path(os.path.abspath(attachment))
+    home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    if not home.is_absolute() or home.is_symlink():
+        raise ValueError("agent_chat_codex_home_invalid")
+    with _codex_owner_lock(home):
+        return _register_codex_mcp_locked(
+            home, attachment, command, previous_sha256, deadline_ns=deadline_ns
+        )
+
+
+def _registration_budget(deadline_ns: int | None) -> float:
+    if deadline_ns is None:
+        return 30
+    remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+    if remaining <= 0:
+        raise ValueError("agent_chat_tooling_deadline_expired")
+    return min(30, remaining)
+
+
+@contextmanager
+def _codex_owner_lock(home: Path) -> Iterator[None]:
+    _mkdir(home)
+    _directory(home)
+    lock = os.open(
+        home / ".matrix-mcp-install.lock",
+        os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    try:
+        info = os.fstat(lock)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+        ):
+            raise ValueError("agent_chat_codex_mcp_lock_rejected")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(lock)
+
+
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_codex_role(
+    codex: str,
+    home: Path,
+    command: list[str],
+    *,
+    timeout_seconds: float = 30,
+    startup_timeout_seconds: int | None = None,
+) -> None:
+    """Edit the selected role with Codex's versioned native config writer.
+
+    The caller supplies a private candidate home, never the active home.
+    This config-only process receives no thread, turn or discovery request.
+    """
+    if not 0 < timeout_seconds <= 30:
+        raise ValueError("agent_chat_codex_mcp_registration_failed")
+    config = home / "config.toml"
+    process = subprocess.Popen(
+        [codex, "app-server", "--listen", "stdio://"],
+        env={**os.environ, "CODEX_HOME": str(home)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    pending = b""
+    identifier = 0
+    deadline = time.monotonic() + timeout_seconds
+    completed = False
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise ValueError("agent_chat_codex_mcp_registration_failed")
+        return value
+
+    def send(raw: bytes) -> None:
+        assert process.stdin is not None
+        descriptor = process.stdin.fileno()
+        offset = 0
+        while offset < len(raw):
+            if not select.select([], [descriptor], [], remaining())[1]:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            remaining()
+            try:
+                offset += os.write(descriptor, raw[offset : offset + 65536])
+            except BlockingIOError:
+                continue
+
+    def call(method: str, params: dict[str, Any]) -> Any:
+        nonlocal pending, identifier
+        identifier += 1
+        assert process.stdin is not None and process.stdout is not None
+        send(
+            canonical_bytes({"id": identifier, "method": method, "params": params})
+            + b"\n"
+        )
+        while True:
+            remaining()
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                message = json.loads(raw)
+                if message.get("id") == identifier:
+                    if "error" in message or "result" not in message:
+                        raise ValueError("agent_chat_codex_mcp_registration_failed")
+                    remaining()
+                    return message["result"]
+            if process.poll() is not None:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            if not select.select([process.stdout], [], [], remaining())[0]:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk or len(pending) + len(chunk) > 1024 * 1024:
+                raise ValueError("agent_chat_codex_mcp_registration_failed")
+            pending += chunk
+
+    try:
+        assert process.stdin is not None
+        os.set_blocking(process.stdin.fileno(), False)
+        call(
+            "initialize",
+            {"clientInfo": {"name": "matrix-config-writer", "version": "1"}},
+        )
+        assert process.stdin is not None
+        send(b'{"method":"initialized"}\n')
+        observed = call("config/read", {"includeLayers": True})
+        layers = [
+            row
+            for row in observed["layers"]
+            if row["name"].get("type") == "user"
+            and row["name"].get("file") == str(config)
+        ]
+        if len(layers) != 1:
+            raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+        call(
+            "config/batchWrite",
+            {
+                "filePath": str(config),
+                "expectedVersion": layers[0]["version"],
+                "reloadUserConfig": False,
+                "edits": [
+                    {
+                        "keyPath": "mcp_servers.matrix.command",
+                        "value": command[0],
+                        "mergeStrategy": "replace",
+                    },
+                    {
+                        "keyPath": "mcp_servers.matrix.args",
+                        "value": command[1:],
+                        "mergeStrategy": "replace",
+                    },
+                ]
+                + (
+                    []
+                    if startup_timeout_seconds is None
+                    else [
+                        {
+                            "keyPath": "mcp_servers.matrix.startup_timeout_sec",
+                            "value": startup_timeout_seconds,
+                            "mergeStrategy": "replace",
+                        }
+                    ]
+                ),
+            },
+        )
+        completed = True
+    finally:
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        finally:
+            if not completed and process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            finally:
+                if process.stdout is not None:
+                    process.stdout.close()
+
+
+def _read_codex_config(path: Path) -> bytes:
+    """Read owner-only TOML, including an empty document, without following links.
+
+    Credential readers intentionally reject empty bytes. Keep this exception
+    local to Codex configuration; connection documents and secrets use the
+    unchanged SDK reader.
+    """
+    _directory(path.parent)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise ValueError("agent_chat_codex_config_rejected") from None
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+            or not 0 <= info.st_size <= 4 * 1024 * 1024
+        ):
+            raise ValueError("agent_chat_codex_config_rejected")
+        chunks = []
+        remaining = info.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                raise ValueError("agent_chat_codex_config_rejected")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise ValueError("agent_chat_codex_config_rejected")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _register_codex_mcp_locked(
+    home: Path,
+    attachment: Path,
+    command: list[str],
+    previous_sha256: str | None,
+    *,
+    deadline_ns: int | None = None,
+) -> dict[str, Any]:
+    # This lock serializes this receiving-owner installer, not arbitrary native
+    # config writers. Reject their observed intervening edits before publication.
+    _registration_budget(deadline_ns)
+    config = home / "config.toml"
+    before = (
+        _read_codex_config(config) if config.exists() or config.is_symlink() else b""
+    )
+    old = tomllib.loads(before.decode())
+    servers = old.get("mcp_servers", {})
+    existing = servers.get("matrix")
+    wanted = {"command": command[0], "args": command[1:]}
+    if existing is not None:
+        if existing.get("enabled", True) is not True:
+            raise ValueError("agent_chat_codex_mcp_disabled")
+        current = {key: existing.get(key) for key in wanted}
+        if current == wanted and (
+            "startup_timeout_sec" in existing or "startup_timeout_ms" in existing
+        ):
+            _sync_directory(home)
+            _registration_budget(deadline_ns)
+            return {"status": "configured", "catalog_acceptance": "unobserved"}
+        if (
+            current != wanted
+            and previous_sha256 != hashlib.sha256(canonical_bytes(current)).hexdigest()
+        ):
+            raise ValueError("agent_chat_codex_mcp_conflict")
+    history = attachment / "codex-mcp-history" / str(uuid.uuid4())
+    _put(history / "config.before.toml", before)
+    candidate_home = history / "candidate-home"
+    candidate = _codex_candidate(
+        candidate_home,
+        before,
+        command,
+        **(
+            {}
+            if deadline_ns is None
+            else {"timeout_seconds": _registration_budget(deadline_ns)}
+        ),
+    )
+    _put(history / "config.candidate.toml", candidate)
+    _put(
+        history / "selection.json",
+        canonical_bytes(
+            {
+                "selection": wanted,
+                "before_sha256": hashlib.sha256(before).hexdigest(),
+                "candidate_sha256": hashlib.sha256(candidate).hexdigest(),
+            }
+        ),
+    )
+    # The preimage, validated candidate and selection must survive a lost reply
+    # after publication. Retrying then observes the already selected exact role.
+    directory = candidate_home
+    while True:
+        _sync_directory(directory)
+        if directory == attachment.parent:
+            break
+        directory = directory.parent
+    temporary = home / (".matrix-mcp-" + str(uuid.uuid4()))
+    try:
+        _put(temporary, candidate)
+        observed = (
+            _read_codex_config(config)
+            if config.exists() or config.is_symlink()
+            else b""
+        )
+        if observed not in (before, candidate):
+            raise ValueError("agent_chat_codex_mcp_configuration_changed")
+        if observed != candidate:
+            _registration_budget(deadline_ns)
+            os.replace(temporary, config)
+        _sync_directory(home)
+        _registration_budget(deadline_ns)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {
+        "status": "configured",
+        "catalog_acceptance": "unobserved",
+        "history": str(history),
+    }
+
+
+def _codex_candidate(
+    home: Path,
+    before: bytes,
+    command: list[str],
+    *,
+    timeout_seconds: float | None = None,
+) -> bytes:
+    """Resume private preparation without overwriting an unrecognized candidate."""
+    old = tomllib.loads(before.decode())
+    servers = old.get("mcp_servers", {})
+    role = servers.get("matrix", {})
+    startup_default = (
+        {}
+        if "startup_timeout_sec" in role or "startup_timeout_ms" in role
+        else {"startup_timeout_sec": 60}
+    )
+    expected = {
+        **old,
+        "mcp_servers": {
+            **servers,
+            "matrix": {
+                **role,
+                **startup_default,
+                "command": command[0],
+                "args": command[1:],
+            },
+        },
+    }
+    config = home / "config.toml"
+    if not config.exists():
+        _put(config, before)
+    candidate = _read_codex_config(config)
+    if candidate == before and old != expected:
+        codex = shutil.which("codex")
+        if codex is None:
+            raise ValueError("agent_chat_codex_cli_unavailable")
+        _write_codex_role(
+            codex,
+            home,
+            command,
+            **({"startup_timeout_seconds": 60} if startup_default else {}),
+            timeout_seconds=30 if timeout_seconds is None else timeout_seconds,
+        )
+        candidate = _read_codex_config(config)
+    if tomllib.loads(candidate.decode()) != expected:
+        raise ValueError("agent_chat_codex_mcp_configuration_conflict")
+    return candidate
+
+
+def _publish_exact(
+    path: Path, before: bytes, after: bytes, *, deadline_ns: int | None = None
+) -> None:
+    """Complete an original-or-intended file replacement and its durability."""
+    from daimon_matrix.messaging_config import protected_read
+
+    current = protected_read(path)
+    if current not in (before, after):
+        raise ValueError("agent_chat_tooling_conflict")
+    if current != after:
+        temporary = path.parent / (".matrix-tooling-" + str(uuid.uuid4()))
+        try:
+            _put(temporary, after)
+            if protected_read(path) != before:
+                raise ValueError("agent_chat_tooling_conflict")
+            if deadline_ns is not None and time.monotonic_ns() >= deadline_ns:
+                raise ValueError("agent_chat_tooling_deadline_expired")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    _sync_directory(path.parent)
+
+
+def _binding_fingerprint(
+    attachment: Path, *, binding_filename: str = "binding.json"
+) -> tuple[dict[str, Any], str]:
+    from daimon_matrix.messaging_config import protected_read
+
+    if binding_filename not in {"binding.json", "owner-binding.json"}:
+        raise ValueError("agent_chat_tooling_binding_invalid")
+    path = attachment / binding_filename
+    binding = load_binding(path)
+    bridge(binding)  # Validate messaging-only capability; no request is sent.
+    raw = json.loads(protected_read(path))
+    paths = {path}
+    children = [binding]
+    if "links" in binding:
+        paths.update(Path(item) for item in raw["links"].values())
+        children = list(binding["links"].values())
+    paths.update(Path(child["client_config"]) for child in children)
+    vector = {
+        str(item): hashlib.sha256(protected_read(item)).hexdigest()
+        for item in sorted(paths)
+    }
+    return binding, hashlib.sha256(canonical_bytes(vector)).hexdigest()
+
+
+def reconcile_tooling(
+    attachment: Path,
+    command: list[str],
+    operation_id: str,
+    *,
+    connections: Sequence[Path] = (),
+    deadline_ns: int | None = None,
+) -> dict[str, Any]:
+    """Adopt an owner-derived qualified command without reenrolling the body.
+
+    The owning adapter derives command from its approved SDK/code, never peer
+    text. One retained operation owns all exact connection/config preimages.
+    Native catalog acceptance and active-session reload remain separate.
+    """
+    from daimon_matrix.messaging_config import protected_read
+
+    def remaining() -> float:
+        if deadline_ns is None:
+            return 30
+        value = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        if value <= 0:
+            raise ValueError("agent_chat_tooling_deadline_expired")
+        return min(30, value)
+
+    remaining()
+    identifier = operation_id.removeprefix("operation:")
+    if str(uuid.UUID(identifier)) != identifier:
+        raise ValueError("agent_chat_tooling_operation_invalid")
+    attachment = Path(os.path.abspath(attachment))
+    binding_filename = (
+        Path(command[-1]).name if command and isinstance(command[-1], str) else ""
+    )
+    if (
+        not command
+        or binding_filename not in {"binding.json", "owner-binding.json"}
+        or any(
+            not isinstance(item, str) or not item or "\0" in item for item in command
+        )
+        or command[-2:] != ["--binding", str(attachment / binding_filename)]
+    ):
+        raise ValueError("agent_chat_tooling_command_invalid")
+    home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    if not home.is_absolute() or home.is_symlink():
+        raise ValueError("agent_chat_codex_home_invalid")
+    paths = [attachment / "connection.json", *connections, home / "config.toml"]
+    if (
+        len(paths) > 10
+        or len(set(paths)) != len(paths)
+        or any(not item.is_absolute() or ".." in item.parts for item in paths)
+    ):
+        raise ValueError("agent_chat_tooling_paths_invalid")
+    history = attachment / "codex-mcp-history" / ("tooling-" + identifier)
+    command_sha = hashlib.sha256(canonical_bytes(command)).hexdigest()
+    with _codex_owner_lock(home):
+        binding, binding_sha = _binding_fingerprint(
+            attachment, binding_filename=binding_filename
+        )
+        intent = dict(
+            operation_id=operation_id,
+            command_sha256=command_sha,
+            binding_sha256=binding_sha,
+            paths=list(map(str, paths)),
+        )
+        _put(history / "intent.json", canonical_bytes(intent))
+        manifest_path = history / "manifest.json"
+        if not manifest_path.exists():
+            originals = []
+            for index, path in enumerate(paths):
+                saved = history / f"{index}.before"
+                if not saved.exists():
+                    _put(saved, protected_read(path))
+                before = protected_read(saved)
+                if protected_read(path) != before:
+                    raise ValueError("agent_chat_tooling_conflict")
+                originals.append(before)
+            current_command = None
+            for index, before in enumerate(originals[:-1]):
+                original = json.loads(before)
+                if (
+                    set(original)
+                    not in (
+                        {"command", "tools", "incoming_channels"},
+                        {"command", "tools", "incoming_channels", "outgoing_channels"},
+                    )
+                    or original["incoming_channels"] != binding["incoming_channels"]
+                    or original.get("outgoing_channels", binding["outgoing_channels"])
+                    != binding["outgoing_channels"]
+                    or not isinstance(original["command"], list)
+                    or original["command"][-2:]
+                    != ["--binding", str(attachment / binding_filename)]
+                    or {row.get("name") for row in original["tools"]}
+                    != {row["name"] for row in _tools()}
+                ):
+                    raise ValueError("agent_chat_tooling_connection_invalid")
+                if (
+                    current_command is not None
+                    and current_command != original["command"]
+                ):
+                    raise ValueError("agent_chat_tooling_conflict")
+                current_command = original["command"]
+                _put(
+                    history / f"{index}.after",
+                    canonical_bytes(
+                        {**original, "command": command, "tools": _tools()}
+                    ),
+                )
+            role = (
+                tomllib.loads(originals[-1].decode())
+                .get("mcp_servers", {})
+                .get("matrix")
+            )
+            if (
+                not isinstance(role, dict)
+                or not current_command
+                or role.get("command") != current_command[0]
+                or role.get("args") != [*current_command[1:], "mcp"]
+            ):
+                raise ValueError("agent_chat_codex_mcp_conflict")
+            candidate = _codex_candidate(
+                history / "candidate-home",
+                originals[-1],
+                [*command, "mcp"],
+                **({} if deadline_ns is None else {"timeout_seconds": remaining()}),
+            )
+            _put(history / f"{len(paths) - 1}.after", candidate)
+            manifest = {
+                **intent,
+                "files": [
+                    dict(
+                        path=str(path),
+                        before_sha256=hashlib.sha256(originals[index]).hexdigest(),
+                        after_sha256=hashlib.sha256(
+                            protected_read(history / f"{index}.after")
+                        ).hexdigest(),
+                    )
+                    for index, path in enumerate(paths)
+                ],
+            }
+            _put(manifest_path, canonical_bytes(manifest))
+        manifest = json.loads(protected_read(manifest_path))
+        if (
+            set(manifest) != {*intent, "files"}
+            or {key: manifest[key] for key in intent} != intent
+            or not isinstance(manifest["files"], list)
+            or len(manifest["files"]) != len(paths)
+        ):
+            raise ValueError("agent_chat_tooling_conflict")
+        updates = []
+        for index, row in enumerate(manifest["files"]):
+            before, after = (
+                protected_read(history / f"{index}.{suffix}")
+                for suffix in ("before", "after")
+            )
+            if (
+                row["path"] != str(paths[index])
+                or row["before_sha256"] != hashlib.sha256(before).hexdigest()
+                or row["after_sha256"] != hashlib.sha256(after).hexdigest()
+                or protected_read(paths[index]) not in (before, after)
+            ):
+                raise ValueError("agent_chat_tooling_conflict")
+            updates.append((paths[index], before, after))
+        directory = history / "candidate-home"
+        while True:
+            _sync_directory(directory)
+            if directory == attachment.parent:
+                break
+            directory = directory.parent
+        for path, before, after in updates:
+            remaining()
+            if (
+                _binding_fingerprint(attachment, binding_filename=binding_filename)[1]
+                != binding_sha
+            ):
+                raise ValueError("agent_chat_tooling_conflict")
+            _publish_exact(
+                path,
+                before,
+                after,
+                **({} if deadline_ns is None else {"deadline_ns": deadline_ns}),
+            )
+        remaining()
+        role = tomllib.loads(updates[-1][2].decode())["mcp_servers"]["matrix"]
+        client = bridge(binding).client.config
+        result = dict(
+            status="configured" if role.get("enabled", True) is True else "disabled",
+            operation_id=operation_id,
+            binding_sha256=binding_sha,
+            command_sha256=command_sha,
+            config_sha256=hashlib.sha256(updates[-1][2]).hexdigest(),
+            transition_sha256=hashlib.sha256(canonical_bytes(manifest)).hexdigest(),
+            runtime_id=client.runtime_id,
+            server=client.expected_server,
+            incoming_channels=binding["incoming_channels"],
+            outgoing_channels=binding["outgoing_channels"],
+            catalog_acceptance="unobserved",
+        )
+        remaining()
+        return result
+
+
 def _tools() -> list[dict[str, Any]]:
     tools = [
         {
@@ -78,6 +718,8 @@ def _tools() -> list[dict[str, Any]]:
 def install(args: argparse.Namespace) -> dict[str, Any]:
     import daimon_matrix.agent_chat as module
 
+    deadline_ns = getattr(args, "deadline_ns", None)
+    _registration_budget(deadline_ns)
     target = Path(os.path.abspath(args.attachment))
     binding = {
         "schema": SCHEMA,
@@ -102,6 +744,7 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
     _mkdir(target)
     _directory(target)
     (target / "requests").mkdir(mode=0o700, exist_ok=True)
+    _registration_budget(deadline_ns)
     _put(target / "binding.json", canonical_bytes(binding))
     bridge(load_binding(target / "binding.json"))
     command = [
@@ -135,10 +778,11 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         _put(home / "daimon-chat" / "connection.json", connection)
         _put(
             home / "daimon-chat" / "agents/openai.yaml",
-            b"policy:\n  allow_implicit_invocation: false\n",
+            b"policy:\n  allow_implicit_invocation: true\n",
         )
+    _registration_budget(deadline_ns)
     _put(target / "connection.json", connection)
-    return {
+    result: dict[str, Any] = {
         "status": "installed",
         "command": command,
         "new_daemons": 0,
@@ -151,6 +795,15 @@ def install(args: argparse.Namespace) -> dict[str, Any]:
         else None,
         "mcp_command": [*command, "mcp"],
     }
+    if getattr(args, "register_codex_mcp", False):
+        result["codex_mcp"] = register_codex_mcp(
+            target,
+            result["mcp_command"],
+            previous_sha256=getattr(args, "previous_codex_mcp_sha256", None),
+            deadline_ns=deadline_ns,
+        )
+    _registration_budget(deadline_ns)
+    return result
 
 
 def _semantic_schema(value: Any) -> Any:
@@ -294,6 +947,12 @@ def main() -> None:
     parser.add_argument("--incoming", action="append", default=[])
     parser.add_argument("--outgoing", action="append", default=[])
     parser.add_argument("--hermes-home", type=Path)
+    parser.add_argument(
+        "--register-codex-mcp",
+        action="store_true",
+        help="Register native Matrix tools through this owner's Codex config writer",
+    )
+    parser.add_argument("--previous-codex-mcp-sha256")
     parser.add_argument(
         "--skills-dir",
         type=Path,

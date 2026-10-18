@@ -150,25 +150,40 @@ for the operation it is about to perform. A relocated or restored runtime is
 reprovisioned as a fresh embodiment and never inherits these client keys from
 another embodiment.
 
-## Expiry and reprovisioning
+## Capability expiry and receiving recovery
 
-For an active current bundle whose profiles predate a required method, use the
-[scoped owner capability upgrade](operator-capability-upgrade.md). It authenticates
-and signs an exact successor while preserving existing keys, identity, history
-and original expiry. Renderer refresh alone never adds signed methods. New
-onboarding must qualify actual observer read and sealed conversation with genuine
-receiving receipts; status and sync are not conversation acceptance.
+Original operator/status roles expire30 days after preparation. The receipt
+retains `reprovision_at_ms` and `expires_at_ms`; those dates describe the original
+grant, not a direction to replace the being or body for routine maintenance.
+Explicit body migration still uses its own rebirth procedure. Keep identity,
+keys, history, custody highwater and original client requests through software
+updates and capability recovery.
 
-Every generated role capability expires 30 days after preparation. The public
-receipt records both `reprovision_at_ms` (seven days before expiry) and
-`expires_at_ms`. Schedule a fresh `daimon-rebirth prepare`/`authorize`/`activate`
-ceremony no later than `reprovision_at_ms`, validate and start that new
-root-authorized embodiment, then park or revoke the predecessor through the
-normal signed authority transition. This creates new keys and role descriptors;
-there is deliberately no multi-file in-place key rotation. At hard expiry, or
-if any descriptor is marked revoked, runtime loading and request authentication
-fail closed. Rerunning `daimon-synthetic-bootstrap` is only a disposable-fixture
-rebuild and is not an operational rotation procedure.
+For an active bundle missing a newly supported method, use the
+[scoped owner capability upgrade](operator-capability-upgrade.md). Method-only
+upgrades retain their original expiry. Renderer or SDK refresh never issues
+signed methods or renews a grant by itself.
+
+New optional receiving controllers use the earliest original owner-role expiry,
+bounded by the operator lifetime policy. Their lifetime is independent of the
+finite update transaction deadline. A stopped V8 receiver with only that optional
+role expired can use the explicit existing-owner renewal transaction in the
+same runbook. It requires current original roles, authenticated existing custody
+and currently valid signed being/body authority; revoked roles never renew.
+The transaction changes only the selected descriptor/client binding and advances
+the custody counter once. It creates no being, embodiment or incarnation.
+
+Recovery of expired original roles is not supplied by this narrow receiving
+repair. Report that specific gap and preserve the runtime; do not silently turn
+a routine update into a new embodiment ceremony. V7 rejects inactive capabilities
+at load. V8 retains their authenticated claims but request authentication still
+refuses expired/revoked grants. Current signed body credentials and local role
+capabilities have separate validity; neither substitutes for the other.
+
+[#355](https://github.com/AlterMundi/daimon-matrix/issues/355) owns the receiving
+expiry correction and its actual Source/guest integration. A source transaction
+or green check is not evidence of receiving deployment. Preserve exact prior
+receipts and pending requests; never silently re-sign them after renewal.
 
 ## Configured peer pull
 
