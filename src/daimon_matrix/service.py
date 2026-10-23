@@ -878,6 +878,42 @@ class HostedWeave:
                             "retryable": exception.retryable,
                         },
                     )
+                except (SyncProtocolError, WeaveProtocolError):
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={"code": "protocol_rejected", "retryable": False},
+                    )
+                except ProjectionError:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={"code": "projection_invalid", "retryable": False},
+                    )
+                except LedgerEquivocationError:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={"code": "durable_conflict", "retryable": False},
+                    )
+                except LedgerGapError:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={"code": "causal_gap", "retryable": True},
+                    )
                 except (LedgerError, LedgerStateError):
                     return create_response(
                         capability,
@@ -3054,6 +3090,12 @@ class HostedWeave:
             or receipt["authority"] != "daimon"
         ):
             raise ServiceError("projection_effect_actor_mismatch")
+        fence = receipt["resource_fence"]
+        if (
+            fence is not None
+            and fence["holder_embodiment_id"] != self.origin["embodiment_id"]
+        ):
+            raise ServiceError("projection_effect_fence_holder_mismatch")
         now = self.clock()
         if (
             receipt["completed_at_ms"] > now

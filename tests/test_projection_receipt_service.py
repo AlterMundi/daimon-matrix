@@ -5,9 +5,14 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 from typing import Any
+from unittest.mock import patch
 
 from daimon_matrix.canonical import canonical_bytes
-from daimon_matrix.cluster import create_effect_receipt
+from daimon_matrix.cluster import (
+    create_effect_receipt,
+    create_resource_fence_evidence,
+    resource_fence_position,
+)
 from daimon_matrix.local_api import (
     create_capability,
     create_request,
@@ -20,7 +25,9 @@ from daimon_matrix.service import (
     OPERATOR_CAPABILITY_PROFILES,
     HostedWeave,
 )
+from daimon_matrix.weave import WeaveProtocolError
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
+from tests.test_dm037_cluster_effects import verification
 
 
 class ProjectionReceiptTests(RootLedgerFixture):
@@ -151,6 +158,66 @@ class ProjectionReceiptTests(RootLedgerFixture):
             ),
             1,
         )
+
+    def test_foreign_fence_holder_exact_retry_is_an_authenticated_refusal(self) -> None:
+        fence = create_resource_fence_evidence(
+            body_ref="cluster:other-body",
+            holder_embodiment_id="embodiment:other",
+            holder_incarnation_id="incarnation:other",
+            resource_ref="fixture:selected-config",
+            epoch=7,
+            observed_at_ms=NOW - 100,
+            expires_at_ms=NOW + 1000,
+            verification_ref="fixture:current-fence",
+        )
+        fields = {
+            k: v for k, v in self.receipt.items() if k not in {"schema", "content_hash"}
+        }
+        fields["resource_fence"] = resource_fence_position(fence)
+        request = self.request(receipt=create_effect_receipt(**fields))
+
+        def observer(receipt: Any, at_ms: int) -> dict[str, Any]:
+            return {**self.observe(receipt, at_ms), "current_fence_evidence": fence}
+
+        self.service = replace(
+            self.service,
+            projection_observer=observer,
+            projection_fence_verifier=verification,
+        )
+        for _ in range(2):
+            response = self.invoke(request)
+            self.assertFalse(response["ok"])
+            self.assertEqual(
+                response["error"],
+                {
+                    "code": "projection_effect_fence_holder_mismatch",
+                    "retryable": False,
+                },
+            )
+        self.assertEqual(self.observations, 0)
+        self.assertEqual(len(self.ledger_a.events()), 2)
+
+    def test_protocol_refusal_remains_authenticated_on_exact_retry(self) -> None:
+        request = self.request()
+        with patch.object(
+            self.ledger_a,
+            "append_local_idempotent",
+            side_effect=WeaveProtocolError("invalid_projection_receipt"),
+        ):
+            for _ in range(2):
+                response = self.invoke(request)
+                self.assertFalse(response["ok"])
+                self.assertEqual(
+                    response["error"],
+                    {
+                        "code": "protocol_rejected",
+                        "retryable": False,
+                    },
+                )
+        self.assertEqual(len(self.ledger_a.events()), 2)
+        # A later valid attempt resumes the retained request, not a new effect.
+        self.assertTrue(self.invoke(request)["ok"])
+        self.assertEqual(len(self.ledger_a.events()), 3)
 
     def test_missing_observer_recovers_the_original_request(self) -> None:
         request = self.request()
