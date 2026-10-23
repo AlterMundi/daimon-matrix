@@ -4,7 +4,7 @@
     "attestation": {
       "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
       "causal_parents": [],
-      "content_hash": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+      "content_hash": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
       "event_id": "00000205-0000-4000-8000-000000000001",
       "kind": "experience.observed",
       "manifest_hash": "1065983b575118b7d86a6c5504f8e8a038c81525e81d6ca21447bedf60cced3d",
@@ -19,7 +19,7 @@
         "bootstrap": {
           "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
           "body_ref": "cluster:legion:compaii",
-          "capability_set_hash": "9ac797c5f4860c8df89eb5ff2a6ca3e4aee54cafdc0b41f8af644996ed232031",
+          "capability_set_hash": "3dfbc86fc413431144ae15c60deee02024b02cf2d76eef4f82a0e7783cda1588",
           "certificate_hash": "9b595c344e52f65f0291f3c95581adf192a78d7fd78c22ebbca7186213959340",
           "embodiment_id": "embodiment:legion",
           "expires_at_ms": 1800000030000,
@@ -41,26 +41,26 @@
       "signature": {
         "alg": "Ed25519",
         "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
-        "value": "iM6tDpEBkdvDtAE5gT013Mje4smMhWGcS07T4czpobsJXS50R5SJ_BRgASbqd_VK3VHb8GRv4mCBhSuiaH-9AQ"
+        "value": "JuFq53JrKvg4LH4r0K_Q7cfodoys_WroEDmN_l_QSy6Zwm5qm1DswjzUL5Wh-DfRUkIXif4iAd7L_j7v8pV4Ag"
       },
       "subject": "codex-body/bootstrap",
       "supersedes": null
     },
     "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
     "body_ref": "cluster:legion:compaii",
-    "capability_set_hash": "9ac797c5f4860c8df89eb5ff2a6ca3e4aee54cafdc0b41f8af644996ed232031",
+    "capability_set_hash": "3dfbc86fc413431144ae15c60deee02024b02cf2d76eef4f82a0e7783cda1588",
     "certificate_hash": "9b595c344e52f65f0291f3c95581adf192a78d7fd78c22ebbca7186213959340",
     "embodiment_id": "embodiment:legion",
     "expires_at_ms": 1800000030000,
     "incarnation_id": "incarnation:legion:0",
     "issued_at_ms": 1800000000000,
-    "matrix_high_water": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+    "matrix_high_water": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
     "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
     "schema": "dm.codex-body.bootstrap/v2",
     "signature": {
       "alg": "Ed25519",
       "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
-      "value": "iM6tDpEBkdvDtAE5gT013Mje4smMhWGcS07T4czpobsJXS50R5SJ_BRgASbqd_VK3VHb8GRv4mCBhSuiaH-9AQ"
+      "value": "JuFq53JrKvg4LH4r0K_Q7cfodoys_WroEDmN_l_QSy6Zwm5qm1DswjzUL5Wh-DfRUkIXif4iAd7L_j7v8pV4Ag"
     }
   },
   "codex": {

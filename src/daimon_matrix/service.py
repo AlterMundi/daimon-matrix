@@ -21,6 +21,13 @@ from types import MappingProxyType
 from typing import Any, Final, cast
 
 from .canonical import CanonicalError, b64url, canonical_bytes, unb64url
+from .cluster import (
+    ClusterEvidenceError,
+    FenceVerifier,
+    projection_receipt_payload,
+    reconcile_effect_receipt,
+    validate_effect_receipt,
+)
 from .communication import (
     MESSAGE_PAYLOAD_SCHEMA,
     CommunicationError,
@@ -106,6 +113,7 @@ METHODS: Final = frozenset(
         "we.event.get",
         "we.observe",
         "we.propose",
+        "we.projection.receipt",
         "we.preview",
         "we.projection.get",
         "we.projection.rebuild",
@@ -568,6 +576,10 @@ class HostedWeave:
         default_factory=dict
     )
     visibility_status: Callable[[], Mapping[str, int | str | None]] | None = None
+    projection_observer: (
+        Callable[[Mapping[str, Any], int], Mapping[str, Any]] | None
+    ) = None
+    projection_fence_verifier: FenceVerifier | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -835,6 +847,46 @@ class HostedWeave:
                             "retryable": exception.retryable,
                         },
                     )
+            if method == "we.projection.receipt":
+                # A retained RPC is history, not proof of a continuing effect.
+                # Reconcile even a formerly unavailable observer using the same
+                # original request; the ledger retains one canonical event.
+                try:
+                    result = self._projection_receipt(
+                        request["params"],
+                        client_id=client_id,
+                        request_id=request_id,
+                        request_hash=digest,
+                    )
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        result=result,
+                    )
+                except ServiceError as exception:
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={
+                            "code": exception.code,
+                            "retryable": exception.retryable,
+                        },
+                    )
+                except (LedgerError, LedgerStateError):
+                    return create_response(
+                        capability,
+                        request_id=request_id,
+                        request_digest=digest,
+                        server=self.origin,
+                        completed_at_ms=self.clock(),
+                        error={"code": "runtime_unavailable", "retryable": True},
+                    )
             if method == "curator.complete" and verified["ok"]:
                 curator = self.curator
                 result = verified["result"]
@@ -1092,6 +1144,18 @@ class HostedWeave:
             expected_server=self.origin,
             expected_runtime=self.runtime_identity,
         )
+        if method == "we.projection.receipt":
+            # A concurrent finisher may retain an earlier outcome. Serve this
+            # dispatch's actual observation; the original RPC remains history
+            # and every later exact retry reconciles it again.
+            return verify_response(
+                response,
+                capability,
+                expected_request_id=request_id,
+                expected_request_hash=digest,
+                expected_server=self.origin,
+                expected_runtime=self.runtime_identity,
+            )
         if method == "messaging.inbox":
             # finish_rpc can select a concurrent finisher's earlier response.
             return self._messaging_response(verified, request, capability)
@@ -2471,6 +2535,9 @@ class HostedWeave:
                 "local_origin": self.origin,
                 "ledger_schema_version": SCHEMA_VERSION,
                 "integrity": "ok",
+                "projection_receipts": {
+                    "observer_available": self.projection_observer is not None
+                },
                 "counts": self.ledger.status_counts(),
                 "visibility": visibility,
                 "authority_epoch": {
@@ -2665,6 +2732,13 @@ class HostedWeave:
             )
         if method == "we.observe":
             return self._observe(
+                params,
+                client_id=client_id,
+                request_id=request_id,
+                request_hash=request_hash,
+            )
+        if method == "we.projection.receipt":
+            return self._projection_receipt(
                 params,
                 client_id=client_id,
                 request_id=request_id,
@@ -2949,6 +3023,123 @@ class HostedWeave:
             if kind == "experience.observed"
             else "dm.we.proposal-result/v1",
             "event": event,
+        }
+
+    def _projection_receipt(
+        self, params: Any, *, client_id: str, request_id: str, request_hash: str
+    ) -> dict[str, Any]:
+        value = _closed(params, {"receipt"})
+        try:
+            receipt = validate_effect_receipt(value["receipt"])
+        except ClusterEvidenceError as exception:
+            raise ServiceError(exception.code) from exception
+        state_hash = self.ledger.state_hash()
+        target = self.ledger.event(receipt["target_event_id"])
+        decision = self.ledger.event(receipt["decision_event_id"])
+        if target is None or target["kind"] not in {
+            "configuration.proposed",
+            "skill.proposed",
+        }:
+            raise ServiceError("projection_known_proposal_required")
+        if (
+            decision is None
+            or decision["kind"] != "adoption.decided"
+            or decision["origin"] != self.origin
+            or decision["payload"]["target_event_id"] != target["event_id"]
+            or decision["payload"]["decision"] != "adopt"
+        ):
+            raise ServiceError("projection_local_adoption_required")
+        if (
+            receipt["actor"] != self.origin["principal_id"]
+            or receipt["authority"] != "daimon"
+        ):
+            raise ServiceError("projection_effect_actor_mismatch")
+        now = self.clock()
+        if (
+            receipt["completed_at_ms"] > now
+            or receipt["started_at_ms"] < decision["occurred_at_ms"]
+        ):
+            raise ServiceError("projection_effect_timing_invalid")
+        entry = next(
+            (
+                item
+                for item in ProjectionEngine(self.ledger).snapshot()["entries"]
+                if item["event_id"] == target["event_id"]
+            ),
+            None,
+        )
+        if (
+            entry is None
+            or entry["state"] != "adopted"
+            or entry["decision_event_id"] != decision["event_id"]
+        ):
+            raise ServiceError("projection_adoption_not_current")
+        if self.projection_observer is None:
+            raise ServiceError("projection_effect_truth_unverifiable", retryable=True)
+        try:
+            observed = self.projection_observer(copy.deepcopy(receipt), now)
+            if not isinstance(observed, Mapping) or set(observed) != {
+                "intent",
+                "observed_postcondition",
+                "current_fence_evidence",
+            }:
+                raise ValueError("invalid_observer_result")
+            reconciliation = reconcile_effect_receipt(
+                receipt,
+                intent=observed["intent"],
+                observed_postcondition=observed["observed_postcondition"],
+                at_ms=now,
+                current_fence_evidence=observed["current_fence_evidence"],
+                fence_verifier=self.projection_fence_verifier,
+            )
+        except Exception as exception:
+            raise ServiceError(
+                "projection_effect_truth_unverifiable", retryable=True
+            ) from exception
+        if reconciliation["status"] != "verified":
+            raise ServiceError(
+                str(reconciliation["status"]),
+                retryable=reconciliation["status"] == "effect-truth-unverifiable",
+            )
+        if self.ledger.state_hash() != state_hash:
+            raise ServiceError("projection_decision_view_changed", retryable=True)
+        payload = projection_receipt_payload(receipt)
+        event_id = str(
+            uuid.uuid5(uuid.UUID(receipt["effect_id"]), "projection.receipted")
+        )
+        existing = self.ledger.event(event_id)
+        if existing is not None:
+            if (
+                existing["kind"] != "projection.receipted"
+                or existing["origin"] != self.origin
+                or existing["subject"] != target["subject"]
+                or existing["payload"] != payload
+            ):
+                raise ServiceError("projection_effect_identity_conflict")
+            event = existing
+        else:
+            sensitivity = (
+                target["sensitivity"]
+                if target["sensitivity"] == decision["sensitivity"]
+                else "private"
+            )
+            event = self.ledger.append_local_idempotent(
+                client_id=client_id,
+                request_id=request_id,
+                request_hash=request_hash,
+                kind="projection.receipted",
+                subject=target["subject"],
+                payload=payload,
+                signer=self.signer,
+                sensitivity=sensitivity,
+                causal_parents=sorted({target["event_id"], decision["event_id"]}),
+                event_id=event_id,
+                expected_state_hash=state_hash,
+            )
+        return {
+            "schema": "dm.we.projection-receipt-result/v1",
+            "event": event,
+            "reconciliation": reconciliation,
         }
 
     def _decide(

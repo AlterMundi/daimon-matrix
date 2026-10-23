@@ -460,6 +460,9 @@ def load_runtime(
     tribe_verifier: SnapshotVerifier | None = None,
     curator_fence_verifier: FenceVerifier | None = None,
     curator_effect_observer: EffectTruthObserver | None = None,
+    projection_observer: Callable[[Mapping[str, Any], int], Mapping[str, Any]]
+    | None = None,
+    projection_fence_verifier: FenceVerifier | None = None,
     relationship_authorities: Mapping[str, RootAuthority | RootHistoryAuthority]
     | None = None,
     qualified_startup: Mapping[str, Any] | None = None,
@@ -1670,6 +1673,8 @@ def load_runtime(
         peer_context=peer_context,
         we_lane=we_lane,
         visibility_status=visibility.status,
+        projection_observer=projection_observer,
+        projection_fence_verifier=projection_fence_verifier,
         loaded_runtime=canonical_bytes(
             {
                 "schema": "dm.runtime.loaded-base/v1",

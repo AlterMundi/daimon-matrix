@@ -1,7 +1,7 @@
 {
-  "bootstrap_event_hash": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+  "bootstrap_event_hash": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
   "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
-  "previous_event_hash": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+  "previous_event_hash": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
   "previous_event_id": "00000205-0000-4000-8000-000000000001",
   "schema": "dm.codex-body.session-witness/v1",
   "witness_sequence": 1

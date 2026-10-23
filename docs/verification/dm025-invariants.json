@@ -7,9 +7,9 @@
     "2026-07-28"
   ],
   "mcp_sdk": "mcp==2.0.0",
-  "service_method_count": 89,
-  "cli_command_count": 74,
-  "mcp_tool_count": 71,
+  "service_method_count": 90,
+  "cli_command_count": 75,
+  "mcp_tool_count": 72,
   "mcp_resource_count": 8,
   "invariants": {
     "clients_use_daemon_only": true,

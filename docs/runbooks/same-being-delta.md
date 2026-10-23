@@ -2,8 +2,10 @@
 
 Matrix#376 owns the unfinished integrated workflow. Its unit is all customization
 relative to each versioned harness baseline, plus memory and selected skills.
-This first implementation supplies read-only behavior discovery and comparison;
-it does not yet apply behavioral changes or complete the end-to-end increment.
+The merged inventory supplies read-only discovery/comparison; DMK PR32 supplies
+native exchange, and Cluster PR295 supplies selected behavioral materialization.
+Cluster#296 composes these with the existing selective Skills installer. The full
+end-to-end increment and actual two-body use remain unfinished.
 
 Use the owning ordinary checkout and receiving-private operation directory. Reuse
 `tools.export_being` for file inventory, source selection and credential checks;
@@ -120,3 +122,43 @@ An offline receiver remains pending without blocking independent implementation.
 No recurring timer, hook, attention loop, automatic adoption or global Stop is
 implied. Each global Stop requires fresh explicit human consent. Rollback preserves
 current accepted authority, conversation/incident data and uncertain effects.
+
+## Observed foreground projection receipts
+
+`we.projection.receipt` takes exactly `{ "receipt": <dm.cluster-effect-receipt/v1> }`.
+CLI: `we projection-receipt --receipt <file>`. MCP: `we_projection_receipt`.
+It belongs to the existing weave mutation capability, not observe. It never
+executes the external effect or installs its observer from RPC/peer data.
+
+The receiving host injects `projection_observer` and, for a fenced effect, the
+existing Cluster `projection_fence_verifier` through `load_runtime`. The observer
+returns exactly `intent`, `observed_postcondition`, `current_fence_evidence` from
+its actual retained owning operation. The same-being Cluster integration observer
+resolves the opaque effect UUID in OperationJournal and rechecks actual DMK,
+selective skill and behavioral state. A claimed success from the caller alone
+cannot cross this boundary. Other native memory projections keep their dedicated
+qualified adapter; this foreground method accepts configuration/skill proposals.
+
+Matrix requires a known complete proposal, its current linear adoption by this
+exact local origin, the local daimon actor and valid local timing. It uses the
+existing canonical Cluster reconciliation and ledger state CAS before authoring
+`projection.receipted`. Sensitivity is never lowered: equal target/decision
+sensitivity is preserved; differing sensitivities produce a private receipt.
+The canonical event ID derives from the effect UUID; recording it from another
+request cannot duplicate the event or silently replace changed evidence.
+
+Persist the complete signed mutation request before sending, including its
+original nonce/authentication, not merely its UUID. Reuse the existing CLI
+request file or MCP operation ID; the integration parent retains those exact
+documents. The receiving client capability must support the method and a fresh
+`runtime.status.projection_receipts.observer_available` must be true before any
+child effect starts. This uses the existing receiving status read; no separate
+manual preflight or approval is needed. Preserve the original client profile for unresolved
+requests across a qualified receiver update; never re-sign an uncertain request
+with a fresh nonce to conceal an authorization mismatch.
+
+Every exact retry independently reconciles the current effect and adoption,
+including a cached RPC success or previously unavailable observer. The original
+RPC/event remains historical evidence; a later refusal never deletes it. This
+observation concerns materialized state, not a model's consumed context.
+The actual receiving harness-use checks remain separate unfinished work in376.

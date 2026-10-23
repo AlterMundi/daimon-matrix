@@ -274,6 +274,7 @@
         {"properties": {"method": {"const": "we.observe"}, "params": {"$ref": "#/$defs/observeParams"}}},
         {"properties": {"method": {"const": "we.decide"}, "params": {"$ref": "#/$defs/decideParams"}}},
         {"properties": {"method": {"const": "we.diff"}, "params": {"$ref": "#/$defs/diffParams"}}},
+        {"properties": {"method": {"const": "we.projection.receipt"}, "params": {"type": "object", "required": ["receipt"], "properties": {"receipt": {"type": "object"}}, "additionalProperties": false}}},
         {"properties": {"method": {"const": "we.projection.get"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.projection.rebuild"}, "params": {"$ref": "#/$defs/empty"}}}
       ]}]

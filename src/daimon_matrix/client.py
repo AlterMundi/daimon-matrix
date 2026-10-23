@@ -613,6 +613,13 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("we.diff", params, request_id=request_id)
 
+    def projection_receipt(
+        self, receipt: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "we.projection.receipt", {"receipt": receipt}, request_id=request_id
+        )
+
     def projection_get(
         self, *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import select
@@ -8,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,6 +23,7 @@ from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
+from daimon_matrix.cluster import create_effect_receipt
 from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import (
     MAX_CAPABILITY_METHODS,
@@ -56,11 +59,15 @@ class InstalledSurfaceTests(RuntimeFixture):
     def setUp(self) -> None:
         super().setUp()
         self.state_root, bundle, self.capability, _ = self.make_process_bundle()
+        self.projection_intents: dict[str, dict[str, Any]] = {}
+        self.projection_posts = self.state_root / "observed-projections.json"
+        self.projection_posts.write_bytes(canonical_bytes({}))
         self.runtime = load_runtime(
             self.state_root,
             "runtime.json",
             lambda: bytearray(PASSWORD),
             clock=lambda: time.time_ns() // 1_000_000,
+            projection_observer=self.observe_projection,
         )
         self.stop = threading.Event()
         self.thread = threading.Thread(
@@ -88,6 +95,17 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.config_path.chmod(0o600)
         self.request_dir = self.state_root / "requests"
         self.request_dir.mkdir(mode=0o700)
+
+    def observe_projection(
+        self, receipt: Mapping[str, Any], at_ms: int
+    ) -> Mapping[str, Any]:
+        return {
+            "intent": self.projection_intents[str(receipt["effect_id"])],
+            "observed_postcondition": json.loads(self.projection_posts.read_bytes())[
+                receipt["effect_id"]
+            ],
+            "current_fence_evidence": None,
+        }
 
     def tearDown(self) -> None:
         self.stop.set()
@@ -540,6 +558,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 str(document),
             ],
             ["we", "heads"],
+            ["we", "projection-receipt", "--receipt", str(document)],
             ["we", "diff"],
             ["we", "preview", "--events", str(events)],
             ["we", "observe", "--subject", "subject", "--payload", str(document)],
@@ -724,6 +743,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "we_heads",
                 "we_event_get",
                 "we_propose",
+                "we_projection_receipt",
                 "we_diff",
                 "we_preview",
                 "we_projection_get",
@@ -740,10 +760,7 @@ class InstalledSurfaceTests(RuntimeFixture):
             },
         )
         self.assertEqual(
-            {
-                item["description"].removeprefix("Typed Daimon operation ")
-                for item in tools
-            },
+            {TOOL_CONTRACTS[item["name"]][0] for item in tools},
             set(
                 (
                     CURATOR_METHODS
@@ -881,6 +898,104 @@ class InstalledSurfaceTests(RuntimeFixture):
                     response = json.loads(output)
                     self.assertEqual(response["error"]["code"], -32700)
         self.assertEqual(self.runtime.service.ledger.rpc_requests(), [])
+
+    def test_projection_receipt_cli_mcp_reconcile_real_host_observation(self) -> None:
+        self.capability = self.operator_capabilities["weave"]
+        config = json.loads(self.config_path.read_bytes())
+        config["capability"] = self.capability.descriptor
+        self.config_path.write_bytes(canonical_bytes(config))
+        service = self.runtime.service
+        target = service.ledger.append_local(
+            kind="configuration.proposed",
+            subject="selected-effect",
+            payload={"content_refs": ["a" * 64]},
+            signer=service.signer,
+            sensitivity="private",
+        )
+        decision = service.ledger.append_local(
+            kind="adoption.decided",
+            subject=target["subject"],
+            payload={
+                "target_event_id": target["event_id"],
+                "decision": "adopt",
+                "reason": "Fixture-owned selected effect",
+            },
+            signer=service.signer,
+            causal_parents=[target["event_id"]],
+            sensitivity="private",
+        )
+        effect_id = "38200000-0000-4000-8000-000000000075"
+        intent = {"selection_sha256": "a" * 64}
+        self.projection_intents[effect_id] = intent
+        postcondition = {"materialized": True, "revision": 1}
+        self.projection_posts.write_bytes(canonical_bytes({effect_id: postcondition}))
+        now = time.time_ns() // 1_000_000
+        receipt = create_effect_receipt(
+            effect_id=effect_id,
+            target_event_id=target["event_id"],
+            decision_event_id=decision["event_id"],
+            adapter="fixture-owned-config/v1",
+            preview_hash="a" * 64,
+            intent_hash=hashlib.sha256(canonical_bytes(intent)).hexdigest(),
+            actor=service.origin["principal_id"],
+            authority="daimon",
+            resource_fence=None,
+            result="applied",
+            observed_postcondition=postcondition,
+            started_at_ms=now,
+            completed_at_ms=now,
+        )
+        document = self.state_root / "effect-receipt.json"
+        document.write_bytes(canonical_bytes(receipt))
+        token = self.state_root / "effect-retry.json"
+        arguments = [
+            "--json",
+            "--request-file",
+            str(token),
+            "we",
+            "projection-receipt",
+            "--receipt",
+            str(document),
+        ]
+        first = self.run_surface("daimon_matrix.cli", arguments)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        exact_request = token.read_bytes()
+        repeated = self.run_surface("daimon_matrix.cli", arguments)
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertEqual(token.read_bytes(), exact_request)
+        event = json.loads(first.stdout)["response"]["result"]["event"]
+        self.assertEqual(
+            json.loads(repeated.stdout)["response"]["result"]["event"], event
+        )
+        response = self.mcp_exchange(
+            {
+                "jsonrpc": "2.0",
+                "id": "projection",
+                "method": "tools/call",
+                "params": {
+                    "_meta": META,
+                    "name": "we_projection_receipt",
+                    "arguments": {
+                        "receipt": receipt,
+                        "operation_id": "70000000-0000-4000-8000-000000000075",
+                    },
+                },
+            }
+        )
+        result = response["result"]["structuredContent"]
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["event"], event)
+        self.assertEqual(len(service.ledger.events()), 3)
+        self.projection_posts.write_bytes(
+            canonical_bytes({effect_id: {"materialized": True, "revision": 2}})
+        )
+        changed = self.run_surface("daimon_matrix.cli", arguments)
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertEqual(
+            json.loads(changed.stdout)["response"]["error"]["code"],
+            "effect-truth-discrepancy",
+        )
+        self.assertEqual(len(service.ledger.events()), 3)
 
 
 class ClientSchemaTests(unittest.TestCase):

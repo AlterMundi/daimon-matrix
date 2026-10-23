@@ -3,77 +3,77 @@
   "files": [
     {
       "name": "negative/continuity-prefetch.json",
-      "sha256": "aa5527def10cb96f96120afe311a4315b02cfe55e5a820764cbfb4c2c6606296",
+      "sha256": "4650ed991d0dd57c207796a3e9f3308a91efd136cbcf929b3843b5aacf65e3f8",
       "valid": false
     },
     {
       "name": "negative/hook-policy.json",
-      "sha256": "b0f1063a2bc6f2c468e2024a2512e21a5a6b8a3a57dec7ec422f4eebd334910e",
+      "sha256": "8b7063a78f8c67544624e7bc796fe465bff753fdfdc72b8be48173876de957e9",
       "valid": false
     },
     {
       "name": "negative/mixed-plan.json",
-      "sha256": "0d8f621f8d4ee11c3548cbd4bc1ff92045322b5441863d07621c837216eb6dbb",
+      "sha256": "5a45feb5af24d33008049979aec7b150d4664decc3105a985955f0eedb5ade5b",
       "valid": false
     },
     {
       "name": "valid/bootstrap.json",
-      "sha256": "76fbacd21f7b47ac5172dc4350ff845baf55573b333d6a5ef42f6fb362275c54",
+      "sha256": "fef9b9435cbf1b4d479057af4134127d45bd881d24d3b05a9c5a45953539c4fb",
       "valid": true
     },
     {
       "name": "valid/continuity-plan.json",
-      "sha256": "463b4efe27422531f8063434772f8fd6f1b6b99ab781a537983c1e830c51ea29",
+      "sha256": "e82620fe36185321a64cb26e7a594e0624f209bbece866907605982090556f95",
       "valid": true
     },
     {
       "name": "valid/full-access-plan.json",
-      "sha256": "0bcb88ee7b8baabf82813111796e20adacd307632478b77945701e506ca7bcd7",
+      "sha256": "1375bb1a99ec3b441ea77614f368e58d8d73835979765438caf7bd5d67d76528",
       "valid": true
     },
     {
       "name": "valid/launch-receipt.json",
-      "sha256": "f390f93f513e08ca48599e09ac8daa4a164b07e170227a1f627b8891b1784ef1",
+      "sha256": "55018c777298607da306271ab32167f911f82fa56d1889566a75ad1e7c04d7cf",
       "valid": true
     },
     {
       "name": "valid/parking-handle.json",
-      "sha256": "0b3d56e52371bf9724ac7dacfa0f09b08d827a5f272fa1e35cbd7be3dd47c391",
+      "sha256": "d67e43096eb407d50a6a97abae6617bd9941ea9ce9a376d167288303cbf17ce1",
       "valid": true
     },
     {
       "name": "valid/plan.json",
-      "sha256": "55a71d9b5a8e08d520e0a331e668eb3e09ab5656e20bf6f3b17bf3cbf872fef8",
+      "sha256": "a5e918ba0c99df8029c4383f51d108e490b7ecf8421232cc91234b82393c2379",
       "valid": true
     },
     {
       "name": "valid/profile-manifest.json",
-      "sha256": "e5b17716d9c04e4b1f480ff8bc67774e646e34933455994285d2f60e8d457927",
+      "sha256": "4394d384a2abcedb751f6539f3e060e2f5db8bc3b8eee820c57540e8aaf16054",
       "valid": true
     },
     {
       "name": "valid/session-proof-record.json",
-      "sha256": "88fb0f79edf38e11dc2ad18ce09c867994944d448544580e67d742514108e847",
+      "sha256": "5d9e47b98c698ca68e4318f9a7d1f8cb0fb081cf3fe5d0a0463b5acdcc160c08",
       "valid": true
     },
     {
       "name": "valid/session-witness.json",
-      "sha256": "87439bb085a29e5129d0c292890b2be8b16297b17046e158a024b8f39230cf6d",
+      "sha256": "a47c29427da02b148c6ff79448fab779414c4634178afa5c564607bae365ac5b",
       "valid": true
     },
     {
       "name": "valid/turn-intent.json",
-      "sha256": "0ed73674b25d9b8980b4072427a7b1e8fcee972cbd5ecc52ca3a2e0e9e10f867",
+      "sha256": "c23801f6c1856f3a85ab7ab53ac8efaf8bf372c10ebe87581bbe80712bb618b8",
       "valid": true
     },
     {
       "name": "valid/turn-result.json",
-      "sha256": "c63f862bb58ad6b160843e66939b541bfdcfc58b6af0c26854b91bb74c891737",
+      "sha256": "f28a44c30163a2f9018a25afa0517853dfadd40c0c42cafd920268e1a8b716c3",
       "valid": true
     },
     {
       "name": "valid/turning-handle.json",
-      "sha256": "e2ac07fa6c58926987cb9fc0f9fef9bf261680169bc8459ac6594d9e74148b60",
+      "sha256": "d39a99aa184939510da3b4987c54186e319fff51c8521d7e98e7299c0f40f614",
       "valid": true
     }
   ],

@@ -10,8 +10,8 @@
     "protocol": {"const": "2026-07-28"},
     "tools": {
       "type": "array",
-      "minItems": 71,
-      "maxItems": 71,
+      "minItems": 72,
+      "maxItems": 72,
       "uniqueItems": true,
       "items": {
         "type": "object",
@@ -43,7 +43,7 @@
               "tribe_membership_accept", "relationship_event_ingest",
               "relationship_cursor", "relationship_status",
               "relationship_snapshot", "relationship_disclose",
-              "we_heads", "we_event_get", "we_propose", "we_diff", "we_preview",
+              "we_heads", "we_event_get", "we_propose", "we_projection_receipt", "we_diff", "we_preview",
               "we_projection_get", "we_observe", "we_decide",
               "we_projection_rebuild", "we_sync_request", "we_sync_peer_pull", "we_sync_serve",
               "we_sync_pull", "we_sync_validate_receipt",
@@ -75,7 +75,7 @@
               "tribe.membership.accept", "relationship.event.ingest",
               "relationship.cursor", "relationship.status",
               "relationship.snapshot", "relationship.disclose",
-              "we.heads", "we.event.get", "we.propose", "we.diff", "we.preview",
+              "we.heads", "we.event.get", "we.propose", "we.projection.receipt", "we.diff", "we.preview",
               "we.projection.get", "we.observe", "we.decide",
               "we.projection.rebuild", "we.sync.request", "we.sync.peer-pull", "we.sync.serve",
               "we.sync.pull", "we.sync.validate-receipt",
