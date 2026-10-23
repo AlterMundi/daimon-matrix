@@ -103,7 +103,9 @@ METHODS: Final = frozenset(
         "we.decide",
         "we.diff",
         "we.heads",
+        "we.event.get",
         "we.observe",
+        "we.propose",
         "we.preview",
         "we.projection.get",
         "we.projection.rebuild",
@@ -267,6 +269,7 @@ OBSERVE_METHODS: Final = frozenset(
         "species.incoming",
         "we.diff",
         "we.heads",
+        "we.event.get",
         "we.observe",
         "we.preview",
         "we.conversation.page",
@@ -2636,6 +2639,30 @@ class HostedWeave:
             return self._we_converse(params)
         if method == "we.conversation.page":
             return self._we_conversation_page(params)
+        if method == "we.event.get":
+            value = _closed(params, {"event_id"})
+            return {
+                "schema": "dm.we.event-result/v1",
+                "event": self.ledger.event(_uuid(value["event_id"])),
+            }
+        if method == "we.propose":
+            if (
+                not isinstance(params, Mapping)
+                or not isinstance(params.get("kind"), str)
+                or params["kind"]
+                not in {
+                    "configuration.proposed",
+                    "skill.proposed",
+                }
+            ):
+                raise ServiceError("invalid_params")
+            return self._observe(
+                {key: value for key, value in params.items() if key != "kind"},
+                client_id=client_id,
+                request_id=request_id,
+                request_hash=request_hash,
+                kind=params["kind"],
+            )
         if method == "we.observe":
             return self._observe(
                 params,
@@ -2884,6 +2911,7 @@ class HostedWeave:
         client_id: str,
         request_id: str,
         request_hash: str,
+        kind: str = "experience.observed",
     ) -> dict[str, Any]:
         value = _closed(
             params,
@@ -2907,7 +2935,7 @@ class HostedWeave:
             client_id=client_id,
             request_id=request_id,
             request_hash=request_hash,
-            kind="experience.observed",
+            kind=kind,
             subject=subject,
             payload=value["payload"],
             signer=self.signer,
@@ -2916,7 +2944,12 @@ class HostedWeave:
             occurred_at_ms=None if occurred is None else _uint(occurred),
             event_id=None if event_id is None else _uuid(event_id),
         )
-        return {"schema": "dm.we.observe-result/v1", "event": event}
+        return {
+            "schema": "dm.we.observe-result/v1"
+            if kind == "experience.observed"
+            else "dm.we.proposal-result/v1",
+            "event": event,
+        }
 
     def _decide(
         self,

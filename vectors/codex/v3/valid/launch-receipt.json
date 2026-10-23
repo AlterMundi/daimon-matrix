@@ -23,17 +23,17 @@
     "body_ref": "cluster:legion:compaii",
     "embodiment_id": "embodiment:legion",
     "incarnation_id": "incarnation:legion:0",
-    "matrix_high_water": "9cd7e8f022a1dbe00fc4833e7d935b12fd1852f239714972f22bc1a0e3564190",
+    "matrix_high_water": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
     "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms"
   },
   "observed_at_ms": 1800000000000,
   "outcome": "started",
-  "plan_hash": "9c0ea738457d4d2cebfe2b638651988f14d65c1a7ac896186c4705f627961891",
-  "profile_id": "dm:codex-profile:v3:9Na5na7MTBQb76lILeeKZ6uEAvwc4c--l3VajFdTK30",
-  "receipt_id": "dm:codex-launch-receipt:v3:bRyhsf6IMXqTmfMKyAF4pMh4Gf6PrQoSs6HGACR0xQk",
+  "plan_hash": "493eb23c407d7e56927346c3a71320c32a3d24327a097a35691f10a320f0a262",
+  "profile_id": "dm:codex-profile:v3:6T5PJvcpyUjxjj4BS27j7NazRQ_tDQi7WGccrhvSlz0",
+  "receipt_id": "dm:codex-launch-receipt:v3:2pVDevhCR8DlrkIuIC4SSSv9QctqFga1FLRO_3ck9dY",
   "reviewed_files": {
     "agents_sha256": "6b9a86c76f56660b5d7f45adf6c72234fbb998e8b803dcbe8104be17741311f2",
-    "bootstrap_sha256": "36f2a0933ee87f448f75b479ed4035d668b465a87c8d140f28fa08fae9e7a711",
+    "bootstrap_sha256": "d78d28a9ae4aa22b2804be9af80c107512475e6d368e9147fc0a7be7babca97c",
     "config_sha256": "c7375948cc05269ff8643754615d605a6a54c7f5a0ef83c118a8f3adb7245e0a"
   },
   "runtime": {

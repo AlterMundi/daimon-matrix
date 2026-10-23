@@ -586,6 +586,18 @@ class LocalClient:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         return self.invoke("we.preview", {"events": events}, request_id=request_id)
 
+    def we_event_get(
+        self, event_id: str, *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke(
+            "we.event.get", {"event_id": event_id}, request_id=request_id
+        )
+
+    def we_propose(
+        self, params: Mapping[str, Any], *, request_id: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.invoke("we.propose", params, request_id=request_id)
+
     def we_observe(
         self, params: Mapping[str, Any], *, request_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:

@@ -344,6 +344,7 @@ class Pair:
         text: str = TEXT,
         body_extra: Mapping[str, Any] | None = None,
     ) -> tuple[bytes, bytes, dict[str, Any], dict[str, Any]]:
+        assert self.policy.membership_ref is not None
         body = {"text": text, "resource_ref": self.policy.resource_ref}
         body.update(body_extra or {})
         message = self.event(
@@ -1814,6 +1815,7 @@ class NativeSendRpcTests(unittest.TestCase):
             },
             "acceptance",
         )
+        assert pair.policy.tribe_ref is not None
         snapshot = pair.sender_relationships.view(
             at_ms=pair.now, card_verifier=pair.receiver._card
         ).snapshot(pair.policy.tribe_ref)
@@ -2056,7 +2058,9 @@ class NativeSendRpcTests(unittest.TestCase):
         self.assertFalse(self.invoke(hosted, request)["ok"])
         self.assertEqual(len(calls), 2)
 
-    def test_historical_digest_never_enters_a_transmitting_or_completed_retry(self):
+    def test_historical_digest_never_enters_a_transmitting_or_completed_retry(
+        self,
+    ) -> None:
         pair, hosted, delivery, calls = self.setup_sender()
         request = self.request(pair)
         self.assertTrue(self.invoke(hosted, request)["ok"])
@@ -2438,6 +2442,7 @@ class NativeMessagingTests(unittest.TestCase):
         providers = []
         ingresses = {}
         transport: dict[str, Any] = {}
+        assert pair.policy.membership_ref is not None
         receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
@@ -2698,6 +2703,7 @@ class NativeMessagingTests(unittest.TestCase):
         pair = Pair(self.root)
         sender = self.make_sender(pair)
         ingresses = {}
+        assert pair.policy.membership_ref is not None
         receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, callback in (
             ("evidence", pair.receiver.receive_evidence),
@@ -3527,6 +3533,7 @@ class NativeMessagingTests(unittest.TestCase):
         drop_response = {"message": True}
         corrupt_response = {"evidence": True}
         ingresses = {}
+        assert pair.policy.membership_ref is not None
         receiver_egress = synthetic_visibility(clock=lambda: pair.now)
         for phase, validate in (
             ("evidence", pair.receiver.receive_evidence),

@@ -9,8 +9,9 @@ does not happen to include the second, and then fails CI in the installed-wheel
 job, which is the slowest place to find out.
 
 This check is deliberately cheap and deliberately narrow: it compares the actual
-package module set against every inventory and every asserted count, and it runs
-the generated-artifact check set. It does not run tests and it is not a substitute
+package module set against every inventory and every asserted count, validates
+the existing conformance evidence references, and runs the generated-artifact
+check set. It does not run tests and it is not a substitute
 for them. Run it before pushing; a pre-push hook in `.githooks` does it for you.
 """
 
@@ -121,6 +122,23 @@ def check_generated(python: str, problems: list[str]) -> None:
             )
 
 
+def check_evidence(problems: list[str]) -> None:
+    """Reuse the registry's AST check without running its evidence tests."""
+    sys.path.insert(0, str(ROOT / "src"))
+    try:
+        from daimon_matrix.conformance import ConformanceError, Registry, _test_exists
+
+        registry = Registry.load(ROOT / "conformance/registry-v1.json")
+        for test_id in sorted(
+            {test for scenario in registry.scenarios for test in scenario.evidence}
+        ):
+            _test_exists(test_id, ROOT)
+    except ConformanceError as exception:
+        _fail(problems, f"conformance registry: {exception}")
+    finally:
+        sys.path.pop(0)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -138,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     problems: list[str] = []
     check_inventories(modules, problems)
     check_counts(modules, problems)
+    check_evidence(problems)
     if not arguments.skip_generated:
         check_generated(arguments.python, problems)
     if problems:
