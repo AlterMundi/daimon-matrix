@@ -40,10 +40,10 @@ def _scenario_registry() -> dict[str, Any]:
         ),
         (
             "card-control-and-expiry",
-            "Only a current root-bound card supports current authority.",
+            "Expired cards remove grants while signed group membership remains intact.",
             [
                 "tests.test_dm082_relationships.RelationshipContractTests."
-                "test_expired_cards_remove_relationship_and_snapshot_authority"
+                "test_expired_cards_remove_grants_but_preserve_signed_membership"
             ],
         ),
         (
