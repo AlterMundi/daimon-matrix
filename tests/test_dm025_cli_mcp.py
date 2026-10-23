@@ -220,6 +220,82 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(token.stat().st_mode & 0o777, 0o600)
         self.assertEqual(len(self.runtime.service.ledger.events()), 1)
 
+    def test_proposal_cli_and_mcp_use_real_daemon_with_exact_retry_and_read(
+        self,
+    ) -> None:
+        observer = self.capability
+        self.capability = self.operator_capabilities["weave"]
+        config = json.loads(self.config_path.read_bytes())
+        config["capability"] = self.capability.descriptor
+        self.config_path.write_bytes(canonical_bytes(config))
+        payload = self.state_root / "selected-customization.json"
+        payload.write_bytes(canonical_bytes({"content_sha256": "a" * 64}))
+        arguments = [
+            "--json",
+            "--request-file",
+            str(self.state_root / "proposal.retry.json"),
+            "we",
+            "propose",
+            "--kind",
+            "configuration.proposed",
+            "--subject",
+            "selected",
+            "--payload",
+            str(payload),
+        ]
+        first = self.run_surface("daimon_matrix.cli", arguments)
+        again = self.run_surface("daimon_matrix.cli", arguments)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, again.stdout)
+        cli_event = json.loads(first.stdout)["response"]["result"]["event"]
+        self.assertEqual(cli_event["kind"], "configuration.proposed")
+
+        def mcp(name: str, values: dict[str, Any]) -> dict[str, Any]:
+            response = self.mcp_exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "integration",
+                    "method": "tools/call",
+                    "params": {"_meta": META, "name": name, "arguments": values},
+                }
+            )
+            result = response["result"]["structuredContent"]
+            self.assertTrue(result["ok"], result)
+            return cast(dict[str, Any], result["result"]["event"])
+
+        values = {
+            "kind": "skill.proposed",
+            "subject": "selected-skill",
+            "payload": {"content_sha256": "b" * 64},
+            "operation_id": "70000000-0000-4000-8000-000000000099",
+        }
+        mcp_event = mcp("we_propose", values)
+        self.assertEqual(mcp("we_propose", values), mcp_event)
+        self.assertEqual(mcp_event["kind"], "skill.proposed")
+        self.assertEqual(len(self.runtime.service.ledger.events()), 2)
+        self.capability = observer
+        config["capability"] = observer.descriptor
+        self.config_path.write_bytes(canonical_bytes(config))
+        fetched = self.run_surface(
+            "daimon_matrix.cli",
+            ["--json", "we", "event-get", "--event-id", cli_event["event_id"]],
+        )
+        self.assertEqual(fetched.returncode, 0, fetched.stderr)
+        self.assertEqual(
+            json.loads(fetched.stdout)["response"]["result"]["event"], cli_event
+        )
+        self.assertEqual(
+            mcp("we_event_get", {"event_id": mcp_event["event_id"]}), mcp_event
+        )
+        self.assertTrue(
+            all(
+                item["state"] == "pending"
+                for item in self.runtime.service._diff(
+                    {"after": None, "kind": None, "limit": 10, "subject": None}
+                )["entries"]
+            )
+        )
+
     def test_every_cli_command_maps_to_exactly_one_closed_method(self) -> None:
         document = self.state_root / "document.json"
         document.write_bytes(b"{}")
@@ -477,6 +553,17 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "--reason",
                 "reason",
             ],
+            ["we", "event-get", "--event-id", "33000000-0000-4000-8000-000000000026"],
+            [
+                "we",
+                "propose",
+                "--kind",
+                "configuration.proposed",
+                "--subject",
+                "selected",
+                "--payload",
+                str(document),
+            ],
             ["we", "projection-get"],
             ["we", "projection-rebuild"],
             [
@@ -575,7 +662,7 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(set(responses), {1, 2, 3, 4, 5})
         self.assertIn("2026-07-28", responses[1]["result"]["supportedVersions"])
         tools = responses[2]["result"]["tools"]
-        self.assertEqual(len(tools), 69)
+        self.assertEqual(len(tools), len(TOOL_CONTRACTS))
         self.assertEqual(
             {item["name"] for item in tools},
             {
@@ -635,6 +722,8 @@ class InstalledSurfaceTests(RuntimeFixture):
                 "tribe_leave",
                 "tribe_membership_accept",
                 "we_heads",
+                "we_event_get",
+                "we_propose",
                 "we_diff",
                 "we_preview",
                 "we_projection_get",
@@ -852,7 +941,7 @@ class ClientSchemaTests(unittest.TestCase):
         import copy
 
         from daimon_matrix.local_api import create_request
-        from tests.test_receiving_runtime import reader
+        from tests.reader_fixtures import reader
 
         schema = json.loads(
             (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()

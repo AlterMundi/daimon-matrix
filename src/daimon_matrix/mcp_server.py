@@ -580,6 +580,11 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         True,
     ),
     "we_heads": ("we.heads", _object_schema({}), True),
+    "we_event_get": (
+        "we.event.get",
+        _object_schema({"event_id": _UUID}, ("event_id",)),
+        True,
+    ),
     "we_diff": (
         "we.diff",
         _object_schema(
@@ -793,6 +798,21 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
 
 _CHANNEL_ID = {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
 _MESSAGE_TEXT = {"type": "string", "minLength": 1, "maxLength": 16_384}
+# Reuse observation fields/defaults; only these two existing proposal kinds
+# may cross the owner's separate weave mutation capability.
+TOOL_CONTRACTS["we_propose"] = (
+    "we.propose",
+    _object_schema(
+        {
+            **TOOL_CONTRACTS["we_observe"][1]["properties"],
+            "kind": {"enum": ["configuration.proposed", "skill.proposed"]},
+        },
+        ("kind", "subject", "payload"),
+    ),
+    False,
+)
+
+
 MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     "messaging_inbox": (
         "messaging.inbox",
@@ -1028,6 +1048,16 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         "tribe.leave": {"payload"},
         "tribe.membership.accept": {"payload"},
         "we.heads": set(),
+        "we.event.get": {"event_id"},
+        "we.propose": {
+            "kind",
+            "causal_parents",
+            "event_id",
+            "occurred_at_ms",
+            "payload",
+            "sensitivity",
+            "subject",
+        },
         "we.diff": {"after", "kind", "limit", "subject"},
         "we.preview": {"events"},
         "we.observe": {

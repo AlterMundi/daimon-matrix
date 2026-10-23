@@ -247,9 +247,12 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         if not isinstance(events, list):
             raise ClientError("events_document_not_array")
         return "we.preview", {"events": events}
-    if command == ("we", "observe"):
+    if command == ("we", "event-get"):
+        return "we.event.get", {"event_id": args.event_id}
+    if command in {("we", "observe"), ("we", "propose")}:
         payload = _bounded_file(args.payload)
-        return "we.observe", {
+        return ("we.propose" if args.command == "propose" else "we.observe"), {
+            **({"kind": args.kind} if args.command == "propose" else {}),
             "subject": args.subject,
             "payload": payload,
             "sensitivity": args.sensitivity,
@@ -711,17 +714,31 @@ def parser() -> argparse.ArgumentParser:
     diff.add_argument("--subject")
     preview = we_commands.add_parser("preview", help="validate without mutation")
     preview.add_argument("--events", required=True, help="JSON array file, or -")
-    observe = we_commands.add_parser("observe", help="author one local observation")
-    observe.add_argument("--subject", required=True)
-    observe.add_argument("--payload", required=True, help="JSON object file, or -")
-    observe.add_argument(
-        "--sensitivity",
-        choices=("personal", "private", "shareable"),
-        default="personal",
+    event_get = we_commands.add_parser(
+        "event-get", help="read one exact known complete event"
     )
-    observe.add_argument("--causal-parent", action="append", default=[])
-    observe.add_argument("--occurred-at-ms", type=int)
-    observe.add_argument("--event-id")
+    event_get.add_argument("--event-id", required=True)
+    for name, help_text in (
+        ("observe", "author one local observation"),
+        ("propose", "author a selected configuration or skill proposal"),
+    ):
+        author = we_commands.add_parser(name, help=help_text)
+        if name == "propose":
+            author.add_argument(
+                "--kind",
+                choices=("configuration.proposed", "skill.proposed"),
+                required=True,
+            )
+        author.add_argument("--subject", required=True)
+        author.add_argument("--payload", required=True, help="JSON object file, or -")
+        author.add_argument(
+            "--sensitivity",
+            choices=("personal", "private", "shareable"),
+            default="personal",
+        )
+        author.add_argument("--causal-parent", action="append", default=[])
+        author.add_argument("--occurred-at-ms", type=int)
+        author.add_argument("--event-id")
     decide = we_commands.add_parser(
         "decide", help="author one explicit local decision successor"
     )

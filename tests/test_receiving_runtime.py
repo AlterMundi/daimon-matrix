@@ -44,6 +44,7 @@ from daimon_matrix.service import (
 )
 from tests import test_dm025_client as client_fixtures
 from tests import test_group_messaging_runtime as group_fixtures
+from tests.reader_fixtures import reader
 
 
 def budget():
@@ -71,22 +72,6 @@ def select(controller, value, request=None):
     return controller.select_readers(
         value, request_sha256=request, deadline_ns=budget()
     )
-
-
-def reader(**changes):
-    return {
-        "being_ref": "dm:being:v1:" + "A" * 43,
-        "embodiment_id": "embodiment:synthetic",
-        "credential_id": "credential:synthetic",
-        "incarnation_id": "incarnation:synthetic",
-        "authority_manifest_hash": "b" * 64,
-        "receiving_selection_sha256": "c" * 64,
-        "loaded_view_sha256": "d" * 64,
-        "expires_at_ms": 20_000,
-        "wire_read": ["dm.tribe.conversation/v1", "dm.tribe.direct-conversation/v1"],
-        "authority_epochs": ["b" * 64],
-        **changes,
-    }
 
 
 class ReceivingOwnerConnectionTests(client_fixtures.ClientFixture):

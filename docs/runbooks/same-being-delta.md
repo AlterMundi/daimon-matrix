@@ -91,7 +91,8 @@ The owner-local `we.propose` RPC accepts the same closed fields as `we.observe`
 plus a `kind` equal to `configuration.proposed` or `skill.proposed`. It uses the
 existing weave mutation capability; the default observe capability cannot
 propose. The existing `we.observe` contract is unchanged. Use the maintained
-client's `invoke` method, stable operation request IDs and exact content
+client's `we_propose`/`we_event_get` methods (or `invoke`), stable operation
+request IDs and exact content
 references. Native unsigned records and manual edits remain attributed migration
 input, never historical signed `memory.recorded` events.
 
@@ -100,7 +101,10 @@ input, never historical signed `memory.recorded` events.
 when that event is not known/complete. It is an authenticated observe read, not a
 peer-chosen file resolver. An RPC request ID retains its original read snapshot;
 a later observation uses a new read ID, never a new mutation ID to hide uncertainty.
-Normal native sync carries the proposal unchanged. Receiving it does not adopt
+CLI equivalents are `we propose --kind ... --subject ... --payload ...` and
+`we event-get --event-id ...`; MCP exposes `we_propose` and `we_event_get` with
+the same closed fields. Use the existing persisted request file or MCP operation
+ID for an exact mutation retry. Normal native sync carries the proposal unchanged. Receiving it does not adopt
 it: use the existing local `we.decide` chain. Neither proposal, event retrieval
 nor adoption proves or executes the external effect. The effect adapter must
 supply actual postcondition evidence through the established projection boundary.

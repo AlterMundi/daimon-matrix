@@ -269,6 +269,8 @@
         {"properties": {"method": {"const": "we.sync.serve"}, "params": {"$ref": "#/$defs/syncServeParams"}}},
         {"properties": {"method": {"const": "we.sync.pull"}, "params": {"$ref": "#/$defs/syncPullParams"}}},
         {"properties": {"method": {"const": "we.sync.validate-receipt"}, "params": {"$ref": "#/$defs/syncReceiptParams"}}},
+        {"properties": {"method": {"const": "we.propose"}, "params": {"$ref": "#/$defs/proposeParams"}}},
+        {"properties": {"method": {"const": "we.event.get"}, "params": {"type": "object", "required": ["event_id"], "properties": {"event_id": {"$ref": "#/$defs/uuid"}}, "additionalProperties": false}}},
         {"properties": {"method": {"const": "we.observe"}, "params": {"$ref": "#/$defs/observeParams"}}},
         {"properties": {"method": {"const": "we.decide"}, "params": {"$ref": "#/$defs/decideParams"}}},
         {"properties": {"method": {"const": "we.diff"}, "params": {"$ref": "#/$defs/diffParams"}}},
@@ -670,6 +672,72 @@
     "syncReceiptParams": {
       "type": "object", "additionalProperties": false, "required": ["receipt", "transport"],
       "properties": {"receipt": {"type": "object"}, "transport": {"$ref": "#/$defs/transport"}}
+    },
+    "proposeParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "payload",
+        "sensitivity",
+        "causal_parents",
+        "occurred_at_ms",
+        "event_id",
+        "kind"
+      ],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "payload": {
+          "type": "object"
+        },
+        "sensitivity": {
+          "enum": [
+            "personal",
+            "private",
+            "shareable"
+          ]
+        },
+        "causal_parents": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "occurred_at_ms": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/uint"
+            }
+          ]
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uuid"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "configuration.proposed",
+            "skill.proposed"
+          ]
+        }
+      }
     },
     "observeParams": {
       "type": "object", "additionalProperties": false,
