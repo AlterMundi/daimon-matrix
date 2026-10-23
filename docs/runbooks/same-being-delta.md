@@ -72,11 +72,38 @@ author a Weave adoption. The resulting comparison is a preview with no effects.
 
 ## Integration frontier
 
-Reuse `owner-memory-sync` and DMK reconciliation for attributed same-being memory,
+Use DMK `scripts/same_being_sync.py` for the current unsigned native delta
+([DMK PR32](https://github.com/AlterMundi/daimon-memory-kit/pull/32)): finite
+read-only pages, retained-content closure, native transactional application,
+original/receiving history and legacy sidecar provenance. Its commands are
+`export`, `inventory`, `apply`, `status`; the parent joins one existing
+`backupctl` operation across all pages. Source publication is not receiving
+installation/adoption. Preserve the old `owner-memory-sync` qualification for
+its signed projection scope; do not downgrade a current DMK distribution to
+force an unsigned recurring delta through its old checkout/writer cutoff. Reuse
 Skills `describe/prepare/apply/status/recover/rollback` for selected immutable
 packages, and Weave `configuration.proposed`, `adoption.decided` and
 `projection.receipted` for existing native semantics. Discovery itself neither
 authors these events nor changes identity, permissions, account, custody or history.
+
+The owner-local `we.propose` RPC accepts the same closed fields as `we.observe`
+(`subject`, `payload`, `sensitivity`, `causal_parents`, `occurred_at_ms`, `event_id`)
+plus a `kind` equal to `configuration.proposed` or `skill.proposed`. It uses the
+existing weave mutation capability; the default observe capability cannot
+propose. The existing `we.observe` contract is unchanged. Use the maintained
+client's `invoke` method, stable operation request IDs and exact content
+references. Native unsigned records and manual edits remain attributed migration
+input, never historical signed `memory.recorded` events.
+
+`we.event.get` with `{ "event_id": "<canonical UUID>" }` returns
+`dm.we.event-result/v1` and the complete original signed event, or `event: null`
+when that event is not known/complete. It is an authenticated observe read, not a
+peer-chosen file resolver. An RPC request ID retains its original read snapshot;
+a later observation uses a new read ID, never a new mutation ID to hide uncertainty.
+Normal native sync carries the proposal unchanged. Receiving it does not adopt
+it: use the existing local `we.decide` chain. Neither proposal, event retrieval
+nor adoption proves or executes the external effect. The effect adapter must
+supply actual postcondition evidence through the established projection boundary.
 
 The remaining operator must connect exact references/preview, explicit retained
 local decisions and missing behavior-materialization adapters under one resumable

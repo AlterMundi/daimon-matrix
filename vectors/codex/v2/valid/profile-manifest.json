@@ -12,7 +12,7 @@
     },
     {
       "name": "bootstrap.json",
-      "sha256": "36f2a0933ee87f448f75b479ed4035d668b465a87c8d140f28fa08fae9e7a711"
+      "sha256": "d78d28a9ae4aa22b2804be9af80c107512475e6d368e9147fc0a7be7babca97c"
     },
     {
       "name": "config.toml",
@@ -23,8 +23,8 @@
   "lifecycle": "human-request-only",
   "matrix_mcp_binary_sha256": "30b3ea6a556809ffa2f5f391fa024e60cfd9dd2a8e2e1b71ac7a5d5d0510811f",
   "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
-  "plan_hash": "9773cacf8ce1a46f61e7552e5ebdd0feb370032d08656d22960ece0c098f5ace",
-  "profile_id": "dm:codex-profile:v2:ADDXiJUZTlguGCKHZJBVqlNzB1xlY3baSv55NtwdHMc",
+  "plan_hash": "e2bc7a2fe32f4dbf74d0b856805c9c5ef789c435a3a159524f4fca27caed7ef9",
+  "profile_id": "dm:codex-profile:v2:X2fgTqdCMVDyqjF3tmGM6IE3BgZ4fLyG7h6yFyLCwJo",
   "schema": "dm.codex-body.profile-manifest/v2",
   "workspace_ref": "dm:workspace:v1:tZNFI7EX8k9K15FwwRl0huIU-56Sq71OF314mRT5Yps"
 }

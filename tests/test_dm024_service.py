@@ -27,8 +27,14 @@ from daimon_matrix.local_api import (
 )
 from daimon_matrix.runtime import RuntimeError as HostedRuntimeError
 from daimon_matrix.runtime import load_label_index
-from daimon_matrix.service import METHODS, HostedWeave, ServiceError
-from daimon_matrix.weave import BeingManifest, RootAuthority
+from daimon_matrix.service import (
+    METHODS,
+    OBSERVE_METHODS,
+    OPERATOR_CAPABILITY_PROFILES,
+    HostedWeave,
+    ServiceError,
+)
+from daimon_matrix.weave import BeingManifest, RootAuthority, create_event
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 
 
@@ -251,9 +257,120 @@ class HostedServiceTests(RootLedgerFixture):
         self.assertEqual(len(self.ledger_a.events()), 3)
         self.assertEqual(self.ledger_a.rpc_requests()[0]["state"], "completed")
 
+    def test_typed_proposals_preserve_kind_and_exact_retry(self) -> None:
+        for index, kind in enumerate(
+            ("configuration.proposed", "skill.proposed"), 1000
+        ):
+            params = dict(self.observe_params("selected-customization"), kind=kind)
+            params["payload"] = {
+                "content_sha256": "a" * 64,
+                "authority": "unsigned-native",
+            }
+            request, response = self.invoke(self.service_a, index, "we.propose", params)
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["result"]["schema"], "dm.we.proposal-result/v1")
+            event = response["result"]["event"]
+            self.assertEqual(event["kind"], kind)
+            self.assertEqual(event["origin"], self.service_a.origin)
+            self.assertEqual(self.service_a.handle(request), response)
+        self.assertEqual(len(self.ledger_a.events()), 2)
+        self.assertTrue(
+            all(
+                entry["state"] == "pending"
+                for entry in self.service_a._diff(
+                    {"after": None, "kind": None, "limit": 10, "subject": None}
+                )["entries"]
+            )
+        )
+
+    def test_typed_proposals_do_not_widen_the_observe_profile(self) -> None:
+        self.assertNotIn("we.propose", OBSERVE_METHODS)
+        self.assertIn("we.propose", OPERATOR_CAPABILITY_PROFILES["weave"])
+        self.assertIn("we.event.get", OBSERVE_METHODS)
+        observer = create_capability(
+            key("observer"),
+            client_id="client:observer",
+            methods=sorted(OBSERVE_METHODS),
+            not_before_ms=NOW - 1,
+            not_after_ms=NOW + 1,
+        )
+        observe_only = replace(
+            self.service_a, capabilities={observer.capability_id: observer}
+        )
+        request = self.request(
+            1010,
+            "we.propose",
+            dict(self.observe_params("refused"), kind="configuration.proposed"),
+        )
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            observe_only.handle(request)
+        self.assertEqual(self.ledger_a.events(), [])
+
+    def test_proposal_cannot_select_another_kind_or_change_observe(self) -> None:
+        for index, kind in enumerate(
+            (
+                "experience.observed",
+                "memory.recorded",
+                "projection.receipted",
+                "adoption.decided",
+                None,
+                [],
+                {},
+            ),
+            1020,
+        ):
+            _, result = self.invoke(
+                self.service_a,
+                index,
+                "we.propose",
+                dict(self.observe_params("refused"), kind=kind),
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "invalid_params")
+        _, observed = self.invoke(
+            self.service_a,
+            1030,
+            "we.observe",
+            dict(self.observe_params("refused"), kind="configuration.proposed"),
+        )
+        self.assertFalse(observed["ok"])
+        self.assertEqual(observed["error"]["code"], "invalid_params")
+        self.assertEqual(self.ledger_a.events(), [])
+
+    def test_exact_event_read_excludes_unknown_and_incomplete_events(self) -> None:
+        dependent = create_event(
+            self.authority,
+            self.origins["daimonmatrix"],
+            self.signers["daimonmatrix"],
+            event_id=rpc_id(1040),
+            sequence=1,
+            previous_event_id=None,
+            occurred_at_ms=NOW,
+            causal_parents=[rpc_id(1041)],
+            kind="configuration.proposed",
+            subject="pending-source",
+            payload={"content_sha256": "b" * 64},
+        )
+        self.ledger_a.ingest([dependent], source="same-being-peer")
+        for index, event_id in enumerate((dependent["event_id"], rpc_id(1042)), 1043):
+            _, response = self.invoke(
+                self.service_a, index, "we.event.get", {"event_id": event_id}
+            )
+            self.assertTrue(response["ok"])
+            self.assertEqual(
+                response["result"], {"schema": "dm.we.event-result/v1", "event": None}
+            )
+        self.assertEqual(self.ledger_a.incomplete_count(), 1)
+
     def test_authenticated_sync_receipt_and_import_is_not_adoption(self) -> None:
         _, observed = self.invoke(
-            self.service_b, 20, "we.observe", self.observe_params("remote-observation")
+            self.service_b,
+            20,
+            "we.propose",
+            dict(
+                self.observe_params("remote-customization"),
+                kind="configuration.proposed",
+            ),
         )
         remote_event = observed["result"]["event"]
         _, request_response = self.invoke(
@@ -307,6 +424,12 @@ class HostedServiceTests(RootLedgerFixture):
         entry = diff["result"]["entries"][0]
         self.assertEqual(entry["event_id"], remote_event["event_id"])
         self.assertEqual(entry["state"], "pending")
+        _, fetched = self.invoke(
+            self.service_a, 27, "we.event.get", {"event_id": remote_event["event_id"]}
+        )
+        self.assertEqual(fetched["result"]["event"], remote_event)
+        self.assertEqual(fetched["result"]["event"]["origin"], self.service_b.origin)
+        self.assertNotEqual(fetched["result"]["event"]["origin"], self.service_a.origin)
 
         wrong_transport = self.request(
             26,
