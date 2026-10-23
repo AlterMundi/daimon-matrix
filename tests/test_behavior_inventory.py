@@ -142,6 +142,34 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(all("value_sha256" in r for r in rows))
 
+    def test_three_way_preview_preserves_manual_conflicts_and_cross_being_boundary(
+        self,
+    ):
+        import copy
+
+        base = self.discover()
+        base["origin"] = dict(being_ref="same-being", body_ref="original-body")
+        base["native_configuration"] = dict(
+            settings=[dict(key=["style"], value_sha256="a" * 64)]
+        )
+        left, right = copy.deepcopy(base), copy.deepcopy(base)
+        left["native_configuration"]["settings"][0]["value_sha256"] = "b" * 64
+        right["native_configuration"]["settings"][0]["value_sha256"] = "c" * 64
+        right["origin"]["body_ref"] = "other-body"
+        result = tool.compare(left, right, base)
+        self.assertEqual(result["entries"][0]["state"], "conflicting_edits")
+        self.assertFalse(any(result["effects"].values()))
+        self.assertEqual(
+            tool.compare(base, right, base)["entries"][0]["state"], "incoming_changed"
+        )
+        self.assertEqual(
+            tool.compare(left, right)["entries"][0]["state"],
+            "different_without_common_history",
+        )
+        right["origin"]["being_ref"] = "different-being"
+        with self.assertRaisesRegex(ValueError, "same_being_inventory"):
+            tool.compare(left, right)
+
     def test_project_layers_and_skill_aliases_preserve_gaps(self):
         (self.home / "AGENTS.md").write_text("Parent instructions\n")
         (self.cwd / ".codex").mkdir()

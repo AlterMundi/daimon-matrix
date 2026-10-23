@@ -222,6 +222,7 @@ def discover(
     return dict(
         schema=SCHEMA,
         origin=attribution,
+        receiving=dict(home=str(home), codex_home=str(codex_home), cwd=str(cwd)),
         harness=dict(
             name="codex",
             version=version,
@@ -297,6 +298,77 @@ def native_comparison(current: Path | None, baseline: Path | None) -> dict:
     )
 
 
+def comparable_items(inventory: dict) -> dict[tuple[str, ...], str]:
+    """Exact content identity only; local path hashes are not semantic conflicts."""
+    items = {}
+    for row in inventory.get("native_configuration", {}).get("settings", []):
+        if "value_sha256" in row:
+            items[("native-setting", *row["key"])] = row["value_sha256"]
+    for row in inventory["instructions"]:
+        if row["scope"] == "global" and row["state"] == "observed":
+            items[("global-instructions",)] = row["sha256"]
+    for index, root in enumerate(inventory["skills"]):
+        for row in root.get("documents", []):
+            if row["state"] == "observed":
+                relative = Path(row["path"]).relative_to(root["path"]).as_posix()
+                items[("skill-document", str(index), relative)] = row["sha256"]
+    return items
+
+
+def compare(left: dict, right: dict, common: dict | None = None) -> dict:
+    """A preview never resolves divergent manual edits or applies peer content."""
+    for value in (left, right, *([common] if common is not None else [])):
+        if value.get("schema") != SCHEMA or not value.get("origin", {}).get(
+            "being_ref"
+        ):
+            raise ValueError("attributed_receiving_inventory_required")
+        if value["origin"]["being_ref"] != left["origin"]["being_ref"]:
+            raise ValueError("same_being_inventory_required")
+    local = comparable_items(left)
+    incoming = comparable_items(right)
+    baseline = comparable_items(common) if common is not None else {}
+    rows = []
+    for key in sorted(local.keys() | incoming.keys()):
+        before = baseline.get(key)
+        a, b = local.get(key), incoming.get(key)
+        state = (
+            "equal"
+            if a == b
+            else "different_without_common_history"
+            if key not in baseline
+            else "incoming_changed"
+            if a == before
+            else "local_changed"
+            if b == before
+            else "conflicting_edits"
+        )
+        rows.append(
+            dict(
+                item=list(key),
+                state=state,
+                local_sha256=a,
+                incoming_sha256=b,
+                common_sha256=before,
+            )
+        )
+    return dict(
+        schema="dm.behavior-comparison/v1",
+        being_ref=left["origin"]["being_ref"],
+        inventories=dict(
+            local=hashed(left),
+            incoming=hashed(right),
+            common=hashed(common) if common is not None else None,
+        ),
+        entries=rows,
+        gaps=sorted(set(left["gaps"] + right["gaps"])),
+        meaning=(
+            "exact content preview; differences require "
+            "local intent/adaptation decisions"
+        ),
+        effects=dict(configuration_changed=False, adoption_authored=False),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
@@ -310,6 +382,8 @@ def main() -> int:
     parser.add_argument("--native-config", type=Path)
     parser.add_argument("--native-baseline", type=Path)
     parser.add_argument("--origin", type=Path)
+    parser.add_argument("--compare-with", type=Path)
+    parser.add_argument("--common", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     os.umask(0o077)
@@ -326,11 +400,18 @@ def main() -> int:
         native_baseline=args.native_baseline,
         origin=args.origin,
     )
+    if args.compare_with is not None:
+        export_being.safe_path(args.compare_with)
+        common = None
+        if args.common is not None:
+            export_being.safe_path(args.common)
+            common = json.loads(args.common.read_text())
+        result = compare(result, json.loads(args.compare_with.read_text()), common)
     export_being.new_file(args.output, export_being.json_bytes(result))
     print(
         json.dumps(
             dict(
-                schema=SCHEMA,
+                schema=result["schema"],
                 output_written=True,
                 inventory_sha256=hashed(result),
                 effects=result["effects"],

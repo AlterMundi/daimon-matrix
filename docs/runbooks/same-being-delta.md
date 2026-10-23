@@ -58,6 +58,18 @@ explicit native null is `baseline_unspecified`, not a claimed effective factory
 value. A known matching value is inherited; a known difference is modified;
 unknown keys/defaults remain unknown. Running-turn consumption remains unverified.
 
+## Exact receiving comparison
+
+Add `--compare-with` for a selected attributed inventory of another body of the
+same being, and optionally `--common` for retained common inventory history.
+The tool compares exact native-setting, global-instruction and skill-document
+hashes, retaining both inventory references and original unknowns. Without common
+history it does not manufacture an incoming winner. Divergent edits on both
+sides are explicit conflicts; a local unchanged preimage identifies only a
+candidate incoming change. Local path/config adaptations still require a local
+intent decision. These unsigned observations never grant execution authority or
+author a Weave adoption. The resulting comparison is a preview with no effects.
+
 ## Integration frontier
 
 Reuse `owner-memory-sync` and DMK reconciliation for attributed same-being memory,
