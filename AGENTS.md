@@ -56,6 +56,8 @@ Evidence discipline — these three cost a red head and a corrected public recor
   core.hooksPath .githooks` makes the pre-push hook run it automatically. When adding
   or removing a package module, or editing any `specs/` or `docs/` file a generator
   digests, grep for the previous literal value, not only for the new name.
+  The same cheap check validates all conformance registry evidence IDs against
+  the test AST; renamed tests must update every registry and its pinned digest.
 - Green in the development venv proves nothing about the environments CI actually
   uses. `tests.test_dm051_sealed` and every conformance evidence test also run inside
   the installed-wheel venv and the conformance venv, which do not have the
