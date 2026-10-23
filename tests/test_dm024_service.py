@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import sqlite3
 import unittest
@@ -9,13 +10,14 @@ from contextlib import closing
 from dataclasses import replace
 from typing import Any
 
-from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
 from daimon_matrix.identity import create_incarnation_authorization
 from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import (
     LocalApiError,
+    REQUEST_DOMAIN,
     LocalCapability,
     create_capability,
     create_request,
@@ -297,28 +299,32 @@ class HostedServiceTests(RootLedgerFixture):
         observe_only = replace(
             self.service_a, capabilities={observer.capability_id: observer}
         )
-        request = self.request(
-            1010,
-            "we.propose",
-            dict(self.observe_params("refused"), kind="configuration.proposed"),
+        request = self.request(1010, "runtime.status", {}, capability=observer)
+        request["method"] = "we.propose"
+        request["params"] = dict(
+            self.observe_params("refused"), kind="configuration.proposed"
+        )
+        # A prohibited method cannot pass create_request's client-side gate.
+        # Sign it correctly as this known observer to exercise the server gate.
+        core = {key: value for key, value in request.items() if key != "auth"}
+        request["auth"]["value"] = b64url(
+            hmac.digest(observer.key, REQUEST_DOMAIN + canonical_bytes(core), "sha256")
         )
         with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
             observe_only.handle(request)
         self.assertEqual(self.ledger_a.events(), [])
 
     def test_proposal_cannot_select_another_kind_or_change_observe(self) -> None:
-        for index, kind in enumerate(
-            (
-                "experience.observed",
-                "memory.recorded",
-                "projection.receipted",
-                "adoption.decided",
-                None,
-                [],
-                {},
-            ),
-            1020,
-        ):
+        kinds: tuple[Any, ...] = (
+            "experience.observed",
+            "memory.recorded",
+            "projection.receipted",
+            "adoption.decided",
+            None,
+            [],
+            {},
+        )
+        for index, kind in enumerate(kinds, 1020):
             _, result = self.invoke(
                 self.service_a,
                 index,
