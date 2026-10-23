@@ -1,11 +1,11 @@
 {
-  "bootstrap_hash": "17587a0abebb7e09968cc5efb31626984311a6bd3d015f9957be3553d3ee519d",
+  "bootstrap_hash": "0e8879312a62c442623efcb7d3adfbb54868c159efc40202e0b9e4229ae4db1c",
   "event": {
     "being_ref": "dm:being:v1:VrGvO0sj67ug2smIijLPeOxfTftcfpGGG2Wq7VoAlks",
     "causal_parents": [
       "00000205-0000-4000-8000-000000000001"
     ],
-    "content_hash": "26184ca7aa88a43f4033222b345af02944627dff29dc9bea6e40d7470c83a14e",
+    "content_hash": "dccbb8bcf84f5218fd7525f9afad6fba980b14596635a67f1abeda64d74518a0",
     "event_id": "00000205-0000-4000-8000-000000000002",
     "kind": "experience.observed",
     "manifest_hash": "1065983b575118b7d86a6c5504f8e8a038c81525e81d6ca21447bedf60cced3d",
@@ -17,9 +17,9 @@
       "principal_id": "compaii@legion"
     },
     "payload": {
-      "bootstrap_event_hash": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+      "bootstrap_event_hash": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
       "matrix_session_id": "dm:session:v1:JqqWk5nMrDhevWBLaMeihl42iE6RHsZbO8294-rxvms",
-      "previous_event_hash": "f20359f40f79cd0e260bf4c48f54663c7dd939eb2882fc957724907de3251932",
+      "previous_event_hash": "4bc49044b949a85ac6248b551ef10fcd63e643812f989f44b40065cbd3804f87",
       "previous_event_id": "00000205-0000-4000-8000-000000000001",
       "schema": "dm.codex-body.session-witness/v1",
       "witness_sequence": 1
@@ -31,13 +31,13 @@
     "signature": {
       "alg": "Ed25519",
       "kid": "dm:key:v1:1ylfLFdJamTf5fqWxZvCLeIH_QHop4an4-jC-NiCP2Q",
-      "value": "kH9VG4BjpfEEYwunfIc4PEc7djO89ThI_dqNl-ybiT9tWvYF127PKy6jqfdMOKsu3siWsyWSVWBCtvviHGPPAg"
+      "value": "kxJeUXtEDaCwrIL8Au6V7Et2FXi8Gec0fSEkU5HOir2ck-0xKcdhZpSnVTxel3E2xYXvBj_VE-cIoRNRlrL0CQ"
     },
     "subject": "codex-body/session-witness",
     "supersedes": null
   },
   "generation": 0,
   "previous_record_hash": null,
-  "record_hash": "2ed8b90d592f5a629df61dba76a40e011ae83e58d44e1746b1f963d93bd8cd46",
+  "record_hash": "ac082f1cfca476eded68686a5e530b023e0431c5698b125089c45712c12f9c03",
   "schema": "dm.codex-body.session-proof-record/v1"
 }

@@ -286,6 +286,8 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         if args.thread_id is not None:
             page_params["thread_id"] = args.thread_id
         return "we.conversation.page", page_params
+    if command == ("we", "projection-receipt"):
+        return "we.projection.receipt", {"receipt": _bounded_file(args.receipt)}
     if command == ("we", "projection-get"):
         return "we.projection.get", {}
     if command == ("we", "projection-rebuild"):
@@ -739,6 +741,13 @@ def parser() -> argparse.ArgumentParser:
         author.add_argument("--causal-parent", action="append", default=[])
         author.add_argument("--occurred-at-ms", type=int)
         author.add_argument("--event-id")
+    receipt = we_commands.add_parser(
+        "projection-receipt",
+        help="record a projection only after trusted host reconciliation",
+    )
+    receipt.add_argument(
+        "--receipt", required=True, help="exact Cluster effect receipt JSON file or -"
+    )
     decide = we_commands.add_parser(
         "decide", help="author one explicit local decision successor"
     )
