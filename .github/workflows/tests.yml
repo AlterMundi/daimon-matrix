@@ -430,6 +430,23 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  behavior-inventory:
+    name: receiving behavior inventory (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'behavior-inventory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+      - run: python -m pip install ruff==0.16.1
+      - run: python tools/check_frozen_invariants.py --skip-generated
+      - run: python -m ruff format --check tools/behavior_inventory.py tests/test_behavior_inventory.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/behavior_inventory.py tests/test_behavior_inventory.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -W error::ResourceWarning -m unittest tests.test_behavior_inventory tests.test_ci_scope -v
+
   archive:
     name: portable archive tools (3.13.5)
     needs: scope

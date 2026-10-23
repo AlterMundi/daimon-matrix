@@ -12,6 +12,27 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_read_only_behavior_inventory_does_not_run_native_runtime_suites(self):
+        from tools.ci_scope import BEHAVIOR_INVENTORY_FILES
+
+        self.assertEqual(profile(list(BEHAVIOR_INVENTORY_FILES)), "behavior-inventory")
+        self.assertEqual(
+            profile(["tools/behavior_inventory.py", "src/daimon_matrix/runtime.py"]),
+            "full",
+        )
+        self.assertEqual(
+            profile(["tools/behavior_inventory.py", "tools/export_being.py"]), "full"
+        )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn(
+            "if: needs.scope.outputs.profile == 'behavior-inventory'", workflow
+        )
+        self.assertIn(
+            "unittest tests.test_behavior_inventory tests.test_ci_scope", workflow
+        )
+
     def test_shared_ledger_group_gate_adds_owning_consumers_without_unrelated_suites(
         self,
     ):

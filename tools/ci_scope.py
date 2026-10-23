@@ -17,6 +17,17 @@ INSTALLER_FILES = frozenset(
     }
 )
 
+BEHAVIOR_INVENTORY_FILES = frozenset(
+    {
+        "tools/behavior_inventory.py",
+        "tests/test_behavior_inventory.py",
+        "docs/runbooks/same-being-delta.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
 PEER_FILES = frozenset(
     {
         "tools/chat_link.py",
@@ -313,6 +324,11 @@ LEDGER_GROUP_FILES = RECEIVING_CONTROL_FILES | frozenset(
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if (
+        changed & {"tools/behavior_inventory.py", "tests/test_behavior_inventory.py"}
+        and changed <= BEHAVIOR_INVENTORY_FILES
+    ):
+        return "behavior-inventory"
     if (
         changed <= LEDGER_GROUP_FILES
         and {
