@@ -16,8 +16,8 @@ from daimon_matrix.identity import create_incarnation_authorization
 from daimon_matrix.labels import LABEL_SCHEMA, LabelIndex
 from daimon_matrix.ledger import Ledger
 from daimon_matrix.local_api import (
-    LocalApiError,
     REQUEST_DOMAIN,
+    LocalApiError,
     LocalCapability,
     create_capability,
     create_request,
