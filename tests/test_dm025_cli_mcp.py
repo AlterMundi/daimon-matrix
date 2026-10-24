@@ -12,6 +12,7 @@ import unittest
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 from jsonschema import (  # type: ignore[import-untyped]
     Draft202012Validator,
@@ -22,7 +23,7 @@ from referencing import Registry, Resource
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.cli import _method_params
 from daimon_matrix.cli import parser as cli_parser
-from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
+from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3, ClientConfig, LocalClient
 from daimon_matrix.cluster import create_effect_receipt
 from daimon_matrix.daemon import serve_forever
 from daimon_matrix.local_api import (
@@ -106,6 +107,38 @@ class InstalledSurfaceTests(RuntimeFixture):
             ],
             "current_fence_evidence": None,
         }
+
+    def test_native_receiving_view_avoids_full_history_inspection(self) -> None:
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        with (
+            patch.object(
+                self.runtime.service.ledger,
+                "integrity_check",
+                side_effect=AssertionError("full audit"),
+            ),
+            patch(
+                "daimon_matrix.scopes.ProjectionEngine.snapshot",
+                side_effect=AssertionError("full projection"),
+            ),
+            patch(
+                "daimon_matrix.scopes.SyncEngine.heads",
+                side_effect=AssertionError("full heads"),
+            ),
+        ):
+            request, first = client.runtime_status(view="receiving")
+            repeated = client.send(request)
+        for response in (first, repeated):
+            self.assertTrue(response["ok"], response["error"])
+            self.assertEqual(
+                response["result"]["schema"], "dm.runtime.receiving-status/v1"
+            )
+            self.assertEqual(
+                response["result"]["identity"]["origin"], response["server"]
+            )
+            self.assertNotIn("integrity", response["result"])
 
     def tearDown(self) -> None:
         self.stop.set()

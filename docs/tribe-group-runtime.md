@@ -1,5 +1,16 @@
 # Membership group runtime
 
+Routine receiving observation uses the closed `runtime.status` variant
+`{"view":"receiving"}` (`dm.runtime.receiving-status/v1`, advertised as
+`bounded-receiving-observation/v1`). It authenticates current identity and actual
+body admission together with the loaded runtime, application and reader gates;
+it requires both existing `runtime.status` and `scope.me` grants. Exact retries
+refresh this observation. It does not audit ledger integrity, count history or
+compute Weave heads/projections, and never reports an unperformed audit as `ok`.
+The unchanged empty-parameter status remains the complete audit. A receiver
+rejecting the new view with authenticated `invalid_params` can use that legacy
+path; a timeout or admission/authority failure cannot become a successful fallback.
+
 The group application `dm.messaging.application/v3` contains one `tribe` channel,
 shared verified governance, Root inventories, owned stores, one local intake
 registration and a transport roster. It contains no pair directions, peer policy,
@@ -54,6 +65,15 @@ readable intake before signing its receipt. A receipt returns through the same
 authenticated transport as a control frame; it neither wakes a model nor produces
 another speech echo. Transport ACK alone never terminates a semantic leg. The
 author signs a local retention outcome, without intaking its own message.
+
+A reader refusal before native preparation retains the safe
+`tribe_reader_unconfirmed` diagnostic even though no transport request exists.
+Current `reader_readiness` is independent of that historical refusal. Once an
+unattempted carrier expires, the transport view reports
+`carrier_expired_before_attempt` and cannot release it; this is an actionable
+sender-side transport fact, never a signed non-delivery receipt. An attempted
+but unconfirmed exchange stays uncertain. Genuine later receiving proof can
+still improve the semantic result without reopening transmission.
 
 Exact retries and restarts preserve the logical IDs, audience and ciphertext.
 An expired carrier is reported separately from the retained semantic vector and
@@ -216,6 +236,16 @@ records the completion outcome. No model, poller or extra service is started.
 Exhausted budgets leave recoverable intent. HTTP handlers and workers drain under runtime
 ownership; a stalled local completion cannot be abandoned to claim clean shutdown.
 
+The same completion ticket remains owned if response binding or visibility
+preparation fails before the HTTP adapter receives its reply object. That path
+records an `intake-response` diagnostic and consumes the existing finite ticket;
+it does not claim an ACK write or renew any deadline. Incoming ACKs belong to
+the exact message/evidence response catalogs and paths. Their current loaded
+stores, body and authority checks remain active; only Tribe carriers require a
+Tribe-native record and any matching recovery authorization. Qualification must
+exercise the signed application compositor and real HTTP return path. A synthetic
+ACK authorizer cannot establish that production composition works.
+
 Echo publication has a separate execution guard shared by ordinary advancement
 and authorized ambiguity recovery. Short journal phases use the native storage
 fence; Telegram network I/O does not hold that fence. An already suppressed or
@@ -227,3 +257,30 @@ The release descriptor includes `bounded-numeric-http/v1`,
 `owned-transport-reply/v1` and `bounded-group-fanout/v1`. Source/installed
 qualification does not establish actual receiving readiness or compatible
 rollback. Those selections remain the receiver-compatible rollout's work.
+
+
+### Explicit expired-before-attempt recovery
+
+The installed release must advertise `explicit-unattempted-carrier-recovery/v1`
+and all required loaded readers must include `dm.tribe.recovery-conversation/v1`
+in their V2 readiness. Use the existing `messaging_send` tool with exactly:
+
+```json
+{"schema":"dm.tribe.recovery-request/v1","channel_id":"tribe","original_send_id":"ORIGINAL_UUID","recovery_id":"NEW_TECHNICAL_UUID"}
+```
+
+This responds to an explicit recovery request, not automatic peer attention.
+Keep that recovery ID for every retry. It identifies a new bounded technical
+carrier of the SAME signed message; it is not a new speech/send ID. No text,
+thread, destination or caller-controlled expiry is accepted. The original must
+be expired, confirmed in Tribu and proven never attempted across its entire
+frozen audience. Unknown/prepared attempts are refused even with zero completed
+releases. This first profile permits one recovery ID per original.
+
+`messaging_delivery` with the ORIGINAL send ID retains both carrier histories.
+The original stays expired; `recovery.native_visibility` is suppressed, and
+`recovery.original_publication=confirmed-by-reference` describes reuse rather
+than another platform receipt. Signed semantic receiving evidence names the
+original message. Compact presentation is required. Preserve the qualified
+recovery-aware SDK after a recovery obligation enters history; older reader
+software is not a compatible rollback.

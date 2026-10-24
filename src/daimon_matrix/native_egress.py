@@ -1065,10 +1065,13 @@ class MandatoryEgressController:
                     or entries != sorted(set(entries))
                 ):
                     raise NativeEgressError("reader_selection_invalid")
-            if not set(row["wire_read"]) <= {
+            supported_wires = {
                 "dm.tribe.conversation/v1",
                 "dm.tribe.direct-conversation/v1",
-            } or any(
+            }
+            if typed:
+                supported_wires.add("dm.tribe.recovery-conversation/v1")
+            if not set(row["wire_read"]) <= supported_wires or any(
                 _SHA256.fullmatch(item) is None for item in row["authority_epochs"]
             ):
                 raise NativeEgressError("reader_selection_invalid")
@@ -1934,6 +1937,7 @@ class MandatoryEgressController:
                 paths = {
                     "dm.tribe.conversation/v1": "tribe-message-request",
                     "dm.tribe.direct-conversation/v1": "tribe-message-request",
+                    "dm.tribe.recovery-conversation/v1": "tribe-message-request",
                     "dm.tribe.intake-result/v1": "tribe-receipt-request",
                 }
                 if document.get("schema") not in paths:

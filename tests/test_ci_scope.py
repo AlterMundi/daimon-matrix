@@ -514,6 +514,30 @@ class CIScopeTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(profile([*changed, path]), "full")
 
+    def test_reader_validity_with_pure_fixtures_uses_installed_receiving_checks(self):
+        changed = [
+            "src/daimon_matrix/native_egress.py",
+            "src/daimon_matrix/service.py",
+            "src/daimon_matrix/messaging.py",
+            "src/daimon_matrix/messaging_store.py",
+            "src/daimon_matrix/release_compatibility.py",
+            "tests/test_receiving_runtime.py",
+            "tests/test_release_compatibility.py",
+            "tests/reader_fixtures.py",
+            "tests/test_dm025_cli_mcp.py",
+            "schemas/hosted/v1/local-api.schema.json",
+            "specs/receiver-compatible-release.md",
+            "docs/runbooks/operator-capability-upgrade.md",
+            "provenance/hermes-agent-0.19.0.json",
+            "vectors/hermes/v1/index.json",
+            "vectors/hermes/v1/valid/launch-receipt.json",
+            "vectors/hermes/v1/valid/profile-manifest.json",
+            "tools/ci_scope.py",
+            "tests/test_ci_scope.py",
+        ]
+        self.assertEqual(profile(changed), "receiving-control")
+        self.assertEqual(profile([*changed, "src/daimon_matrix/identity.py"]), "full")
+
     def test_visibility_worker_fix_uses_existing_installed_visibility_checks(self):
         changed = [
             "src/daimon_matrix/daemon.py",

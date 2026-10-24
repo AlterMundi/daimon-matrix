@@ -299,6 +299,17 @@ class ScopeResolver:
         return self._me_at(_uint(self.clock(), "invalid_scope_time"))
 
     def _me_at(self, now: int) -> dict[str, Any]:
+        return {
+            **self._identity_at(now),
+            "heads": SyncEngine(self.ledger).heads(),
+            "effective": ProjectionEngine(self.ledger).snapshot(),
+        }
+
+    def identity(self) -> dict[str, Any]:
+        """Current identity and real body admission, without projecting history."""
+        return self._identity_at(_uint(self.clock(), "invalid_scope_time"))
+
+    def _identity_at(self, now: int) -> dict[str, Any]:
         origin = self.local_origin
         body: Mapping[str, Any] | None = None
         if self.body_reader is not None:
@@ -309,6 +320,10 @@ class ScopeResolver:
                     origin["incarnation_id"],
                     now,
                 )
+            except OSError as exception:
+                raise ScopeError(
+                    "body_snapshot_unavailable", retryable=True
+                ) from exception
             except (ScopeError, ValueError) as exception:
                 raise ScopeError("body_snapshot_rejected") from exception
             if not isinstance(value, Mapping):
@@ -334,8 +349,6 @@ class ScopeResolver:
             "incarnation_authorization_ref": member["incarnation_authorization_id"],
             "body_capabilities": list(self.body_capabilities),
             "body": body,
-            "heads": SyncEngine(self.ledger).heads(),
-            "effective": ProjectionEngine(self.ledger).snapshot(),
         }
 
     def we(self) -> dict[str, Any]:

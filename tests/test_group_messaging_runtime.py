@@ -329,6 +329,266 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def _expired_unattempted(self, *, group=False):
+        from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
+
+        sender, receiver = self.groups
+        sender.egress._policy["representation"] = READABLE_REPRESENTATION
+        receiver.egress._policy["representation"] = READABLE_REPRESENTATION
+        import json
+
+        send_echo = sender.egress._transport.send
+
+        def formatted_echo(request):
+            response = json.loads(send_echo(request))
+            if "entities" in request:
+                response["result"]["entities"] = request["entities"]
+            return json.dumps(response).encode()
+
+        sender.egress._transport.send = formatted_echo
+        args = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retain this exact directed handoff",
+            destination={"kind": "being", "being_ref": receiver.lane.being_ref},
+        )
+        sender.direct_reader_ready = lambda row: False
+        if group:
+            args.pop("destination")
+            providers = sender.providers
+            sender.providers = {}
+            try:
+                original = sender.send(**args)
+            finally:
+                sender.providers = providers
+        else:
+            original = sender.send(**args)
+        self.fixture.now += sender.policy.max_ttl_ms + 1
+        sender.direct_reader_ready = lambda row: True
+        return args, original
+
+    def test_explicit_recovery_delivers_original_once_with_new_bounded_authorization(
+        self,
+    ):
+        sender, receiver = self.groups
+        args, original = self._expired_unattempted()
+        before_echo = len(sender.egress._transport.requests)
+        recovery_id = str(uuid.uuid4())
+        recovered = sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
+        )
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        recovered = sender.inspect(client_id="test", send_id=args["send_id"])
+        self.assertEqual(recovered["message_id"], original["message_id"])
+        self.assertEqual(recovered["thread_id"], original["thread_id"])
+        self.assertEqual(recovered["audience"], original["audience"])
+        self.assertTrue(recovered["semantic"]["terminal"])
+        self.assertEqual(len(sender.egress._transport.requests), before_echo)
+        items = receiver.page(after=0, limit=100)
+        self.assertEqual(
+            [x["message"]["event_id"] for x in items], [original["message_id"]]
+        )
+        native = sender.records.get("native", recovery_id)
+        replay = sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
+        )
+        self.assertEqual(replay["semantic"], recovered["semantic"])
+        self.assertEqual(sender.records.get("native", recovery_id), native)
+        self.assertEqual(len(receiver.page(after=0, limit=100)), 1)
+        self.assertEqual(len(sender.egress._transport.requests), before_echo)
+
+    def test_group_recovery_preserves_author_retention_and_whole_frozen_audience(self):
+        sender, receiver = self.groups
+        args, original = self._expired_unattempted(group=True)
+        rid = str(uuid.uuid4())
+        sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=rid
+        )
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        result = sender.inspect(client_id="test", send_id=args["send_id"])
+        self.assertEqual(result["message_id"], original["message_id"])
+        self.assertEqual(result["audience"], original["audience"])
+        self.assertNotIn("destination", result)
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(
+            [x["message"]["event_id"] for x in receiver.page(after=0, limit=10)],
+            [original["message_id"]],
+        )
+        sender.egress.validate_registered_catalogs()
+
+    def test_recovery_refuses_a_prepared_transport_even_when_no_release_completed(self):
+        sender, _receiver = self.groups
+        args, _original = self._expired_unattempted()
+        row = sender.records.get("send", args["send_id"])["rows"][0]
+        request_id = str(
+            uuid.uuid5(
+                uuid.UUID(args["send_id"]),
+                f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+            )
+        )
+        sender.records.reserve(
+            "transport", request_id, {"synthetic": True}, lambda: {"request": ""}
+        )
+        with self.assertRaisesRegex(
+            ValueError, "tribe_recovery_original_attempt_uncertain"
+        ):
+            sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=str(uuid.uuid4()),
+            )
+        self.assertIsNone(sender.records.get("recovery-selection", args["send_id"]))
+
+    def test_recovery_expiry_returns_retained_outcome_without_another_carrier(self):
+        sender, receiver = self.groups
+        args, original = self._expired_unattempted()
+        sender.direct_reader_ready = lambda row: False
+        recovery_id = str(uuid.uuid4())
+        first = sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
+        )
+        native = sender.records.get("native", recovery_id)
+        self.fixture.now = first["recovery"]["expires_at_ms"]
+        with (
+            patch.object(
+                sender.lane, "prepare_recovery", side_effect=AssertionError("renewal")
+            ),
+            patch.object(sender, "_fanout", side_effect=AssertionError("replay")),
+        ):
+            retained = sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            )
+        self.assertEqual(retained["message_id"], original["message_id"])
+        self.assertTrue(retained["recovery"]["expired"])
+        self.assertTrue(
+            all(row["state"] == "expired" for row in retained["recovery"]["transport"])
+        )
+        self.assertEqual(sender.records.get("native", recovery_id), native)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
+    def test_receiver_verifies_signed_recovery_and_new_time_bound(self):
+        import copy
+
+        from daimon_matrix.canonical import unb64url
+        from daimon_matrix.sealed import _parse
+
+        sender, receiver = self.groups
+        args, _original = self._expired_unattempted()
+        sender.direct_reader_ready = lambda row: False
+        rid = str(uuid.uuid4())
+        result = sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=rid
+        )
+        payload = _parse(unb64url(sender.records.get("native", rid)["native"]))
+        receiver.lane.validate_intake(payload)
+        for change in (
+            {"message_hash": "f" * 64},
+            {"expires_at_ms": result["recovery"]["expires_at_ms"] + 1},
+            {"directed": False},
+        ):
+            invalid = copy.deepcopy(payload)
+            invalid["recovery"]["payload"].update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                receiver.lane.validate_intake(invalid)
+        self.fixture.now = result["recovery"]["expires_at_ms"]
+        with self.assertRaises(ValueError):
+            receiver.lane.validate_intake(payload)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
+    def test_missing_recovery_record_after_admission_blocks_actual_write(self):
+        sender, receiver = self.groups
+        args, _original = self._expired_unattempted()
+        recovery_id = str(uuid.uuid4())
+        get, prepare, release = (
+            sender.records.get,
+            sender.egress.prepare_visibility,
+            sender.egress.release_bounded,
+        )
+        missing, writes = [False], []
+
+        def get_record(kind, record_id, **keywords):
+            if missing[0] and kind == "recovery" and record_id == recovery_id:
+                return None
+            return get(kind, record_id, **keywords)
+
+        def disappear_after_admission(binding):
+            value = prepare(binding)
+            missing[0] = True
+            return value
+
+        def physical_release(binding, raw, write, **keywords):
+            def observed_write(*args, **kwargs):
+                writes.append(True)
+                return write(*args, **kwargs)
+
+            return release(binding, raw, observed_write, **keywords)
+
+        with (
+            patch.object(sender.records, "get", side_effect=get_record),
+            patch.object(
+                sender.egress,
+                "prepare_visibility",
+                side_effect=disappear_after_admission,
+            ),
+            patch.object(
+                sender.egress, "release_bounded", side_effect=physical_release
+            ) as bounded,
+        ):
+            result = sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            )
+        self.assertGreater(bounded.call_count, 0)
+        self.assertEqual(writes, [])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["semantic"]["terminal"])
+        self.assertEqual(result["recovery"]["reason_code"], "recovery_record_missing")
+        self.assertIsNotNone(sender.records.get("native", recovery_id))
+
+    def test_recovery_rechecks_parent_publication_at_physical_release(self):
+        sender, receiver = self.groups
+        args, original = self._expired_unattempted()
+        inspect = sender.egress.inspect_retained
+        prepare = sender.egress.prepare_visibility
+        invalidated = [False]
+
+        def inspect_parent(binding):
+            result = inspect(binding)
+            if binding.operation_id == args["send_id"] and invalidated[0]:
+                return {**result, "echo_state": "unconfirmed"}
+            return result
+
+        def invalidate_after_admission(binding):
+            result = prepare(binding)
+            invalidated[0] = True
+            return result
+
+        release = sender.egress.release_bounded
+        with (
+            patch.object(sender.egress, "inspect_retained", side_effect=inspect_parent),
+            patch.object(
+                sender.egress,
+                "prepare_visibility",
+                side_effect=invalidate_after_admission,
+            ),
+            patch.object(sender.egress, "release_bounded", wraps=release) as bounded,
+        ):
+            result = sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=str(uuid.uuid4()),
+            )
+        self.assertGreater(bounded.call_count, 0)
+        self.assertFalse(result["semantic"]["terminal"])
+        self.assertEqual(receiver.page(after=0, limit=100), [])
+        self.assertEqual(result["message_id"], original["message_id"])
+
     def test_local_busy_database_keeps_safe_cause_without_peer_effect_or_replay(self):
         sender, receiver = self.groups
         original_release = sender.egress.release_bounded
@@ -887,6 +1147,37 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertFalse(historical["transport"][0]["reader_readiness"])
         self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
 
+    def test_direct_block_keeps_historical_reason_after_readiness_restored_and_expiry(
+        self,
+    ):
+        sender, receiver = self.groups
+        arguments = self.direct_arguments(sender, receiver)
+        first = self.send_and_settle(sender, **arguments)
+        remote = first["transport"][0]
+        self.assertEqual(remote["state"], "blocked")
+        self.assertEqual(remote["last_failure"]["code"], "tribe_reader_unconfirmed")
+        failure = remote["last_failure"]
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertIsNone(remote["response_sha256"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        sender.direct_reader_ready = lambda row: True
+        self.fixture.now += 60000
+        with patch.object(
+            sender, "_transmit", side_effect=AssertionError("expired replay")
+        ):
+            expired = self.send_and_settle(sender, **arguments)
+        remote = expired["transport"][0]
+        self.assertEqual(remote["state"], "expired")
+        self.assertEqual(remote["reason_code"], "carrier_expired_before_attempt")
+        self.assertEqual(remote["attempt_state"], "not-attempted")
+        self.assertTrue(remote["reader_readiness"])
+        self.assertEqual(remote["last_failure"], failure)
+        self.assertEqual(expired["message_id"], first["message_id"])
+        self.assertEqual(expired["semantic"], first["semantic"])
+        self.assertFalse(expired["semantic"]["terminal"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
     def test_direct_reader_withdrawal_between_bounded_attempts_stops_release(self):
         sender, receiver = self.groups
         sender.direct_reader_ready = lambda row: True
@@ -1187,7 +1478,10 @@ class GroupRuntimeTests(unittest.TestCase):
     def _bounded_write_operation(self):
         group = self.groups[0]
         identifier = str(uuid.uuid4())
-        raw = b"synthetic bounded native writer"
+        # The group authorizer classifies recovery from the actual carrier.
+        # These native-egress deadline tests never dispatch to a peer, but must
+        # provide parseable ordinary bytes to reach the boundary under test.
+        raw = canonical_bytes({"schema": "test.bounded-native-writer/v1"})
         projection = {
             "event_id": identifier,
             "event_digest": "a" * 64,
@@ -1945,11 +2239,9 @@ class GroupRuntimeTests(unittest.TestCase):
                     ),
                     clock=lane.clock,
                     egress=group.egress,
-                    egress_catalog_id=f"{phase}-responses",
+                    egress_catalog_id=f"messaging-{phase}-responses",
                     egress_authority_head=origin_body,
-                    egress_authorizer=lambda binding, origin=origin_body: (
-                        binding.authority_head == origin
-                    ),
+                    egress_authorizer=group._authorize,
                     intake_validator=None,
                     intake_admission=group.admit_message
                     if phase == "message"
@@ -2004,6 +2296,109 @@ class GroupRuntimeTests(unittest.TestCase):
         return group.inspect(
             client_id=arguments["client_id"], send_id=result["send_id"]
         )
+
+    def _composed_http_founder(self):
+        """Exercise signed application composition, including its real ACK guard."""
+        _runtime, _app, view = self._signed_group_application(record_key_check=False)
+        group = view.service.messaging.channels["tribe"]
+        http = view.messaging_http
+        server = create_messaging_http_server(
+            ("127.0.0.1", 0),
+            evidence_ingress=http.evidence_ingress,
+            message_ingress=http.message_ingress,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        _previous, member = self.groups
+        member.direct_reader_ready = lambda _row: True
+        # Return through the existing real member listener. No fake authorizer,
+        # ACK, visibility permit or receipt is substituted at either endpoint.
+        group.providers = {
+            (member.lane.being_ref, member.lane.local_embodiment_id): {
+                phase: DirectHTTPProvider(
+                    provider_ref="body-1",
+                    route_ref="body-1",
+                    key_ref="key-1",
+                    secret=bytes([2]) * 32,
+                    route_class="direct",
+                    sender_principal=group.lane.being_ref,
+                    sender_body_ref=group.ledger.local_origin["body_ref"],
+                    endpoint=f"http://127.0.0.1:{self.servers[1].server_port}"
+                    f"/dm-messaging/v1/{phase}",
+                    total_timeout_seconds=12,
+                    clock=group.lane.clock,
+                    egress=group.egress,
+                )
+                for phase in ("message", "evidence")
+            }
+        }
+        member.providers[(group.lane.being_ref, group.lane.local_embodiment_id)] = {
+            phase: DirectHTTPProvider(
+                provider_ref="body-0",
+                route_ref="body-0",
+                key_ref="body-0",
+                secret=bytes([1]) * 32,
+                route_class="direct",
+                sender_principal=member.lane.being_ref,
+                sender_body_ref=member.ledger.local_origin["body_ref"],
+                endpoint=f"http://127.0.0.1:{server.server_port}/dm-messaging/v1/{phase}",
+                total_timeout_seconds=12,
+                clock=member.lane.clock,
+                egress=member.egress,
+            )
+            for phase in ("message", "evidence")
+        }
+        self.groups[0], self.servers[0] = group, server
+        return member, group
+
+    def test_composed_group_ack_and_signed_receipt_cross_the_real_http_boundary(self):
+        sender, receiver = self._composed_http_founder()
+        result = self.send_and_settle(sender, **self.direct_arguments(sender, receiver))
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(result["transport"][0]["state"], "recipient-intake")
+        receipt = receiver.records.get("receipt", result["message_id"])
+        self.assertIsNotNone(receipt)
+        ingress = receiver.intake_ingresses["message"]
+        admission = receiver.records.intake_page()["items"][0]["admission"]
+        request_id = admission["context"]["request"]["request_id"]
+        binding = receiver.egress.binding(ingress.egress_catalog_id, request_id)
+        self.assertTrue(receiver._authorize(binding))
+        self.assertFalse(receiver._authorize(replace(binding, catalog_id="unknown")))
+        self.assertFalse(
+            receiver._authorize(replace(binding, path_id="messaging-evidence-result"))
+        )
+        self.assertFalse(receiver._authorize(replace(binding, authority_head="stale")))
+        self.assertGreater(
+            receiver.egress.inspect_retained(binding)["completed_releases"], 0
+        )
+
+    def test_prewrite_visibility_failure_keeps_admitted_receipt_completion(self):
+        sender, receiver = self._composed_http_founder()
+        original = receiver.egress.prepare_visibility
+
+        def fail_ack(binding):
+            if binding.catalog_id == "messaging-message-responses":
+                raise NativeEgressError("egress_authority_blocked")
+            return original(binding)
+
+        with patch.object(receiver.egress, "prepare_visibility", side_effect=fail_ack):
+            result = self.send_and_settle(
+                sender, **self.direct_arguments(sender, receiver)
+            )
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        self.assertIsNotNone(receiver.records.get("receipt", result["message_id"]))
+        self.assertTrue(result["semantic"]["terminal"])
+        admission = receiver.records.intake_page()["items"][0]["admission"]
+        request_id = admission["context"]["request"]["request_id"]
+        diagnostic = read_diagnostic(
+            receiver.intake_ingresses["message"].inbox.path,
+            "intake-response",
+            request_id,
+        )
+        self.assertEqual(diagnostic["code"], "intake_egress_authority_blocked")
 
     def test_http_ack_precedes_a_blocked_signed_receipt_attempt(self):
         sender, receiver = self.groups

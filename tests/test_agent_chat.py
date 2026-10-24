@@ -1123,6 +1123,43 @@ class AgentChatTests(unittest.TestCase):
                 )
             self.assertEqual(make_client.call_count, 2)
 
+    def test_recovery_is_closed_and_uses_its_own_exact_retry_identity(self):
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix import agent_chat
+        from daimon_matrix.mcp_server import _messaging_tool_params
+
+        binding = self.setup_binding()
+        channel = binding["outgoing_channels"][0]
+        args = dict(
+            schema="dm.tribe.recovery-request/v1",
+            channel_id=channel,
+            original_send_id=str(uuid.uuid4()),
+            recovery_id=str(uuid.uuid4()),
+        )
+        checked = agent_chat.checked_arguments(binding, "messaging_send", args)
+        self.assertEqual(checked["operation_id"], args["recovery_id"])
+        method, params, operation = _messaging_tool_params("messaging_send", checked)
+        self.assertEqual(
+            (method, params, operation), ("messaging.send", args, args["recovery_id"])
+        )
+        for change in (
+            {"text": "replacement"},
+            {"thread_id": str(uuid.uuid4())},
+            {"send_id": str(uuid.uuid4())},
+            {"destination": {"kind": "being"}},
+            {"schema": "unknown"},
+            {"expires_at_ms": 123},
+        ):
+            with self.subTest(change=change), self.assertRaises(MCPError):
+                _messaging_tool_params("messaging_send", {**args, **change})
+        with self.assertRaises(ValueError):
+            agent_chat.checked_arguments(
+                binding,
+                "messaging_send",
+                {**args, "operation_id": args["original_send_id"]},
+            )
+
     def test_messaging_selector_is_closed_typed_and_never_a_telegram_alias(self):
         from mcp.shared.exceptions import MCPError
 

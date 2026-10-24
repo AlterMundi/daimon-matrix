@@ -133,6 +133,9 @@ class TribeRecordStore:
             "receipt-terminal",
             "control-proof",
             "control-terminal",
+            "recovery",
+            "recovery-selection",
+            "recovery-intent",
         }:
             raise ValueError("tribe_record_kind_invalid")
         if str(uuid.UUID(record_id)) != record_id:

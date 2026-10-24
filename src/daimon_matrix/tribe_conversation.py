@@ -279,6 +279,7 @@ TRIBE_MESSAGE_CONTENT_TYPE: Final = "application/vnd.daimon.tribe-message+json"
 TRIBE_RECEIPT_CONTENT_TYPE: Final = "application/vnd.daimon.tribe-receipt+json"
 TRIBE_CONVERSATION_SCHEMA: Final = "dm.tribe.conversation/v1"
 TRIBE_DIRECT_SCHEMA: Final = "dm.tribe.direct-conversation/v1"
+TRIBE_RECOVERY_SCHEMA: Final = "dm.tribe.recovery-conversation/v1"
 TRIBE_CONVERSE_RESULT_SCHEMA: Final = "dm.tribe.converse-result/v1"
 TRIBE_INTAKE_SCHEMA: Final = "dm.tribe.intake-result/v1"
 TRIBE_RECEIPT_SCHEMA: Final = "dm.communication.receipt/v2"
@@ -805,6 +806,143 @@ class TribeConversation:
             "expires_at_ms": expires,
         }
 
+    def prepare_recovery(
+        self,
+        *,
+        original_send_id: str,
+        recovery_id: str,
+        message: Mapping[str, Any],
+        resolution: Mapping[str, Any],
+        original_publication_sha256: str,
+        ttl_ms: int,
+    ) -> dict[str, Any]:
+        """Retain one bounded carrier for the exact expired original message."""
+        original = self.records.get("send", original_send_id)
+        native = self.records.get("native", original_send_id)
+        if original is None or native is None:
+            raise TribeConversationError("tribe_recovery_original_missing")
+        now = self.clock()
+        ttl = _uint(ttl_ms, "tribe_lane_ttl_invalid")
+        if not 0 < ttl <= MAX_TRIBE_TTL_MS:
+            raise TribeConversationError("tribe_lane_ttl_invalid")
+        sender = self._epoch(self.being_ref, message["manifest_hash"])
+        verify_event(message, sender)
+        verify_event(resolution, sender)
+        if message["origin"] != self.ledger.local_origin:
+            raise TribeConversationError("tribe_recovery_original_author_required")
+        # Freeze time before signing or encryption; exact retries cannot extend it.
+        intent = self.records.reserve(
+            "recovery-intent",
+            _uuid_text(recovery_id, "tribe_lane_request_invalid"),
+            {
+                "original_send_id": original_send_id,
+                "ttl_ms": ttl,
+                "original_publication_sha256": original_publication_sha256,
+            },
+            lambda: {"issued_at_ms": now, "expires_at_ms": now + ttl},
+        )
+        old_payload = _parse(unb64url(native["native"]))
+        tribe = old_payload["tribe_ref"]
+        current = self.snapshot(tribe, now)
+        active = {
+            row["principal_id"]
+            for row in current.value["members"]
+            if row["state"] == "active"
+        }
+        if (
+            not {self.being_ref, *[row["being_ref"] for row in original["rows"]]}
+            <= active
+        ):
+            raise TribeConversationError("tribe_recovery_membership_changed")
+        for row in original["rows"]:
+            self._operational(
+                row["being_ref"], row["credential_id"], row["embodiment_id"], now
+            )
+        self._operational(
+            self.being_ref, self.local_credential_id, self.local_embodiment_id, now
+        )
+        recovery = self._author(
+            client_id="tribe-carrier-recovery/v1",
+            request_id=recovery_id,
+            subject="tribe.carrier-recovery",
+            sensitivity="shareable",
+            occurred_at_ms=intent["issued_at_ms"],
+            causal_parents=(message["event_id"], resolution["event_id"]),
+            payload={
+                "schema": "dm.tribe.carrier-recovery/v1",
+                "recovery_id": recovery_id,
+                "original_send_id": original_send_id,
+                "message_id": message["event_id"],
+                "message_hash": message["content_hash"],
+                "resolution_hash": resolution["content_hash"],
+                "tribe_ref": tribe,
+                "original_carrier_sha256": hashlib.sha256(
+                    unb64url(native["native"])
+                ).hexdigest(),
+                "original_publication_sha256": original_publication_sha256,
+                "original_expires_at_ms": original["expires_at_ms"],
+                "expires_at_ms": intent["expires_at_ms"],
+                "directed": "destination" in original,
+            },
+        )
+        targets = [
+            RecipientTarget(
+                self._epoch(row["being_ref"], original["epochs"][row["being_ref"]]),
+                row["credential_id"],
+            )
+            for row in original["rows"]
+        ]
+        authorization = DisclosureAuthorization.from_membership_recovery_identity(
+            recovery_event=recovery,
+            original_expires_at_ms=original["expires_at_ms"],
+            message_id=message["event_id"],
+            message_hash=message["content_hash"],
+            sensitivity=message["sensitivity"],
+            resolution_event=resolution,
+            sender_authority=sender,
+            recipient_targets=targets,
+            memberships=original["proofs"],
+            sender_membership=original["sender_proof"],
+            tribe_ref=tribe,
+            expires_at_ms=intent["expires_at_ms"],
+            authorization_id=str(
+                uuid.uuid5(uuid.UUID(recovery_id), "tribe-recovery-authorization/v1")
+            ),
+        )
+        envelope = self.envelopes.get_or_create(
+            recovery_id,
+            sealing_plan_hash(
+                message,
+                authorization,
+                targets,
+                issued_at_ms=intent["issued_at_ms"],
+                expires_at_ms=intent["expires_at_ms"],
+            ),
+            lambda: seal_event(
+                message,
+                sender_authority=sender,
+                recipients=targets,
+                authorization=authorization,
+                custody=self.custody,
+                issued_at_ms=intent["issued_at_ms"],
+                expires_at_ms=intent["expires_at_ms"],
+            ),
+        )
+        return {
+            "message": message,
+            "resolution": resolution,
+            "recovery": recovery,
+            "rows": original["rows"],
+            **intent,
+            "payload": {
+                "schema": TRIBE_RECOVERY_SCHEMA,
+                "envelope": b64url(envelope),
+                "resolution": resolution,
+                "tribe_ref": tribe,
+                "recovery": recovery,
+            },
+        }
+
     def converse(
         self,
         *,
@@ -1051,16 +1189,28 @@ class TribeConversation:
         and signed membership history, never copied from the wire, so an envelope
         cannot name an audience this member does not independently agree with.
         """
-        if not isinstance(payload, Mapping) or set(payload) != {
-            "envelope",
-            "resolution",
-            "schema",
-            "tribe_ref",
+        recovering = (
+            isinstance(payload, Mapping)
+            and payload.get("schema") == TRIBE_RECOVERY_SCHEMA
+        )
+        fields = {"envelope", "resolution", "schema", "tribe_ref"}
+        if recovering:
+            fields.add("recovery")
+        if not isinstance(payload, Mapping) or set(payload) != fields:
+            raise TribeConversationError("tribe_lane_payload_invalid")
+        if payload["schema"] not in {
+            TRIBE_CONVERSATION_SCHEMA,
+            TRIBE_DIRECT_SCHEMA,
+            TRIBE_RECOVERY_SCHEMA,
         }:
             raise TribeConversationError("tribe_lane_payload_invalid")
-        if payload["schema"] not in {TRIBE_CONVERSATION_SCHEMA, TRIBE_DIRECT_SCHEMA}:
-            raise TribeConversationError("tribe_lane_payload_invalid")
         directed = payload["schema"] == TRIBE_DIRECT_SCHEMA
+        if recovering:
+            if not isinstance(payload["recovery"], Mapping):
+                raise TribeConversationError("tribe_lane_payload_invalid")
+            directed = payload["recovery"].get("payload", {}).get("directed")
+            if type(directed) is not bool:
+                raise TribeConversationError("tribe_lane_payload_invalid")
         now = _uint(self.clock(), "tribe_lane_clock_invalid")
         tribe = _text(payload["tribe_ref"], "tribe_lane_tribe_ref_invalid")
         raw = unb64url(
@@ -1172,7 +1322,7 @@ class TribeConversation:
             tribe_ref=tribe,
             principal_id=sender_being,
         )
-        authorization = DisclosureAuthorization.from_membership_resolution_identity(
+        authorization_parameters: dict[str, Any] = dict(
             message_id=message_id,
             message_hash=str(envelope["event_hash"]),
             sensitivity=str(envelope["sensitivity"]),
@@ -1187,6 +1337,27 @@ class TribeConversation:
             ),
             authorization_id=str(envelope["authorization_id"]),
         )
+        if recovering:
+            recovery = verify_event(payload["recovery"], sender_authority)
+            if recovery["occurred_at_ms"] > now:
+                raise TribeConversationError("tribe_recovery_time_invalid")
+            current = self.snapshot(tribe, now)
+            active = {
+                row["principal_id"]
+                for row in current.value["members"]
+                if row["state"] == "active"
+            }
+            if not {sender_being, self.being_ref} <= active:
+                raise TribeConversationError("tribe_recovery_membership_changed")
+            authorization = DisclosureAuthorization.from_membership_recovery_identity(
+                **authorization_parameters,
+                recovery_event=recovery,
+                original_expires_at_ms=recovery["payload"]["original_expires_at_ms"],
+            )
+        else:
+            authorization = DisclosureAuthorization.from_membership_resolution_identity(
+                **authorization_parameters
+            )
         try:
             message = open_event(
                 raw,

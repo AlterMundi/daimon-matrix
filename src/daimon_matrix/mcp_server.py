@@ -1125,6 +1125,39 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
     return method, params, operation_id
 
 
+# Recovery is an explicit closed variant of the existing send capability.
+# It cannot carry replacement speech, destination, thread or caller-made proofs.
+_send_schema = MESSAGING_TOOL_CONTRACTS["messaging_send"][1]
+_send_schema["properties"].update(
+    {
+        "schema": {"type": "string", "const": "dm.tribe.recovery-request/v1"},
+        "original_send_id": _UUID,
+        "recovery_id": _UUID,
+    }
+)
+_send_schema["required"] = ["channel_id"]
+_send_schema["oneOf"] = [
+    {
+        "required": ["send_id", "thread_id", "text"],
+        "not": {
+            "anyOf": [
+                {"required": [key]}
+                for key in ("schema", "original_send_id", "recovery_id")
+            ]
+        },
+    },
+    {
+        "required": ["schema", "original_send_id", "recovery_id"],
+        "not": {
+            "anyOf": [
+                {"required": [key]}
+                for key in ("send_id", "thread_id", "text", "destination")
+            ]
+        },
+    },
+]
+
+
 def _messaging_tool_params(
     name: str, arguments: Any
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -1132,9 +1165,17 @@ def _messaging_tool_params(
     method, schema, _ = MESSAGING_TOOL_CONTRACTS[name]
     if not isinstance(arguments, Mapping):
         raise MCPError(types.INVALID_PARAMS, "Tool arguments must be an object")
-    if not set(schema["required"]) <= set(arguments) or not set(arguments) <= set(
-        schema["properties"]
-    ):
+    recovering = name == "messaging_send" and "schema" in arguments
+    required = set(schema["required"])
+    allowed = set(schema["properties"])
+    if name == "messaging_send":
+        if recovering:
+            required = {"schema", "channel_id", "original_send_id", "recovery_id"}
+            allowed = required | {"operation_id"}
+        else:
+            required = {"channel_id", "send_id", "thread_id", "text"}
+            allowed -= {"schema", "original_send_id", "recovery_id"}
+    if not required <= set(arguments) or not set(arguments) <= allowed:
         raise MCPError(types.INVALID_PARAMS, "Tool arguments violate the closed schema")
     for field, value in arguments.items():
         rule = schema["properties"][field]
@@ -1156,6 +1197,8 @@ def _messaging_tool_params(
                     <= len(value)
                     <= rule.get("maxLength", 2**53 - 1)
                 )
+                if "const" in rule:
+                    valid = valid and value == rule["const"]
                 if "pattern" in rule:
                     valid = valid and re.fullmatch(rule["pattern"], value) is not None
                 if rule.get("format") == "uuid":

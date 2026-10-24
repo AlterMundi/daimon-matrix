@@ -126,7 +126,11 @@ class AgentChatMcp(DaimonMcp):
             "messaging_delivery": (
                 "Inspect a retained message's delivery evidence "
                 "without sending it again. Unconfirmed transport may include a safe "
-                "last_failure code; it does not prove rejection or non-delivery."
+                "last_failure code; it does not prove rejection or non-delivery. "
+                "carrier_expired_before_attempt means the original carrier ended "
+                "without a native attempt; current readiness does not renew it. "
+                "Confirmed Telegram visibility is separate from signed "
+                "recipient delivery."
             ),
         }
         for tool in result.tools:
@@ -264,11 +268,14 @@ def checked_arguments(
     if name in {"messaging_send", "messaging_reply"}:
         # Stable send IDs also key durable authenticated exact-retry requests.
         # A changed payload under the same ID is refused, never silently resent.
-        if arguments.get("operation_id", arguments.get("send_id")) != arguments.get(
-            "send_id"
-        ):
+        recovering = (
+            name == "messaging_send"
+            and arguments.get("schema") == "dm.tribe.recovery-request/v1"
+        )
+        identity = arguments.get("recovery_id" if recovering else "send_id")
+        if arguments.get("operation_id", identity) != identity:
             raise ValueError("agent_chat_operation_id_must_match_send_id")
-        arguments["operation_id"] = arguments.get("send_id")
+        arguments["operation_id"] = identity
     return dict(arguments)
 
 

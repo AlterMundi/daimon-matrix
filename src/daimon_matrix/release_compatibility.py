@@ -27,6 +27,7 @@ _WIRES = sorted(
         "dm.messaging.application/v3",
         "dm.tribe.conversation/v1",
         "dm.tribe.direct-conversation/v1",
+        "dm.tribe.recovery-conversation/v1",
         "dm.tribe.intake-result/v1",
         "dm.communication.message/v1",
         "dm.communication.resolution/v1",
@@ -55,6 +56,8 @@ _FEATURES = sorted(
         "signed-roster-cas/v1",
         "durable-reader-recovery/v1",
         "credential-bound-reader-validity/v1",
+        "explicit-unattempted-carrier-recovery/v1",
+        "bounded-receiving-observation/v1",
     }
 )
 _CONTRACT_FIELDS = {

@@ -306,8 +306,9 @@ Technical completion MUST NOT create speech, reciprocal control exchanges,
 model activation or inbox attention. Recovery MUST have explicit owner lifecycle
 and bounded navigation, preserving uncertain effects and deduplication history.
 
-After carrier expiry, recovery MUST use already committed validated intake,
-not reopen the expired carrier. Historical ACK retention MUST NOT admit expired
+After carrier expiry, ordinary retry MUST use already committed validated intake,
+not reopen the expired carrier. The explicit never-attempted recovery below is
+an additive, separately authorized carrier; it never extends the original one. Historical ACK retention MUST NOT admit expired
 egress. Missing original legacy deadline provenance MUST remain blocked rather
 than receiving a fresh lifetime. Receipt-return expiry ends its transmission
 permission; it does not prove the original message was not received.
@@ -424,3 +425,58 @@ reject the selector. Qualified releases MUST declare the new carrier, direct
 semantics and retained inspection/recovery. This contract creates no new human
 permissions, model wakeup, peer attention or router behavior. Actual receiving
 selection and group/direct acceptance remain #337/#344/#342 and Cluster #232.
+
+
+## 17. Explicit recovery of a never-attempted original
+
+`dm.tribe.recovery-request/v1` is a closed variant of the existing authenticated
+`messaging.send` method: `channel_id`, `original_send_id` and `recovery_id` only.
+It carries no replacement speech, thread, destination, audience, expiry or proof.
+The existing client/channel grant and exact retry journal remain mandatory;
+`recovery_id`, rather than the original send ID, keys this new technical operation.
+No timer, model wakeup, implicit renewal or new resource grant follows.
+
+This first recovery profile accepts only an expired original authored by the same
+current body whose complete human publication remains confirmed. There MUST be
+no retained transport preparation for any original audience leg and no completed
+native release. Zero completed releases alone is NOT absence of an attempt.
+An uncertain, previously attempted, unconfirmed-publication or changed-author
+original MUST be refused. Each original admits one recovery ID; exact retry keeps
+its original deadline, envelope, authorization and transport request bytes.
+
+The sender signs `dm.tribe.carrier-recovery/v1`, binding the original send/message
+identity and hash, signed resolution hash, original carrier hash, exact original
+publication binding hash, Tribe, original expiry, recovery ID and new finite
+expiry. This authorization is a technical event, never new speech. It is created
+after original expiry and its carrier lifetime is bounded by the existing maximum
+TTL. Current operational credentials and active membership remain required;
+recovery MUST NOT resolve a new audience or acquire newly enrolled keys.
+
+`dm.tribe.recovery-conversation/v1` carries that signed authorization alongside the
+original signed resolution and a fresh sealed envelope of the unchanged message.
+Both sides reconstruct membership evidence from the original historical decision;
+the new sealing evidence binds that evidence and the signed recovery event. The
+receiver independently verifies the original author, unchanged audience, current
+sender/recipient authority and membership, recovery time and finite expiry before
+opening/committing. Reinterpreting this carrier as an ordinary group or direct
+carrier MUST fail. Loaded reader V2 readiness MUST explicitly include this wire
+before any physical send. Legacy reader V1 declarations remain unchanged.
+
+The existing native egress catalog authorizer MUST revalidate the exact confirmed
+original publication at admission and EVERY physical write. A changed, missing or
+ambiguous parent blocks that write. The recovery's own authorization-control
+visibility is honestly suppressed by the compact presentation, referencing the
+original publication; it MUST NOT fabricate a new Telegram acknowledgment. The
+plain JSON presentation, which displays technical controls, is unsupported for
+this no-duplicate-speech recovery profile.
+
+Durable intake and semantic receipts retain the ORIGINAL message identity and
+hash. Existing committed intake, deduplication, first-observation times, receipt
+obligations and deadlines MUST NOT be renewed. An actual new intake may produce
+its ordinary signed receiving receipt. Readonly delivery exposes the original
+expired carrier separately from the bounded recovery and its transport outcome;
+only genuine signed receiving evidence improves semantic delivery.
+
+After retaining recovery native obligations, rollback MUST keep a reader supporting
+this carrier and historical catalog. Do not restore a validator that cannot read
+the new history. Existing supported disable controls remain available.

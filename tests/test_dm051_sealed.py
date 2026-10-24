@@ -537,6 +537,7 @@ class DurableEnvelopeTests(SealedFixture):
     def test_store_rejects_weak_parent_and_symlink(self) -> None:
         weak = self.root_path / "weak"
         weak.mkdir(mode=0o755)
+        weak.chmod(0o755)  # Exercise unsafe permissions even under a private umask.
         with self.assertRaises(SealedDeliveryError):
             EnvelopeStore(weak / "outbox.sqlite")
         target = self.root_path / "real.sqlite"
