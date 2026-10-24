@@ -49,6 +49,20 @@ def digest(value):
 
 
 class ReleaseCompatibilityTests(unittest.TestCase):
+    def test_credential_bound_selection_requires_its_actual_journal_reader(self):
+        release = release_fixture()
+        self.assertIn(
+            "credential-bound-reader-validity/v1", release["contract"]["capabilities"]
+        )
+        self.assertEqual(
+            release["contract"]["store_versions"]["reader_control"], [1, 2]
+        )
+        old = describe_reader()
+        old["contract"]["store_versions"]["reader_control"] = [1]
+        result = assess_reader(release, old, expected_digest=digest(release))
+        self.assertFalse(result["compatible"])
+        self.assertIn("store_versions_unsupported", result["reasons"])
+
     def test_distinct_receiver_code_keeps_shared_sdk_and_global_defaults(self):
         release = release_fixture()
         release["artifacts"]["owner_client"] = "6" * 64

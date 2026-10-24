@@ -44,7 +44,7 @@ from daimon_matrix.service import (
 )
 from tests import test_dm025_client as client_fixtures
 from tests import test_group_messaging_runtime as group_fixtures
-from tests.reader_fixtures import reader
+from tests.reader_fixtures import reader, reader_v2
 
 
 def budget():
@@ -54,6 +54,12 @@ def budget():
 def command(controller, *, phase="revoke", readers=None, operation_id=None, **changes):
     current = controller.reader_snapshot("tribe", deadline_ns=budget())
     return {
+        **(
+            {"schema": "dm.runtime.reader-selection/v2"}
+            if readers
+            and any(row.get("schema") == "dm.receiving.reader/v2" for row in readers)
+            else {}
+        ),
         "process_instance_id": current["process_instance_id"],
         "channel_id": "tribe",
         "expected_head": current["head"],
@@ -310,7 +316,7 @@ class ReceivingOwnerConnectionTests(client_fixtures.ClientFixture):
             client.runtime_status()
 
 
-class ReceivingOwnerApiTests(unittest.TestCase):
+class ReceivingOwnerApiFixture(unittest.TestCase):
     controlled_readers = True
 
     def setUp(self):
@@ -363,6 +369,113 @@ class ReceivingOwnerApiTests(unittest.TestCase):
             issued_at_ms=self.fixture.now,
             method=method,
             params=params,
+        )
+
+    def credential_reader(self):
+        authority = self.group.lane.authority
+        credential_id = self.group.lane.local_credential_id
+        body = authority.credentials[credential_id]["body"]
+        member = next(
+            row
+            for row in authority.manifest.value["embodiments"]
+            if row["embodiment_credential_id"] == credential_id
+        )
+        return reader_v2(
+            being_ref=authority.manifest.being_ref,
+            embodiment_id=member["embodiment_id"],
+            incarnation_id=member["incarnation_id"],
+            credential_id=credential_id,
+            authority_manifest_hash=authority.manifest.digest,
+            authority_epochs=[authority.manifest.digest],
+            validity=body.get(
+                "validity",
+                {
+                    "mode": "finite",
+                    "not_before_ms": body.get("valid_from_ms"),
+                    "not_after_ms": body.get("valid_until_ms"),
+                },
+            ),
+        )
+
+
+class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
+    def test_credential_bound_finite_selection_refuses_broader_validity(self):
+        row = self.credential_reader()
+        self.assertEqual(row["validity"]["mode"], "finite")
+        roster = self.group.receiving_roster()["roster_sha256"]
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        broad = {**row, "validity": {"mode": "until-revoked", "not_before_ms": 0}}
+        refused = self.service.handle(
+            self.request(
+                command(
+                    self.group.egress,
+                    phase="select",
+                    readers=[broad],
+                    expected_roster_sha256=roster,
+                )
+            )
+        )
+        self.assertEqual(refused["error"]["code"], "reader_validity_conflict")
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[row],
+                expected_roster_sha256=roster,
+            )
+        )
+        result = self.service.handle(request)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["result"]["schema"], "dm.receiving.reader-selection/v2")
+        self.assertEqual(self.service.handle(request), result)
+        self.fixture.now = row["validity"]["not_after_ms"]
+        self.assertFalse(self.group.egress.reader_ready("tribe", row))
+
+    def test_typed_control_is_explicit_and_legacy_shape_stays_closed(self):
+        row = self.credential_reader()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        before = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        typed = command(
+            self.group.egress,
+            phase="select",
+            readers=[row],
+            expected_roster_sha256=self.group.receiving_roster()["roster_sha256"],
+        )
+        for invalid in (
+            {k: v for k, v in typed.items() if k != "schema"},
+            {**typed, "schema": "dm.runtime.reader-selection/v3"},
+            {**typed, "readers": [reader()]},
+        ):
+            with self.subTest(schema=invalid.get("schema")):
+                result = self.service.handle(self.request(invalid))
+                self.assertEqual(result["error"]["code"], "reader_selection_invalid")
+                self.assertEqual(
+                    self.group.egress.reader_snapshot("tribe", deadline_ns=budget()),
+                    before,
+                )
+
+    def test_credential_bound_control_requires_roster_before_native_selection(self):
+        row = self.credential_reader()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        before = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        refused = self.service.handle(
+            self.request(
+                command(
+                    self.group.egress,
+                    phase="select",
+                    readers=[row],
+                )
+            )
+        )
+        self.assertEqual(refused["error"]["code"], "reader_roster_required")
+        self.assertEqual(
+            self.group.egress.reader_snapshot("tribe", deadline_ns=budget()), before
         )
 
     def test_roster_digest_is_stable_across_clock_and_contains_verified_proof_epochs(
@@ -831,6 +944,85 @@ class ReceivingOwnerApiTests(unittest.TestCase):
             )
 
 
+class UntilRevokedOwnerApiTests(ReceivingOwnerApiFixture):
+    def setUp(self):
+        from dataclasses import replace
+
+        from daimon_matrix import identity
+        from daimon_matrix.canonical import unb64url
+        from daimon_matrix.synthetic_relationships import _identity, _seed
+        from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        def signed_identity(label):
+            old = _identity(label)
+            body = old.credential["body"]
+            credential = identity.create_embodiment_credential_v2(
+                old.state,
+                [_seed(f"{label}:root:{i}") for i in range(3)],
+                _seed(f"{label}:signing"),
+                unb64url(body["encryption_key"]["public"], length=32),
+                embodiment_id=body["embodiment_id"],
+                body_ref=body["body_ref"],
+                purposes=body["purposes"],
+                transport_principals=body["transport_principals"],
+                validity={
+                    "mode": "until-revoked",
+                    "not_before_ms": body["valid_from_ms"],
+                },
+            )
+            incarnation = identity.create_incarnation_authorization(
+                credential,
+                _seed(f"{label}:signing"),
+                incarnation_id=old.origin["incarnation_id"],
+                incarnation_sequence=0,
+                started_at_ms=body["valid_from_ms"],
+            )
+            manifest = copy.deepcopy(dict(old.authority.manifest.value))
+            manifest["embodiments"][0].update(
+                embodiment_credential_id=credential["artifact_id"],
+                incarnation_authorization_id=incarnation["artifact_id"],
+            )
+            authority = RootAuthority(
+                BeingManifest.from_value(manifest),
+                old.state,
+                {credential["artifact_id"]: credential},
+                {incarnation["artifact_id"]: incarnation},
+            )
+            return replace(old, credential=credential, authority=authority)
+
+        with patch(
+            "daimon_matrix.synthetic_relationships._identity",
+            side_effect=signed_identity,
+        ):
+            super().setUp()
+
+    def test_actual_signed_until_revoked_credential_accepts_typed_binding(self):
+        row = self.credential_reader()
+        self.assertEqual(row["validity"]["mode"], "until-revoked")
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        result = self.service.handle(
+            self.request(
+                command(
+                    self.group.egress,
+                    phase="select",
+                    readers=[row],
+                    expected_roster_sha256=self.group.receiving_roster()[
+                        "roster_sha256"
+                    ],
+                )
+            )
+        )
+        self.assertTrue(result["ok"], result)
+        self.fixture.now += 1000
+        self.assertTrue(self.group.egress.reader_ready("tribe", row))
+        snapshot = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        snapshot["readers"][0]["validity"]["not_before_ms"] = self.fixture.now + 1000
+        row["validity"]["not_before_ms"] = self.fixture.now + 1000
+        self.assertTrue(self.group.egress.reader_ready("tribe", row))
+
+
 class ReceivingCompositionTests(unittest.TestCase):
     with_receiving_controller = True
     setUp = group_fixtures.GroupRuntimeTests.setUp
@@ -1205,6 +1397,26 @@ class ReceivingCompositionTests(unittest.TestCase):
 
 
 class ReaderSelectionTests(unittest.TestCase):
+    def test_typed_validity_is_closed_and_refuses_future_or_expired_binding(self):
+        c = self.controller
+        select(c, command(c))
+        before = c.reader_snapshot("tribe", deadline_ns=budget())
+        invalid = [
+            {"mode": "until-revoked", "not_before_ms": True},
+            {"mode": "until-revoked", "not_before_ms": 0, "not_after_ms": None},
+            {"mode": "unknown", "not_before_ms": 0},
+            {"mode": "finite", "not_before_ms": 0},
+            {"mode": "finite", "not_before_ms": 0, "not_after_ms": self.now},
+            {"mode": "until-revoked", "not_before_ms": self.now + 1},
+        ]
+        for validity in invalid:
+            with self.subTest(validity=validity), self.assertRaises(NativeEgressError):
+                select(
+                    c,
+                    command(c, phase="select", readers=[reader_v2(validity=validity)]),
+                )
+        self.assertEqual(c.reader_snapshot("tribe", deadline_ns=budget()), before)
+
     def setUp(self):
         self.now = 1_000
         self.controller = synthetic_visibility(clock=lambda: self.now)
@@ -1385,7 +1597,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         controller = synthetic_visibility(clock=lambda: self.now)
         controller.register_reader_channel("tribe", "0" * 64, controlled=True)
 
-        def authorized(expected):
+        def authorized(expected, *, readers=None):
             if expected != self.roster:
                 raise ValueError("reader_roster_conflict")
             return nullcontext()
@@ -1411,6 +1623,50 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             recovery_roster_sha256=self.roster,
         )
         return controller, value
+
+    def enabled_v2(self, *, finite=False):
+        controller = self.restart()
+        select(controller, command(controller))
+        row = reader_v2()
+        if finite:
+            row["validity"] = {
+                "mode": "finite",
+                "not_before_ms": 0,
+                "not_after_ms": 20_000,
+            }
+        value = command(controller, phase="select", readers=[row])
+        controller.select_readers(
+            value,
+            request_sha256="e" * 64,
+            deadline_ns=budget(),
+            recovery_roster_sha256=self.roster,
+        )
+        return controller, value
+
+    def test_typed_binding_passes_old_proof_horizon_and_recovers_mixed_history(self):
+        old, value = self.enabled_v2()
+        head = self.records.reader_control_head("tribe")
+        self.assertEqual(head["schema"], "dm.receiving.reader-control-record/v2")
+        self.now = 20_001
+        self.assertTrue(old.reader_ready("tribe", value["readers"][0]))
+        current = self.restart()
+        self.assertTrue(current.reader_ready("tribe", value["readers"][0]))
+        self.assertEqual(current.reader_recovery_status("tribe")["state"], "recovered")
+        self.assertIsNone(current.reader_recovery_status("tribe")["eligible_until_ms"])
+        self.assertEqual(
+            self.records.reader_control_head("tribe")["schema"], head["schema"]
+        )
+
+    def test_real_finite_typed_expiry_still_invalidates_recovery(self):
+        old, value = self.enabled_v2(finite=True)
+        self.now = 20_000
+        self.assertFalse(old.reader_ready("tribe", value["readers"][0]))
+        self.assertEqual(old.reader_recovery_status("tribe")["state"], "expired")
+        current = self.restart()
+        self.assertFalse(current.reader_ready("tribe", value["readers"][0]))
+        self.assertEqual(
+            self.records.reader_control_head("tribe")["action"], "invalidate"
+        )
 
     def test_restart_restores_fixed_vector_and_new_provenance_without_old_request(self):
         old, request = self.enabled()

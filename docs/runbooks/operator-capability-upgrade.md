@@ -6,7 +6,14 @@ A serving SDK with `durable-reader-recovery/v1` records authenticated reader
 controls in its existing group record store. Startup recovers the latest selected
 reader vector only when the qualified code/SDK, runtime, application, stores,
 visibility, controller, identity, authority and signed roster are unchanged.
-It preserves the original expiry and retains fresh process provenance. It does
+It preserves the selected validity and retains fresh process provenance. Legacy
+V1 reader rows keep their original finite expiry. With
+`credential-bound-reader-validity/v1`, an explicitly selected V2 reader instead
+uses the actual signed credential's finite or until-revoked validity; a finite
+maintenance/proof deadline never grants indefinite eligibility. V2 selection
+requires the current signed roster and verifies credential/incarnation authority
+under the existing fence. A software installation alone does not convert V1
+rows. Keep a V2-capable recovery SDK once a V2 journal has been selected. It does
 not replay old requests, messages, models or completed onboarding stages.
 
 Use authenticated `runtime.status.receiving.recovery` to distinguish selected,

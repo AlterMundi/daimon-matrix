@@ -63,7 +63,7 @@ from .memory_policy import (
 )
 from .memory_projection import MemoryProjectionError, current_memory_projection
 from .messaging import GroupMessaging, MessagingChannel, MessagingDelivery
-from .native_egress import NativeEgressError
+from .native_egress import READER_CONTROL_SCHEMA, NativeEgressError
 from .peer_transport import (
     PeerClientContext,
     PeerTransportAmbiguous,
@@ -1270,6 +1270,10 @@ class HostedWeave:
             group.validate(self)
             command = dict(params)
             expected_roster = command.pop("expected_roster_sha256", None)
+            rows = command.get("readers")
+            typed = command.get("schema") == READER_CONTROL_SCHEMA
+            if typed and command.get("phase") == "select" and expected_roster is None:
+                raise ServiceError("reader_roster_required")
             if "expected_roster_sha256" in params and (
                 not isinstance(expected_roster, str)
                 or re.fullmatch(r"[0-9a-f]{64}", expected_roster) is None
@@ -1280,7 +1284,9 @@ class HostedWeave:
                 request_sha256=request_hash,
                 deadline_ns=time.monotonic_ns() + 2_000_000_000,
                 selection_authorization=(
-                    lambda: group.selection_authorization(expected_roster)
+                    lambda: group.selection_authorization(
+                        expected_roster, **({"readers": rows} if typed else {})
+                    )
                 )
                 if expected_roster is not None and command.get("phase") == "select"
                 else None,
@@ -1304,8 +1310,8 @@ class HostedWeave:
                 "reader_roster_unavailable", retryable=retryable
             ) from None
         except ValueError as exception:
-            if str(exception) == "reader_roster_conflict":
-                raise ServiceError("reader_roster_conflict") from None
+            if str(exception) in {"reader_roster_conflict", "reader_validity_conflict"}:
+                raise ServiceError(str(exception)) from None
             raise ServiceError("reader_controller_binding_invalid") from None
 
     @staticmethod
@@ -2611,8 +2617,15 @@ class HostedWeave:
                         group.validate(self)
                     result["receiving"] = {
                         "schema": "dm.runtime.reader-status/v1",
-                        "contract": "dm.runtime.reader-selection/v1",
-                        "features": ["signed-roster-cas/v1"]
+                        "contract": READER_CONTROL_SCHEMA,
+                        "contracts": [
+                            "dm.runtime.reader-selection/v1",
+                            READER_CONTROL_SCHEMA,
+                        ],
+                        "features": [
+                            "signed-roster-cas/v1",
+                            "credential-bound-reader-validity/v1",
+                        ]
                         + (
                             ["durable-reader-recovery/v1"]
                             if all(

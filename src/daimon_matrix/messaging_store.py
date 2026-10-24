@@ -234,8 +234,18 @@ class TribeRecordStore:
                     "request_sha256",
                     "roster_sha256",
                 }
-                or document["schema"] != "dm.receiving.reader-control-record/v1"
+                or document["schema"]
+                not in {
+                    "dm.receiving.reader-control-record/v1",
+                    "dm.receiving.reader-control-record/v2",
+                }
                 or document["action"] not in {"control", "rebound", "invalidate"}
+            ):
+                raise ValueError("reader_journal_record_invalid")
+            if (
+                document["schema"] == "dm.receiving.reader-control-record/v1"
+                and document["command"].get("schema")
+                == "dm.runtime.reader-selection/v2"
             ):
                 raise ValueError("reader_journal_record_invalid")
             if document.get("channel_id") == channel_id:
@@ -287,9 +297,19 @@ class TribeRecordStore:
                     != previous
                 ):
                     raise ValueError("reader_journal_head_conflict")
+                typed = (
+                    previous is not None
+                    and previous["schema"] == "dm.receiving.reader-control-record/v2"
+                ) or document["command"].get(
+                    "schema"
+                ) == "dm.runtime.reader-selection/v2"
                 value = {
                     **document,
-                    "schema": "dm.receiving.reader-control-record/v1",
+                    "schema": (
+                        "dm.receiving.reader-control-record/v2"
+                        if typed
+                        else "dm.receiving.reader-control-record/v1"
+                    ),
                     "channel_id": channel_id,
                     "revision": 1 if previous is None else previous["revision"] + 1,
                     "predecessor_sha256": None
