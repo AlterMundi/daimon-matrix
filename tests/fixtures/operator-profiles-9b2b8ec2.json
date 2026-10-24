@@ -1,0 +1,108 @@
+{
+  "communication": [
+    "communication.accept",
+    "communication.attempt",
+    "communication.claim",
+    "communication.compact",
+    "communication.cursor.advance",
+    "communication.delivery",
+    "communication.rebuild-plan",
+    "communication.receipt.record",
+    "communication.result",
+    "communication.route-ack"
+  ],
+  "curator": [
+    "curator.claim",
+    "curator.complete",
+    "curator.enqueue"
+  ],
+  "memory": [
+    "memory.execute"
+  ],
+  "observe": [
+    "communication.page",
+    "curator.inspect",
+    "memory.context",
+    "memory.evaluate",
+    "relationship.cursor",
+    "relationship.disclose",
+    "relationship.snapshot",
+    "relationship.status",
+    "review.inspect",
+    "review.queue",
+    "route.inspect",
+    "runtime.status",
+    "scope.me",
+    "scope.resolve",
+    "scope.tribe",
+    "scope.we",
+    "scope.we.diff",
+    "scope.we.sync-plan",
+    "source.assess",
+    "source.diff",
+    "source.incoming",
+    "source.projection",
+    "source.status",
+    "species.incoming",
+    "we.conversation.page",
+    "we.diff",
+    "we.heads",
+    "we.observe",
+    "we.preview",
+    "we.projection.get",
+    "we.sync.serve",
+    "we.sync.validate-receipt"
+  ],
+  "relationships": [
+    "relationship.accept",
+    "relationship.card.publish",
+    "relationship.close",
+    "relationship.event.ingest",
+    "relationship.grant",
+    "relationship.grant.accept",
+    "relationship.grant.relinquish",
+    "relationship.grant.revoke",
+    "relationship.offer",
+    "tribe.declare",
+    "tribe.expel",
+    "tribe.founder.accept",
+    "tribe.founder.transfer",
+    "tribe.invite",
+    "tribe.leave",
+    "tribe.membership.accept"
+  ],
+  "review": [
+    "review.authorize",
+    "review.decision.draft",
+    "review.decision.submit",
+    "review.execute",
+    "review.request",
+    "review.revoke"
+  ],
+  "routes": [
+    "route.submit"
+  ],
+  "sources": [
+    "source.claim",
+    "source.content.put",
+    "source.cursor.create",
+    "source.import.decide",
+    "source.promote",
+    "source.publication.append",
+    "source.pull"
+  ],
+  "species": [
+    "species.apply",
+    "species.genesis.ingest",
+    "species.release.ingest",
+    "species.rollback"
+  ],
+  "weave": [
+    "we.converse",
+    "we.decide",
+    "we.projection.rebuild",
+    "we.sync.peer-pull",
+    "we.sync.pull",
+    "we.sync.request"
+  ]
+}

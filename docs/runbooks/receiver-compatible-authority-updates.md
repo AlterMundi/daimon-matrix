@@ -60,6 +60,17 @@ successor procedure, not foreign-peer adoption. Preserve its distinct body keys,
 origin and native conversations. A body with no enrolled Matrix runtime requires
 onboarding; this repair never invents membership or imports another body.
 
+Historical onboarding preparations keep the exact capability map originally
+issued. New methods do not retroactively add grants or invalidate that archive.
+Preparation validation recognizes the complete map from Matrix
+`9b2b8ec2c455d3bf316bc00dc9e1bac44e9d5094` by SHA256 of canonical JSON
+`{role: sorted(methods)}`; its literal fixture is retained in
+`tests/fixtures/operator-profiles-9b2b8ec2.json`. Partial, mixed-version and
+expanded historical maps are refused. All key, client, slot, lifetime, request
+and authority checks remain active. New issuance and default capability
+validation still require the current exact map. Never rewrite an original
+preparation or add an old-SDK custody path to repair SDK compatibility.
+
 This procedure installs no model attention, autonomous peer reply, inbox reader
 or scheduler. Existing human authorization covers the finite deployment; it
 adds no repeated approval or new identity ceremony.

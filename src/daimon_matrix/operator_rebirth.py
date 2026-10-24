@@ -4409,6 +4409,7 @@ def _validated_preparation(
             label=label,
             issued_at_ms=value["created_at_ms"],
             observed_at_ms=observed_at_ms,
+            allow_historical_profiles=True,
         )
         validate_host_capability_set(
             host_capabilities,
