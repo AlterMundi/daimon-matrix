@@ -888,6 +888,7 @@ _DIAGNOSTIC_CODES = (
             "route_result_unknown",
             "canonical_rejected",
             "route_timeout",
+            "tribe_reader_unconfirmed",
             "route_http_incomplete",
             "route_connection_failed",
             "route_http_response_invalid",

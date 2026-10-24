@@ -887,6 +887,37 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertFalse(historical["transport"][0]["reader_readiness"])
         self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
 
+    def test_direct_block_keeps_historical_reason_after_readiness_restored_and_expiry(
+        self,
+    ):
+        sender, receiver = self.groups
+        arguments = self.direct_arguments(sender, receiver)
+        first = self.send_and_settle(sender, **arguments)
+        remote = first["transport"][0]
+        self.assertEqual(remote["state"], "blocked")
+        self.assertEqual(remote["last_failure"]["code"], "tribe_reader_unconfirmed")
+        failure = remote["last_failure"]
+        native = sender.records.get("native", arguments["send_id"])
+        self.assertIsNone(remote["response_sha256"])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        sender.direct_reader_ready = lambda row: True
+        self.fixture.now += 60000
+        with patch.object(
+            sender, "_transmit", side_effect=AssertionError("expired replay")
+        ):
+            expired = self.send_and_settle(sender, **arguments)
+        remote = expired["transport"][0]
+        self.assertEqual(remote["state"], "expired")
+        self.assertEqual(remote["reason_code"], "carrier_expired_before_attempt")
+        self.assertEqual(remote["attempt_state"], "not-attempted")
+        self.assertTrue(remote["reader_readiness"])
+        self.assertEqual(remote["last_failure"], failure)
+        self.assertEqual(expired["message_id"], first["message_id"])
+        self.assertEqual(expired["semantic"], first["semantic"])
+        self.assertFalse(expired["semantic"]["terminal"])
+        self.assertEqual(sender.records.get("native", arguments["send_id"]), native)
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+
     def test_direct_reader_withdrawal_between_bounded_attempts_stops_release(self):
         sender, receiver = self.groups
         sender.direct_reader_ready = lambda row: True

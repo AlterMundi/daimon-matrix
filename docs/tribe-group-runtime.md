@@ -55,6 +55,15 @@ authenticated transport as a control frame; it neither wakes a model nor produce
 another speech echo. Transport ACK alone never terminates a semantic leg. The
 author signs a local retention outcome, without intaking its own message.
 
+A reader refusal before native preparation retains the safe
+`tribe_reader_unconfirmed` diagnostic even though no transport request exists.
+Current `reader_readiness` is independent of that historical refusal. Once an
+unattempted carrier expires, the transport view reports
+`carrier_expired_before_attempt` and cannot release it; this is an actionable
+sender-side transport fact, never a signed non-delivery receipt. An attempted
+but unconfirmed exchange stays uncertain. Genuine later receiving proof can
+still improve the semantic result without reopening transmission.
+
 Exact retries and restarts preserve the logical IDs, audience and ciphertext.
 An expired carrier is reported separately from the retained semantic vector and
 is not retransmitted or silently replaced. V0 does not re-wrap old messages.

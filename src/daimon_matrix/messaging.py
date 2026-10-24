@@ -1979,9 +1979,10 @@ class GroupMessaging:
                     state = proof["result"]["outcome"]
                     attempt = state
                     proof_hash = hashlib.sha256(unb64url(proof["response"])).hexdigest()
-                elif self.records.get("transport", request_id) is not None:
-                    attempt = "unconfirmed"
-                    # Diagnostics never establish or invalidate receiving proof.
+                else:
+                    # A readiness refusal occurs before transport preparation;
+                    # it still has a retained diagnostic. Current readiness is
+                    # evaluated separately below, never used to rewrite history.
                     with (
                         suppress(OSError, sqlite3.Error, ValueError),
                         self.egress.local_storage(),
@@ -1989,8 +1990,17 @@ class GroupMessaging:
                         failure = read_diagnostic(
                             self.records.path, "route", request_id
                         )
-                elif route == "unavailable":
-                    state = "unroutable"
+                    if self.records.get("transport", request_id) is not None:
+                        attempt = "unconfirmed"
+                    elif route == "unavailable":
+                        state = "unroutable"
+                    elif self.lane.clock() >= plan["expires_at_ms"]:
+                        state = "expired"
+                    elif (
+                        failure is not None
+                        and failure["code"] == "tribe_reader_unconfirmed"
+                    ):
+                        state = "blocked"
             transport.append(
                 {
                     "being_ref": target[0],
@@ -2000,6 +2010,13 @@ class GroupMessaging:
                     "attempt_state": attempt,
                     "current_route": route,
                     **({"last_failure": failure} if failure is not None else {}),
+                    **(
+                        {"reason_code": "carrier_expired_before_attempt"}
+                        if not author
+                        and attempt == "not-attempted"
+                        and self.lane.clock() >= plan["expires_at_ms"]
+                        else {}
+                    ),
                 }
             )
         result = {
@@ -2452,10 +2469,6 @@ class GroupMessaging:
             else None
         )
         for row in prepared["rows"]:
-            if (
-                destination is not None or self.controlled_readers
-            ) and not self._direct_ready(row, requirements=requirements):
-                continue
             if (row["being_ref"], row["embodiment_id"]) == (
                 self.lane.being_ref,
                 self.lane.local_embodiment_id,
@@ -2463,9 +2476,42 @@ class GroupMessaging:
                 continue
             if (row["membership_ref"], row["embodiment_id"]) in completed:
                 continue
+            if (
+                destination is not None or self.controlled_readers
+            ) and not self._direct_ready(row, requirements=requirements):
+                self._record_reader_block(send_id, row)
+                continue
             eligible.append(row)
         self._fanout(native, eligible, operation, authorize=authorize)
         return self._result(message, send_id)
+
+    def _record_reader_block(
+        self,
+        operation_id: str,
+        row: Mapping[str, Any],
+        *,
+        deadline_ns: int | None = None,
+    ) -> None:
+        request_id = str(
+            uuid.uuid5(
+                uuid.UUID(operation_id),
+                f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+            )
+        )
+        # This is a safe diagnostic, not a transport attempt or receiver proof.
+        # A contended/corrupt sidecar cannot change the message's native outcome.
+        with (
+            suppress(OSError, sqlite3.Error, ValueError),
+            self.egress.local_storage(deadline_ns=deadline_ns),
+        ):
+            write_diagnostic(
+                self.records.path,
+                "route",
+                request_id,
+                "tribe_reader_unconfirmed",
+                self.lane.clock(),
+                timeout=0,
+            )
 
     def _claim_transport(
         self, row: Mapping[str, Any], operation: OperationBinding, *, receipt: bool
@@ -2644,6 +2690,9 @@ class GroupMessaging:
             else None
         )
         if controlled_data and not self._direct_ready(row, requirements=requirements):
+            self._record_reader_block(
+                operation.operation_id, row, deadline_ns=deadline_ns
+            )
             return None
         if receipt:
             identifier = document["receipt"]["event_id"]

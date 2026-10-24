@@ -126,7 +126,11 @@ class AgentChatMcp(DaimonMcp):
             "messaging_delivery": (
                 "Inspect a retained message's delivery evidence "
                 "without sending it again. Unconfirmed transport may include a safe "
-                "last_failure code; it does not prove rejection or non-delivery."
+                "last_failure code; it does not prove rejection or non-delivery. "
+                "carrier_expired_before_attempt means the original carrier ended "
+                "without a native attempt; current readiness does not renew it. "
+                "Confirmed Telegram visibility is separate from signed "
+                "recipient delivery."
             ),
         }
         for tool in result.tools:
