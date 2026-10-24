@@ -1478,7 +1478,10 @@ class GroupRuntimeTests(unittest.TestCase):
     def _bounded_write_operation(self):
         group = self.groups[0]
         identifier = str(uuid.uuid4())
-        raw = b"synthetic bounded native writer"
+        # The group authorizer classifies recovery from the actual carrier.
+        # These native-egress deadline tests never dispatch to a peer, but must
+        # provide parseable ordinary bytes to reach the boundary under test.
+        raw = canonical_bytes({"schema": "test.bounded-native-writer/v1"})
         projection = {
             "event_id": identifier,
             "event_digest": "a" * 64,
