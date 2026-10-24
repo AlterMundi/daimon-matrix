@@ -142,6 +142,88 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(all("value_sha256" in r for r in rows))
 
+    def native_packet(self, effective, layers):
+        current = self.root / "layered-current.json"
+        baseline = self.root / "layered-baseline.json"
+        current.write_text(
+            json.dumps(
+                dict(
+                    binary_sha256="a" * 64, result=dict(config=effective, layers=layers)
+                )
+            )
+        )
+        baseline.write_text(
+            json.dumps(dict(binary_sha256="a" * 64, result=dict(config={"tui": None})))
+        )
+        return tool.native_comparison(current, baseline)
+
+    def test_layer_inputs_do_not_turn_expanded_defaults_into_customization(self):
+        layers = [
+            dict(name={"type": "sessionFlags"}, config={"model": "other"}),
+            dict(
+                name={"type": "user", "file": "owned-config"},
+                config={"model": "selected", "tui": {"theme": "dark"}},
+            ),
+            dict(
+                name={"type": "project", "file": "disabled-config"},
+                disabledReason="untrusted",
+                config={"tui": {"show_tooltips": False}},
+            ),
+            dict(name={"type": "system"}, config={}),
+        ]
+        result = self.native_packet(
+            {"model": "selected", "tui": {"theme": "dark", "show_tooltips": True}},
+            layers,
+        )
+        rows = {tuple(x["key"]): x for x in result["settings"]}
+        self.assertEqual(rows[("tui", "theme")]["declaration_state"], "active-exact")
+        tooltips = rows[("tui", "show_tooltips")]
+        self.assertEqual(tooltips["baseline_state"], "unknown_default")
+        self.assertEqual(tooltips["declaration_state"], "disabled-only")
+        self.assertEqual(tooltips["input_sources"][0]["layer_index"], 2)
+        model = rows[("model",)]
+        self.assertEqual(
+            [x["matches_effective"] for x in model["input_sources"]], [False, True]
+        )
+        self.assertEqual(model["declaration_state"], "active-exact")
+        self.assertNotIn("selected", json.dumps(result))
+        self.assertNotIn("dark", json.dumps(result))
+
+    def test_null_ancestors_arrays_and_missing_layer_content_stay_distinct(self):
+        layers = [dict(name={"type": "user"}, config={"tui": None, "args": ["local"]})]
+        result = self.native_packet(
+            {"tui": {"theme": "expanded"}, "args": ["local", "expanded"]}, layers
+        )
+        rows = {tuple(x["key"]): x for x in result["settings"]}
+        theme = rows[("tui", "theme")]
+        self.assertEqual(theme["declaration_state"], "active-ancestor")
+        self.assertEqual(theme["input_sources"][0]["key"], ["tui"])
+        self.assertIsNone(theme["input_sources"][0]["matches_effective"])
+        self.assertEqual(rows[("args", "0")]["declaration_state"], "active-exact")
+        self.assertEqual(
+            rows[("args", "1")]["declaration_state"], "no-active-declaration"
+        )
+        result = self.native_packet({"value": True}, [{"name": {"type": "user"}}])
+        self.assertEqual(result["settings"][0]["declaration_state"], "unavailable")
+        self.assertEqual(result["layers"][0]["config_state"], "unavailable")
+
+    def test_private_inputs_retain_omission_and_do_not_disclose_input_digests(self):
+        sensitive = {"mcp_servers": {"test": {"bearer_token": "sensitive"}}}
+        result = self.native_packet(
+            sensitive, [dict(name={"type": "user"}, config=sensitive)]
+        )
+        self.assertEqual(
+            result["settings"],
+            [
+                dict(
+                    key=["mcp_servers", "test", "bearer_token"],
+                    state="private_binding_omitted",
+                )
+            ],
+        )
+        self.assertNotIn("sensitive", json.dumps(result))
+        self.assertNotIn(tool.hashed("sensitive"), json.dumps(result))
+
     def test_three_way_preview_preserves_manual_conflicts_and_cross_being_boundary(
         self,
     ):

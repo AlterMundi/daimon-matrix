@@ -60,6 +60,21 @@ explicit native null is `baseline_unspecified`, not a claimed effective factory
 value. A known matching value is inherited; a known difference is modified;
 unknown keys/defaults remain unknown. Running-turn consumption remains unverified.
 
+Each non-secret setting also records `input_sources`, referencing the ordered
+`layers` metadata by `layer_index`. An `exact` declaration names the leaf; an
+`ancestor` names a scalar/null input above an expanded effective object. The
+comparison flag describes equality only, never which input won or a model read.
+Input values and their digests are not copied into this report. Disabled layers
+remain visible without becoming active declarations. Missing layer configuration
+is unavailable evidence, not proof that a setting has no input.
+
+`declaration_state` distinguishes `active-exact`, `active-ancestor`,
+`disabled-only`, `no-active-declaration` and `unavailable`. An expanded setting
+without an active declared leaf must not silently become a CompAII customization
+to install elsewhere. Existing unknown/unspecified baseline classes remain
+unchanged even when an active layer declares the setting. Receiving-local intent
+and adaptation still decide adoption; neither declaration nor equality grants it.
+
 ## Exact receiving comparison
 
 Add `--compare-with` for a selected attributed inventory of another body of the
