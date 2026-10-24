@@ -824,6 +824,8 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
 
         def body_reader(body_ref, embodiment_id, incarnation_id, evaluated_at_ms):
             calls.append(state[0])
+            if state[0] == "unavailable":
+                raise ValueError("actual admission reader unavailable")
             return dict(
                 schema="dm.cluster-body-snapshot/v1",
                 body_ref=body_ref,
@@ -878,6 +880,16 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
                 expected_server=first["server"],
                 expected_runtime=first["runtime"],
             )
+            state[0] = "unavailable"
+            refusal = service.handle(request)
+            self.assertFalse(refusal["ok"])
+            self.assertEqual(refusal["error"]["code"], "body_snapshot_rejected")
+            initial_refusal = service.handle(self.request(8002, {"view": "receiving"}))
+            self.assertFalse(initial_refusal["ok"])
+            state[0] = "running"
+            restored = service.handle(request)
+            self.assertTrue(restored["ok"])
+            self.assertEqual(restored["result"]["identity"]["body"]["state"], "running")
 
     def test_receiving_identity_does_not_expand_a_status_only_grant(self):
         capability = create_capability(

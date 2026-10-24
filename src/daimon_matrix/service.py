@@ -2636,7 +2636,12 @@ class HostedWeave:
                 # A routine load/admission proof is not a full database audit.
                 # The identity helper calls the actual current body reader and
                 # validates active origin; it does not use a cached projection.
-                result["identity"] = scopes.identity()
+                try:
+                    result["identity"] = scopes.identity()
+                except ScopeError as exception:
+                    raise ServiceError(
+                        exception.code, retryable=exception.retryable
+                    ) from exception
                 result["inspection"] = "current-receiving"
             else:
                 result.update(
