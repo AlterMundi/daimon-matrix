@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import itertools
+import json
 import unittest
 import uuid
+from pathlib import Path
 
 from daimon_matrix.local_api import LocalApiError, create_capability, create_request
 from daimon_matrix.operator_capabilities import (
@@ -28,6 +30,82 @@ from daimon_matrix.service import (
 
 
 class OperatorCapabilityProfileTests(unittest.TestCase):
+    def test_historical_preparations_require_one_exact_complete_profile_version(
+        self,
+    ) -> None:
+        now = 1_800_000_000_000
+        historical = json.loads(
+            (
+                Path(__file__).parent / "fixtures/operator-profiles-9b2b8ec2.json"
+            ).read_bytes()
+        )
+        current, keys, slots = create_operator_capability_set(
+            "legion", issued_at_ms=now
+        )
+        secrets = {slots[p]: keys[p] for p in OPERATOR_PROFILE_NAMES}
+
+        def descriptors(methods):
+            return {
+                p: create_capability(
+                    keys[p],
+                    client_id=current[p].client_id,
+                    methods=methods[p],
+                    not_before_ms=current[p].descriptor["not_before_ms"],
+                    not_after_ms=current[p].descriptor["not_after_ms"],
+                ).descriptor
+                for p in OPERATOR_PROFILE_NAMES
+            }
+
+        def validate(rows, *, historical_allowed=False, observed=now):
+            return validate_operator_capability_set(
+                rows,
+                slots,
+                secrets,
+                label="legion",
+                issued_at_ms=now,
+                observed_at_ms=observed,
+                allow_historical_profiles=historical_allowed,
+            )
+
+        rows = descriptors(historical)
+        with self.assertRaisesRegex(
+            OperatorCapabilityError, "operator_capability_policy_rejected"
+        ):
+            validate(rows)
+        accepted = validate(rows, historical_allowed=True)
+        self.assertEqual(
+            {p: sorted(c.methods) for p, c in accepted.items()}, historical
+        )
+        self.assertEqual(
+            {p: frozenset(c.methods) for p, c in current.items()},
+            OPERATOR_CAPABILITY_PROFILES,
+        )
+        validate({p: c.descriptor for p, c in current.items()}, historical_allowed=True)
+        for change in ("mixed", "partial", "extra"):
+            with self.subTest(change=change):
+                methods = {p: list(v) for p, v in historical.items()}
+                if change == "mixed":
+                    methods["observe"] = sorted(OPERATOR_CAPABILITY_PROFILES["observe"])
+                elif change == "partial":
+                    methods["observe"].remove("runtime.status")
+                else:
+                    methods["weave"].append("we.propose")
+                    methods["weave"].sort()
+                with self.assertRaisesRegex(
+                    OperatorCapabilityError, "operator_capability_policy_rejected"
+                ):
+                    validate(descriptors(methods), historical_allowed=True)
+        with self.assertRaisesRegex(
+            OperatorCapabilityError, "operator_capability_policy_rejected"
+        ):
+            validate(
+                rows, historical_allowed=True, observed=now + OPERATOR_CAPABILITY_TTL_MS
+            )
+        tampered = {p: dict(v) for p, v in rows.items()}
+        tampered["weave"]["client_id"] = "another-client"
+        with self.assertRaises(OperatorCapabilityError):
+            validate(tampered, historical_allowed=True)
+
     def test_host_profiles_are_exact_and_outside_operator_partition(self) -> None:
         self.assertEqual(
             HOST_CAPABILITY_PROFILES,

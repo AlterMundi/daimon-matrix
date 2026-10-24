@@ -64,6 +64,47 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestAdditionalEmbodiment(RootLedgerFixture):
+    def test_retained_historical_preparation_validates_without_rewriting_or_new_grants(
+        self,
+    ) -> None:
+        from daimon_matrix import operator_capabilities, operator_rebirth
+
+        historical = json.loads(
+            (ROOT / "tests/fixtures/operator-profiles-9b2b8ec2.json").read_bytes()
+        )
+        parent = self.root_path / "historical-preparation"
+        password = b"synthetic-historical-preparation"
+        authority = authority_from_document(self.authority_document())
+        with mock.patch.object(
+            operator_capabilities,
+            "OPERATOR_CAPABILITY_PROFILES",
+            {p: frozenset(v) for p, v in historical.items()},
+        ):
+            prepared = create_target_preparation(
+                parent,
+                authority,
+                self.target_profile(),
+                lambda: bytearray(password),
+                created_at_ms=NOW + 10,
+                expires_at_ms=NOW + 60_010,
+            )
+        request = json.loads((parent / "request.json").read_bytes())
+        before = {p: p.read_bytes() for p in parent.iterdir() if p.is_file()}
+        verified, _, _ = operator_rebirth._validated_preparation(
+            parent,
+            prepared,
+            request,
+            authority,
+            lambda: bytearray(password),
+            observed_at_ms=NOW + 11,
+        )
+        self.assertEqual(verified, prepared)
+        self.assertEqual(
+            {p: row["methods"] for p, row in verified["capabilities"].items()},
+            historical,
+        )
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+
     def authority_document(self) -> dict[str, Any]:
         return {
             "schema": "dm.operator.authority/v1",

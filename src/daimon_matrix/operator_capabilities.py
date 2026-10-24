@@ -30,6 +30,12 @@ OPERATOR_CAPABILITY_PROFILE_SCHEMA: Final = "dm.operator.capability-profile/v1"
 OPERATOR_CAPABILITY_BINDING_SCHEMA: Final = "dm.operator.capability-binding/v1"
 OPERATOR_RUNTIME_ID_SCHEMA: Final = "dm.operator.runtime-identity/v1"
 OPERATOR_PROFILE_NAMES: Final = tuple(sorted(OPERATOR_CAPABILITY_PROFILES))
+# Exact complete role -> sorted method-list map issued by Matrix
+# 9b2b8ec2c455d3bf316bc00dc9e1bac44e9d5094. Historical preparation
+# validation may recognize it; new issuance/default validation stay current.
+_HISTORICAL_PREPARATION_PROFILES: Final = frozenset(
+    {"533365cfb995514ce420d5d7ffd6ee6bad50a03353013c68be70b0192c4b27c1"}
+)
 OBSERVE_PROFILE: Final = "observe"
 STATUS_OBSERVER_METHODS: Final = frozenset(
     {
@@ -388,6 +394,7 @@ def validate_operator_capability_set(
     label: str,
     issued_at_ms: int,
     observed_at_ms: int,
+    allow_historical_profiles: bool = False,
 ) -> dict[str, LocalCapability]:
     """Validate the complete profile set and reject regrouping or stale roles."""
 
@@ -421,7 +428,6 @@ def validate_operator_capability_set(
         descriptor = capability.descriptor
         if (
             capability.client_id != f"client:operator:{label}:{profile}"
-            or frozenset(capability.methods) != OPERATOR_CAPABILITY_PROFILES[profile]
             or descriptor["not_before_ms"] != expected_before
             or descriptor["not_after_ms"] != lifecycle["expires_at_ms"]
             or descriptor["status"] != "active"
@@ -434,6 +440,19 @@ def validate_operator_capability_set(
         keys.append(key)
     if len(set(keys)) != len(keys):
         raise OperatorCapabilityError("duplicate_operator_capability_key")
+    methods = {
+        profile: sorted(value.methods) for profile, value in capabilities.items()
+    }
+    current = {
+        profile: sorted(value)
+        for profile, value in OPERATOR_CAPABILITY_PROFILES.items()
+    }
+    if methods != current and not (
+        allow_historical_profiles
+        and hashlib.sha256(canonical_bytes(methods)).hexdigest()
+        in _HISTORICAL_PREPARATION_PROFILES
+    ):
+        raise OperatorCapabilityError("operator_capability_policy_rejected")
     return capabilities
 
 
