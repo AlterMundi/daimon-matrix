@@ -329,7 +329,7 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
-    def _expired_unattempted(self):
+    def _expired_unattempted(self, *, group=False):
         from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
 
         sender, receiver = self.groups
@@ -354,7 +354,16 @@ class GroupRuntimeTests(unittest.TestCase):
             destination={"kind": "being", "being_ref": receiver.lane.being_ref},
         )
         sender.direct_reader_ready = lambda row: False
-        original = sender.send(**args)
+        if group:
+            args.pop("destination")
+            providers = sender.providers
+            sender.providers = {}
+            try:
+                original = sender.send(**args)
+            finally:
+                sender.providers = providers
+        else:
+            original = sender.send(**args)
         self.fixture.now += sender.policy.max_ttl_ms + 1
         sender.direct_reader_ready = lambda row: True
         return args, original
@@ -389,6 +398,26 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertEqual(sender.records.get("native", recovery_id), native)
         self.assertEqual(len(receiver.page(after=0, limit=100)), 1)
         self.assertEqual(len(sender.egress._transport.requests), before_echo)
+
+    def test_group_recovery_preserves_author_retention_and_whole_frozen_audience(self):
+        sender, receiver = self.groups
+        args, original = self._expired_unattempted(group=True)
+        rid = str(uuid.uuid4())
+        sender.recover(
+            client_id="test", original_send_id=args["send_id"], recovery_id=rid
+        )
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        result = sender.inspect(client_id="test", send_id=args["send_id"])
+        self.assertEqual(result["message_id"], original["message_id"])
+        self.assertEqual(result["audience"], original["audience"])
+        self.assertNotIn("destination", result)
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(
+            [x["message"]["event_id"] for x in receiver.page(after=0, limit=10)],
+            [original["message_id"]],
+        )
+        sender.egress.validate_registered_catalogs()
 
     def test_recovery_refuses_a_prepared_transport_even_when_no_release_completed(self):
         sender, _receiver = self.groups
