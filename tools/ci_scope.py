@@ -306,6 +306,8 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
         "tests/test_receiving_runtime.py",
         "tests/test_dm024_runtime.py",
         "tests/test_dm025_client.py",
+        "tests/reader_fixtures.py",
+        "specs/receiver-compatible-release.md",
     }
 )
 
