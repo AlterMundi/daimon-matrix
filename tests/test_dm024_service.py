@@ -790,7 +790,7 @@ class HostedServiceTests(RootLedgerFixture):
 
 
 class BoundedReceivingObservationTests(RootLedgerFixture):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.capability = create_capability(
             key("bounded-status"),
@@ -808,7 +808,12 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             "bounded-status",
         )
 
-    def request(self, index, params, capability=None):
+    def request(
+        self,
+        index: int,
+        params: dict[str, Any],
+        capability: LocalCapability | None = None,
+    ) -> dict[str, Any]:
         return create_request(
             capability or self.capability,
             request_id=rpc_id(index),
@@ -818,14 +823,22 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             nonce=index.to_bytes(16, "big"),
         )
 
-    def test_receiving_view_keeps_current_admission_without_full_ledger_work(self):
+    def test_receiving_view_keeps_current_admission_without_full_ledger_work(
+        self,
+    ) -> None:
         state = ["running"]
         calls = []
 
-        def body_reader(body_ref, embodiment_id, incarnation_id, evaluated_at_ms):
+        def body_reader(
+            body_ref: str, embodiment_id: str, incarnation_id: str, evaluated_at_ms: int
+        ) -> dict[str, Any]:
             calls.append(state[0])
             if state[0] == "unavailable":
                 raise ValueError("actual admission reader unavailable")
+            if state[0] == "socket-unavailable":
+                raise OSError("actual admission socket unavailable")
+            if state[0] == "socket-timeout":
+                raise TimeoutError("actual admission socket deadline")
             return dict(
                 schema="dm.cluster-body-snapshot/v1",
                 body_ref=body_ref,
@@ -836,6 +849,7 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
                 resource_fences=[],
             )
 
+        assert self.service.scopes is not None
         service = replace(
             self.service, scopes=replace(self.service.scopes, body_reader=body_reader)
         )
@@ -886,12 +900,22 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             self.assertEqual(refusal["error"]["code"], "body_snapshot_rejected")
             initial_refusal = service.handle(self.request(8002, {"view": "receiving"}))
             self.assertFalse(initial_refusal["ok"])
+            for failure in ("socket-unavailable", "socket-timeout"):
+                state[0] = failure
+                refusal = service.handle(request)
+                self.assertFalse(refusal["ok"])
+                self.assertEqual(
+                    refusal["error"],
+                    {"code": "body_snapshot_unavailable", "retryable": True},
+                )
+                state[0] = "running"
+                self.assertTrue(service.handle(request)["ok"])
             state[0] = "running"
             restored = service.handle(request)
             self.assertTrue(restored["ok"])
             self.assertEqual(restored["result"]["identity"]["body"]["state"], "running")
 
-    def test_receiving_identity_does_not_expand_a_status_only_grant(self):
+    def test_receiving_identity_does_not_expand_a_status_only_grant(self) -> None:
         capability = create_capability(
             key("status-only"),
             client_id="client:status-only",
@@ -906,7 +930,7 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             service.handle(self.request(8002, {"view": "receiving"}, capability))
         self.assertTrue(service.handle(self.request(8003, {}, capability))["ok"])
 
-    def test_full_default_and_closed_receiving_view_remain_distinct(self):
+    def test_full_default_and_closed_receiving_view_remain_distinct(self) -> None:
         with patch.object(
             self.ledger_a, "integrity_check", wraps=self.ledger_a.integrity_check
         ) as audit:
@@ -917,9 +941,11 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             self.assertIn("counts", response["result"])
             self.assertNotIn("identity", response["result"])
             audit.assert_called_once()
-        for index, params in enumerate(
-            ({"view": "full"}, {"view": "receiving", "audit": False}), 8010
-        ):
+        variants: list[dict[str, Any]] = [
+            {"view": "full"},
+            {"view": "receiving", "audit": False},
+        ]
+        for index, params in enumerate(variants, 8010):
             response = self.service.handle(self.request(index, params))
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "invalid_params")

@@ -320,6 +320,10 @@ class ScopeResolver:
                     origin["incarnation_id"],
                     now,
                 )
+            except OSError as exception:
+                raise ScopeError(
+                    "body_snapshot_unavailable", retryable=True
+                ) from exception
             except (ScopeError, ValueError) as exception:
                 raise ScopeError("body_snapshot_rejected") from exception
             if not isinstance(value, Mapping):
