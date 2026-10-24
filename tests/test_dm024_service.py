@@ -9,6 +9,7 @@ import unittest
 from contextlib import closing
 from dataclasses import replace
 from typing import Any
+from unittest.mock import patch
 
 from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.communication import MESSAGE_PAYLOAD_SCHEMA
@@ -786,6 +787,130 @@ class HostedServiceTests(RootLedgerFixture):
             }
         self.assertEqual(version, "3")
         self.assertTrue({"local_operations", "rpc_requests"} <= tables)
+
+
+class BoundedReceivingObservationTests(RootLedgerFixture):
+    def setUp(self):
+        super().setUp()
+        self.capability = create_capability(
+            key("bounded-status"),
+            client_id="client:bounded-status",
+            methods=["runtime.status", "scope.me"],
+            not_before_ms=NOW - 10000,
+            not_after_ms=NOW + 10000,
+        )
+        self.service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {self.capability.capability_id: self.capability},
+            lambda: NOW,
+            "dm:runtime:v1:" + "a" * 43,
+            "bounded-status",
+        )
+
+    def request(self, index, params, capability=None):
+        return create_request(
+            capability or self.capability,
+            request_id=rpc_id(index),
+            issued_at_ms=NOW,
+            method="runtime.status",
+            params=params,
+            nonce=index.to_bytes(16, "big"),
+        )
+
+    def test_receiving_view_keeps_current_admission_without_full_ledger_work(self):
+        state = ["running"]
+        calls = []
+
+        def body_reader(body_ref, embodiment_id, incarnation_id, evaluated_at_ms):
+            calls.append(state[0])
+            return dict(
+                schema="dm.cluster-body-snapshot/v1",
+                body_ref=body_ref,
+                embodiment_id=embodiment_id,
+                incarnation_id=incarnation_id,
+                observed_at_ms=evaluated_at_ms,
+                state=state[0],
+                resource_fences=[],
+            )
+
+        service = replace(
+            self.service, scopes=replace(self.service.scopes, body_reader=body_reader)
+        )
+        request = self.request(8001, {"view": "receiving"})
+        with (
+            patch.object(
+                self.ledger_a,
+                "integrity_check",
+                side_effect=AssertionError("full audit"),
+            ),
+            patch(
+                "daimon_matrix.scopes.SyncEngine.heads",
+                side_effect=AssertionError("full heads"),
+            ),
+            patch(
+                "daimon_matrix.scopes.ProjectionEngine.snapshot",
+                side_effect=AssertionError("full projection"),
+            ),
+        ):
+            first = service.handle(request)
+            self.assertTrue(first["ok"], first["error"])
+            view = first["result"]
+            self.assertEqual(view["schema"], "dm.runtime.receiving-status/v1")
+            self.assertEqual(view["identity"]["origin"], first["server"])
+            self.assertEqual(view["identity"]["body"]["state"], "running")
+            self.assertFalse(
+                {"integrity", "counts", "visibility", "heads", "effective"}
+                & view.keys()
+            )
+            self.assertFalse({"heads", "effective"} & view["identity"].keys())
+            state[0] = "stopped"
+            current = service.handle(request)
+            self.assertTrue(current["ok"], current["error"])
+            self.assertEqual(current["result"]["identity"]["body"]["state"], "stopped")
+            self.assertEqual(calls[0], "running")
+            self.assertEqual(calls[-1], "stopped")
+            verify_response(
+                current,
+                self.capability,
+                expected_request_id=request["request_id"],
+                expected_request_hash=request_hash(request),
+                expected_server=first["server"],
+                expected_runtime=first["runtime"],
+            )
+
+    def test_receiving_identity_does_not_expand_a_status_only_grant(self):
+        capability = create_capability(
+            key("status-only"),
+            client_id="client:status-only",
+            methods=["runtime.status"],
+            not_before_ms=NOW - 10000,
+            not_after_ms=NOW + 10000,
+        )
+        service = replace(
+            self.service, capabilities={capability.capability_id: capability}
+        )
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            service.handle(self.request(8002, {"view": "receiving"}, capability))
+        self.assertTrue(service.handle(self.request(8003, {}, capability))["ok"])
+
+    def test_full_default_and_closed_receiving_view_remain_distinct(self):
+        with patch.object(
+            self.ledger_a, "integrity_check", wraps=self.ledger_a.integrity_check
+        ) as audit:
+            response = self.service.handle(self.request(8004, {}))
+            self.assertTrue(response["ok"], response["error"])
+            self.assertEqual(response["result"]["schema"], "dm.runtime.status/v1")
+            self.assertEqual(response["result"]["integrity"], "ok")
+            self.assertIn("counts", response["result"])
+            self.assertNotIn("identity", response["result"])
+            audit.assert_called_once()
+        for index, params in enumerate(
+            ({"view": "full"}, {"view": "receiving", "audit": False}), 8010
+        ):
+            response = self.service.handle(self.request(index, params))
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "invalid_params")
 
 
 if __name__ == "__main__":

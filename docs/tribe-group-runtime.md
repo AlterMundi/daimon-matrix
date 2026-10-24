@@ -1,5 +1,16 @@
 # Membership group runtime
 
+Routine receiving observation uses the closed `runtime.status` variant
+`{"view":"receiving"}` (`dm.runtime.receiving-status/v1`, advertised as
+`bounded-receiving-observation/v1`). It authenticates current identity and actual
+body admission together with the loaded runtime, application and reader gates;
+it requires both existing `runtime.status` and `scope.me` grants. Exact retries
+refresh this observation. It does not audit ledger integrity, count history or
+compute Weave heads/projections, and never reports an unperformed audit as `ok`.
+The unchanged empty-parameter status remains the complete audit. A receiver
+rejecting the new view with authenticated `invalid_params` can use that legacy
+path; a timeout or admission/authority failure cannot become a successful fallback.
+
 The group application `dm.messaging.application/v3` contains one `tribe` channel,
 shared verified governance, Root inventories, owned stores, one local intake
 registration and a transport roster. It contains no pair directions, peer policy,

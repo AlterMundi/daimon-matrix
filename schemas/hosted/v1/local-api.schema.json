@@ -266,7 +266,7 @@
         {"properties": {"method": {"const": "we.sync.peer-pull"}, "params": {"$ref": "#/$defs/peerPullParams"}}},
         {"properties": {"method": {"const": "we.converse"}, "params": {"$ref": "#/$defs/weConverseParams"}}},
         {"properties": {"method": {"const": "we.conversation.page"}, "params": {"$ref": "#/$defs/weConversationPageParams"}}},
-        {"properties": {"method": {"const": "runtime.status"}, "params": {"$ref": "#/$defs/empty"}}},
+        {"properties": {"method": {"const": "runtime.status"}, "params": {"oneOf": [{"$ref": "#/$defs/empty"}, {"type": "object", "additionalProperties": false, "required": ["view"], "properties": {"view": {"const": "receiving"}}}]}}},
         {"properties": {"method": {"const": "we.heads"}, "params": {"$ref": "#/$defs/empty"}}},
         {"properties": {"method": {"const": "we.preview"}, "params": {"$ref": "#/$defs/previewParams"}}},
         {"properties": {"method": {"const": "we.sync.request"}, "params": {"$ref": "#/$defs/syncRequestParams"}}},

@@ -505,7 +505,9 @@ jobs:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Run40077087854 reached the final Weave cases without a failure before
+    # the35min outer cap. Native/operation deadlines remain unchanged.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Preseed exact legacy migration fixture

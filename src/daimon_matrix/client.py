@@ -449,9 +449,15 @@ class LocalClient:
         return request, self.send(request)
 
     def runtime_status(
-        self, *, request_id: str | None = None
+        self, *, request_id: str | None = None, view: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        return self.invoke("runtime.status", {}, request_id=request_id)
+        if view not in (None, "receiving"):
+            raise ClientError("invalid_runtime_status_view")
+        return self.invoke(
+            "runtime.status",
+            {} if view is None else {"view": view},
+            request_id=request_id,
+        )
 
     def scope_me(
         self, *, request_id: str | None = None

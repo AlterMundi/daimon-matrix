@@ -714,6 +714,14 @@ class HostedWeave:
         client_id = capability.client_id
         request_id = request["request_id"]
         method = request["method"]
+        if (
+            method == "runtime.status"
+            and request["params"] == {"view": "receiving"}
+            and "scope.me" not in capability.methods
+        ):
+            # This view also discloses current identity/body admission. It
+            # composes existing grants; runtime.status alone cannot grant it.
+            raise LocalApiError("authentication_failed")
         try:
             for binding in self.loaded_stores.values():
                 binding.verify()
@@ -797,7 +805,8 @@ class HostedWeave:
             if method == "runtime.reader-selection" or (
                 method == "runtime.status"
                 and (
-                    self.receiving is not None
+                    request["params"] == {"view": "receiving"}
+                    or self.receiving is not None
                     or self.loaded_runtime is not None
                     or (
                         isinstance(verified.get("result"), Mapping)
@@ -1198,7 +1207,8 @@ class HostedWeave:
         if method == "runtime.reader-selection" or (
             method == "runtime.status"
             and (
-                self.receiving is not None
+                request["params"] == {"view": "receiving"}
+                or self.receiving is not None
                 or self.loaded_runtime is not None
                 or (
                     isinstance(verified.get("result"), Mapping)
@@ -2580,10 +2590,12 @@ class HostedWeave:
                 through_sequence=_uint(value["through_sequence"]),
             )
         if method == "runtime.status":
-            _closed(params, set())
+            receiving_view = params == {"view": "receiving"}
+            _closed(params, {"view"} if receiving_view else set())
             for binding in self.loaded_stores.values():
                 binding.verify()
-            self.ledger.integrity_check()
+            if not receiving_view:
+                self.ledger.integrity_check()
             accepted = tuple(
                 getattr(
                     self.ledger.authority,
@@ -2600,21 +2612,19 @@ class HostedWeave:
                     "worker_state": "unavailable",
                     "worker_failures": 0,
                 }
-                if self.visibility_status is None
+                if receiving_view or self.visibility_status is None
                 else dict(self.visibility_status())
             )
-            result = {
-                "schema": "dm.runtime.status/v1",
+            result: dict[str, Any] = {
+                "schema": (
+                    "dm.runtime.receiving-status/v1"
+                    if receiving_view
+                    else "dm.runtime.status/v1"
+                ),
                 "being_ref": self.ledger.authority.manifest.being_ref,
                 "manifest_hash": self.ledger.authority.manifest.digest,
                 "local_origin": self.origin,
                 "ledger_schema_version": SCHEMA_VERSION,
-                "integrity": "ok",
-                "projection_receipts": {
-                    "observer_available": self.projection_observer is not None
-                },
-                "counts": self.ledger.status_counts(),
-                "visibility": visibility,
                 "authority_epoch": {
                     "schema": "dm.we.authority-epoch-status/v1",
                     "active_manifest_hash": self.ledger.authority.manifest.digest,
@@ -2622,6 +2632,21 @@ class HostedWeave:
                     "epoch_count": len(accepted),
                 },
             }
+            if receiving_view:
+                # A routine load/admission proof is not a full database audit.
+                # The identity helper calls the actual current body reader and
+                # validates active origin; it does not use a cached projection.
+                result["identity"] = scopes.identity()
+                result["inspection"] = "current-receiving"
+            else:
+                result.update(
+                    integrity="ok",
+                    projection_receipts={
+                        "observer_available": self.projection_observer is not None
+                    },
+                    counts=self.ledger.status_counts(),
+                    visibility=visibility,
+                )
             if self.loaded_runtime is not None:
                 loaded = json.loads(self.loaded_runtime)
                 if loaded["process_id"] != os.getpid():
