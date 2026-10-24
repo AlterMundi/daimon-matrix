@@ -830,6 +830,7 @@ INTAKE_FAILURE_CODES = LOCAL_EGRESS_DIAGNOSTIC_CODES | frozenset(
         "failure_unknown",
         "egress_operation_invalid",
         "egress_attempt_deadline",
+        "egress_authority_blocked",
         "echo_projection_invalid",
         "echo_policy_invalid",
         "echo_proof_invalid",

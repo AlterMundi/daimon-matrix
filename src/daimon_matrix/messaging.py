@@ -1886,6 +1886,14 @@ class GroupMessaging:
             )
             if binding.authority_head != self.ledger.local_origin["body_ref"]:
                 return False
+            if binding.catalog_id != self.records.catalog_id:
+                # Incoming transport ACKs are owned by their opaque-response
+                # catalogs. They share current body/authority checks, but are
+                # not Tribe carriers and have no Tribe-native/recovery record.
+                return (binding.catalog_id, binding.path_id) in {
+                    ("messaging-message-responses", "messaging-message-result"),
+                    ("messaging-evidence-responses", "messaging-evidence-result"),
+                }
             native = self.records.get("native", binding.locator)
             if native is None:
                 return False

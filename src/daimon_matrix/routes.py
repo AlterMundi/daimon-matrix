@@ -1608,18 +1608,12 @@ class TransportIngress:
         after_response_bounded: Callable[[int], Mapping[str, Any] | None] | None = None,
         completion_expires_at_ms: int | None = None,
     ) -> TransportReply:
-        binding = self.egress.binding(self.egress_catalog_id, request_id)
-        # Preserve the selected visibility prerequisite, including legacy
-        # profiles that publish control results. This preparation is separate
-        # from the check-only socket release; it never grants a reusable permit.
-        self.egress.prepare_visibility(binding)
-
         def release(writer: Callable[[bytes], None], deadline_ns: int) -> None:
             self.egress.release_bounded(
                 binding, response, writer, deadline_ns=deadline_ns
             )
 
-        return TransportReply(
+        reply = TransportReply(
             bytes(response),
             after_response,
             release,
@@ -1635,6 +1629,28 @@ class TransportIngress:
                 timeout=0,
             ),
         )
+        try:
+            binding = self.egress.binding(self.egress_catalog_id, request_id)
+            # Preserve visibility before any socket write, including profiles
+            # that publish control results. This grants no reusable permit.
+            self.egress.prepare_visibility(binding)
+        except Exception as failure:
+            # Intake and its ACK may already be durable. The HTTP adapter has
+            # no reply object yet, so its finally cannot complete this ticket.
+            # Consume the same bounded technical completion here; retain the
+            # failed ACK and never grant another carrier or extend its expiry.
+            with suppress(ValueError, OSError, sqlite3.Error):
+                write_diagnostic(
+                    self.inbox.path,
+                    "intake-response",
+                    request_id,
+                    _intake_failure_code(failure),
+                    self.clock(),
+                    timeout=0,
+                )
+            reply.complete(deadline_ns=time.monotonic_ns())
+            raise RouteAmbiguous("transport_intake_recovery_pending") from failure
+        return reply
 
     def intake_binding(self) -> dict[str, Any]:
         return {

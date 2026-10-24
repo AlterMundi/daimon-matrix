@@ -2239,11 +2239,9 @@ class GroupRuntimeTests(unittest.TestCase):
                     ),
                     clock=lane.clock,
                     egress=group.egress,
-                    egress_catalog_id=f"{phase}-responses",
+                    egress_catalog_id=f"messaging-{phase}-responses",
                     egress_authority_head=origin_body,
-                    egress_authorizer=lambda binding, origin=origin_body: (
-                        binding.authority_head == origin
-                    ),
+                    egress_authorizer=group._authorize,
                     intake_validator=None,
                     intake_admission=group.admit_message
                     if phase == "message"
@@ -2298,6 +2296,109 @@ class GroupRuntimeTests(unittest.TestCase):
         return group.inspect(
             client_id=arguments["client_id"], send_id=result["send_id"]
         )
+
+    def _composed_http_founder(self):
+        """Exercise signed application composition, including its real ACK guard."""
+        _runtime, _app, view = self._signed_group_application(record_key_check=False)
+        group = view.service.messaging.channels["tribe"]
+        http = view.messaging_http
+        server = create_messaging_http_server(
+            ("127.0.0.1", 0),
+            evidence_ingress=http.evidence_ingress,
+            message_ingress=http.message_ingress,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        _previous, member = self.groups
+        member.direct_reader_ready = lambda _row: True
+        # Return through the existing real member listener. No fake authorizer,
+        # ACK, visibility permit or receipt is substituted at either endpoint.
+        group.providers = {
+            (member.lane.being_ref, member.lane.local_embodiment_id): {
+                phase: DirectHTTPProvider(
+                    provider_ref="body-1",
+                    route_ref="body-1",
+                    key_ref="key-1",
+                    secret=bytes([2]) * 32,
+                    route_class="direct",
+                    sender_principal=group.lane.being_ref,
+                    sender_body_ref=group.ledger.local_origin["body_ref"],
+                    endpoint=f"http://127.0.0.1:{self.servers[1].server_port}"
+                    f"/dm-messaging/v1/{phase}",
+                    total_timeout_seconds=12,
+                    clock=group.lane.clock,
+                    egress=group.egress,
+                )
+                for phase in ("message", "evidence")
+            }
+        }
+        member.providers[(group.lane.being_ref, group.lane.local_embodiment_id)] = {
+            phase: DirectHTTPProvider(
+                provider_ref="body-0",
+                route_ref="body-0",
+                key_ref="body-0",
+                secret=bytes([1]) * 32,
+                route_class="direct",
+                sender_principal=member.lane.being_ref,
+                sender_body_ref=member.ledger.local_origin["body_ref"],
+                endpoint=f"http://127.0.0.1:{server.server_port}/dm-messaging/v1/{phase}",
+                total_timeout_seconds=12,
+                clock=member.lane.clock,
+                egress=member.egress,
+            )
+            for phase in ("message", "evidence")
+        }
+        self.groups[0], self.servers[0] = group, server
+        return member, group
+
+    def test_composed_group_ack_and_signed_receipt_cross_the_real_http_boundary(self):
+        sender, receiver = self._composed_http_founder()
+        result = self.send_and_settle(sender, **self.direct_arguments(sender, receiver))
+        self.assertTrue(result["semantic"]["terminal"])
+        self.assertEqual(result["transport"][0]["state"], "recipient-intake")
+        receipt = receiver.records.get("receipt", result["message_id"])
+        self.assertIsNotNone(receipt)
+        ingress = receiver.intake_ingresses["message"]
+        admission = receiver.records.intake_page()["items"][0]["admission"]
+        request_id = admission["context"]["request"]["request_id"]
+        binding = receiver.egress.binding(ingress.egress_catalog_id, request_id)
+        self.assertTrue(receiver._authorize(binding))
+        self.assertFalse(receiver._authorize(replace(binding, catalog_id="unknown")))
+        self.assertFalse(
+            receiver._authorize(replace(binding, path_id="messaging-evidence-result"))
+        )
+        self.assertFalse(receiver._authorize(replace(binding, authority_head="stale")))
+        self.assertGreater(
+            receiver.egress.inspect_retained(binding)["completed_releases"], 0
+        )
+
+    def test_prewrite_visibility_failure_keeps_admitted_receipt_completion(self):
+        sender, receiver = self._composed_http_founder()
+        original = receiver.egress.prepare_visibility
+
+        def fail_ack(binding):
+            if binding.catalog_id == "messaging-message-responses":
+                raise NativeEgressError("egress_authority_blocked")
+            return original(binding)
+
+        with patch.object(receiver.egress, "prepare_visibility", side_effect=fail_ack):
+            result = self.send_and_settle(
+                sender, **self.direct_arguments(sender, receiver)
+            )
+        self.assertEqual(len(receiver.page(after=0, limit=10)), 1)
+        self.assertIsNotNone(receiver.records.get("receipt", result["message_id"]))
+        self.assertTrue(result["semantic"]["terminal"])
+        admission = receiver.records.intake_page()["items"][0]["admission"]
+        request_id = admission["context"]["request"]["request_id"]
+        diagnostic = read_diagnostic(
+            receiver.intake_ingresses["message"].inbox.path,
+            "intake-response",
+            request_id,
+        )
+        self.assertEqual(diagnostic["code"], "intake_egress_authority_blocked")
 
     def test_http_ack_precedes_a_blocked_signed_receipt_attempt(self):
         sender, receiver = self.groups

@@ -236,6 +236,16 @@ records the completion outcome. No model, poller or extra service is started.
 Exhausted budgets leave recoverable intent. HTTP handlers and workers drain under runtime
 ownership; a stalled local completion cannot be abandoned to claim clean shutdown.
 
+The same completion ticket remains owned if response binding or visibility
+preparation fails before the HTTP adapter receives its reply object. That path
+records an `intake-response` diagnostic and consumes the existing finite ticket;
+it does not claim an ACK write or renew any deadline. Incoming ACKs belong to
+the exact message/evidence response catalogs and paths. Their current loaded
+stores, body and authority checks remain active; only Tribe carriers require a
+Tribe-native record and any matching recovery authorization. Qualification must
+exercise the signed application compositor and real HTTP return path. A synthetic
+ACK authorizer cannot establish that production composition works.
+
 Echo publication has a separate execution guard shared by ordinary advancement
 and authorized ambiguity recovery. Short journal phases use the native storage
 fence; Telegram network I/O does not hold that fence. An already suppressed or
