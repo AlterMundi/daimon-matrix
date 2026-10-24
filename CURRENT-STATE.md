@@ -23,6 +23,10 @@ observation work](https://github.com/nicoechaniz/daimon-cluster/issues/305#issue
 Coordinator-only recovery reused the original lifecycle/tooling, expiry and exact
 requests; no further body/SDK lifecycle, Codex/Telegram restart or global Stop
 occurred. Earlier failed/fenced operations and uncertain publications remain history.
+Current reader eligibility ends on 2026-10-25 at 02:41:11 UTC. It inherits the
+maintenance horizon; a durable renewal route is not established. Cluster
+[#310](https://github.com/nicoechaniz/daimon-cluster/issues/310) owns this concrete
+gap. Current delivery success does not prove continued eligibility past that time.
 
 The full same-being integration goal #376 remains active and unfinished. The
 local DMK guide 1.2.6 was installed through actual Weave proposal, local decision,
