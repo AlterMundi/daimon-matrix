@@ -7,7 +7,31 @@ retain their historical evidence and do not select a runtime.
 and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
 the reviewed next changes; they do not activate automatic peer attention.
 
-## Accepted receiving and maintained updates — 2026-10-18
+## Accepted receiving and same-being integration — 2026-10-24
+
+CompAII, Eko and Oliva actually load receiving body `07902c2a`, SDK `5e3f2a1e`,
+Matrix `b74a979a` and Cluster `c85a9d87`. Source's full selected memory adapter
+is restored. Root `af5575a6` is a separately qualified coordinator/observer;
+it does not relabel the running bodies. Parent `08467c5b` completed linked
+cohort `15bf63ee` with current positive reader selections for all three.
+
+Native group send `605074a5-02f4-4548-ac47-3c259b5b6a38` produced message
+`a0ec9519-b0bf-4baf-8c22-222af4d6d02d`, Source's authored copy, Eko and Oliva's
+signed delivered receipts and one confirmed Tribu echo. Three unavailable
+sibling bodies remain explicit. [Observed receipt hashes and remaining cold
+observation work](https://github.com/nicoechaniz/daimon-cluster/issues/305#issuecomment-6380104091).
+Coordinator-only recovery reused the original lifecycle/tooling, expiry and exact
+requests; no further body/SDK lifecycle, Codex/Telegram restart or global Stop
+occurred. Earlier failed/fenced operations and uncertain publications remain history.
+
+The full same-being integration goal #376 remains active and unfinished. The
+local DMK guide 1.2.6 was installed through actual Weave proposal, local decision,
+owning installer and trusted effect receipt, then read in the current foreground
+harness; cached automatic prompt refresh is not claimed. Legion is unavailable,
+so its native memory/skill/behavior adoption and real consumption remain pending.
+Restored VPS communication is not two-body convergence. [Goal progress](https://github.com/AlterMundi/daimon-matrix/issues/376#issuecomment-6380104260).
+
+## Historical receiving and maintained updates — 2026-10-18
 
 CompAII, Eko and Oliva load receiving helper `6dffe887`, with unchanged Matrix
 `9b2b8ec2c455d3bf316bc00dc9e1bac44e9d5094`, SDK
