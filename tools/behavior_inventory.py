@@ -249,6 +249,66 @@ def discover(
     )
 
 
+def input_declaration(config: dict, key: tuple[str, ...]) -> tuple | None:
+    """Find a declaration, not a winning value or an inferred merge rule."""
+    value: Any = config
+    for index, part in enumerate(key):
+        if isinstance(value, dict):
+            if part not in value:
+                return None
+            value = value[part]
+        elif isinstance(value, list):
+            if not re.fullmatch(r"0|[1-9][0-9]*", part) or int(part) >= len(value):
+                return None
+            value = value[int(part)]
+        else:
+            return "ancestor", list(key[:index]), value
+    return "exact", list(key), value
+
+
+def native_inputs(layers: list, key: tuple[str, ...], effective: Any) -> dict:
+    """Attribute inputs without publishing values, digests or guessed precedence."""
+    sources = []
+    unavailable = not layers
+    active = set()
+    for index, layer in enumerate(layers):
+        enabled = layer.get("disabledReason") is None
+        config = layer.get("config")
+        if not isinstance(config, dict):
+            unavailable |= enabled
+            continue
+        declared = input_declaration(config, key)
+        if declared is None:
+            continue
+        kind, path, value = declared
+        sources.append(
+            dict(
+                layer_index=index,
+                key=path,
+                declaration=kind,
+                matches_effective=(
+                    type(value) is type(effective) and value == effective
+                    if kind == "exact"
+                    else None
+                ),
+            )
+        )
+        if enabled:
+            active.add(kind)
+    state = (
+        "active-exact"
+        if "exact" in active
+        else "active-ancestor"
+        if "ancestor" in active
+        else "unavailable"
+        if unavailable
+        else "disabled-only"
+        if sources
+        else "no-active-declaration"
+    )
+    return dict(declaration_state=state, input_sources=sources)
+
+
 def native_comparison(current: Path | None, baseline: Path | None) -> dict:
     """Compare retained native reads; null is unspecified, never a factory value."""
     if current is None:
@@ -262,6 +322,7 @@ def native_comparison(current: Path | None, baseline: Path | None) -> dict:
         if observed["binary_sha256"] != previous["binary_sha256"]:
             raise ValueError("matching_native_binary_baseline_required")
     defaults = dict(leaves(previous["result"]["config"])) if previous else {}
+    input_layers = observed["result"].get("layers", [])
     settings = []
     for key, value in leaves(observed["result"]["config"]):
         if any(PRIVATE_KEY.search(part) for part in key):
@@ -278,13 +339,21 @@ def native_comparison(current: Path | None, baseline: Path | None) -> dict:
             else "modified"
         )
         settings.append(
-            dict(key=list(key), value_sha256=hashed(value), baseline_state=state)
+            dict(
+                key=list(key),
+                value_sha256=hashed(value),
+                baseline_state=state,
+                **native_inputs(input_layers, key, value),
+            )
         )
     layers = [
         dict(
             source=item.get("name", item.get("source")),
             version=item.get("version"),
             disabled_reason=item.get("disabledReason"),
+            config_state="observed"
+            if isinstance(item.get("config"), dict)
+            else "unavailable",
         )
         for item in observed["result"].get("layers", [])
     ]
