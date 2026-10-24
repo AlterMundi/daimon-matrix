@@ -2073,6 +2073,7 @@ class AuthenticatedProvider:
                 if group.get("schema") not in {
                     "dm.tribe.conversation/v1",
                     "dm.tribe.direct-conversation/v1",
+                    "dm.tribe.recovery-conversation/v1",
                 }:
                     raise RouteError("route_group_carrier_mismatch")
                 if (

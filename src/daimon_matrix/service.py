@@ -1590,6 +1590,39 @@ class HostedWeave:
             raise ServiceError("messaging_rejected") from None
 
     def _messaging_send(self, params: Any, *, client_id: str) -> dict[str, Any]:
+        if isinstance(params, Mapping) and "schema" in params:
+            value = _closed(
+                params, {"schema", "channel_id", "original_send_id", "recovery_id"}
+            )
+            if value["schema"] != "dm.tribe.recovery-request/v1":
+                raise ServiceError("invalid_params")
+            channel_id = value["channel_id"]
+            if (
+                not isinstance(channel_id, str)
+                or _MESSAGING_CHANNEL_ID.fullmatch(channel_id) is None
+            ):
+                raise ServiceError("invalid_params")
+            original_id, recovery_id = (
+                _uuid(value["original_send_id"]),
+                _uuid(value["recovery_id"]),
+            )
+            try:
+                context = self._messaging_context()
+                if channel_id not in context.client_channels.get(
+                    client_id, frozenset()
+                ):
+                    raise ValueError
+                delivery = context.deliveries[channel_id]
+                if not isinstance(delivery, GroupMessaging):
+                    raise ValueError("tribe_recovery_channel_required")
+                return delivery.recover(
+                    client_id=client_id,
+                    original_send_id=original_id,
+                    recovery_id=recovery_id,
+                    authorize=self._messaging_guard(context, client_id, channel_id),
+                )
+            except Exception:
+                raise ServiceError("messaging_rejected") from None
         fields = {"channel_id", "send_id", "thread_id", "text"}
         if isinstance(params, Mapping) and "destination" in params:
             fields.add("destination")

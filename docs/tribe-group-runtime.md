@@ -236,3 +236,30 @@ The release descriptor includes `bounded-numeric-http/v1`,
 `owned-transport-reply/v1` and `bounded-group-fanout/v1`. Source/installed
 qualification does not establish actual receiving readiness or compatible
 rollback. Those selections remain the receiver-compatible rollout's work.
+
+
+### Explicit expired-before-attempt recovery
+
+The installed release must advertise `explicit-unattempted-carrier-recovery/v1`
+and all required loaded readers must include `dm.tribe.recovery-conversation/v1`
+in their V2 readiness. Use the existing `messaging_send` tool with exactly:
+
+```json
+{"schema":"dm.tribe.recovery-request/v1","channel_id":"tribe","original_send_id":"ORIGINAL_UUID","recovery_id":"NEW_TECHNICAL_UUID"}
+```
+
+This responds to an explicit recovery request, not automatic peer attention.
+Keep that recovery ID for every retry. It identifies a new bounded technical
+carrier of the SAME signed message; it is not a new speech/send ID. No text,
+thread, destination or caller-controlled expiry is accepted. The original must
+be expired, confirmed in Tribu and proven never attempted across its entire
+frozen audience. Unknown/prepared attempts are refused even with zero completed
+releases. This first profile permits one recovery ID per original.
+
+`messaging_delivery` with the ORIGINAL send ID retains both carrier histories.
+The original stays expired; `recovery.native_visibility` is suppressed, and
+`recovery.original_publication=confirmed-by-reference` describes reuse rather
+than another platform receipt. Signed semantic receiving evidence names the
+original message. Compact presentation is required. Preserve the qualified
+recovery-aware SDK after a recovery obligation enters history; older reader
+software is not a compatible rollback.

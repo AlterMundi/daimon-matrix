@@ -1884,7 +1884,12 @@ class GroupMessaging:
                 self.lane.local_embodiment_id,
                 self.lane.clock(),
             )
-            return binding.authority_head == self.ledger.local_origin["body_ref"]
+            if binding.authority_head != self.ledger.local_origin["body_ref"]:
+                return False
+            recovery = self.records.get("recovery", binding.operation_id)
+            if recovery is not None:
+                self._validate_recovery_parent(recovery)
+            return True
         except ValueError:
             return False
 
@@ -2049,6 +2054,59 @@ class GroupMessaging:
                 else None
             ),
         }
+        recovery_selection = self.records.get("recovery-selection", send_id)
+        if recovery_selection is not None:
+            recovery_id = recovery_selection["recovery_id"]
+            recovery = self.records.get("recovery", recovery_id)
+            if recovery is not None:
+                recovered_transport = []
+                for row in message["payload"]["body"]["audience"]:
+                    if (row["being_ref"], row["embodiment_id"]) == (
+                        message["being_ref"],
+                        message["origin"]["embodiment_id"],
+                    ):
+                        continue
+                    request_id = str(
+                        uuid.uuid5(
+                            uuid.UUID(recovery_id),
+                            f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+                        )
+                    )
+                    proof = self.records.transport_result(request_id)
+                    carrier_attempt = self.records.get("transport", request_id)
+                    recovered_transport.append(
+                        {
+                            "being_ref": row["being_ref"],
+                            "embodiment_id": row["embodiment_id"],
+                            "state": proof["result"]["outcome"]
+                            if proof is not None
+                            else "unconfirmed"
+                            if carrier_attempt is not None
+                            else "expired"
+                            if self.lane.clock() >= recovery["expires_at_ms"]
+                            else "not-attempted",
+                            "response_sha256": None
+                            if proof is None
+                            else hashlib.sha256(
+                                unb64url(proof["response"])
+                            ).hexdigest(),
+                        }
+                    )
+                result["recovery"] = {
+                    "recovery_id": recovery_id,
+                    "expires_at_ms": recovery["expires_at_ms"],
+                    "expired": self.lane.clock() >= recovery["expires_at_ms"],
+                    "original_publication": "confirmed-by-reference"
+                    if result["visibility"] is not None
+                    and result["visibility"]["echo_state"] == "confirmed"
+                    else "unconfirmed",
+                    "transport": recovered_transport,
+                    "native_visibility": self.egress.inspect_retained(
+                        self.egress.binding("tribe-carriers", recovery_id)
+                    )
+                    if self.records.get("native", recovery_id) is not None
+                    else None,
+                }
         destination = message["payload"]["body"].get("destination")
         if destination is not None:
             result.update(
@@ -2485,6 +2543,230 @@ class GroupMessaging:
         self._fanout(native, eligible, operation, authorize=authorize)
         return self._result(message, send_id)
 
+    def _validate_recovery_parent(
+        self, recovery: Mapping[str, Any]
+    ) -> OperationBinding:
+        """Recheck the exact original publication at every physical release."""
+        original_id = recovery["original_send_id"]
+        parent = self.egress.binding("tribe-carriers", original_id)
+        publication_hash = hashlib.sha256(canonical_bytes(asdict(parent))).hexdigest()
+        if publication_hash != recovery["original_publication_sha256"]:
+            raise ValueError("tribe_recovery_publication_changed")
+        publication = self.egress.inspect_retained(parent)
+        if (
+            publication["echo_state"] != "confirmed"
+            or publication["completed_releases"]
+        ):
+            raise ValueError("tribe_recovery_original_not_unattempted")
+        native = self.records.get("native", original_id)
+        plan = self.records.get("send", original_id)
+        if native is None or plan is None:
+            raise ValueError("tribe_recovery_original_missing")
+        raw = unb64url(native["native"])
+        if hashlib.sha256(raw).hexdigest() != recovery["original_carrier_sha256"]:
+            raise ValueError("tribe_recovery_original_changed")
+        result = self.records.get("result", original_id)
+        if result is None:
+            raise ValueError("tribe_recovery_original_missing")
+        message = self.ledger.event(result["message_id"])
+        if (
+            message is None
+            or message["content_hash"] != recovery["message_hash"]
+            or native["projection"]["event_id"] != message["event_id"]
+            or native["projection"]["event_digest"] != message["content_hash"]
+        ):
+            raise ValueError("tribe_recovery_original_changed")
+        for row in plan["rows"]:
+            transport_id = str(
+                uuid.uuid5(
+                    uuid.UUID(original_id),
+                    f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+                )
+            )
+            if self.records.get("transport", transport_id) is not None:
+                raise ValueError("tribe_recovery_original_attempt_uncertain")
+        # Verify this technical authorization, never a caller-authored parent pointer.
+        event = verify_event(
+            recovery["event"],
+            self.lane._epoch(message["being_ref"], message["manifest_hash"]),
+        )
+        body = event["payload"]
+        for key in (
+            "original_send_id",
+            "message_hash",
+            "original_carrier_sha256",
+            "original_publication_sha256",
+        ):
+            if body[key] != recovery[key]:
+                raise ValueError("tribe_recovery_proof_conflict")
+        if event["origin"] != message["origin"]:
+            raise ValueError("tribe_recovery_original_author_required")
+        current = self.lane.snapshot(self.policy.tribe_ref, self.lane.clock())
+        active = {
+            m["principal_id"]
+            for m in current.value["members"]
+            if m["state"] == "active"
+        }
+        if not {self.lane.being_ref, *[r["being_ref"] for r in plan["rows"]]} <= active:
+            raise ValueError("tribe_recovery_membership_changed")
+        return parent
+
+    def recover(
+        self,
+        *,
+        client_id: str,
+        original_send_id: str,
+        recovery_id: str,
+        authorize: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Explicit one-carrier recovery, retaining original speech and audience.
+
+        First slice accepts only an expired, confirmed, provably never-attempted
+        original. Unknown attempts are never permission to remint a carrier.
+        """
+        from .tribe_conversation import TRIBE_RECOVERY_SCHEMA
+
+        if authorize is not None:
+            authorize()
+        original_send_id, recovery_id = _uuid(original_send_id), _uuid(recovery_id)
+        if original_send_id == recovery_id:
+            raise ValueError("tribe_recovery_distinct_control_required")
+        request = self.records.get("request", original_send_id)
+        result = self.records.get("result", original_send_id)
+        plan = self.records.get("send", original_send_id)
+        if (
+            request is None
+            or request["client_id"] != client_id
+            or result is None
+            or plan is None
+        ):
+            raise ValueError("tribe_send_missing")
+        if self.lane.clock() < plan["expires_at_ms"]:
+            raise ValueError("tribe_recovery_original_not_expired")
+        retained_recovery = self.records.get("recovery", recovery_id)
+        if (
+            retained_recovery is not None
+            and retained_recovery["original_send_id"] != original_send_id
+        ):
+            raise ValueError("tribe_record_request_conflict")
+        if (
+            retained_recovery is not None
+            and self.lane.clock() >= retained_recovery["expires_at_ms"]
+        ):
+            message = self.ledger.event(result["message_id"])
+            if message is None:
+                raise ValueError("tribe_send_missing")
+            return self._result(message, original_send_id)
+        # Plain JSON intentionally publishes technical controls; that receiving
+        # profile cannot satisfy reuse of the original single visible speech.
+        if self.egress.representation == "plain-json/v2":
+            raise ValueError("tribe_recovery_visibility_profile_unsupported")
+        message = self.ledger.event(result["message_id"])
+        resolution = self.ledger.event(result["resolution_id"])
+        if message is None or resolution is None:
+            raise ValueError("tribe_send_missing")
+        parent = self.egress.binding("tribe-carriers", original_send_id)
+        native = self.records.get("native", original_send_id)
+        if native is None:
+            raise ValueError("tribe_recovery_original_missing")
+        parent_reference = {
+            "original_send_id": original_send_id,
+            "message_hash": message["content_hash"],
+            "original_carrier_sha256": hashlib.sha256(
+                unb64url(native["native"])
+            ).hexdigest(),
+            "original_publication_sha256": hashlib.sha256(
+                canonical_bytes(asdict(parent))
+            ).hexdigest(),
+        }
+        # Check original uncertainty before creating any technical authorization.
+        publication = self.egress.inspect_retained(parent)
+        if (
+            publication["echo_state"] != "confirmed"
+            or publication["completed_releases"]
+        ):
+            raise ValueError("tribe_recovery_original_not_unattempted")
+        for row in plan["rows"]:
+            transport_id = str(
+                uuid.uuid5(
+                    uuid.UUID(original_send_id),
+                    f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+                )
+            )
+            if self.records.get("transport", transport_id) is not None:
+                raise ValueError("tribe_recovery_original_attempt_uncertain")
+        self.records.reserve(
+            "recovery-selection",
+            original_send_id,
+            {"recovery_id": recovery_id},
+            lambda: {"recovery_id": recovery_id},
+        )
+        prepared = self.lane.prepare_recovery(
+            original_send_id=original_send_id,
+            recovery_id=recovery_id,
+            message=message,
+            resolution=resolution,
+            original_publication_sha256=parent_reference["original_publication_sha256"],
+            ttl_ms=self.policy.max_ttl_ms,
+        )
+        recovery = {
+            **parent_reference,
+            "event": prepared["recovery"],
+            "recovery_id": recovery_id,
+            "expires_at_ms": prepared["expires_at_ms"],
+        }
+        self.records.reserve("recovery", recovery_id, recovery, lambda: recovery)
+        self._validate_recovery_parent(recovery)
+        if self.lane.clock() < prepared["expires_at_ms"]:
+            projection = {
+                **native["projection"],
+                "event_id": prepared["recovery"]["event_id"],
+                "event_digest": prepared["recovery"]["content_hash"],
+                "kind": "authorization-control",
+                "content": {"stage": "converse"},
+                "reply_to": {
+                    "event_id": message["event_id"],
+                    "event_digest": message["content_hash"],
+                },
+            }
+            operation = self.records.admit(
+                recovery_id,
+                canonical_bytes(prepared["payload"]),
+                path_id="tribe-message-request",
+                projection=projection,
+                deadline_ms=prepared["expires_at_ms"],
+                authority_head=self.ledger.local_origin["body_ref"],
+            )
+            self.egress.prepare_visibility(operation)
+            epochs = self._reader_requirements(plan, message["manifest_hash"])[1]
+            completed = {
+                (leg["recipient_id"], leg["receipt_origin_embodiment_id"])
+                for leg in self.communication.result(message["event_id"])["legs"]
+                if leg["state"] == "delivered"
+            }
+            rows = []
+            for row in prepared["rows"]:
+                if (row["being_ref"], row["embodiment_id"]) == (
+                    self.lane.being_ref,
+                    self.lane.local_embodiment_id,
+                ):
+                    continue
+                if (row["membership_ref"], row["embodiment_id"]) in completed:
+                    continue
+                if not self._direct_ready(
+                    row, requirements=(TRIBE_RECOVERY_SCHEMA, epochs)
+                ):
+                    self._record_reader_block(recovery_id, row)
+                    continue
+                rows.append(row)
+            self._fanout(
+                canonical_bytes(prepared["payload"]),
+                rows,
+                operation,
+                authorize=authorize,
+            )
+        return self._result(message, original_send_id)
+
     def _record_reader_block(
         self,
         operation_id: str,
@@ -2675,20 +2957,32 @@ class GroupMessaging:
             return None
         provider = providers["evidence" if receipt else "message"]
         document = _parse(native)
+        recovering = (
+            not receipt
+            and document.get("schema") == "dm.tribe.recovery-conversation/v1"
+        )
         directed = (
             not receipt and document.get("schema") == "dm.tribe.direct-conversation/v1"
         )
-        controlled_data = directed or (self.controlled_readers and not receipt)
+        controlled_data = (
+            recovering or directed or (self.controlled_readers and not receipt)
+        )
         requirements = (
             self._reader_requirements(
                 self.records.get(
-                    "send", operation.operation_id, deadline_ns=deadline_ns
+                    "send",
+                    document["recovery"]["payload"]["original_send_id"]
+                    if recovering
+                    else operation.operation_id,
+                    deadline_ns=deadline_ns,
                 ),
                 document["resolution"]["manifest_hash"],
             )
             if controlled_data
             else None
         )
+        if recovering and requirements is not None:
+            requirements = ("dm.tribe.recovery-conversation/v1", requirements[1])
         if controlled_data and not self._direct_ready(row, requirements=requirements):
             self._record_reader_block(
                 operation.operation_id, row, deadline_ns=deadline_ns
@@ -2802,12 +3096,20 @@ class GroupMessaging:
             TRIBE_CONVERSATION_SCHEMA,
             TRIBE_DIRECT_SCHEMA,
             TRIBE_INTAKE_SCHEMA,
+            TRIBE_RECOVERY_SCHEMA,
         )
 
         document = _parse(raw)
-        if document.get("schema") in {TRIBE_CONVERSATION_SCHEMA, TRIBE_DIRECT_SCHEMA}:
+        if document.get("schema") in {
+            TRIBE_CONVERSATION_SCHEMA,
+            TRIBE_DIRECT_SCHEMA,
+            TRIBE_RECOVERY_SCHEMA,
+        }:
+            fields = {"schema", "envelope", "resolution", "tribe_ref"}
+            if document["schema"] == TRIBE_RECOVERY_SCHEMA:
+                fields.add("recovery")
             if (
-                set(document) != {"schema", "envelope", "resolution", "tribe_ref"}
+                set(document) != fields
                 or not isinstance(document["envelope"], str)
                 or not isinstance(document["resolution"], Mapping)
             ):

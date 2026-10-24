@@ -85,3 +85,20 @@ https://hackmd.io/@nicoechaniz/daimon-matrix, pinned repository snapshot at
 `/here`, `/near`, `/all`, `/everyone`, `/tribe`, `/human`, `/realm`) that the
 runtime implements only partially. Do not invent scope names or paraphrase the
 vision from memory.
+
+
+## Explicit recovery of an expired, never-attempted send
+
+When the human requests recovery and the installed receiver advertises
+`explicit-unattempted-carrier-recovery/v1`, use the existing `messaging_send`
+with `schema: "dm.tribe.recovery-request/v1"`, the configured `channel_id`,
+`original_send_id` and one fresh `recovery_id`. Include no text, thread or
+recipient override. Keep the recovery ID and exact arguments after uncertainty;
+it identifies a bounded technical carrier of the original signed message,
+never replacement speech. This first profile refuses any original prepared or
+uncertain transport attempt, missing confirmed publication, changed author or
+unsupported reader. It permits one recovery ID per original. No ordinary retry
+silently extends expiry. Read `messaging_delivery` using the original send ID;
+only its genuine signed semantic receipt proves receiving delivery. The
+recovery's suppressed technical visibility reuses the original confirmed echo,
+not a second Telegram publication or fabricated acknowledgment.

@@ -432,6 +432,89 @@ class DisclosureAuthorization:
             authorization_id=authorization_id,
         )
 
+    @classmethod
+    def from_membership_recovery_identity(
+        cls,
+        *,
+        recovery_event: Mapping[str, Any],
+        original_expires_at_ms: int,
+        **parameters: Any,
+    ) -> DisclosureAuthorization:
+        """Verify a bounded new authorization for the unchanged signed message.
+
+        The original membership decision remains historical. Only the original
+        author can sign this closed recovery; it does not resolve a new audience.
+        Current operational identity and membership are checked by the lane.
+        """
+        historical = cls.from_membership_resolution_identity(
+            **{**parameters, "expires_at_ms": original_expires_at_ms}
+        )
+        authority = parameters["sender_authority"]
+        try:
+            recovery = verify_event(recovery_event, authority)
+            resolution = verify_event(parameters["resolution_event"], authority)
+            body = _closed(
+                recovery["payload"],
+                {
+                    "schema",
+                    "recovery_id",
+                    "original_send_id",
+                    "message_id",
+                    "message_hash",
+                    "resolution_hash",
+                    "tribe_ref",
+                    "original_carrier_sha256",
+                    "original_publication_sha256",
+                    "original_expires_at_ms",
+                    "expires_at_ms",
+                    "directed",
+                },
+            )
+            if (
+                recovery["kind"] != "experience.observed"
+                or recovery["subject"] != "tribe.carrier-recovery"
+                or recovery["origin"] != resolution["origin"]
+                or body["schema"] != "dm.tribe.carrier-recovery/v1"
+                or body["message_id"] != historical.value["event_id"]
+                or body["message_hash"] != historical.value["event_hash"]
+                or body["resolution_hash"] != resolution["content_hash"]
+                or body["tribe_ref"] != parameters["tribe_ref"]
+                or body["original_expires_at_ms"] != original_expires_at_ms
+                or body["expires_at_ms"] != parameters["expires_at_ms"]
+                or type(body["directed"]) is not bool
+                or recovery["occurred_at_ms"] < original_expires_at_ms
+                or resolution["event_id"] not in recovery["causal_parents"]
+            ):
+                raise _reject()
+            _uuid(body["recovery_id"])
+            _uuid(body["original_send_id"])
+            _hex_hash(body["original_carrier_sha256"])
+            _hex_hash(body["original_publication_sha256"])
+        except (KeyError, CommunicationError, WeaveProtocolError) as exception:
+            raise _reject() from exception
+        identity = {
+            "event_id": historical.value["event_id"],
+            "content_hash": historical.value["event_hash"],
+            "sensitivity": historical.value["sensitivity"],
+        }
+        return cls.synthetic(
+            event=identity,
+            sender=historical.value["sender"],
+            recipients=historical.value["recipients"],
+            evidence_hash=hashlib.sha256(
+                canonical_bytes(
+                    {
+                        "schema": "dm.tribe.recovery-evidence/v1",
+                        "membership_evidence_sha256": historical.value["evidence_hash"],
+                        "recovery_event_hash": recovery["content_hash"],
+                    }
+                )
+            ).hexdigest(),
+            authorized_at_ms=recovery["occurred_at_ms"],
+            expires_at_ms=parameters["expires_at_ms"],
+            authorization_id=parameters["authorization_id"],
+        )
+
 
 def _membership_identity(
     message: Mapping[str, Any],
