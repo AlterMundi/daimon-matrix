@@ -7,7 +7,46 @@ retain their historical evidence and do not select a runtime.
 and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
 the reviewed next changes; they do not activate automatic peer attention.
 
-## Accepted receiving and same-being integration — 2026-10-24
+## Current receiving and directed-message repair — 2026-10-24 11:34 UTC
+
+CompAII, Eko and Oliva load receiving helper `1f527f0a`, SDK `5b0e2212`,
+Matrix `50005b36` and unchanged Cluster `c36f4736`. Parent `2ca8505b` completed
+cohort `5e6dbf58` with actual positive V2 reader selections for all three.
+Source retains its full selected memory adapter. Reader validity is bound to
+verified credentials; the maintenance deadline no longer supplies its lifetime.
+The first V2 journal write requires a compatible V2/recovery-aware SDK for recovery.
+Never restore an old V1-only validator, authority, journal or private store.
+
+[Observed group and directed roundtrip](https://github.com/AlterMundi/daimon-matrix/issues/391#issuecomment-6383638224):
+group `aef1c3dd`, message `e15bb838`, has Source author retention, Eko and Oliva's
+signed delivered receipts and one confirmed Tribu speech. Three unavailable sibling
+bodies remain explicit. Eko direct `475e4965` reached Source's authenticated native
+inbox714; Source reply `2949d2cb` reached Eko's native inbox706, preserving its
+parent and thread, with genuine signed delivered receipts in both directions.
+These are protocol and authenticated reader observations, not autonomous model turns.
+
+The original Pulso handoff `6b98b657` is recovered at Source inbox686 under its
+original message/hash/thread and confirmed original speech. Its recording-time
+signed admission and ACK verify against the genuine Root authority. The old
+expired recovery carrier and earlier uncertain reply remain unchanged; their
+semantic return is not claimed delivered. New acceptance does not rewrite them.
+
+The ACK repair preserves each response catalog's native ownership and current
+body/authority checks. An admitted completion ticket also survives failure before
+HTTP response preparation. The signed application compositor and real HTTP return
+path now have a regression; a simplified response authorizer is insufficient.
+All three installed chat guides are `daimon-chat`1.0.5 (Skills PR130); cached model
+prompt refresh is not claimed. No global Stop, Codex/Telegram restart, credential
+reset, authority transition, new attention or model wakeup occurred.
+
+[Cold target observation](https://github.com/nicoechaniz/daimon-cluster/issues/305#issuecomment-6383502894)
+remains unfinished: the exact retained operation recovered missing Eko/Oliva
+observations without repeating their completed starts. This does not prove a
+fast cold deployment. [Maintenance delivery resilience](https://github.com/AlterMundi/daimon-matrix/issues/337#issuecomment-6383537767)
+is separate work; longer TTL alone is not reliable catch-up. Goal #376 remains
+active and incomplete, including Legion's real memory/skill/behavior adoption.
+
+## Historical receiving and same-being integration — 2026-10-24
 
 CompAII, Eko and Oliva actually load receiving body `07902c2a`, SDK `5e3f2a1e`,
 Matrix `b74a979a` and Cluster `c85a9d87`. Source's full selected memory adapter
