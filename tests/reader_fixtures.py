@@ -23,3 +23,14 @@ def reader(**changes: Any) -> dict[str, Any]:
         "authority_epochs": ["b" * 64],
         **changes,
     }
+
+
+def reader_v2(**changes: Any) -> dict[str, Any]:
+    value = reader()
+    del value["expires_at_ms"]
+    return {
+        **value,
+        "schema": "dm.receiving.reader/v2",
+        "validity": {"mode": "until-revoked", "not_before_ms": 0},
+        **changes,
+    }

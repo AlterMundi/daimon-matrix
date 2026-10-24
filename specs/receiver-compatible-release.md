@@ -136,6 +136,32 @@ old traffic. No update may report the entire frozen message audience adopted fro
 three working VPS bodies. Supply qualified public recovery packages for unavailable
 external bodies; never custody, accounts or private routes.
 
+## Reader eligibility and proof deadlines
+
+A finite maintenance operation or fresh observation deadline bounds the control
+transaction. It is not the lifetime of a selected receiving body's signed
+credential. `credential-bound-reader-validity/v1` advertises owner-control
+`dm.runtime.reader-selection/v2`, alongside supported closed V1 commands.
+V2 rows use `dm.receiving.reader/v2` with the identity validity algebra: either
+finite `not_before_ms`/`not_after_ms`, or explicit `until-revoked` with
+`not_before_ms`. A large numeric expiry is not an indefinite credential.
+
+A V2 select requires the exact current signed-roster digest. Under the existing
+physical fence and roster transaction, each row must match the active body,
+incarnation, credential and authority; its requested validity must attenuate the
+actual verified signed credential. Existing loaded-code, selection, wire,
+authority-epoch, revocation and process requirements remain necessary for egress.
+An until-revoked row does not bypass these requirements or activate a model.
+
+The authenticated reader journal records this as V2, preserving prior finite V1
+controls and tombstones unchanged. Old V1 rows retain their original expiry;
+installing new software does not reinterpret or renew them. A new explicitly
+qualified selection is required to adopt credential-bound eligibility. Restart
+recovery revalidates the retained exact roster, actual credential, validity and
+existing loaded binding. A rollback must read the actual retained journal version;
+an SDK that understands only V1 cannot recover a V2-selected reader journal.
+The fresh control deadline and original operation expiry remain unchanged.
+
 ## Pending work, expiry and rollback
 
 `pending_transmission` is `original-binding-unexpired`: a software update does not

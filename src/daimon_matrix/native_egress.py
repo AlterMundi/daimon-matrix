@@ -26,6 +26,7 @@ from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol, TypeVar
 
 from .canonical import canonical_bytes
+from .identity import validate_validity, validity_contains
 from .mandatory_echo import (
     EchoError,
     EchoJournal,
@@ -39,6 +40,33 @@ from .telegram_mirror import PlainTelegramTransport
 
 class NativeEgressError(ValueError):
     """Stable, bounded failure without native bytes, projection text, or secrets."""
+
+
+READER_VALIDITY_SCHEMA: Final = "dm.receiving.reader/v2"
+READER_CONTROL_SCHEMA: Final = "dm.runtime.reader-selection/v2"
+
+
+def _reader_validity(row: Mapping[str, Any]) -> dict[str, Any]:
+    if row.get("schema") == READER_VALIDITY_SCHEMA:
+        return validate_validity(row["validity"])
+    return validate_validity(
+        {"mode": "finite", "not_before_ms": 0, "not_after_ms": row["expires_at_ms"]}
+    )
+
+
+def _freeze_reader(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {
+            **row,
+            "wire_read": tuple(row["wire_read"]),
+            "authority_epochs": tuple(row["authority_epochs"]),
+            **(
+                {"validity": MappingProxyType(_reader_validity(row))}
+                if row.get("schema") == READER_VALIDITY_SCHEMA
+                else {}
+            ),
+        }
+    )
 
 
 class SyntheticEchoTransport:
@@ -752,6 +780,7 @@ class _ReaderSelection:
     request_sha256: str | None = None
     control_sha256: str | None = None
     readers: tuple[Mapping[str, Any], ...] = ()
+    version: int = 1
 
 
 class MandatoryEgressController:
@@ -880,7 +909,11 @@ class MandatoryEgressController:
         if selected is None or self._reader_instance_pid != os.getpid():
             raise NativeEgressError("reader_context_unavailable")
         return {
-            "schema": "dm.receiving.reader-selection/v1",
+            "schema": (
+                "dm.receiving.reader-selection/v2"
+                if selected.version == 2
+                else "dm.receiving.reader-selection/v1"
+            ),
             "process_instance_id": self._reader_instance_id,
             "process_id": self._reader_instance_pid,
             "channel_id": channel_id,
@@ -893,7 +926,13 @@ class MandatoryEgressController:
             "request_sha256": selected.request_sha256,
             "readers": [
                 {
-                    key: list(item) if isinstance(item, tuple) else item
+                    key: (
+                        list(item)
+                        if isinstance(item, tuple)
+                        else dict(item)
+                        if isinstance(item, Mapping)
+                        else item
+                    )
                     for key, item in row.items()
                 }
                 for row in selected.readers
@@ -938,6 +977,11 @@ class MandatoryEgressController:
             "phase",
             "readers",
         }
+        typed = (
+            isinstance(value, Mapping) and value.get("schema") == READER_CONTROL_SCHEMA
+        )
+        if typed:
+            fields.add("schema")
         if not isinstance(value, Mapping) or set(value) != fields:
             raise NativeEgressError("reader_selection_invalid")
         if not _valid_text(value["channel_id"], maximum=128) or not isinstance(
@@ -982,7 +1026,14 @@ class MandatoryEgressController:
         }
         readers = []
         for row in value["readers"]:
-            if not isinstance(row, Mapping) or set(row) != reader_fields:
+            fields = (
+                reader_fields - {"expires_at_ms"} | {"schema", "validity"}
+                if typed
+                else reader_fields
+            )
+            if not isinstance(row, Mapping) or set(row) != fields:
+                raise NativeEgressError("reader_selection_invalid")
+            if typed and row["schema"] != READER_VALIDITY_SCHEMA:
                 raise NativeEgressError("reader_selection_invalid")
             if any(
                 not _valid_text(row[key], maximum=256)
@@ -1001,11 +1052,10 @@ class MandatoryEgressController:
                 )
             ):
                 raise NativeEgressError("reader_selection_invalid")
-            if (
-                type(row["expires_at_ms"]) is not int
-                or not 0 < row["expires_at_ms"] < 2**53
-            ):
-                raise NativeEgressError("reader_selection_invalid")
+            try:
+                validity = _reader_validity(row)
+            except (ValueError, KeyError):
+                raise NativeEgressError("reader_selection_invalid") from None
             for key in ("wire_read", "authority_epochs"):
                 entries = row[key]
                 if (
@@ -1029,6 +1079,7 @@ class MandatoryEgressController:
                     **row,
                     "wire_read": list(row["wire_read"]),
                     "authority_epochs": list(row["authority_epochs"]),
+                    **({"validity": validity} if typed else {}),
                 }
             )
         identities = [(row["being_ref"], row["embodiment_id"]) for row in readers]
@@ -1088,7 +1139,10 @@ class MandatoryEgressController:
             previous.phase != "revoke" or not same_operation
         ):
             raise NativeEgressError("reader_revocation_required")
-        if any(row["expires_at_ms"] <= self._clock() for row in readers):
+        if any(
+            not validity_contains(_reader_validity(row), self._clock())
+            for row in readers
+        ):
             raise NativeEgressError("reader_selection_expired")
         candidate = _ReaderSelection(
             context_sha256=previous.context_sha256,
@@ -1101,16 +1155,8 @@ class MandatoryEgressController:
             release_digest=value["release_digest"],
             request_sha256=request_sha256,
             control_sha256=command_sha256,
-            readers=tuple(
-                MappingProxyType(
-                    {
-                        **row,
-                        "wire_read": tuple(row["wire_read"]),
-                        "authority_epochs": tuple(row["authority_epochs"]),
-                    }
-                )
-                for row in readers
-            ),
+            readers=tuple(_freeze_reader(row) for row in readers),
+            version=2 if value.get("schema") == READER_CONTROL_SCHEMA else 1,
         )
         recovery = self._reader_recovery.get(value["channel_id"])
         if recovery is not None:
@@ -1170,7 +1216,7 @@ class MandatoryEgressController:
         boot: Mapping[str, Any],
         load: Callable[..., dict[str, Any] | None],
         append: Callable[..., dict[str, Any]],
-        authorization: Callable[[str], AbstractContextManager[None]],
+        authorization: Callable[..., AbstractContextManager[None]],
     ) -> None:
         """One bounded startup restoration, before workers/listeners exist.
 
@@ -1218,12 +1264,19 @@ class MandatoryEgressController:
                     latest["binding_sha256"] != state["binding_sha256"]
                     or not isinstance(latest["roster_sha256"], str)
                     or any(
-                        row["expires_at_ms"] <= self._clock()
+                        not validity_contains(_reader_validity(row), self._clock())
                         for row in command["readers"]
                     )
                 ):
                     raise NativeEgressError("reader_recovery_incompatible")
-                with authorization(latest["roster_sha256"]):
+                with authorization(
+                    latest["roster_sha256"],
+                    **(
+                        {"readers": command["readers"]}
+                        if latest["schema"] == "dm.receiving.reader-control-record/v2"
+                        else {}
+                    ),
+                ):
                     rebound = append(
                         channel_id,
                         latest,
@@ -1251,15 +1304,11 @@ class MandatoryEgressController:
                         release_digest=command["release_digest"],
                         head=_digest(canonical_bytes([previous.head, rebound])),
                         readers=tuple(
-                            MappingProxyType(
-                                {
-                                    **row,
-                                    "wire_read": tuple(row["wire_read"]),
-                                    "authority_epochs": tuple(row["authority_epochs"]),
-                                }
-                            )
-                            for row in command["readers"]
+                            _freeze_reader(row) for row in command["readers"]
                         ),
+                        version=2
+                        if command.get("schema") == READER_CONTROL_SCHEMA
+                        else 1,
                     )
                     state["latest"] = rebound
                     state["status"] = "recovered"
@@ -1272,6 +1321,7 @@ class MandatoryEgressController:
                 incompatible = isinstance(failure, ValueError) and str(failure) in {
                     "reader_recovery_incompatible",
                     "reader_roster_conflict",
+                    "reader_validity_conflict",
                 }
                 if latest is not None and incompatible:
                     try:
@@ -1311,11 +1361,13 @@ class MandatoryEgressController:
     def reader_recovery_status(self, channel_id: str) -> dict[str, Any]:
         state = self._reader_recovery.get(channel_id)
         latest = None if state is None else state["latest"]
-        expiry = (
-            None
-            if latest is None or not latest["command"]["readers"]
-            else min(row["expires_at_ms"] for row in latest["command"]["readers"])
-        )
+        readers = [] if latest is None else latest["command"]["readers"]
+        finite = [
+            value["not_after_ms"]
+            for row in readers
+            if (value := _reader_validity(row))["mode"] == "finite"
+        ]
+        expiry = min(finite, default=None)
         status = "unavailable" if state is None else state["status"]
         if (
             status in {"selected", "recovered"}
@@ -1350,7 +1402,7 @@ class MandatoryEgressController:
                 reader[key] == row.get(key)
                 for key in ("being_ref", "embodiment_id", "credential_id")
             )
-            and self._clock() < reader["expires_at_ms"]
+            and validity_contains(_reader_validity(reader), self._clock())
             and (required_wire is None or required_wire in reader["wire_read"])
             and all(
                 epoch in reader["authority_epochs"]

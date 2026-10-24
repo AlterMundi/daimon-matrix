@@ -34,6 +34,12 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
+from .identity import (
+    VerificationError,
+    validity_attenuates,
+    verify_embodiment_credential,
+    verify_incarnation_authorization,
+)
 from .labels import LabelError, LabelIndex
 from .ledger import Ledger
 from .mandatory_echo import read_diagnostic, write_diagnostic
@@ -43,7 +49,11 @@ from .messaging_store import (
     MessagingOutboxStore,
     TribeControlCapacityError,
 )
-from .native_egress import MandatoryEgressController, OperationBinding
+from .native_egress import (
+    READER_VALIDITY_SCHEMA,
+    MandatoryEgressController,
+    OperationBinding,
+)
 from .relationship_store import (
     RelationshipStore,
     RelationshipStoreError,
@@ -2160,7 +2170,12 @@ class GroupMessaging:
             return roster
 
     @contextmanager
-    def selection_authorization(self, expected_roster_sha256: str) -> Iterator[None]:
+    def selection_authorization(
+        self,
+        expected_roster_sha256: str,
+        *,
+        readers: list[dict[str, Any]] | None = None,
+    ) -> Iterator[None]:
         """Called under physical fence; hold the local roster through selection.
 
         Lock order is physical fence -> relationship transaction, matching
@@ -2172,11 +2187,57 @@ class GroupMessaging:
         with self.lane.relationships.authorization_view(
             at_ms=now, card_verifier=self.lane.card_verifier, busy_timeout_ms=0
         ) as view:
-            if (
-                self._receiving_roster(view, now)["roster_sha256"]
-                != expected_roster_sha256
-            ):
+            roster = self._receiving_roster(view, now)
+            if roster["roster_sha256"] != expected_roster_sha256:
                 raise ValueError("reader_roster_conflict")
+            for row in readers or []:
+                if row.get("schema") != READER_VALIDITY_SCHEMA:
+                    continue
+                try:
+                    if not any(
+                        all(
+                            candidate[key] == row[key]
+                            for key in (
+                                "being_ref",
+                                "embodiment_id",
+                                "credential_id",
+                                "authority_manifest_hash",
+                            )
+                        )
+                        for candidate in roster["audience"]
+                    ):
+                        raise ValueError("reader_validity_conflict")
+                    authority = self.lane._active(row["being_ref"])
+                    member = authority.manifest.member(
+                        row["embodiment_id"], row["incarnation_id"]
+                    )
+                    if (
+                        member["status"] != "active"
+                        or member["embodiment_credential_id"] != row["credential_id"]
+                    ):
+                        raise ValueError("reader_validity_conflict")
+                    credential = authority.credentials[row["credential_id"]]
+                    body = verify_embodiment_credential(
+                        credential, authority.state, at_ms=now
+                    )
+                    verify_incarnation_authorization(
+                        authority.incarnations[member["incarnation_authorization_id"]],
+                        credential,
+                        authority.state,
+                        at_ms=now,
+                    )
+                    actual = body.get(
+                        "validity",
+                        {
+                            "mode": "finite",
+                            "not_before_ms": body.get("valid_from_ms"),
+                            "not_after_ms": body.get("valid_until_ms"),
+                        },
+                    )
+                    if not validity_attenuates(row["validity"], actual):
+                        raise ValueError("reader_validity_conflict")
+                except (KeyError, VerificationError):
+                    raise ValueError("reader_validity_conflict") from None
             self._verify_loaded_stores()
             yield
 

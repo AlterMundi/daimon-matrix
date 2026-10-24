@@ -1056,7 +1056,7 @@ class ClientSchemaTests(unittest.TestCase):
         import copy
 
         from daimon_matrix.local_api import create_request
-        from tests.reader_fixtures import reader
+        from tests.reader_fixtures import reader, reader_v2
 
         schema = json.loads(
             (ROOT / "schemas/hosted/v1/local-api.schema.json").read_bytes()
@@ -1097,12 +1097,51 @@ class ClientSchemaTests(unittest.TestCase):
         }
         validator.validate(request(revoked))
         validator.validate(request(selected))
+        typed = {
+            **selected,
+            "schema": "dm.runtime.reader-selection/v2",
+            "readers": [reader_v2()],
+        }
+        validator.validate(request(typed))
+        validator.validate(
+            request(
+                {
+                    **typed,
+                    "readers": [
+                        reader_v2(
+                            validity={
+                                "mode": "finite",
+                                "not_before_ms": 0,
+                                "not_after_ms": 100,
+                            }
+                        )
+                    ],
+                }
+            )
+        )
         invalid = [
             {key: value for key, value in revoked.items() if key != "expected_head"},
             {**revoked, "unknown": True},
             {**revoked, "readers": [reader()]},
             {**selected, "readers": [reader(expires_at_ms=True)]},
             {**selected, "readers": [reader(wire_read=["unsupported-wire"])]},
+            {
+                key: value
+                for key, value in typed.items()
+                if key != "expected_roster_sha256"
+            },
+            {**typed, "readers": [reader_v2(expires_at_ms=100)]},
+            {
+                **typed,
+                "readers": [
+                    reader_v2(
+                        validity={
+                            "mode": "until-revoked",
+                            "not_before_ms": True,
+                        }
+                    )
+                ],
+            },
         ]
         extra = copy.deepcopy(selected)
         extra["readers"][0]["unknown"] = True
