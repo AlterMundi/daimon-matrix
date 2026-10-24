@@ -500,6 +500,57 @@ class GroupRuntimeTests(unittest.TestCase):
             receiver.lane.validate_intake(payload)
         self.assertEqual(receiver.page(after=0, limit=10), [])
 
+    def test_missing_recovery_record_after_admission_blocks_actual_write(self):
+        sender, receiver = self.groups
+        args, _original = self._expired_unattempted()
+        recovery_id = str(uuid.uuid4())
+        get, prepare, release = (
+            sender.records.get,
+            sender.egress.prepare_visibility,
+            sender.egress.release_bounded,
+        )
+        missing, writes = [False], []
+
+        def get_record(kind, record_id, **keywords):
+            if missing[0] and kind == "recovery" and record_id == recovery_id:
+                return None
+            return get(kind, record_id, **keywords)
+
+        def disappear_after_admission(binding):
+            value = prepare(binding)
+            missing[0] = True
+            return value
+
+        def physical_release(binding, raw, write, **keywords):
+            def observed_write(*args, **kwargs):
+                writes.append(True)
+                return write(*args, **kwargs)
+
+            return release(binding, raw, observed_write, **keywords)
+
+        with (
+            patch.object(sender.records, "get", side_effect=get_record),
+            patch.object(
+                sender.egress,
+                "prepare_visibility",
+                side_effect=disappear_after_admission,
+            ),
+            patch.object(
+                sender.egress, "release_bounded", side_effect=physical_release
+            ) as bounded,
+        ):
+            result = sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            )
+        self.assertGreater(bounded.call_count, 0)
+        self.assertEqual(writes, [])
+        self.assertEqual(receiver.page(after=0, limit=10), [])
+        self.assertFalse(result["semantic"]["terminal"])
+        self.assertEqual(result["recovery"]["reason_code"], "recovery_record_missing")
+        self.assertIsNotNone(sender.records.get("native", recovery_id))
+
     def test_recovery_rechecks_parent_publication_at_physical_release(self):
         sender, receiver = self.groups
         args, original = self._expired_unattempted()

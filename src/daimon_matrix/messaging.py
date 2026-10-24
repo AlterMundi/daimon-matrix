@@ -1886,9 +1886,21 @@ class GroupMessaging:
             )
             if binding.authority_head != self.ledger.local_origin["body_ref"]:
                 return False
+            native = self.records.get("native", binding.locator)
+            if native is None:
+                return False
+            carrier = _parse(unb64url(native["native"]))
             recovery = self.records.get("recovery", binding.operation_id)
-            if recovery is not None:
+            if carrier.get("schema") == "dm.tribe.recovery-conversation/v1":
+                if (
+                    recovery is None
+                    or recovery["recovery_id"] != binding.operation_id
+                    or carrier.get("recovery") != recovery["event"]
+                ):
+                    return False
                 self._validate_recovery_parent(recovery)
+            elif recovery is not None:
+                return False
             return True
         except ValueError:
             return False
@@ -2058,7 +2070,13 @@ class GroupMessaging:
         if recovery_selection is not None:
             recovery_id = recovery_selection["recovery_id"]
             recovery = self.records.get("recovery", recovery_id)
-            if recovery is not None:
+            if recovery is None:
+                result["recovery"] = {
+                    "recovery_id": recovery_id,
+                    "state": "unavailable",
+                    "reason_code": "recovery_record_missing",
+                }
+            else:
                 recovered_transport = []
                 for row in message["payload"]["body"]["audience"]:
                     if (row["being_ref"], row["embodiment_id"]) == (
