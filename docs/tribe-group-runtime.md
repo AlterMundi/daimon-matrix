@@ -259,6 +259,25 @@ qualification does not establish actual receiving readiness or compatible
 rollback. Those selections remain the receiver-compatible rollout's work.
 
 
+### Reader recovery at startup
+
+Reader restoration shares one finite startup deadline across authenticated head
+loading, current signed-roster and credential checks, and the rebound transaction.
+The default is sixty seconds; a hosting supervisor can supply its earlier
+absolute monotonic deadline. All application views must use that same envelope.
+The append still authenticates the complete predecessor chain and uses its
+transactional head CAS. No stage obtains a renewed budget. Ordinary RPC/control
+deadlines, carrier expiry and credential validity are unchanged.
+
+A deadline, storage or verification failure keeps the retained intent closed;
+it never searches backward for an older positive record. Startup errors expose
+only a closed `recovery_failure` stage/code descriptor, preserving the distinction
+between a journal deadline, unavailable storage and invalid verification without
+including arbitrary exception text. Software selection can invalidate a previous
+boot binding; restoring the old executable does not restore positive eligibility.
+Use current qualified owner controls for forward recovery, preserving exact
+requests, native acknowledgments and signed history.
+
 ### Explicit expired-before-attempt recovery
 
 The installed release must advertise `explicit-unattempted-carrier-recovery/v1`

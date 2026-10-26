@@ -41,9 +41,30 @@ from .telegram_mirror import PlainTelegramTransport
 class NativeEgressError(ValueError):
     """Stable, bounded failure without native bytes, projection text, or secrets."""
 
+    recovery_failure: dict[str, str] | None = None
+
 
 READER_VALIDITY_SCHEMA: Final = "dm.receiving.reader/v2"
 READER_CONTROL_SCHEMA: Final = "dm.runtime.reader-selection/v2"
+READER_STARTUP_TIMEOUT_NS: Final = 60_000_000_000
+
+
+def _recovery_failure(stage: str, failure: Exception) -> dict[str, str]:
+    """Closed diagnostic values; never retain arbitrary exception contents."""
+    code = "verification_failed"
+    if isinstance(failure, ValueError) and str(failure) in {
+        "reader_journal_deadline_expired",
+        "reader_journal_record_invalid",
+        "reader_journal_chain_invalid",
+        "tribe_record_corrupt",
+        "messaging_binding_rejected",
+    }:
+        code = str(failure)
+    elif isinstance(failure, sqlite3.Error):
+        code = "storage_busy_or_unavailable"
+    elif isinstance(failure, OSError):
+        code = "storage_unavailable"
+    return {"stage": stage, "code": code}
 
 
 def _reader_validity(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -1220,6 +1241,7 @@ class MandatoryEgressController:
         load: Callable[..., dict[str, Any] | None],
         append: Callable[..., dict[str, Any]],
         authorization: Callable[..., AbstractContextManager[None]],
+        deadline_ns: int | None = None,
     ) -> None:
         """One bounded startup restoration, before workers/listeners exist.
 
@@ -1245,7 +1267,18 @@ class MandatoryEgressController:
                 "startup_complete": False,
             }
             self._reader_recovery[channel_id] = state
-            deadline_ns = time.monotonic_ns() + 2_000_000_000
+            # Startup authenticates the complete retained chain twice plus the
+            # current roster. It shares the caller's finite readiness envelope;
+            # ordinary request/control deadlines and credential validity do not
+            # change. No phase renews this deadline.
+            maximum = time.monotonic_ns() + READER_STARTUP_TIMEOUT_NS
+            if deadline_ns is None:
+                deadline_ns = maximum
+            elif type(deadline_ns) is not int:
+                raise NativeEgressError("reader_recovery_deadline_invalid")
+            else:
+                deadline_ns = min(deadline_ns, maximum)
+            stage = "load"
             try:
                 latest = load(channel_id, deadline_ns=deadline_ns)
                 state["latest"] = latest
@@ -1272,6 +1305,7 @@ class MandatoryEgressController:
                     )
                 ):
                     raise NativeEgressError("reader_recovery_incompatible")
+                stage = "authorize"
                 with authorization(
                     latest["roster_sha256"],
                     **(
@@ -1280,6 +1314,7 @@ class MandatoryEgressController:
                         else {}
                     ),
                 ):
+                    stage = "append"
                     rebound = append(
                         channel_id,
                         latest,
@@ -1348,18 +1383,22 @@ class MandatoryEgressController:
                         )
                         state["startup_complete"] = True
                         state["status"] = "invalidated"
-                    except Exception:
+                    except Exception as invalidation_failure:
                         state["status"] = "persistence-uncertain"
-                        raise NativeEgressError(
+                        error = NativeEgressError(
                             "reader_recovery_invalidation_uncertain"
-                        ) from None
+                        )
+                        error.recovery_failure = _recovery_failure(
+                            "invalidate", invalidation_failure
+                        )
+                        raise error from None
                 else:
                     # Do not serve with an unknown/stale durable head: even a
                     # subsequent explicit revoke would be unable to CAS it.
                     # Preserve intent and let the existing service restart retry.
-                    raise NativeEgressError(
-                        "reader_recovery_startup_uncertain"
-                    ) from None
+                    error = NativeEgressError("reader_recovery_startup_uncertain")
+                    error.recovery_failure = _recovery_failure(stage, failure)
+                    raise error from None
 
     def reader_recovery_status(self, channel_id: str) -> dict[str, Any]:
         state = self._reader_recovery.get(channel_id)

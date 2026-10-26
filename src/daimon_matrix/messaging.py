@@ -1770,7 +1770,9 @@ class GroupMessaging:
             self.lane.clock(),
         )
 
-    def initialize_reader_recovery(self, service: Any) -> None:
+    def initialize_reader_recovery(
+        self, service: Any, *, deadline_ns: int | None = None
+    ) -> None:
         """Attach durable owner controls only at a fully qualified serving boot."""
         if not self.controlled_readers:
             return
@@ -1864,6 +1866,7 @@ class GroupMessaging:
             load=self.records.reader_control_head,
             append=self.records.append_reader_control,
             authorization=self.selection_authorization,
+            deadline_ns=deadline_ns,
         )
 
     def _verify_loaded_stores(self) -> None:

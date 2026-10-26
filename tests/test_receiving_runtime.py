@@ -1593,7 +1593,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         }
         self.roster = "b" * 64
 
-    def restart(self, *, binding=None):
+    def restart(self, *, binding=None, deadline_ns=None):
         controller = synthetic_visibility(clock=lambda: self.now)
         controller.register_reader_channel("tribe", "0" * 64, controlled=True)
 
@@ -1609,8 +1609,52 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             load=self.records.reader_control_head,
             append=self.records.append_reader_control,
             authorization=authorized,
+            **({"deadline_ns": deadline_ns} if deadline_ns is not None else {}),
         )
         return controller
+
+    def test_valid_startup_can_authenticate_both_scans_beyond_two_seconds(self):
+        self.enabled_v2()
+        verify = self.records.verify
+        monotonic = [1_000_000_000]
+
+        def slow_verify(value, binding):
+            monotonic[0] += 700_000_000
+            verify(value, binding)
+
+        self.records.verify = slow_verify
+        with patch("time.monotonic_ns", lambda: monotonic[0]):
+            current = self.restart()
+        self.assertGreater(monotonic[0], 3_000_000_000)
+        self.assertEqual(current.reader_recovery_status("tribe")["state"], "recovered")
+        self.assertTrue(current.reader_ready("tribe", reader_v2()))
+
+    def test_one_expired_startup_deadline_preserves_positive_intent_and_safe_cause(
+        self,
+    ):
+        self.enabled_v2()
+        before = self.records.reader_control_head("tribe")
+        verify = self.records.verify
+        monotonic = [1_000_000_000]
+
+        def slow_verify(value, binding):
+            monotonic[0] += 700_000_000
+            verify(value, binding)
+
+        self.records.verify = slow_verify
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            self.assertRaisesRegex(
+                NativeEgressError, "reader_recovery_startup_uncertain"
+            ) as raised,
+        ):
+            self.restart(deadline_ns=3_000_000_000)
+        self.assertEqual(
+            raised.exception.recovery_failure,
+            {"stage": "append", "code": "reader_journal_deadline_expired"},
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertEqual(self.records.reader_control_head("tribe"), before)
 
     def enabled(self):
         controller = self.restart()

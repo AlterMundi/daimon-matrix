@@ -30,6 +30,7 @@ from .messaging_config import (
     verify_visibility_participant,
 )
 from .native_egress import (
+    READER_STARTUP_TIMEOUT_NS,
     VISIBILITY_SCHEMA_VERSION,
     MandatoryEgressController,
     NativeEgressError,
@@ -531,9 +532,12 @@ def serve_forever(
     stop: threading.Event | None = None,
     ready_descriptor: int | None = None,
     fault_hook: FaultHook | None = None,
+    startup_deadline_ns: int | None = None,
 ) -> None:
     """Bind only after runtime verification and serve with fixed concurrency."""
 
+    if startup_deadline_ns is None:
+        startup_deadline_ns = time.monotonic_ns() + READER_STARTUP_TIMEOUT_NS
     stopping = threading.Event() if stop is None else stop
     path = runtime.socket_path
     current_root = runtime.state_root.lstat()
@@ -551,7 +555,9 @@ def serve_forever(
         runtime.egress.validate_registry(_enabled_egress_paths(runtime))
         if runtime.service.receiving is not None:
             for group in runtime.service.receiving.channels.values():
-                group.initialize_reader_recovery(runtime.service)
+                group.initialize_reader_recovery(
+                    runtime.service, deadline_ns=startup_deadline_ns
+                )
         runtime.egress.worker_started()
         egress_thread = threading.Thread(
             target=_run_egress_worker,
