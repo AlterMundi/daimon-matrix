@@ -243,7 +243,9 @@ actual current time. Only expired descriptors whose status is still active are
 renewed, with their existing client IDs, methods, keys and profile bindings.
 Unexpired descriptors stay byte-identical; revoked or future-dated profiles
 refuse. The explicit new horizon must cover the finite transaction authorization
-and cannot exceed thirty days from staging. It does not extend the body's signed
+and cannot exceed thirty days from staging. An expired optional receiving
+controller is additionally bounded by the earliest resulting original-role
+expiry; it never outlives an original role that remains unexpired. It does not extend the body's signed
 identity, grants, authority or any other credential. V7 is deliberately unsupported
 by this recovery; no clock substitution or runtime authentication bypass is used.
 

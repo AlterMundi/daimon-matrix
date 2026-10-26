@@ -563,6 +563,23 @@ def _additions(value: Any) -> dict[str, list[str]]:
     return value
 
 
+def _renewed_profile_expiry(
+    bundle: dict[str, Any], profile: dict[str, Any], renewal: dict[str, int]
+) -> int:
+    """An optional controller never outlives the resulting original roles."""
+    expiry = renewal["not_after_ms"]
+    if profile != profiles.host_capability_profile("receiving-controller"):
+        return expiry
+    horizons: list[int] = [expiry]
+    horizons.extend(
+        row["descriptor"]["not_after_ms"]
+        for row in bundle["capabilities"]
+        if row["profile"] != profile
+        and row["descriptor"]["not_after_ms"] > renewal["issued_at_ms"]
+    )
+    return min(horizons)
+
+
 def _profile_renewal_successor(
     before: dict[str, bytes], after: dict[str, bytes], renewal: Any
 ) -> None:
@@ -608,7 +625,8 @@ def _profile_renewal_successor(
             or {k: v for k, v in descriptor.items() if k not in changing}
             != {k: v for k, v in updated.items() if k not in changing}
             or updated["not_before_ms"] != issued
-            or updated["not_after_ms"] != expiry
+            or updated["not_after_ms"]
+            != _renewed_profile_expiry(old, row["profile"], renewal)
         ):
             raise UpgradeError("upgrade_profile_renewal_conflict")
         filename = str(
@@ -836,10 +854,11 @@ def stage_capabilities(
 ) -> dict[str, Any]:
     """Issue only owner-requested missing methods, retaining all keys and identity.
 
-    This is a signed bundle successor, never a capability-file edit. Explicit
-    renewal repairs only an expired optional V8 receiving controller, using the
-    still-valid original owner roles and custody. It adds no methods or keys.
-    The original stays untouched until exact atomic publication.
+    This is a signed bundle successor, never a capability-file edit. Optional
+    controller renewal uses still-valid original owner roles. Explicit V8 profile
+    renewal instead validates current signed body authority and existing custody,
+    renewing only expired active local profiles without adding methods or keys.
+    Both retain the original until exact atomic publication.
     """
     if not externally_quiesced or not 1 <= len(password) <= 4096:
         raise UpgradeError("upgrade_quiescence_and_password_required")
@@ -1004,7 +1023,9 @@ def stage_capabilities(
                     client_id=previous["client_id"],
                     methods=previous["methods"],
                     not_before_ms=renewal["issued_at_ms"],
-                    not_after_ms=renewal["not_after_ms"],
+                    not_after_ms=_renewed_profile_expiry(
+                        bundle, row["profile"], renewal
+                    ),
                     status=previous["status"],
                 )
                 row["descriptor"] = capability.descriptor

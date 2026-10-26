@@ -546,6 +546,46 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
                 ready["profile_renewal"],
             )
 
+    def test_profile_renewal_controller_stays_inside_resulting_owner_horizon(self):
+        self.expired_controller()
+        now = time.time_ns() // 1_000_000
+        owner_horizon = now + 86400000
+        self.rebind_capability("observe", not_after_ms=owner_horizon)
+        self.before = upgrade._snapshot(self.source)
+        self.args["expected_source_sha256"] = upgrade._inventory(self.before)
+        ready = self.stage(profile_renewal_not_after_ms=now + 2 * 86400000)
+        after = upgrade._snapshot(self.transaction / "successor")
+        bundle = json.loads(after["runtime.json"])
+        controller = next(
+            row
+            for row in bundle["capabilities"]
+            if row["profile"]["role"] == "receiving-controller"
+        )
+        self.assertEqual(controller["descriptor"]["not_after_ms"], owner_horizon)
+        self.publish()
+        controller["descriptor"]["not_after_ms"] = ready["profile_renewal"][
+            "not_after_ms"
+        ]
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_profile_renewal_conflict"
+        ):
+            upgrade._profile_renewal_successor(
+                self.before,
+                {**after, "runtime.json": json.dumps(bundle).encode()},
+                ready["profile_renewal"],
+            )
+
+    def test_profile_renewal_all_expired_roles_and_controller_share_new_horizon(self):
+        self.expired_controller()
+        self.expire_profiles()
+        ready = self.stage()
+        after = json.loads((self.transaction / "successor/runtime.json").read_bytes())
+        self.assertEqual(
+            {row["descriptor"]["not_after_ms"] for row in after["capabilities"]},
+            {ready["profile_renewal"]["not_after_ms"]},
+        )
+        self.publish()
+
     def test_owner_renewal_request_field_is_exact_and_digest_bound(self):
         self.expire_profiles()
         request = {
