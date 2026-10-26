@@ -536,8 +536,15 @@ def serve_forever(
 ) -> None:
     """Bind only after runtime verification and serve with fixed concurrency."""
 
+    maximum = time.monotonic_ns() + READER_STARTUP_TIMEOUT_NS
     if startup_deadline_ns is None:
-        startup_deadline_ns = time.monotonic_ns() + READER_STARTUP_TIMEOUT_NS
+        startup_deadline_ns = maximum
+    elif type(startup_deadline_ns) is not int:
+        raise DaemonError("reader_recovery_deadline_invalid")
+    else:
+        startup_deadline_ns = min(startup_deadline_ns, maximum)
+    if time.monotonic_ns() >= startup_deadline_ns:
+        raise DaemonError("reader_journal_deadline_expired")
     stopping = threading.Event() if stop is None else stop
     path = runtime.socket_path
     current_root = runtime.state_root.lstat()
@@ -558,6 +565,8 @@ def serve_forever(
                 group.initialize_reader_recovery(
                     runtime.service, deadline_ns=startup_deadline_ns
                 )
+        if time.monotonic_ns() >= startup_deadline_ns:
+            raise DaemonError("reader_journal_deadline_expired")
         runtime.egress.worker_started()
         egress_thread = threading.Thread(
             target=_run_egress_worker,
@@ -591,6 +600,8 @@ def serve_forever(
         info = path.lstat()
         created = (info.st_dev, info.st_ino)
         listener.settimeout(0.25)
+        if time.monotonic_ns() >= startup_deadline_ns:
+            raise DaemonError("reader_journal_deadline_expired")
         if ready_descriptor is not None:
             os.write(ready_descriptor, b"READY\n")
             os.close(ready_descriptor)

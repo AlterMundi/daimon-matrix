@@ -1656,6 +1656,73 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         self.assertIsNone(raised.exception.__cause__)
         self.assertEqual(self.records.reader_control_head("tribe"), before)
 
+    def test_late_committed_rebound_is_preserved_without_successful_recovery(self):
+        self.enabled_v2()
+        before = self.records.reader_control_head("tribe")
+        append = self.records.append_reader_control
+        monotonic = [1_000_000_000]
+
+        def late_append(*args, **kwargs):
+            result = append(*args, **kwargs)
+            monotonic[0] = 3_000_000_000
+            return result
+
+        self.records.append_reader_control = late_append
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            self.assertRaisesRegex(
+                NativeEgressError, "reader_recovery_startup_uncertain"
+            ) as raised,
+        ):
+            self.restart(deadline_ns=3_000_000_000)
+        after = self.records.reader_control_head("tribe")
+        self.assertEqual(after["action"], "rebound")
+        self.assertEqual(after["command"], before["command"])
+        self.assertNotEqual(after, before)
+        self.assertEqual(
+            raised.exception.recovery_failure,
+            {"stage": "append", "code": "reader_journal_deadline_expired"},
+        )
+
+    def test_runtime_without_receivers_cannot_publish_ready_after_deadline(self):
+        from daimon_matrix import daemon
+
+        root = Path(self.directory.name)
+        info = root.stat()
+        monotonic = [1_000_000_000]
+
+        def slow_registry(_paths):
+            monotonic[0] = 3_000_000_000
+
+        runtime = SimpleNamespace(
+            state_root=root,
+            state_identity=(info.st_dev, info.st_ino),
+            socket_path=root / "test.sock",
+            service=SimpleNamespace(receiving=None),
+            egress=SimpleNamespace(validate_registry=slow_registry),
+        )
+        reader_fd, writer_fd = os.pipe()
+        try:
+            with (
+                patch("time.monotonic_ns", lambda: monotonic[0]),
+                patch.object(daemon, "_enabled_egress_paths", return_value=[]),
+                self.assertRaisesRegex(
+                    daemon.DaemonError, "reader_journal_deadline_expired"
+                ),
+            ):
+                daemon.serve_forever(
+                    runtime,
+                    ready_descriptor=writer_fd,
+                    startup_deadline_ns=3_000_000_000,
+                )
+            self.assertFalse(runtime.socket_path.exists())
+            os.set_blocking(reader_fd, False)
+            with self.assertRaises(BlockingIOError):
+                os.read(reader_fd, 16)
+        finally:
+            os.close(reader_fd)
+            os.close(writer_fd)
+
     def enabled(self):
         controller = self.restart()
         select(controller, command(controller))

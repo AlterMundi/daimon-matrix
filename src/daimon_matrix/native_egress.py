@@ -1280,8 +1280,12 @@ class MandatoryEgressController:
                 deadline_ns = min(deadline_ns, maximum)
             stage = "load"
             try:
+                if time.monotonic_ns() >= deadline_ns:
+                    raise ValueError("reader_journal_deadline_expired")
                 latest = load(channel_id, deadline_ns=deadline_ns)
                 state["latest"] = latest
+                if time.monotonic_ns() >= deadline_ns:
+                    raise ValueError("reader_journal_deadline_expired")
                 if latest is None:
                     state["startup_complete"] = True
                     return
@@ -1333,6 +1337,9 @@ class MandatoryEgressController:
                         },
                         deadline_ns=deadline_ns,
                     )
+                    state["latest"] = rebound
+                    if time.monotonic_ns() >= deadline_ns:
+                        raise ValueError("reader_journal_deadline_expired")
                     # New process/head, historical request and reader proof kept
                     # separately. Old-process RPCs still fail their process CAS.
                     self._reader_selections[channel_id] = replace(
