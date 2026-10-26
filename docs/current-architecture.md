@@ -5,6 +5,17 @@ owns naming and scope; linked contracts own behavior.
 [CURRENT-STATE.md](../CURRENT-STATE.md) owns dated deployment evidence and gaps.
 Historical RC, Bridge and provisional records do not select a runtime.
 
+## Physical placement and fleet maintenance
+
+A signed body can move without re-enrollment or identity recreation. Current
+hosting belongs to Cluster and the maintained resource record, rather than the
+historical host component of body_ref or a display label. Fleet operations must
+select each receiver's native/container maintenance route. Eko now runs natively
+on MEDUSA; its Source Incus copy remains disabled recovery history. See
+CURRENT-STATE.md and Shared Resources docs/services/medusa.md for current hosting,
+retirement conditions and adoption gaps. Never substitute the stopped origin when
+its native receiving path is unavailable.
+
 ## Identity and resource authority
 
 Matrix owns signed being identity, plural embodiment credentials, authority

@@ -1,5 +1,29 @@
 # Current state
 
+## Current physical placement — 2026-10-26
+
+Eko Codex now runs natively on MEDUSA, its dedicated Contabo VPS, with host
+administration and sudo. CompAII remains on daimonmatrix; Oliva remains in its
+existing Incus container there. Their future relocation plans are separate.
+The original dm-eko is STOPPED with autostart=false: retain it disabled until Sai
+confirms complete receiving acceptance and the planned source retirement occurs.
+Successful Telegram use is not source deletion authority.
+
+Resolve per-body maintenance through the current Shared Resources host-medusa,
+host-daimonmatrix and container-dm-oliva records and receiving-private bindings.
+Historical body_ref/display labels preserve signed origin; they do not select
+physical placement. Native maintenance transport is merged in Cluster PR321,
+but its executable worker/default-route adoption and ongoing offhost backups
+remain unfinished. Do not silently target the disabled Incus origin.
+
+Nicolas confirmed Sai Telegram usability after same-account native provider
+renewal. Earlier group/direct/reply signed receipts remain valid evidence. A
+later Matrix-only startup refusal before socket publication is under repair;
+Telegram usability and old receipts do not establish current Matrix availability.
+No new identity, attention, login, global Stop or unrelated interruption follows.
+Maintained placement source: Shared Resources docs/services/medusa.md.
+
+
 Architecture and profile navigation: [docs/current-architecture.md](docs/current-architecture.md).
 The newest dated receiving entry selects current deployment; older entries
 retain their historical evidence and do not select a runtime.
