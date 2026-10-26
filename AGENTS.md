@@ -1,5 +1,12 @@
 # Agent instructions
 
+For fleet maintenance, resolve each body's current physical placement from its
+maintained Shared Resources record and receiving binding. Eko is native on
+MEDUSA; its stopped Source dm-eko is rollback only, never a routine update target.
+See CURRENT-STATE.md for placement and source-retirement conditions. Historical
+signed origin labels do not select a physical host.
+
+
 For current architecture and receiving profiles, read
 [`docs/current-architecture.md`](docs/current-architecture.md); use
 [`CURRENT-STATE.md`](CURRENT-STATE.md) for actual deployment and remaining work.
