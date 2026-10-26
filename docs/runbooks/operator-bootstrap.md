@@ -173,10 +173,14 @@ and currently valid signed being/body authority; revoked roles never renew.
 The transaction changes only the selected descriptor/client binding and advances
 the custody counter once. It creates no being, embodiment or incarnation.
 
-Recovery of expired original roles is not supplied by this narrow receiving
-repair. Report that specific gap and preserve the runtime; do not silently turn
-a routine update into a new embodiment ceremony. V7 rejects inactive capabilities
-at load. V8 retains their authenticated claims but request authentication still
+For expired original profiles on V8, the same owner-local transaction now
+supports an explicit `profile_renewal_not_after_ms` with no method additions.
+Current signed body authority and custody must still validate; only expired
+active descriptors are renewed, under a finite horizon of at most thirty days.
+Identity, keys, methods, history and unexpired profiles remain intact. This is
+an offline owner action, never an implicit refresh or a new embodiment ceremony.
+See the same runbook for exact publication and recovery. V7 rejects inactive
+capabilities at load. V8 retains their authenticated claims but request authentication still
 refuses expired/revoked grants. Current signed body credentials and local role
 capabilities have separate validity; neither substitutes for the other.
 

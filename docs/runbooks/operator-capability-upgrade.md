@@ -226,3 +226,39 @@ This is an owner-local maintenance capability, not a model tool, automatic
 startup mutation or general role renewal service. Runtime validation, authentic
 serving-process load, selected readers and actual communication remain separate
 observed outcomes under the receiving update workflow.
+
+## Expired original local profiles
+
+A V8 body can retain valid signed identity and custody after its local operator
+profiles expire. Do not recreate its embodiment, reset credentials or rotate
+operational keys to repair that local expiry. The existing offline owner
+transaction accepts an explicit `profile_renewal_not_after_ms` with
+`add_methods: {}`. Use the same exact source inventory, counter, control head,
+origin, protected password descriptor, transaction and fenced lifecycle described
+above. This option is mutually exclusive with method additions and optional
+controller provisioning/renewal.
+
+The native loader validates current signed body authority and custody at the
+actual current time. Only expired descriptors whose status is still active are
+renewed, with their existing client IDs, methods, keys and profile bindings.
+Unexpired descriptors stay byte-identical; revoked or future-dated profiles
+refuse. The explicit new horizon must cover the finite transaction authorization
+and cannot exceed thirty days from staging. It does not extend the body's signed
+identity, grants, authority or any other credential. V7 is deliberately unsupported
+by this recovery; no clock substitution or runtime authentication bypass is used.
+
+The successor signs the complete profile set and advances custody once, while
+preserving every history file and request journal. Review its private ready
+receipt's `profile_renewal` and `changes`, then use `publish-capabilities` with
+that exact ready hash. Fresh publication requires current renewed profiles;
+exact recovery of an already committed exchange also works after expiry without
+issuing again. Preserve old requests with their original capability IDs. An old
+uncertain request cannot be re-signed under the renewal and called an exact retry.
+
+This is an explicitly authorized local owner operation, not a daemon/model
+capability or automatic renewal timer. Deploy missing methods separately through
+the existing scoped method upgrade. Verify the actual loaded daemon and its
+selected client after the authorized scoped reload; source tests and staged
+files alone do not establish adoption. Retain a software rollback compatible with
+the renewed signed bundle and monotonic custody counter, never restore the
+expired checkpoint as active state.

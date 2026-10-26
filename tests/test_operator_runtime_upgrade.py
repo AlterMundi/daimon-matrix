@@ -323,6 +323,248 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             capability_upgrade=True,
         )
 
+    def expire_profiles(self, *, partial=False):
+        from daimon_matrix.canonical import canonical_bytes
+        from daimon_matrix.local_api import create_capability
+        from daimon_matrix.operator_capabilities import (
+            create_operator_capability_binding,
+        )
+
+        now = time.time_ns() // 1_000_000
+        self.bundle["schema"] = "dm.runtime.bundle/v8"
+        custody = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        for index, row in enumerate(self.bundle["capabilities"]):
+            if partial and index:
+                continue
+            old = row["descriptor"]
+            row["descriptor"] = create_capability(
+                custody.secrets[row["secret_slot"]],
+                client_id=old["client_id"],
+                methods=old["methods"],
+                not_before_ms=now - 5000,
+                not_after_ms=now - 1000,
+            ).descriptor
+            path = self.source / row["profile"]["client_directory"] / "client.json"
+            client = json.loads(path.read_bytes())
+            client["capability"] = row["descriptor"]
+            path.write_bytes(canonical_bytes(client))
+        self.bundle["operator_capability_binding"] = create_operator_capability_binding(
+            runtime_id=self.bundle["runtime_id"],
+            runtime_label=self.bundle["runtime_label"],
+            being_ref=self.bundle["manifest"]["being_ref"],
+            origin=self.bundle["local_origin"],
+            signing_seed=custody.secrets[self.bundle["keystore"]["signing_slot"]],
+            capability_rows=self.bundle["capabilities"],
+        )
+        (self.source / "runtime.json").write_bytes(canonical_bytes(self.bundle))
+        self.before = upgrade._snapshot(self.source)
+        self.args.update(
+            expected_source_sha256=upgrade.inventory_digest(self.source),
+            add_methods={},
+            profile_renewal_not_after_ms=now + 86400000,
+        )
+
+    def test_owner_renewal_restores_read_preserving_secrets_and_history(
+        self,
+    ):
+        from daimon_matrix.local_api import LocalCapability, create_request
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.runtime import load_runtime
+
+        self.expire_profiles()
+        old = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        ready = self.stage()
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        self.assertEqual(len(ready["changes"]), 12)
+        self.publish()
+        current = EncryptedKeystore(self.source / "custody.json").open(
+            lambda: bytearray(PASSWORD)
+        )
+        self.assertEqual(dict(old.secrets), dict(current.secrets))
+        self.assertEqual(current.counter, old.counter + 1)
+        upgrade._profile_renewal_successor(
+            self.before, upgrade._snapshot(self.source), ready["profile_renewal"]
+        )
+
+        def clock():
+            return time.time_ns() // 1_000_000
+
+        runtime = load_runtime(
+            self.source,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=clock,
+            egress=closed_visibility(clock=clock, catalog_mode="migrate"),
+        )
+        config = json.loads((self.source / "client.json").read_bytes())
+        capability = LocalCapability.from_value(
+            config["capability"], (self.source / "client.key").read_bytes()
+        )
+        response = runtime.service.handle(
+            create_request(
+                capability,
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=clock(),
+                method="scope.me",
+                params={},
+            )
+        )
+        self.assertIsNone(response["error"])
+        self.assertIsInstance(response["result"], dict)
+
+    def test_owner_renewal_leaves_unexpired_roles_byte_identical(self):
+        self.expire_profiles(partial=True)
+        ready = self.stage()
+        self.assertEqual(len(ready["changes"]), 1)
+        new = json.loads((self.transaction / "successor/runtime.json").read_bytes())
+        self.assertEqual(self.bundle["capabilities"][1:], new["capabilities"][1:])
+        self.publish()
+
+    def test_owner_renewal_requires_explicit_selection_and_finite_horizon(self):
+        self.expire_profiles()
+        cases = [
+            {"profile_renewal_not_after_ms": None},
+            {"profile_renewal_not_after_ms": True},
+            {
+                "profile_renewal_not_after_ms": time.time_ns() // 1_000_000
+                + 31 * 86400000
+            },
+            {"profile_renewal_not_after_ms": time.time_ns() // 1_000_000 + 1000},
+            {"add_methods": {"weave": ["we.converse"]}},
+            {"provision_receiving_controller": True},
+            {"renew_receiving_controller": True},
+            {"externally_quiesced": False},
+            {"password": b"wrong"},
+        ]
+        for changes in cases:
+            with (
+                self.subTest(changes=list(changes)),
+                self.assertRaises(upgrade.UpgradeError),
+            ):
+                self.stage(**changes)
+            self.assertFalse(self.transaction.exists())
+            self.assertEqual(upgrade._snapshot(self.source), self.before)
+
+    def test_owner_renewal_refuses_revoked_profiles_and_wrong_identity(self):
+        from unittest.mock import patch
+
+        self.expire_profiles()
+        for mutate in [
+            lambda b: b["capabilities"][0]["descriptor"].update(status="revoked"),
+            lambda b: b.update(schema="dm.runtime.bundle/v7"),
+        ]:
+            bundle = json.loads(self.before["runtime.json"])
+            mutate(bundle)
+            with (
+                patch.object(
+                    upgrade,
+                    "_snapshot",
+                    return_value={
+                        **self.before,
+                        "runtime.json": json.dumps(bundle).encode(),
+                    },
+                ),
+                self.assertRaises(upgrade.UpgradeError),
+            ):
+                self.stage(
+                    expected_source_sha256=upgrade._inventory(
+                        upgrade._snapshot(self.source)
+                    )
+                )
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_identity_or_revision_conflict"
+        ):
+            self.stage(expected_counter=self.args["expected_counter"] + 1)
+        self.assertFalse(self.transaction.exists())
+
+    def test_owner_renewal_no_expired_target_is_not_a_periodic_extender(self):
+        self.bundle["schema"] = "dm.runtime.bundle/v8"
+        from daimon_matrix.canonical import canonical_bytes
+
+        (self.source / "runtime.json").write_bytes(canonical_bytes(self.bundle))
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_expired_profile_required"
+        ):
+            self.stage(
+                add_methods={},
+                profile_renewal_not_after_ms=time.time_ns() // 1_000_000 + 86400000,
+            )
+        self.assertFalse(self.transaction.exists())
+
+    def test_owner_renewal_exact_lost_publication_replay_after_expiry(self):
+        from unittest.mock import patch
+
+        self.expire_profiles()
+        ready = self.stage()
+        exchange = upgrade._exchange
+
+        def lost(left, right):
+            exchange(left, right)
+            raise OSError("synthetic lost return")
+
+        with (
+            patch.object(upgrade, "_exchange", side_effect=lost),
+            self.assertRaises(OSError),
+        ):
+            self.publish()
+        with patch.object(
+            upgrade.time,
+            "time_ns",
+            return_value=(ready["profile_renewal"]["not_after_ms"] + 1) * 1_000_000,
+        ):
+            first = self.publish()
+            self.assertEqual(first, self.publish())
+        self.assertEqual(
+            json.loads((self.source / "runtime.json").read_bytes())["keystore"][
+                "counter"
+            ],
+            ready["counter_after"],
+        )
+
+    def test_owner_renewal_candidate_cannot_change_methods_or_history(self):
+        self.expire_profiles()
+        ready = self.stage()
+        after = upgrade._snapshot(self.transaction / "successor")
+        bundle = json.loads(after["runtime.json"])
+        bundle["capabilities"][0]["descriptor"]["methods"].append("we.propose")
+        altered = {**after, "runtime.json": json.dumps(bundle).encode()}
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_profile_renewal_conflict"
+        ):
+            upgrade._profile_renewal_successor(
+                self.before, altered, ready["profile_renewal"]
+            )
+        with self.assertRaises(upgrade.UpgradeError):
+            upgrade._profile_renewal_successor(
+                self.before,
+                {**after, "extra-history": b"bad"},
+                ready["profile_renewal"],
+            )
+
+    def test_owner_renewal_request_field_is_exact_and_digest_bound(self):
+        self.expire_profiles()
+        request = {
+            k: str(v) if isinstance(v, Path) else v
+            for k, v in self.args.items()
+            if k not in {"password", "externally_quiesced"}
+        }
+        path = self.parent / "request.json"
+        path.write_text(json.dumps(request))
+        path.chmod(0o600)
+        pin = hashlib.sha256(path.read_bytes()).hexdigest()
+        parsed = upgrade._read_request(path, pin, capability_upgrade=True)
+        self.assertEqual(
+            parsed["profile_renewal_not_after_ms"],
+            self.args["profile_renewal_not_after_ms"],
+        )
+        with self.assertRaises(upgrade.UpgradeError):
+            upgrade._read_request(path, "0" * 64, capability_upgrade=True)
+
     def test_upgrade_retains_identity_keys_history_expiry_and_enables_read(self):
         from daimon_matrix.local_api import (
             LocalApiError,
