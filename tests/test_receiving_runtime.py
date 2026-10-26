@@ -1593,7 +1593,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         }
         self.roster = "b" * 64
 
-    def restart(self, *, binding=None):
+    def restart(self, *, binding=None, deadline_ns=None):
         controller = synthetic_visibility(clock=lambda: self.now)
         controller.register_reader_channel("tribe", "0" * 64, controlled=True)
 
@@ -1609,8 +1609,119 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             load=self.records.reader_control_head,
             append=self.records.append_reader_control,
             authorization=authorized,
+            **({"deadline_ns": deadline_ns} if deadline_ns is not None else {}),
         )
         return controller
+
+    def test_valid_startup_can_authenticate_both_scans_beyond_two_seconds(self):
+        self.enabled_v2()
+        verify = self.records.verify
+        monotonic = [1_000_000_000]
+
+        def slow_verify(value, binding):
+            monotonic[0] += 700_000_000
+            verify(value, binding)
+
+        self.records.verify = slow_verify
+        with patch("time.monotonic_ns", lambda: monotonic[0]):
+            current = self.restart()
+        self.assertGreater(monotonic[0], 3_000_000_000)
+        self.assertEqual(current.reader_recovery_status("tribe")["state"], "recovered")
+        self.assertTrue(current.reader_ready("tribe", reader_v2()))
+
+    def test_one_expired_startup_deadline_preserves_positive_intent_and_safe_cause(
+        self,
+    ):
+        self.enabled_v2()
+        before = self.records.reader_control_head("tribe")
+        verify = self.records.verify
+        monotonic = [1_000_000_000]
+
+        def slow_verify(value, binding):
+            monotonic[0] += 700_000_000
+            verify(value, binding)
+
+        self.records.verify = slow_verify
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            self.assertRaisesRegex(
+                NativeEgressError, "reader_recovery_startup_uncertain"
+            ) as raised,
+        ):
+            self.restart(deadline_ns=3_000_000_000)
+        self.assertEqual(
+            raised.exception.recovery_failure,
+            {"stage": "append", "code": "reader_journal_deadline_expired"},
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertEqual(self.records.reader_control_head("tribe"), before)
+
+    def test_late_committed_rebound_is_preserved_without_successful_recovery(self):
+        self.enabled_v2()
+        before = self.records.reader_control_head("tribe")
+        append = self.records.append_reader_control
+        monotonic = [1_000_000_000]
+
+        def late_append(*args, **kwargs):
+            result = append(*args, **kwargs)
+            monotonic[0] = 3_000_000_000
+            return result
+
+        self.records.append_reader_control = late_append
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            self.assertRaisesRegex(
+                NativeEgressError, "reader_recovery_startup_uncertain"
+            ) as raised,
+        ):
+            self.restart(deadline_ns=3_000_000_000)
+        after = self.records.reader_control_head("tribe")
+        self.assertEqual(after["action"], "rebound")
+        self.assertEqual(after["command"], before["command"])
+        self.assertNotEqual(after, before)
+        self.assertEqual(
+            raised.exception.recovery_failure,
+            {"stage": "append", "code": "reader_journal_deadline_expired"},
+        )
+
+    def test_runtime_without_receivers_cannot_publish_ready_after_deadline(self):
+        from daimon_matrix import daemon
+
+        root = Path(self.directory.name)
+        info = root.stat()
+        monotonic = [1_000_000_000]
+
+        def slow_registry(_paths):
+            monotonic[0] = 3_000_000_000
+
+        runtime = SimpleNamespace(
+            state_root=root,
+            state_identity=(info.st_dev, info.st_ino),
+            socket_path=root / "test.sock",
+            service=SimpleNamespace(receiving=None),
+            egress=SimpleNamespace(validate_registry=slow_registry),
+        )
+        reader_fd, writer_fd = os.pipe()
+        try:
+            with (
+                patch("time.monotonic_ns", lambda: monotonic[0]),
+                patch.object(daemon, "_enabled_egress_paths", return_value=[]),
+                self.assertRaisesRegex(
+                    daemon.DaemonError, "reader_journal_deadline_expired"
+                ),
+            ):
+                daemon.serve_forever(
+                    runtime,
+                    ready_descriptor=writer_fd,
+                    startup_deadline_ns=3_000_000_000,
+                )
+            self.assertFalse(runtime.socket_path.exists())
+            os.set_blocking(reader_fd, False)
+            with self.assertRaises(BlockingIOError):
+                os.read(reader_fd, 16)
+        finally:
+            os.close(reader_fd)
+            os.close(writer_fd)
 
     def enabled(self):
         controller = self.restart()
