@@ -244,7 +244,7 @@ class TribeRecordStore:
         # Arbitrary injected verifiers may have additional mutable predicates;
         # only the maintained application verifier opts into historical reuse.
         cache_enabled = getattr(self, "cache_reader_bindings", False)
-        known = (
+        known: set[bytes] = (
             getattr(self, "_reader_verified_bindings", set())
             if getattr(self, "_reader_verifier", None) is self.verify
             else set()
