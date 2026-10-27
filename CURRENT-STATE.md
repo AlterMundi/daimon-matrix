@@ -1,3 +1,31 @@
+## Current receiving deployment and maintenance — 2026-10-27
+
+CompAII, Eko on native MEDUSA and Oliva load body/observer `f6b369a9`,
+Matrix SDK `43f05fdb`, Matrix source `6cb82e5a` and wheel `9e46fe11`.
+Activation `948a07b9` is linked into original maintenance `369e8ec1`, whose
+retained phase is receiving-selected. Root coordinator `95158300` performed the
+activation; the newer coordinator-only maintenance CLI `ef5e0159` is installed
+and its actual status resolves this same selected parent/cohort. Neither helper
+version identifies the body selection.
+
+Source native group message `006e6cc4` has Eko and Oliva signed delivered
+receipts and a confirmed Tribu echo. Model-free Eko reply `24d3c58d` preserves
+the parent/thread and has Source and Oliva signed delivered receipts. Three
+unavailable sibling bodies remain explicitly unconfirmed. No new model turn,
+Codex/Telegram restart, global Stop or uncertain-message remint occurred.
+[Actual acceptance and receipt hashes](https://github.com/AlterMundi/daimon-matrix/issues/376#issuecomment-6435797213).
+
+Use the maintained receiving CLI (`recover-managed-start`, `continue-activation`,
+then ordinary `apply`) for the next authorized recovery. It prepares the exact
+helper, retains finite intents/requests and links completion into the original
+parent. Do not execute dated phase scripts, reinstall unchanged SDKs, recreate
+identities or repeat successful service lifecycle to repair observation. See
+[Cluster PR339](https://github.com/nicoechaniz/daimon-cluster/pull/339) and its
+`docs/runbooks/tribu-sdk-successor.md`. CLI-only CI passed302 cases; unchanged
+body qualification from PR336 remains valid. Matrix #376 remains active for the
+remaining same-being behavioral/native-consumption delta; this deployment is not
+completion of that goal. Earlier dated deployment sections are history.
+
 # Current state
 
 ## Current physical placement — 2026-10-26
@@ -31,7 +59,7 @@ retain their historical evidence and do not select a runtime.
 and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
 the reviewed next changes; they do not activate automatic peer attention.
 
-## Current receiving and directed-message repair — 2026-10-24 11:34 UTC
+## Historical receiving and directed-message repair — 2026-10-24 11:34 UTC
 
 CompAII, Eko and Oliva load receiving helper `1f527f0a`, SDK `5b0e2212`,
 Matrix `50005b36` and unchanged Cluster `c36f4736`. Parent `2ca8505b` completed
