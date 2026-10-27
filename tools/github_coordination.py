@@ -445,8 +445,37 @@ def _linked_issue(body: str, repo: str) -> int | None:
     return None
 
 
+def _operational_checkpoint_only(repo: str, pr_number: int, pull: dict) -> bool:
+    """Only complete, modified factual checkpoint files omit work leases."""
+    count = pull.get("changed_files")
+    if type(count) is not int or not 0 < count <= 2:
+        return False
+    files = _run_gh(["api", f"repos/{repo}/pulls/{pr_number}/files?per_page=100"])
+    return (
+        isinstance(files, list)
+        and len(files) == count
+        and all(
+            isinstance(item, dict)
+            and item.get("filename") in {"CURRENT-STATE.md", "RESUME.md"}
+            and item.get("status") == "modified"
+            and "previous_filename" not in item
+            for item in files
+        )
+    )
+
+
 def audit_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     pull = _run_gh(["api", f"repos/{repo}/pulls/{pr_number}"])
+    if _operational_checkpoint_only(repo, pr_number, pull):
+        return {
+            "ok": True,
+            "repository": repo,
+            "pull_request": pr_number,
+            "linked_issue": None,
+            "current": None,
+            "findings": [],
+            "profile": "operational-checkpoint",
+        }
     body = pull.get("body") or ""
     findings = []
     issue_number = _linked_issue(body, repo)

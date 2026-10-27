@@ -5,6 +5,15 @@ coordination plane. This protocol is orthogonal to `/tribe`, `/me`, `/we`, and
 runtime presence. A coordination label such as `codex@localhost` is not a
 transport principal or Daimon identity.
 
+## Operational checkpoint exception
+
+PRs that only modify existing `CURRENT-STATE.md` and/or `RESUME.md` report the
+`operational-checkpoint` audit profile without an implementation lease or issue
+closure. The audit checks the complete authoritative GitHub file inventory;
+unknown, mixed, added, renamed or behavior/contract files keep the signed work
+protocol below. Ordinary documentation and frozen-invariant checks still run.
+This is a work-coordination exception, not runtime authority or delivery proof.
+
 ## Trust boundary
 
 The public issue log contains two append-only records:
