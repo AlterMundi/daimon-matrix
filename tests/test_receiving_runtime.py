@@ -1027,6 +1027,37 @@ class ReceivingCompositionTests(unittest.TestCase):
     with_receiving_controller = True
     setUp = group_fixtures.GroupRuntimeTests.setUp
 
+    def test_warm_reader_binding_rejects_clock_rollback_with_actual_verifier(self):
+        from daimon_matrix.messaging_config import create_binding, verify_record_binding
+        from tests.test_messaging_runtime import loaded
+
+        _fixture, runtime, _reads = loaded(
+            self, self.fixture.founder, clock=lambda: self.fixture.now
+        )
+        records = TribeRecordStore(
+            runtime.state_root / "clock-regression.sqlite",
+            sign=lambda value: create_binding(runtime, value),
+            verify=lambda value, binding: verify_record_binding(
+                runtime, value, binding
+            ),
+            clock=runtime.service.clock,
+            cache_reader_bindings=True,
+        )
+        # Reuse an actual authenticated reader-control shape, without starting
+        # a worker or producing any foreign message.
+        helper = DurableReaderRecoveryTests()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.records = records
+        helper.enabled_v2()
+        head = records.reader_control_head("tribe")
+        now = self.fixture.now
+        self.fixture.now = now - 1
+        with self.assertRaisesRegex(ValueError, "messaging_binding_rejected"):
+            records.reader_control_head("tribe")
+        self.fixture.now = now
+        self.assertEqual(records.reader_control_head("tribe"), head)
+
     def test_signed_composition_recovers_before_worker_start_and_invalidates_drift(
         self,
     ):
@@ -1578,6 +1609,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             sign=sign,
             verify=verify,
             clock=lambda: self.now,
+            cache_reader_bindings=True,
         )
         self.binding = {
             key: "unchanged"
@@ -1613,13 +1645,82 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         )
         return controller
 
+    def test_custom_verifier_does_not_cache_by_default(self):
+        self.enabled_v2()
+        self.records.cache_reader_bindings = False
+        with patch.object(self.records, "verify", wraps=self.records.verify) as verify:
+            self.records.reader_control_head("tribe")
+            before = verify.call_count
+            self.records.reader_control_head("tribe")
+            self.assertGreater(before, 0)
+            self.assertEqual(verify.call_count, before * 2)
+
+    def test_warm_reader_control_does_not_reverify_unchanged_signed_history(self):
+        current, _ = self.enabled_v2()
+        verify = self.records.verify
+        monotonic = [1_000_000_000]
+        checked = []
+
+        def slow_verify(value, binding):
+            monotonic[0] += 1_200_000_000
+            checked.append(value["record_id"])
+            verify(value, binding)
+
+        self.records.verify = slow_verify
+        with patch("time.monotonic_ns", lambda: monotonic[0]):
+            self.records.reader_control_head("tribe")
+            self.assertGreaterEqual(len(checked), 2)
+            before = len(checked)
+            current.select_readers(
+                command(current),
+                request_sha256="f" * 64,
+                deadline_ns=monotonic[0] + 2_000_000_000,
+            )
+        self.assertEqual(len(checked), before)
+        self.assertEqual(
+            current.reader_snapshot("tribe", deadline_ns=budget())["phase"], "revoke"
+        )
+
+    def test_reader_signature_cache_rejects_changed_signed_fields_and_binding(self):
+        self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        with closing(sqlite3.connect(self.records.path)) as database:
+            database.row_factory = sqlite3.Row
+            original = dict(
+                database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='reader-control' "
+                    "ORDER BY sequence DESC LIMIT 1"
+                ).fetchone()
+            )
+        changes = {
+            "record_id": str(uuid.uuid4()),
+            "request_hash": "0" * 64,
+            "recorded_at_ms": original["recorded_at_ms"] + 1,
+            "binding": canonical_bytes("invalid-synthetic-binding"),
+        }
+        for key, value in changes.items():
+            with self.subTest(field=key):
+                with closing(sqlite3.connect(self.records.path)) as database, database:
+                    database.execute(
+                        "UPDATE tribe_records SET " + key + "=? WHERE sequence=?",
+                        (value, original["sequence"]),
+                    )
+                with self.assertRaisesRegex(ValueError, "synthetic_binding_invalid"):
+                    self.records.reader_control_head("tribe")
+                with closing(sqlite3.connect(self.records.path)) as database, database:
+                    database.execute(
+                        "UPDATE tribe_records SET " + key + "=? WHERE sequence=?",
+                        (original[key], original["sequence"]),
+                    )
+                self.records.reader_control_head("tribe")
+
     def test_valid_startup_can_authenticate_both_scans_beyond_two_seconds(self):
         self.enabled_v2()
         verify = self.records.verify
         monotonic = [1_000_000_000]
 
         def slow_verify(value, binding):
-            monotonic[0] += 700_000_000
+            monotonic[0] += 1_500_000_000
             verify(value, binding)
 
         self.records.verify = slow_verify
@@ -1638,7 +1739,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         monotonic = [1_000_000_000]
 
         def slow_verify(value, binding):
-            monotonic[0] += 700_000_000
+            monotonic[0] += 1_500_000_000
             verify(value, binding)
 
         self.records.verify = slow_verify
@@ -1651,7 +1752,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             self.restart(deadline_ns=3_000_000_000)
         self.assertEqual(
             raised.exception.recovery_failure,
-            {"stage": "append", "code": "reader_journal_deadline_expired"},
+            {"stage": "load", "code": "reader_journal_deadline_expired"},
         )
         self.assertIsNone(raised.exception.__cause__)
         self.assertEqual(self.records.reader_control_head("tribe"), before)

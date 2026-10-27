@@ -45,12 +45,14 @@ class TribeRecordStore:
         sign: Callable[[Any], Any] | None = None,
         verify: Callable[[Any, Any], None] | None = None,
         clock: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
+        cache_reader_bindings: bool = False,
     ) -> None:
         if (sign is None) != (verify is None):
             raise ValueError("tribe_record_binding_required")
         self.path = path.absolute()
         self.sign, self.verify = sign, verify
         self.clock = clock
+        self.cache_reader_bindings = cache_reader_bindings
         self.egress: MandatoryEgressController | None = None
         self.catalog_id: str | None = None
         with self._database() as database:
@@ -88,7 +90,12 @@ class TribeRecordStore:
                 database.execute("PRAGMA synchronous=FULL")
                 yield database
 
-    def _checked(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    def _checked(
+        self,
+        row: sqlite3.Row | dict[str, Any],
+        *,
+        reader_bindings: tuple[set[bytes], set[bytes]] | None = None,
+    ) -> dict[str, Any]:
         raw = bytes(row["document"])
         value = json.loads(raw)
         if (
@@ -97,16 +104,29 @@ class TribeRecordStore:
         ):
             raise ValueError("tribe_record_corrupt")
         if self.verify is not None:
-            self.verify(
-                {
-                    "kind": row["kind"],
-                    "record_id": row["record_id"],
-                    "request_hash": row["request_hash"],
-                    "recorded_at_ms": row["recorded_at_ms"],
-                    "document": value,
-                },
-                json.loads(bytes(row["binding"])),
-            )
+            signed = {
+                "kind": row["kind"],
+                "record_id": row["record_id"],
+                "request_hash": row["request_hash"],
+                "recorded_at_ms": row["recorded_at_ms"],
+                "document": value,
+            }
+            if reader_bindings is None:
+                self.verify(signed, json.loads(bytes(row["binding"])))
+            else:
+                fingerprint = hashlib.sha256(
+                    canonical_bytes(signed) + b"\0" + bytes(row["binding"])
+                ).digest()
+                # The maintained verifier checks this live clock predicate too.
+                # A clock rollback must invalidate a previously warm attestation.
+                instant = signed["recorded_at_ms"]
+                if (
+                    fingerprint not in reader_bindings[0]
+                    or type(instant) is not int
+                    or not 0 <= instant <= self.clock()
+                ):
+                    self.verify(signed, json.loads(bytes(row["binding"])))
+                reader_bindings[1].add(fingerprint)
         return dict(value)
 
     def reserve(
@@ -217,12 +237,27 @@ class TribeRecordStore:
     ) -> dict[str, Any] | None:
         # SQL sequence is not signed. Authenticate the revision/predecessor
         # chain, including tombstones; never search for an older matching select.
+        # Only immutable, historical reader attestations may reuse signature
+        # checks. Every signed field and exact binding byte participates; raw
+        # canonical hashes and the complete revision chain are always checked.
+        # This cache never authorizes a current reader or bypasses its live fence.
+        # Arbitrary injected verifiers may have additional mutable predicates;
+        # only the maintained application verifier opts into historical reuse.
+        cache_enabled = getattr(self, "cache_reader_bindings", False)
+        known = (
+            getattr(self, "_reader_verified_bindings", set())
+            if getattr(self, "_reader_verifier", None) is self.verify
+            else set()
+        )
+        checked: set[bytes] = set()
         documents = []
         for row in database.execute(
             "SELECT * FROM tribe_records WHERE kind='reader-control'"
         ):
             self._reader_budget(deadline_ns)
-            document = self._checked(row)
+            document = self._checked(
+                row, reader_bindings=(known, checked) if cache_enabled else None
+            )
             if (
                 set(document)
                 != {
@@ -268,6 +303,10 @@ class TribeRecordStore:
             ):
                 raise ValueError("reader_journal_chain_invalid")
             previous = document
+        # Publish only after the full current chain is accepted. Removed rows
+        # leave no cache entries, and a changed verifier starts cold.
+        self._reader_verifier = self.verify
+        self._reader_verified_bindings = checked
         return previous
 
     @staticmethod
