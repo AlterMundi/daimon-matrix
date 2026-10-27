@@ -226,6 +226,20 @@ TRIBE_GROUP_FILES = (
 )
 
 
+COORDINATION_FILES = frozenset(
+    {
+        "tools/github_coordination.py",
+        "tests/test_github_coordination_cli.py",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+        "CONTRIBUTING.md",
+        "docs/github-coordination.md",
+        "CURRENT-STATE.md",
+        "RESUME.md",
+    }
+)
+
 CONTEXT_DOC_FILES = frozenset(
     {
         "README.md",
@@ -382,6 +396,11 @@ def profile(paths: list[str]) -> str:
         and changed <= RELEASE_COMPATIBILITY_FILES
     ):
         return "release-compatibility"
+    if {
+        "tools/github_coordination.py",
+        "tests/test_github_coordination_cli.py",
+    } <= changed and changed <= COORDINATION_FILES:
+        return "coordination"
     if changed & {"AGENTS.md", "CURRENT-STATE.md"} and changed <= CONTEXT_DOC_FILES:
         return "context-docs"
     if (

@@ -43,6 +43,22 @@ jobs:
       - run: python3 -W error::ResourceWarning -m unittest tests.test_ci_scope -v
       - run: python3 tools/check_frozen_invariants.py --skip-generated
 
+  coordination:
+    name: GitHub coordination tooling
+    needs: scope
+    if: needs.scope.outputs.profile == 'coordination'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+          cache: pip
+          cache-dependency-path: requirements-vectors.txt
+      - run: python -m pip install -r requirements-vectors.txt
+      - run: python -W error::ResourceWarning -m unittest tests.test_github_claims tests.test_github_coordination_cli tests.test_ci_scope -v
+      - run: python tools/check_frozen_invariants.py --skip-generated
+
   release-compatibility:
     name: installed receiving release contract (3.13.5)
     needs: scope

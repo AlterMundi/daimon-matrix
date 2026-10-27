@@ -7,6 +7,12 @@ and project metadata.
 
 ## One issue, one claim, one PR
 
+Factual operational checkpoint updates limited to modifications of
+`CURRENT-STATE.md` and/or `RESUME.md` do not require an implementation issue,
+claim lease or issue closure. GitHub verifies the complete changed-file list;
+renames, additions, mixed changes, code, contracts and `AGENTS.md` retain the
+normal claim protocol. Documentation and frozen-invariant checks still apply.
+
 An issue is claimable only when:
 
 - it has `status:ready`;

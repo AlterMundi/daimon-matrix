@@ -830,3 +830,19 @@ class ActualMergeScopeTests(unittest.TestCase):
             self.assertEqual(merge.returncode, 1)
             commit("src/daimon_matrix/runtime.py", "resolved actual SDK change")
             self.assertEqual(selected(actual_sdk_head), "profile=full")
+
+
+class CoordinationScopeTests(unittest.TestCase):
+    def test_coordination_tooling_keeps_claim_and_ci_contracts_without_runtime_work(
+        self,
+    ):
+        from tools.ci_scope import COORDINATION_FILES, profile
+
+        self.assertEqual(profile(sorted(COORDINATION_FILES)), "coordination")
+        for extra in (
+            "src/daimon_matrix/messaging.py",
+            "AGENTS.md",
+            "schemas/authority.json",
+            "unknown.py",
+        ):
+            self.assertEqual(profile(sorted(COORDINATION_FILES | {extra})), "full")

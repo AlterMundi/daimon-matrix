@@ -719,3 +719,69 @@ class RecoveryCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OperationalCheckpointAuditTests(unittest.TestCase):
+    def test_factual_checkpoint_modifications_need_no_implementation_lease(self):
+        for names in (
+            ["CURRENT-STATE.md"],
+            ["RESUME.md"],
+            ["CURRENT-STATE.md", "RESUME.md"],
+        ):
+            with self.subTest(names=names):
+                files = [{"filename": name, "status": "modified"} for name in names]
+                with mock.patch.object(
+                    cli, "_run_gh", side_effect=[{"changed_files": len(files)}, files]
+                ) as gh:
+                    result = cli.audit_pr("example/repo", 1, now=NOW)
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["profile"], "operational-checkpoint")
+                self.assertEqual(gh.call_count, 2)
+
+    def test_mixed_unknown_renamed_added_and_incomplete_diffs_keep_claim_audit(self):
+        cases = [
+            [{"filename": "AGENTS.md", "status": "modified"}],
+            [{"filename": "specs/authority.md", "status": "modified"}],
+            [{"filename": "CURRENT-STATE.md", "status": "added"}],
+            [
+                {
+                    "filename": "CURRENT-STATE.md",
+                    "status": "renamed",
+                    "previous_filename": "src/core.py",
+                }
+            ],
+            [
+                {
+                    "filename": "CURRENT-STATE.md",
+                    "status": "modified",
+                    "previous_filename": "src/core.py",
+                }
+            ],
+            [
+                {"filename": "CURRENT-STATE.md", "status": "modified"},
+                {"filename": "src/core.py", "status": "modified"},
+            ],
+            [],
+        ]
+        for files in cases:
+            with self.subTest(files=files):
+                with mock.patch.object(
+                    cli,
+                    "_run_gh",
+                    side_effect=[{"changed_files": max(1, len(files))}, files],
+                ):
+                    result = cli.audit_pr("example/repo", 1, now=NOW)
+                self.assertFalse(result["ok"])
+                self.assertIn(
+                    "missing_claim_id", [x["code"] for x in result["findings"]]
+                )
+
+    def test_missing_or_large_file_inventory_never_exempts_a_pull_request(self):
+        for count in (None, 0, 3, True, "1"):
+            with self.subTest(count=count):
+                with mock.patch.object(
+                    cli, "_run_gh", return_value={"changed_files": count}
+                ) as gh:
+                    result = cli.audit_pr("example/repo", 1, now=NOW)
+                self.assertFalse(result["ok"])
+                self.assertEqual(gh.call_count, 1)
