@@ -1680,6 +1680,7 @@ def _compose_group(
         sign=lambda value: create_binding(runtime, value),
         verify=lambda value, binding: verify_record_binding(runtime, value, binding),
         clock=service.clock,
+        cache_reader_bindings=True,
     )
     lane = TribeConversation(
         service.ledger,
