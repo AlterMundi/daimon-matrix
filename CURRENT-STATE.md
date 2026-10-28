@@ -22,42 +22,41 @@ parent. Do not execute dated phase scripts, reinstall unchanged SDKs, recreate
 identities or repeat successful service lifecycle to repair observation. See
 [Cluster PR339](https://github.com/nicoechaniz/daimon-cluster/pull/339) and its
 `docs/runbooks/tribu-sdk-successor.md`. CLI-only CI passed302 cases; unchanged
-body qualification from PR336 remains valid. Matrix #376 remains active for the
-remaining same-being behavioral/native-consumption delta; this deployment is not
-completion of that goal. Earlier dated deployment sections are history.
+body qualification from PR336 remains valid. The prior sync/Weave goal #376 is complete; the active whole-host migration
+is separate and remains unfinished. Earlier dated deployment sections are history.
 
 # Current state
 
-## Current physical placement — 2026-10-26
+## Current physical placement — 2026-10-28
 
-Eko Codex now runs natively on MEDUSA, its dedicated Contabo VPS, with host
-administration and sudo. CompAII remains on daimonmatrix; Oliva remains in its
-existing Incus container there. Their future relocation plans are separate.
-The original dm-eko is STOPPED with autostart=false: retain it disabled until Sai
-confirms complete receiving acceptance and the planned source retirement occurs.
-Successful Telegram use is not source deletion authority.
+Eko Codex is native on MEDUSA. Its old Source dm-eko is stopped with autostart
+false and retained until Sai confirms complete acceptance and source retirement
+is separately authorized. Never use it as an update target.
 
-Resolve per-body maintenance through the current Shared Resources host-medusa,
-host-daimonmatrix and container-dm-oliva records and receiving-private bindings.
-Historical body_ref/display labels preserve signed origin; they do not select
-physical placement. Native maintenance transport is merged in Cluster PR321,
-but its executable worker/default-route adoption and ongoing offhost backups
-remain unfinished. Do not silently target the disabled Incus origin.
+Oliva now runs in the full KVM resource `vm-dm-oliva` on Shared Resources
+`host-ovh-sys-game-2`, managed by Incus. Her original Source dm-oliva is stopped
+with autostart false and retained; never restart or update it as an active body.
+The writer-fenced final root/home checksum streams completed successfully.
+Native provider, bot authentication, apps and actual consumer file access pass.
+All three Matrix readers survived the scoped restart, directed roundtrip with
+CompAII is signed, and a distinct post-restart group has signed delivery at
+CompAII and Eko. Earlier uncertain group delivery remains uncertain. Human
+acceptance is still pending; completed native turns do not substitute for it.
+Shared services remain Source-backed during the rest of the host migration.
 
-Nicolas confirmed Sai Telegram usability after same-account native provider
-renewal. Earlier group/direct/reply signed receipts remain valid evidence. A
-later Matrix-only startup refusal before socket publication is under repair;
-Telegram usability and old receipts do not establish current Matrix availability.
-No new identity, attention, login, global Stop or unrelated interruption follows.
-Maintained placement source: Shared Resources docs/services/medusa.md.
+CompAII and final shared services remain active on daimonmatrix. Their final
+cutover to the new host still requires Nicolas personal confirmation. The active
+migration includes ALL functioning host services/data and the Cluster control
+plane; initial live copies are staging, not a coherent final snapshot. Preserve
+receiving boot/network/administration and the original sources. No source
+retirement, global Stop, duplicate identity writer or autonomous wakeup follows.
 
+Resolve fleet routes from Shared Resources `host-medusa`, `host-daimonmatrix`,
+`host-ovh-sys-game-2`, `vm-dm-oliva` and historical `container-dm-oliva`, plus
+receiving private bindings. Signed origin labels never override physical placement.
+Maintained deployment and dependency evidence: Shared Resources
+`docs/services/new-ovh-game-host.md` and `docs/services/medusa.md`.
 
-Architecture and profile navigation: [docs/current-architecture.md](docs/current-architecture.md).
-The newest dated receiving entry selects current deployment; older entries
-retain their historical evidence and do not select a runtime.
-[Architecture alignment milestone6](https://github.com/AlterMundi/daimon-matrix/milestone/6)
-and [coordination #336](https://github.com/AlterMundi/daimon-matrix/issues/336) own
-the reviewed next changes; they do not activate automatic peer attention.
 
 ## Historical receiving and directed-message repair — 2026-10-24 11:34 UTC
 
