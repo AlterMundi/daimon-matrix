@@ -1681,6 +1681,74 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             current.reader_snapshot("tribe", deadline_ns=budget())["phase"], "revoke"
         )
 
+    def test_warm_reader_history_keeps_canonicalization_inside_control_budget(self):
+        self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        monotonic = [1_000_000_000]
+        large_passes = []
+
+        def costly_canonical(value):
+            # Boot/context grows with real retained authority history. Charge
+            # each full pass, independently of machine speed or a timing sleep.
+            if isinstance(value, dict) and ("boot" in value or "document" in value):
+                monotonic[0] += 600_000_000
+                large_passes.append(value)
+            return canonical_bytes(value)
+
+        with patch("time.monotonic_ns", lambda: monotonic[0]), patch(
+            "daimon_matrix.messaging_store.canonical_bytes", costly_canonical
+        ):
+            head = self.records.reader_control_head(
+                "tribe", deadline_ns=monotonic[0] + 2_000_000_000
+            )
+            self.records._reader_budget(3_000_000_000)
+        self.assertEqual(head["command"]["phase"], "select")
+        self.assertEqual(len(large_passes), head["revision"])
+
+    def test_warm_reader_hash_reuse_rejects_changed_document_and_signed_fork(self):
+        self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        with closing(sqlite3.connect(self.records.path)) as database:
+            database.row_factory = sqlite3.Row
+            original = dict(database.execute(
+                "SELECT * FROM tribe_records WHERE kind='reader-control' "
+                "ORDER BY sequence DESC LIMIT 1"
+            ).fetchone())
+        for resign in (False, True):
+            with self.subTest(resign=resign):
+                changed = json.loads(bytes(original["document"]))
+                changed["predecessor_sha256"] = "f" * 64
+                raw = canonical_bytes(changed)
+                binding = original["binding"]
+                if resign:
+                    signed = {key: original[key] for key in (
+                        "kind", "record_id", "request_hash", "recorded_at_ms"
+                    )}
+                    binding = canonical_bytes(self.records.sign({
+                        **signed, "document": changed
+                    }))
+                with closing(sqlite3.connect(self.records.path)) as database, database:
+                    database.execute(
+                        "UPDATE tribe_records SET document=?,document_hash=?,binding=? "
+                        "WHERE sequence=?",
+                        (raw, hashlib.sha256(raw).hexdigest(), binding,
+                         original["sequence"]),
+                    )
+                expected = (
+                    "reader_journal_chain_invalid" if resign
+                    else "synthetic_binding_invalid"
+                )
+                with self.assertRaisesRegex(ValueError, expected):
+                    self.records.reader_control_head("tribe")
+                with closing(sqlite3.connect(self.records.path)) as database, database:
+                    database.execute(
+                        "UPDATE tribe_records SET document=?,document_hash=?,binding=? "
+                        "WHERE sequence=?",
+                        (original["document"], original["document_hash"],
+                         original["binding"], original["sequence"]),
+                    )
+                self.records.reader_control_head("tribe")
+
     def test_reader_signature_cache_rejects_changed_signed_fields_and_binding(self):
         self.enabled_v2()
         self.records.reader_control_head("tribe")

@@ -115,7 +115,10 @@ class TribeRecordStore:
                 self.verify(signed, json.loads(bytes(row["binding"])))
             else:
                 fingerprint = hashlib.sha256(
-                    canonical_bytes(signed) + b"\0" + bytes(row["binding"])
+                    canonical_bytes(
+                        {key: item for key, item in signed.items() if key != "document"}
+                    )
+                    + b"\0" + raw + b"\0" + bytes(row["binding"])
                 ).digest()
                 # The maintained verifier checks this live clock predicate too.
                 # A clock rollback must invalidate a previously warm attestation.
@@ -287,22 +290,21 @@ class TribeRecordStore:
             ):
                 raise ValueError("reader_journal_record_invalid")
             if document.get("channel_id") == channel_id:
-                documents.append(document)
-        documents.sort(key=lambda item: item["revision"])
+                # _checked has already proved canonical raw bytes and their hash.
+                # Reuse that exact hash instead of serializing the same boot again.
+                documents.append((document, row["document_hash"]))
+        documents.sort(key=lambda item: item[0]["revision"])
         previous = None
-        for revision, document in enumerate(documents, 1):
+        previous_hash = None
+        for revision, (document, document_hash) in enumerate(documents, 1):
             if (
                 type(document["revision"]) is not int
                 or document["revision"] != revision
-                or document["predecessor_sha256"]
-                != (
-                    None
-                    if previous is None
-                    else hashlib.sha256(canonical_bytes(previous)).hexdigest()
-                )
+                or document["predecessor_sha256"] != previous_hash
             ):
                 raise ValueError("reader_journal_chain_invalid")
             previous = document
+            previous_hash = document_hash
         # Publish only after the full current chain is accepted. Removed rows
         # leave no cache entries, and a changed verifier starts cold.
         self._reader_verifier = self.verify
