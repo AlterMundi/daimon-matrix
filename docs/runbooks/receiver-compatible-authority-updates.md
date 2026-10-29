@@ -127,3 +127,38 @@ carrier/deadline. A verified retained ACK prevents another network release.
 Authority and current reader readiness are checked again before every write.
 Expired inspection and exact later observation never create another send. This is
 finite technical transport work, not inbox attention or autonomous model activity.
+# Body routes after admission or host relocation
+
+Signed membership/Root admission authorizes a body; it does not supply its HTTP
+route. The group's existing application roster supplies transport providers.
+Reader validity proofs establish a compatible loaded receiver, not an address.
+Before claiming a new or moved body is reachable, resolve its actual selected
+intake and current host from the receiving bindings and Shared Resources.
+
+Under the quiesced native writer, use
+`operator_messaging.reconfigure_group_routes(runtime, app_directory, roster,
+expected_application_sha256=..., installation=...)`. It preserves the existing
+client, stores/history, authorities, signed membership and transport keys. Existing
+body rows may change endpoint only; an added body must be active under an already
+pinned being and reuse that being's existing transport material. Give distinct
+body routes distinct provider/route/key reference identifiers even when a being
+consciously retains the same key bytes. This is group maintenance, never per-pair
+enrollment or another group.
+
+Freeze the predecessor digest and desired roster in the owning maintenance
+operation. Exact retry recovers the same signed metadata generation after a lost
+publication return; it neither remints messages nor retransmits uncertain sends.
+The optional visibility installation is reissued over its unchanged disclosure,
+destination, acceptance, secret references and qualification. Then advance the
+Cluster signed group selector under the same writer through its maintained
+`republish_group_selection` operation. Restart only the selected Matrix process,
+qualify its actual current identity/application/process, and select the current
+reader cohort before checking real signed receiving delivery. Preserve native
+model sessions, bot consumers and all original stores. A new body's first group
+application uses the existing `prepare`/visibility publication path and approved
+membership; do not copy another body's client or writable stores as its identity.
+
+For first native base hosting, initialize its closed visibility catalogs through
+the existing explicit catalog migration before adopting its owner visibility.
+An uninitialized catalog is different from a corrupt existing history: never
+delete an existing journal to force a first-install path.
