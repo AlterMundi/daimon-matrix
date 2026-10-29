@@ -1749,6 +1749,196 @@ def republish(
         os.close(descriptor)
 
 
+def reconfigure_group_routes(
+    runtime: HostedRuntime,
+    app_directory: Path | str,
+    roster: Sequence[Mapping[str, Any]],
+    *,
+    expected_application_sha256: str,
+    installation: Path | None = None,
+) -> dict[str, Any]:
+    """Publish owner-selected routes without changing membership or history.
+
+    The caller holds the runtime writer with the old sender quiesced. Existing
+    rows may change endpoint only. Added bodies must be active under an already
+    pinned being and reuse that being's existing transport material. No key,
+    capability, authority, membership, store or message is created or replaced.
+    """
+    import fcntl
+
+    from .messaging_config import APPLICATION_SCHEMA_V3
+
+    root = _directory(app_directory)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if re.fullmatch(r"[0-9a-f]{64}", expected_application_sha256) is None:
+            raise MessagingConfigError("messaging_group_routes_conflict")
+        selected, metadata = read_publication(runtime, root)
+        previous = selected
+        already_selected = config_digest(selected) != expected_application_sha256
+        if already_selected:
+            publication = read_document(root / "publication.json")
+            if publication["body"]["predecessor_sha256"] != expected_application_sha256:
+                raise MessagingConfigError("messaging_group_routes_conflict")
+            previous = read_document(metadata / "predecessor.json")
+            verify_binding(
+                runtime, previous, read_document(metadata / "predecessor-binding.json")
+            )
+        if (
+            previous["schema"] != APPLICATION_SCHEMA_V3
+            or config_digest(previous) != expected_application_sha256
+        ):
+            raise MessagingConfigError("messaging_group_routes_conflict")
+        candidate = copy.deepcopy(previous)
+        candidate["roster"] = copy.deepcopy(list(roster))
+        validate_shape(candidate)
+        old_rows = {
+            (row["being_ref"], row["embodiment_id"]): row for row in previous["roster"]
+        }
+        new_rows = {
+            (row["being_ref"], row["embodiment_id"]): row for row in candidate["roster"]
+        }
+        if (
+            len(new_rows) != len(candidate["roster"])
+            or not old_rows.keys() <= new_rows.keys()
+        ):
+            raise MessagingConfigError("messaging_group_routes_conflict")
+        authorities = _application_authorities(previous)
+        route_ids = set()
+        for key, row in new_rows.items():
+            route = row["route"]
+            authority = authorities.get(row["being_ref"])
+            if authority is None or not any(
+                member["status"] == "active"
+                and member["embodiment_id"] == row["embodiment_id"]
+                and member["body_ref"] == row["body_ref"]
+                for member in authority.manifest.value["embodiments"]
+            ):
+                raise MessagingConfigError("messaging_roster_binding_rejected")
+            route_id = tuple(
+                route[name] for name in ("provider_ref", "route_ref", "key_ref")
+            )
+            if route_id in route_ids:
+                raise MessagingConfigError("messaging_group_routes_conflict")
+            route_ids.add(route_id)
+            if key in old_rows:
+                allowed = copy.deepcopy(old_rows[key])
+                allowed["route"]["endpoint"] = route["endpoint"]
+                if row != allowed:
+                    raise MessagingConfigError("messaging_group_routes_conflict")
+            else:
+                existing_material = {
+                    (old["route"]["secret_file"], old["route"]["secret_sha256"])
+                    for old in old_rows.values()
+                    if old["being_ref"] == row["being_ref"]
+                }
+                if (
+                    route["secret_file"],
+                    route["secret_sha256"],
+                ) not in existing_material:
+                    raise MessagingConfigError("messaging_group_routes_conflict")
+            if (
+                hashlib.sha256(
+                    protected_read(root / route["secret_file"], size=32)
+                ).hexdigest()
+                != route["secret_sha256"]
+            ):
+                raise MessagingConfigError("messaging_key_rejected")
+        if already_selected and selected != candidate:
+            raise MessagingConfigError("messaging_group_routes_conflict")
+        generation = (
+            "generation-"
+            + config_digest(
+                {
+                    "predecessor": expected_application_sha256,
+                    "successor": config_digest(candidate),
+                }
+            )[:32]
+        )
+        if candidate == previous:
+            generation = metadata.name
+        else:
+            destination = root / generation
+            if already_selected and destination != metadata:
+                raise MessagingConfigError("messaging_group_routes_conflict")
+            destination.mkdir(mode=0o700, exist_ok=True)
+            _directory(destination)
+            entries = {
+                "predecessor.json": canonical_bytes(previous),
+                "predecessor-binding.json": canonical_bytes(
+                    create_binding(runtime, previous)
+                ),
+                "application.json": canonical_bytes(candidate),
+                "binding.json": canonical_bytes(create_binding(runtime, candidate)),
+                "client.json": protected_read(metadata / "client.json"),
+                "successor.json": _publication(
+                    runtime, candidate, generation, expected_application_sha256
+                ),
+            }
+            for name, raw in entries.items():
+                _publish_retained_entry(
+                    destination, name, raw, error_code="messaging_group_routes_conflict"
+                )
+            # Reuse the ordinary compositor: real stores, pinned authority,
+            # membership, client and all transport material must still validate.
+            _compose(runtime, root, candidate, metadata_root=destination)
+            _sync(destination)
+            if not already_selected:
+                temporary = "select-" + generation + ".json"
+                _publish_retained_entry(
+                    root,
+                    temporary,
+                    entries["successor.json"],
+                    error_code="messaging_group_routes_conflict",
+                )
+                _sync(root)
+                if (
+                    config_digest(read_publication(runtime, root)[0])
+                    != expected_application_sha256
+                ):
+                    raise MessagingConfigError("messaging_group_routes_conflict")
+                os.replace(root / temporary, root / "publication.json")
+                _sync(root)
+        visibility = (
+            {"reissued": False}
+            if installation is None
+            else _reissue_installation(
+                runtime, installation, application_sha256=config_digest(candidate)
+            )
+        )
+        if read_publication(runtime, root)[0] != candidate:
+            raise MessagingConfigError("messaging_group_routes_conflict")
+        if installation is not None:
+            _owner_visibility_controller(
+                authorities=_verified_application_authorities(
+                    candidate, _runtime_authorities(runtime)
+                ),
+                application_sha256=config_digest(candidate),
+                installation_path=installation,
+                authority=_runtime_authority(runtime),
+                origin=runtime.service.origin,
+                runtime_id=runtime.service.runtime_id,
+                runtime_label=runtime.service.runtime_label,
+                signer_public_key=runtime.service.signer.public_key,
+                clock=runtime.service.clock,
+                catalog_mode="validate",
+            )
+        return {
+            "status": "group-routes-published",
+            "generation": generation,
+            "predecessor_sha256": expected_application_sha256,
+            "application_sha256": config_digest(candidate),
+            "installation": visibility,
+        }
+    except MessagingConfigError:
+        raise
+    except Exception:
+        raise MessagingConfigError("messaging_group_routes_rejected") from None
+    finally:
+        os.close(fd)
+
+
 def admit_group_application(
     runtime: HostedRuntime,
     app_directory: Path | str,

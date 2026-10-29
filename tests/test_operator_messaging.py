@@ -2514,6 +2514,190 @@ class RetainedVisibilityAcceptanceTests(unittest.TestCase):
         daemon_visibility_check(advanced, target, installation)
 
 
+class GroupRouteMaintenanceTests(unittest.TestCase):
+    def setUp(self):
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.operator_messaging import republish
+        from tests.test_dm051_sealed import TribeConversationLaneTests
+        from tests.test_group_messaging_runtime import GroupRuntimeTests
+        from tests.test_republish_after_advance import advance_manifest
+
+        self.fixture = TribeConversationLaneTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        old, self.app, self.view = GroupRuntimeTests._signed_group_application(
+            self, record_key_check=False, founder_only=True
+        )
+        self.record_id = str(uuid.uuid4())
+        self.retained = {"summary": "history before body relocation"}
+        self.view.service.messaging.channels["tribe"].records.reserve(
+            "request", self.record_id, self.retained, lambda: self.retained
+        )
+        advanced = advance_manifest(old)
+        self.fixture.now += 40
+        ordinary = old.service.relationships
+        old_resolver = ordinary.authority_resolver
+        own = advanced.service.ledger.authority
+
+        def resolver(ref):
+            return (
+                own
+                if ref == self.fixture.founder.state.being_ref
+                else old_resolver(ref)
+            )
+
+        ordinary.store.authority_resolver = resolver
+        self.runtime = replace(
+            advanced,
+            service=replace(
+                advanced.service,
+                relationships=replace(ordinary, authority_resolver=resolver),
+            ),
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        republish(self.runtime, self.app)
+        self.previous, _ = read_publication(self.runtime, self.app)
+        self.expected = config_digest(self.previous)
+        self.roster = copy.deepcopy(self.previous["roster"])
+        row = copy.deepcopy(self.roster[0])
+        row.update(
+            embodiment_id="embodiment:republish:fresh",
+            body_ref="cluster:daimonmatrix:republish-fresh",
+        )
+        row["route"].update(
+            provider_ref="body-fresh",
+            route_ref="body-fresh",
+            key_ref="body-fresh",
+            endpoint="http://127.0.0.1:48769/dm-messaging/v1/message",
+        )
+        self.roster.append(row)
+        self.roster[0]["route"]["endpoint"] = (
+            "http://127.0.0.1:48770/dm-messaging/v1/message"
+        )
+
+    def publish(self, **changes):
+        from daimon_matrix.operator_messaging import reconfigure_group_routes
+
+        values = {"expected_application_sha256": self.expected}
+        values.update(changes)
+        return reconfigure_group_routes(self.runtime, self.app, self.roster, **values)
+
+    def test_real_enrolled_body_and_endpoint_preserve_history_client_and_key(self):
+        client = (self.app / "client.key").read_bytes()
+        key = self.app / self.previous["intake"]["secret_file"]
+        material = key.read_bytes()
+        stores = {
+            name: (self.app / name).stat().st_ino
+            for name in self.previous["stores"].values()
+        }
+        result = self.publish()
+        self.assertEqual(result["status"], "group-routes-published")
+        selected, _ = read_publication(self.runtime, self.app)
+        self.assertEqual(selected, {**self.previous, "roster": self.roster})
+        self.assertEqual((self.app / "client.key").read_bytes(), client)
+        self.assertEqual(key.read_bytes(), material)
+        self.assertEqual(
+            stores, {name: (self.app / name).stat().st_ino for name in stores}
+        )
+        records = (
+            load_application(self.runtime, self.app)
+            .service.messaging.channels["tribe"]
+            .records
+        )
+        self.assertEqual(records.get("request", self.record_id), self.retained)
+
+    def test_lost_selection_ack_recovers_same_signed_generation(self):
+        import daimon_matrix.operator_messaging as operator
+
+        original = operator.os.replace
+
+        def lost(source, destination):
+            original(source, destination)
+            if Path(destination) == self.app / "publication.json":
+                raise OSError("simulated lost publication acknowledgment")
+
+        with (
+            patch.object(operator.os, "replace", side_effect=lost),
+            self.assertRaisesRegex(ValueError, "messaging_group_routes_rejected"),
+        ):
+            self.publish()
+        selected = (self.app / "publication.json").read_bytes()
+        first = self.publish()
+        second = self.publish()
+        self.assertEqual(first, second)
+        self.assertEqual((self.app / "publication.json").read_bytes(), selected)
+
+    def test_unadmitted_body_key_replacement_and_stale_selection_are_refused(self):
+        baseline = (self.app / "publication.json").read_bytes()
+        for mutation in ("body", "existing_key", "new_key", "duplicate", "remove"):
+            rows = copy.deepcopy(self.roster)
+            with self.subTest(mutation=mutation):
+                if mutation == "body":
+                    self.roster[-1]["embodiment_id"] = "embodiment:never-admitted"
+                elif mutation == "existing_key":
+                    self.roster[0]["route"]["key_ref"] = "another-key"
+                elif mutation == "new_key":
+                    self.roster[-1]["route"]["secret_sha256"] = "f" * 64
+                elif mutation == "duplicate":
+                    self.roster.append(copy.deepcopy(self.roster[-1]))
+                else:
+                    self.roster.pop(0)
+                with self.assertRaises(ValueError):
+                    self.publish()
+                self.assertEqual((self.app / "publication.json").read_bytes(), baseline)
+                self.roster = rows
+        with self.assertRaises(ValueError):
+            self.publish(expected_application_sha256="0" * 64)
+        self.assertEqual((self.app / "publication.json").read_bytes(), baseline)
+
+    def test_visibility_gap_recovers_without_changing_disclosure_or_secrets(self):
+        import daimon_matrix.operator_messaging as operator
+        from tests.test_republish_after_advance import daemon_visibility_check
+
+        installation, configuration = (
+            GroupApplicationAdmissionTests.visibility_configuration(self)
+        )
+        disclosure = operator.group_visibility_disclosure(
+            self.runtime,
+            self.app,
+            approved_destination=configuration["destination"],
+            issued_at_ms=self.fixture.now,
+        )
+        operator.publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            [create_binding(self.runtime, disclosure)],
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        before = json.loads(installation.read_bytes())["document"]
+        with (
+            patch.object(
+                operator,
+                "_reissue_installation",
+                side_effect=OSError("interrupted before visibility"),
+            ),
+            self.assertRaisesRegex(ValueError, "messaging_group_routes_rejected"),
+        ):
+            self.publish(installation=installation)
+        publication = (self.app / "publication.json").read_bytes()
+        self.publish(installation=installation)
+        after = json.loads(installation.read_bytes())["document"]
+        for field in (
+            "disclosure",
+            "acceptance_set",
+            "secrets",
+            "telegram_qualification",
+        ):
+            self.assertEqual(after[field], before[field])
+        self.assertEqual((self.app / "publication.json").read_bytes(), publication)
+        daemon_visibility_check(self.runtime, self.app, installation)
+
+
 class GroupApplicationAdmissionTests(unittest.TestCase):
     def setUp(self):
         from daimon_matrix.native_egress import closed_visibility
