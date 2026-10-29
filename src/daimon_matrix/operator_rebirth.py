@@ -2063,6 +2063,12 @@ def apply_activation_to_runtime_bundle(
     authority_history.append(
         {
             "manifest": copy.deepcopy(base.manifest.value),
+            # A later enrollment adds credential material. Keep this epoch's
+            # exact authority so earlier retirements never inherit future keys.
+            "control_artifacts": copy.deepcopy(result["control_artifacts"]),
+            "control_head": base.state.head,
+            "credentials": copy.deepcopy(result["credentials"]),
+            "incarnations": copy.deepcopy(result["incarnations"]),
             "successor": copy.deepcopy(verified["body"]["transition"]),
         }
     )
