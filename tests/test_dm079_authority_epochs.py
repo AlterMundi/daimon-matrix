@@ -51,6 +51,7 @@ from daimon_matrix.runtime import load_runtime
 from daimon_matrix.scopes import ScopeResolver
 from daimon_matrix.weave import BeingManifest, RootAuthority, WeaveProtocolError
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
+from tests.test_dm022_ledger import seed as fixture_seed
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 from tools.generate_dm079_vectors import generate as generate_vectors
 
@@ -58,6 +59,129 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class EmbodimentRetirementTests(RuntimeFixture):
+    def test_enrollment_after_retirement_freezes_complete_predecessor_authority(
+        self,
+    ) -> None:
+        from daimon_matrix.operator_rebirth import (
+            apply_activation_to_runtime_bundle,
+            authority_from_runtime_bundle,
+            authorize_enrollment_request,
+            create_enrollment_request,
+        )
+
+        root, bundle, _capability = self.make_bundle(
+            secrets={"peer.encryption.v1:legion": fixture_seed("legion-encryption")}
+        )
+        from daimon_matrix.native_egress import synthetic_visibility
+
+        bundle["peer_transport"] = dict(
+            enabled=True,
+            encryption_slot="peer.encryption.v1:legion",
+            exchange_filename="peer-exchange.sqlite",
+            listen_host="127.0.0.1",
+            listen_port=8686,
+            outbox_filename="peer-outbox.sqlite",
+            targets=[
+                dict(
+                    embodiment_id="embodiment:daimonmatrix",
+                    endpoint="http://127.0.0.1:18686/dm-peer/v1",
+                    timeout_ms=5000,
+                )
+            ],
+        )
+        (root / "runtime.json").write_bytes(canonical_bytes(bundle))
+        initial = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW,
+            egress=synthetic_visibility(clock=lambda: NOW),
+        )
+        event = initial.service.ledger.append_local(
+            kind="experience.observed",
+            subject="before-retirement",
+            payload={"summary": "preserved across later enrollment"},
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+        )
+        intent, shares = self.prepare_retirement(
+            self.authority, ["embodiment:daimonmatrix"]
+        )
+        transition = aggregate_retirement(
+            intent, self.authority, shares, observed_at_ms=NOW + 22
+        )
+        retired = apply_retirement_to_runtime_bundle(bundle, transition)
+        previous = authority_from_runtime_bundle(retired)
+        request = create_enrollment_request(
+            previous,
+            signing_seed=fixture_seed("post-retirement-signing"),
+            encryption_private=fixture_seed("post-retirement-encryption"),
+            transport_seed=fixture_seed("post-retirement-transport"),
+            body_ref="codex:receiving:new",
+            embodiment_id="embodiment:receiving",
+            incarnation_id="incarnation:receiving:0",
+            principal_id="compaii@receiving",
+            created_at_ms=NOW + 30,
+            expires_at_ms=NOW + 60_000,
+            nonce=fixture_seed("post-retirement-nonce"),
+        )
+        activation = authorize_enrollment_request(
+            request,
+            previous,
+            root_seeds=self.root_seeds[:2],
+            issued_at_ms=NOW + 31,
+        )
+        advanced = apply_activation_to_runtime_bundle(
+            retired,
+            activation,
+            previous,
+            target_endpoint="http://127.0.0.1:28686/dm-peer/v1",
+        )
+        snapshot = advanced["authority_history"][-1]
+        for field in (
+            "manifest",
+            "control_artifacts",
+            "control_head",
+            "credentials",
+            "incarnations",
+        ):
+            self.assertEqual(snapshot[field], retired[field])
+        self.assertEqual(
+            advanced["authority_history"][:-1], retired["authority_history"]
+        )
+        store = EncryptedKeystore(root / "custody.json")
+        store.rotate(
+            lambda: bytearray(PASSWORD),
+            lambda: bytearray(PASSWORD),
+            expected_counter=1,
+            control_head=advanced["control_head"],
+        )
+        advanced["keystore"]["counter"] = 2
+        (root / "runtime.json").write_bytes(canonical_bytes(advanced))
+        reopened = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: NOW + 32,
+            egress=synthetic_visibility(clock=lambda: NOW + 32),
+        )
+        self.assertEqual(reopened.service.ledger.event(event["event_id"]), event)
+        reopened.service.ledger.integrity_check()
+        authority = authority_from_runtime_bundle(advanced)
+        self.assertEqual(authority.manifest.value["revision"], 3)
+        self.assertEqual(
+            authority.manifest.member(
+                "embodiment:daimonmatrix",
+                self.origins["daimonmatrix"]["incarnation_id"],
+            )["status"],
+            "retired",
+        )
+        tampered = copy.deepcopy(advanced)
+        tampered["authority_history"][-1]["credentials"] = advanced["credentials"]
+        tampered["authority_history"][-1]["incarnations"] = advanced["incarnations"]
+        with self.assertRaises(RebirthError):
+            authority_from_runtime_bundle(tampered)
+
     def test_native_holder_cli_reads_password_fd_and_preserves_exact_retry(
         self,
     ) -> None:
