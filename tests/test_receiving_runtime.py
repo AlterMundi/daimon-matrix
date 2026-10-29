@@ -1695,8 +1695,9 @@ class DurableReaderRecoveryTests(unittest.TestCase):
                 large_passes.append(value)
             return canonical_bytes(value)
 
-        with patch("time.monotonic_ns", lambda: monotonic[0]), patch(
-            "daimon_matrix.messaging_store.canonical_bytes", costly_canonical
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            patch("daimon_matrix.messaging_store.canonical_bytes", costly_canonical),
         ):
             head = self.records.reader_control_head(
                 "tribe", deadline_ns=monotonic[0] + 2_000_000_000
@@ -1710,10 +1711,12 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         self.records.reader_control_head("tribe")
         with closing(sqlite3.connect(self.records.path)) as database:
             database.row_factory = sqlite3.Row
-            original = dict(database.execute(
-                "SELECT * FROM tribe_records WHERE kind='reader-control' "
-                "ORDER BY sequence DESC LIMIT 1"
-            ).fetchone())
+            original = dict(
+                database.execute(
+                    "SELECT * FROM tribe_records WHERE kind='reader-control' "
+                    "ORDER BY sequence DESC LIMIT 1"
+                ).fetchone()
+            )
         for resign in (False, True):
             with self.subTest(resign=resign):
                 changed = json.loads(bytes(original["document"]))
@@ -1721,21 +1724,32 @@ class DurableReaderRecoveryTests(unittest.TestCase):
                 raw = canonical_bytes(changed)
                 binding = original["binding"]
                 if resign:
-                    signed = {key: original[key] for key in (
-                        "kind", "record_id", "request_hash", "recorded_at_ms"
-                    )}
-                    binding = canonical_bytes(self.records.sign({
-                        **signed, "document": changed
-                    }))
+                    signed = {
+                        key: original[key]
+                        for key in (
+                            "kind",
+                            "record_id",
+                            "request_hash",
+                            "recorded_at_ms",
+                        )
+                    }
+                    binding = canonical_bytes(
+                        self.records.sign({**signed, "document": changed})
+                    )
                 with closing(sqlite3.connect(self.records.path)) as database, database:
                     database.execute(
                         "UPDATE tribe_records SET document=?,document_hash=?,binding=? "
                         "WHERE sequence=?",
-                        (raw, hashlib.sha256(raw).hexdigest(), binding,
-                         original["sequence"]),
+                        (
+                            raw,
+                            hashlib.sha256(raw).hexdigest(),
+                            binding,
+                            original["sequence"],
+                        ),
                     )
                 expected = (
-                    "reader_journal_chain_invalid" if resign
+                    "reader_journal_chain_invalid"
+                    if resign
                     else "synthetic_binding_invalid"
                 )
                 with self.assertRaisesRegex(ValueError, expected):
@@ -1744,8 +1758,12 @@ class DurableReaderRecoveryTests(unittest.TestCase):
                     database.execute(
                         "UPDATE tribe_records SET document=?,document_hash=?,binding=? "
                         "WHERE sequence=?",
-                        (original["document"], original["document_hash"],
-                         original["binding"], original["sequence"]),
+                        (
+                            original["document"],
+                            original["document_hash"],
+                            original["binding"],
+                            original["sequence"],
+                        ),
                     )
                 self.records.reader_control_head("tribe")
 

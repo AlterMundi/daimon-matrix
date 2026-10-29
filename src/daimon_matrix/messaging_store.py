@@ -118,7 +118,10 @@ class TribeRecordStore:
                     canonical_bytes(
                         {key: item for key, item in signed.items() if key != "document"}
                     )
-                    + b"\0" + raw + b"\0" + bytes(row["binding"])
+                    + b"\0"
+                    + raw
+                    + b"\0"
+                    + bytes(row["binding"])
                 ).digest()
                 # The maintained verifier checks this live clock predicate too.
                 # A clock rollback must invalidate a previously warm attestation.
