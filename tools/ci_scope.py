@@ -401,6 +401,13 @@ def profile(paths: list[str]) -> str:
         "tests/test_github_coordination_cli.py",
     } <= changed and changed <= COORDINATION_FILES:
         return "coordination"
+    # This maintained navigation/design entrypoint is prose. It needs the
+    # existing documentation/invariant checks even without a checkpoint edit.
+    # Keep source and normative contract mixtures on their broader profiles.
+    if "docs/current-architecture.md" in changed and changed <= {
+        "docs/current-architecture.md", "tools/ci_scope.py", "tests/test_ci_scope.py"
+    }:
+        return "context-docs"
     if changed & {"AGENTS.md", "CURRENT-STATE.md"} and changed <= CONTEXT_DOC_FILES:
         return "context-docs"
     if (

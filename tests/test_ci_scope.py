@@ -390,6 +390,22 @@ class CIScopeTests(unittest.TestCase):
             "needs.scope.outputs.profile != 'release-compatibility'", portability
         )
 
+    def test_current_architecture_prose_alone_uses_existing_document_checks(self):
+        changed = ["docs/current-architecture.md"]
+        self.assertEqual(profile(changed), "context-docs")
+        self.assertEqual(
+            profile([*changed, "tools/ci_scope.py", "tests/test_ci_scope.py"]),
+            "context-docs",
+        )
+        for other in (
+            "src/daimon_matrix/service.py",
+            "specs/tribe-conversation.md",
+            "pyproject.toml",
+            ".github/workflows/tests.yml",
+            "docs/unknown.md",
+        ):
+            self.assertEqual(profile([*changed, other]), "full")
+
     def test_current_context_docs_do_not_repeat_runtime_qualification(self):
         from tools.ci_scope import CONTEXT_DOC_FILES
 
