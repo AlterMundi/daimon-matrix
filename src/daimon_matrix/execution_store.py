@@ -1220,6 +1220,109 @@ class ExecutionStore:
         with closing(self._connect()) as db:
             return self._work(db, work_id)
 
+    def episode_status(self, account_id: str) -> dict[str, Any]:
+        """One bounded operator snapshot; no dispatch, reset or arrival hook.
+
+        Reads the existing authoritative journal, not a replica's cached balance.
+        Clock faults remain visible while inspection and signed pause still work.
+        """
+        with self._transaction() as db:
+            policy = self._episode(db, account_id)
+            root, _ = self._account(db, account_id)
+            try:
+                observed_at: float | None = self._now(db)
+            except ExecutionDenied:
+                observed_at = None
+            reasons = set()
+            if observed_at is None:
+                reasons.add("clock_untrusted")
+            accounts: dict[str, dict[str, Any]] = {}
+            instructions = []
+            for sha in policy["instructions"]:
+                row = db.execute(
+                    "SELECT payload,proof FROM instruction_funding "
+                    "WHERE instruction_sha256=?",
+                    (sha,),
+                ).fetchone()
+                if row is None:
+                    raise ExecutionDenied("episode funding missing")
+                funding = json.loads(row["payload"])
+                self.verifier.verify("approve", funding, json.loads(row["proof"]))
+                if (
+                    funding["store_id"] != self.store_id
+                    or funding["instruction_sha256"] != sha
+                    or account_id not in funding["accounts"]
+                ):
+                    raise ExecutionDenied("episode funding differs")
+                instructions.append(
+                    {
+                        "instruction_sha256": sha,
+                        "route": funding["route"],
+                        "max_charge": funding["max_charge"],
+                        "accounts": funding["accounts"],
+                    }
+                )
+                for identity in funding["accounts"]:
+                    if identity not in accounts:
+                        account, state = self._account(db, identity)
+                        balance = self._balance(db, identity)
+                        accounts[identity] = (
+                            account
+                            | balance
+                            | {
+                                "paused": bool(state["paused"]),
+                                "control_revision": state["control_revision"],
+                                "available_calls": account["max_calls"]
+                                - balance["calls"],
+                                "available_charge": account["max_charge"]
+                                - balance["charged"],
+                            }
+                        )
+                    account = accounts[identity]
+                    if account["paused"]:
+                        reasons.add("paused")
+                    if observed_at is not None:
+                        if observed_at < account["start"]:
+                            reasons.add("not_started")
+                        if observed_at >= account["end"]:
+                            reasons.add("expired")
+                    if account["available_calls"] <= 0:
+                        reasons.add("call_fuel_exhausted")
+                    if account["available_charge"] < funding["max_charge"]:
+                        reasons.add("charge_exposure_unavailable")
+                    if account["active"] >= account["max_active"]:
+                        reasons.add("concurrency_full")
+                    if account["uncertain"]:
+                        reasons.add("uncertain_exposure")
+            counts = {
+                row["state"]: row["total"]
+                for row in db.execute(
+                    "SELECT state,count(*) AS total FROM coordination_work "
+                    "WHERE account_id=? GROUP BY state",
+                    (account_id,),
+                )
+            }
+            return {
+                "schema": "execution/episode-status/v1",
+                "store_id": self.store_id,
+                "account_id": account_id,
+                "principal": root["principal"],
+                "participants": policy["participants"],
+                "instructions": instructions,
+                "start": root["start"],
+                "end": root["end"],
+                "observed_at": observed_at,
+                "funding_constraints": sorted(reasons),
+                "accounts": [accounts[k] for k in sorted(accounts)],
+                "work": counts,
+                "pending_limit": policy["max_pending"],
+                "request_limit": policy["max_requests"],
+                "execution": (
+                    "Funding snapshot only; constraints can affect different routes. "
+                    "Current source/instruction/writer admission remains required."
+                ),
+            }
+
     def withdraw_coordination(
         self, payload: Mapping[str, Any], proof: Mapping[str, Any]
     ) -> None:

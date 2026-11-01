@@ -661,3 +661,24 @@ it does not claim a production owner-RPC grant or paid inference. Canonical
 `daimon-chat` guidance and both packaged installer surfaces describe the optional
 field only when advertised by the receiving tool. Production selection and
 existing Interaction writer/return integration remain separate #312 requirements.
+
+
+### Operator episode funding snapshot — successor implementation
+
+The existing host-only operator CLI adds `episode-status ACCOUNT_ID`; it reads
+`ExecutionStore.episode_status()` from the same authoritative journal. This is
+one explicit, bounded snapshot of signed participants/instruction references,
+three-ceiling spent/reserved/available call and charge balances, work counts,
+window and current funding constraints. It neither queues nor starts work,
+creates a journal, migrates a schema, resets limits nor enables peer attention.
+It remains inspectable after a latched clock fault and while paused.
+
+The funding constraints are observations across configured instructions/accounts,
+not a claim that every route is blocked or that a native writer is available.
+Current source, instruction, writer and provider admission remain independent
+checks. A frontend must resolve each exact task digest to its approved objective;
+there is no guessed objective derived from peer text. The existing signed
+`control_funding` pause remains the operator control; this read creates no new
+human confirmation ceremony, recurring job, notification stream or credential.
+A rendered Interaction card and one-shot exhaustion publication remain separate
+integration work; this CLI is not their receiving acceptance.

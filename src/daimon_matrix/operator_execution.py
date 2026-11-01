@@ -222,6 +222,8 @@ def main(
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="explicitly provision a fresh, empty journal")
     commands.add_parser("status")
+    episode = commands.add_parser("episode-status")
+    episode.add_argument("account_id")
     propose = commands.add_parser("propose")
     propose.add_argument("instruction")
     for name in ("approve", "renew"):
@@ -247,7 +249,9 @@ def main(
             result: object = {"store_id": store.store_id}
         else:
             store = ExecutionStore(args.store, verifier, clock=clock)
-            if args.command == "status":
+            if args.command == "episode-status":
+                result = store.episode_status(args.account_id)
+            elif args.command == "status":
                 statuses = store.statuses()
                 result = {
                     "store_id": store.store_id,
