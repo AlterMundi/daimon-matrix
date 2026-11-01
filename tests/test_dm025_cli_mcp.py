@@ -1136,6 +1136,7 @@ class ClientSchemaTests(unittest.TestCase):
             "readers": [reader_v2()],
         }
         validator.validate(request(typed))
+        validator.validate(request({**typed, "effect_not_after_ms": 100}))
         validator.validate(
             request(
                 {
@@ -1153,6 +1154,15 @@ class ClientSchemaTests(unittest.TestCase):
             )
         )
         invalid = [
+            {**typed, "effect_not_after_ms": True},
+            {**typed, "effect_not_after_ms": 0},
+            {**typed, "effect_not_after_ms": -1},
+            {
+                **revoked,
+                "schema": "dm.runtime.reader-selection/v2",
+                "effect_not_after_ms": 100,
+            },
+            {**selected, "effect_not_after_ms": 100},
             {key: value for key, value in revoked.items() if key != "expected_head"},
             {**revoked, "unknown": True},
             {**revoked, "readers": [reader()]},

@@ -2688,6 +2688,7 @@ class HostedWeave:
                         "features": [
                             "signed-roster-cas/v1",
                             "credential-bound-reader-validity/v1",
+                            "reader-selection-effect-horizon/v1",
                         ]
                         + (
                             ["durable-reader-recovery/v1"]

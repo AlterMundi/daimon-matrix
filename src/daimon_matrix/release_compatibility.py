@@ -56,6 +56,7 @@ _FEATURES = sorted(
         "signed-roster-cas/v1",
         "durable-reader-recovery/v1",
         "credential-bound-reader-validity/v1",
+        "reader-selection-effect-horizon/v1",
         "explicit-unattempted-carrier-recovery/v1",
         "bounded-receiving-observation/v1",
     }
