@@ -486,3 +486,65 @@ actual Interaction routing; concrete isolated real-adapter qualification and
 operator-visible exhaustion/episode controls. A real trial still requires human
 selection of participants, funding authority, limits and enforceable provider
 route. This core is not complete #312 acceptance or autonomous activation.
+
+
+### Selected-original queue successor — implementation in progress
+
+The next explicit additive journal migration (schema2→3) retains signed immutable
+`execution/episode-policy/v1` eligibility for an existing funded episode account:
+source participant beings, eligible exact funded instruction hashes, source
+threads, finite lifetime request count, pending count and input-body byte limit.
+It cannot mint funding. Its immutable policy and per-root total bound retained
+queue/deduplication metadata; rejected traffic adds no row or log. Only the exact
+source reference/hash/author/body/thread and execution correlation are retained;
+message text stays in the native inbox, not another private-history archive.
+
+`ExecutionStore.enqueue_coordination(message_id, read_message)` is an explicit
+owner invocation using the actual current authenticated native lookup. Only a
+signed communication carrying `execution/coordination-request/v1` with kind
+`work`, one existing episode and an eligible instruction hash may queue. Ordinary
+speech, semantic receipts and structured results/ACKs/status/reactions/errors
+remain non-activating. Root/thread/message text cannot authorize new accounts,
+participants, instructions or resources. This method starts no model or worker.
+
+A queued request's identity derives from its signed source event, author being
+and exact destination instruction. Exact duplicates inspect the same row;
+changed source/root conflicts fail. Root limits are checked in the same write
+transaction that admits the item. Cycle creation and queued→intent correlation
+are atomic with the existing single-writer cycle reservation. An intent is never
+requeued after restart or lost acknowledgment; its original cycle remains the
+reconciliation target. Neither its session nor its root can be replaced to hide
+uncertainty. The policy is an explicit finite root, not a per-arrival approval.
+
+The operator's `ReviewController(require_queued_source=True, read_message=...)`
+also requires conserved funding and rejects unselected direct startup. A chosen
+`work_id` must match the exact instruction. Before startup and each actual
+provider/native submission, its current native source is read again and compared;
+revoked authority or changed content prevents the effect. The deadline is
+rechecked after that bounded authorization read, so lookup latency cannot renew
+the original horizon. Source metadata is attributed in `ReviewRequest.work`;
+it is not human speech or an instruction to widen tools. Like NativeBroker, this
+reader must be a bounded owner-registered primitive, never a model callback or
+Telegram echo. Existing unrelated human calls retain their normal profile.
+
+`tests.test_coordination_queue` composes actual signed native evidence/message
+intake, current policy-based native reading, the real SQLite queue/controller
+and synthetic bounded runner/provider. It covers duplicate/restart identity,
+concurrent claim, queue/input limits, non-activating technical traffic, forged
+root/lookup, actual native relationship revocation before/after startup and a
+final authorization read consuming the dispatch horizon. No network/model call
+or production enrollment is performed. These are native-intake/control tests,
+not proof that an existing real harness consumes selected work metadata or that
+an exclusive billing route is qualified. Those adapter/Interaction wiring and
+human-selected activation decisions remain explicit work.
+
+
+Queued withdrawal uses an authenticated `execution/work-withdrawal/v1` receipt
+from the root's funding authority. It is terminal and idempotent for that exact
+unsubmitted original; it never resets lifetime counts or resumes after restart.
+An already reserved intent cannot be withdrawn as if no work happened: use the
+existing exact instruction cancellation and bounded interruption, preserving its
+cycle/native correlation and conservative billing exposure. Real supported
+structured-request authoring and actual Interaction/qualified adapter consumption
+remain separate from this queue qualification; a synthetic native packet alone
+is not proof those public tools or consuming harnesses are deployed.

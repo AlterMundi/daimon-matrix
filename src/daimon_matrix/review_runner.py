@@ -26,6 +26,7 @@ class ReviewRequest:
     task: str
     cycle_id: str
     deadline: float
+    work: Mapping[str, Any] | None = None
 
 
 class ReviewRunner(Protocol):
@@ -127,6 +128,7 @@ class CycleContext:
         monotonic: Callable[[], float],
         monotonic_deadline: float,
         on_terminal: Callable[[CycleContext], None] | None = None,
+        source_check: Callable[[], None] | None = None,
     ):
         self.cycle = cycle
         self.instruction = instruction
@@ -135,6 +137,7 @@ class CycleContext:
         self._monotonic = monotonic
         self._monotonic_deadline = monotonic_deadline
         self._on_terminal = on_terminal
+        self._source_check = source_check
         self._last_monotonic = monotonic_deadline - instruction.max_cycle_seconds
         self._clock_fault = False
         self._last_wall = float("-inf")
@@ -168,6 +171,11 @@ class CycleContext:
 
     def _checkpoint(self) -> None:
         self.remaining()
+        if self._source_check is not None:
+            self._source_check()
+            # A bounded authorization read can still consume the remaining
+            # horizon. Never submit using the pre-read time observation.
+            self.remaining()
 
     def _finish(self, outcome: Literal["completed", "stopped"]) -> None:
         self._store.finish(self.cycle, outcome)
@@ -222,14 +230,26 @@ class ReviewController:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         require_funding: bool = False,
+        require_queued_source: bool = False,
+        read_message: Callable[[str], Mapping[str, Any]] | None = None,
     ):
         self.store = store
         self.runner = runner
         self.broker = broker
         self.monotonic = monotonic
-        self.require_funding = require_funding
+        self.require_funding = require_funding or require_queued_source
+        self.require_queued_source = require_queued_source
+        # Owner-registered current native lookup; never a model-supplied verifier
+        # or a cached echo. Like NativeBroker, it must be independently bounded.
+        self.read_message = read_message
         self._contexts: dict[tuple[str, int, str], CycleContext] = {}
         self._contexts_lock = threading.Lock()
+
+    def enqueue_native(self, message_id: str) -> str | None:
+        """Explicit passive intake through this owner's registered native reader."""
+        if self.read_message is None:
+            raise ExecutionDenied("no current authenticated source reader")
+        return self.store.enqueue_coordination(message_id, self.read_message)
 
     def _forget(self, context: CycleContext) -> None:
         key = (
@@ -241,9 +261,23 @@ class ReviewController:
             self._contexts.pop(key, None)
 
     def run_due_once(
-        self, identity: str, revision: int, task: str
+        self, identity: str, revision: int, task: str, *, work_id: str | None = None
     ) -> CycleContext | None:
         # Scheduling metadata and arrival text never create an instruction.
+        if self.require_queued_source and work_id is None:
+            raise ExecutionDenied("peer execution requires a selected original")
+        source_check = None
+        work = None
+        if work_id is not None:
+            reader = self.read_message
+            if reader is None:
+                raise ExecutionDenied("no current authenticated source reader")
+
+            def source_check() -> None:
+                self.store.check_work_source(work_id, reader)
+
+            source_check()
+            work = self.store.coordination_work(work_id)
         try:
             status = self.store.status(identity, revision)
         except ExecutionDenied:
@@ -264,7 +298,13 @@ class ReviewController:
         start_mono = self.monotonic()
         if not math.isfinite(start_mono):
             raise ExecutionDenied("untrusted monotonic clock")
-        cycle = self.store.reserve(identity, revision, self.runner.binding)
+        cycle = (
+            self.store.reserve(identity, revision, self.runner.binding)
+            if work_id is None
+            else self.store.reserve(
+                identity, revision, self.runner.binding, work_id=work_id
+            )
+        )
         if cycle is None:
             return None
         context = CycleContext(
@@ -275,10 +315,11 @@ class ReviewController:
             self.monotonic,
             start_mono + instruction.max_cycle_seconds,
             self._forget,
+            source_check,
         )
         with self._contexts_lock:
             self._contexts[(identity, revision, cycle.cycle_id)] = context
-        request = ReviewRequest(instruction, task, cycle.cycle_id, cycle.deadline)
+        request = ReviewRequest(instruction, task, cycle.cycle_id, cycle.deadline, work)
         self.store.dispatch(
             cycle,
             "inference",
