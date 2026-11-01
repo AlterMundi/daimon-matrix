@@ -334,6 +334,7 @@ class FundingTests(unittest.TestCase):
             ("max_charge", 0),
             ("max_output_tokens", 999),
             ("model", "other"),
+            ("max_charge", 30.0),
         ]:
             with self.assertRaises(ExecutionDenied):
                 self.send(instruction, cycle, self.exposure(instruction) | {key: value})

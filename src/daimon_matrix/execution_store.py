@@ -830,14 +830,22 @@ class ExecutionStore:
             if exposure is not None:
                 raise ExecutionDenied("exposure supplied without funding")
             return  # legacy explicit human review, never a coordination runner
-        if exposure != {
+        expected = {
             "route": funding["route"],
             "max_charge": funding["max_charge"],
             "provider": instruction.provider,
             "model": instruction.model,
             "max_input_tokens": instruction.max_input_tokens,
             "max_output_tokens": instruction.max_output_tokens,
-        }:
+        }
+        if (
+            exposure is None
+            or dict(exposure) != expected
+            or any(
+                type(exposure.get(k)) is not int
+                for k in ("max_charge", "max_input_tokens", "max_output_tokens")
+            )
+        ):
             raise ExecutionDenied("qualified adapter exposure required")
         for aid in funding["accounts"]:
             account, _ = self._account(db, aid)
