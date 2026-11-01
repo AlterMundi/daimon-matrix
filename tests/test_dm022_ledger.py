@@ -36,6 +36,7 @@ from daimon_matrix.identity import (
 )
 from daimon_matrix.ledger import (
     Ledger,
+    LedgerAuthoringExpired,
     LedgerEquivocationError,
     LedgerError,
     LedgerGapError,
@@ -191,6 +192,112 @@ class RootLedgerFixture(unittest.TestCase):
             signer=self.signers[label],
             occurred_at_ms=NOW,
         )
+
+
+class AuthoringHorizonTests(RootLedgerFixture):
+    def test_expired_fresh_authoring_rolls_back_but_exact_accepted_retry_survives(
+        self,
+    ) -> None:
+        from unittest.mock import patch
+
+        clock = [NOW]
+        self.ledger_a.clock = lambda: clock[0]
+        request_id = str(uuid.uuid4())
+        payload = {"summary": "one original bounded message"}
+        arguments: dict[str, Any] = dict(
+            client_id="bounded-authoring",
+            request_id=request_id,
+            request_hash=hashlib.sha256(canonical_bytes(payload)).hexdigest(),
+            kind="experience.observed",
+            subject="bounded speech",
+            payload=payload,
+            signer=self.signers["legion"],
+            occurred_at_ms=NOW,
+            effect_not_after_ms=NOW + 1,
+        )
+        clock[0] = NOW + 1
+        with self.assertRaises(LedgerAuthoringExpired):
+            self.ledger_a.append_local_idempotent(**arguments)
+        self.assertEqual(self.ledger_a.known_page(cursor=None)["events"], [])
+        clock[0] = NOW
+        append = self.ledger_a._append_local
+
+        def expires_before_commit(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            event = append(*args, **kwargs)
+            clock[0] = NOW + 1
+            return event
+
+        with (
+            patch.object(self.ledger_a, "_append_local", expires_before_commit),
+            self.assertRaises(LedgerAuthoringExpired),
+        ):
+            self.ledger_a.append_local_idempotent(**arguments)
+        self.assertEqual(self.ledger_a.known_page(cursor=None)["events"], [])
+        clock[0] = NOW
+        accepted = self.ledger_a.append_local_idempotent(**arguments)
+        clock[0] = NOW + 1
+        self.assertEqual(self.ledger_a.append_local_idempotent(**arguments), accepted)
+        self.assertEqual(len(self.ledger_a.known_page(cursor=None)["events"]), 1)
+
+    def test_actual_sqlite_writer_wait_cannot_renew_first_authoring(self) -> None:
+        import sqlite3
+        from collections.abc import Iterator
+        from contextlib import closing, contextmanager
+        from unittest.mock import patch
+
+        clock = [NOW]
+        self.ledger_a.clock = lambda: clock[0]
+        self.ledger_a.initialize()
+        waiting = threading.Event()
+        errors: list[BaseException] = []
+        database = self.ledger_a._database
+
+        @contextmanager
+        def traced(*args: Any, **kwargs: Any) -> Iterator[sqlite3.Connection]:
+            with database(*args, **kwargs) as connection:
+                connection.set_trace_callback(
+                    lambda sql: waiting.set() if sql == "BEGIN IMMEDIATE" else None
+                )
+                yield connection
+
+        def write() -> None:
+            try:
+                self.ledger_a.append_local_idempotent(
+                    client_id="delayed-authoring",
+                    request_id=str(uuid.uuid4()),
+                    request_hash="a" * 64,
+                    kind="experience.observed",
+                    subject="delayed speech",
+                    payload={"summary": "must expire"},
+                    signer=self.signers["legion"],
+                    occurred_at_ms=NOW,
+                    effect_not_after_ms=NOW + 1,
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        with closing(sqlite3.connect(self.ledger_a.path)) as held:
+            held.execute("BEGIN IMMEDIATE")
+            # Schema is initialized above. Skip its redundant DDL here so the
+            # observed wait is the real authoring BEGIN, not schema maintenance.
+            with (
+                patch.object(self.ledger_a, "initialize", lambda: None),
+                patch.object(self.ledger_a, "_database", traced),
+            ):
+                worker = threading.Thread(target=write)
+                worker.start()
+                try:
+                    self.assertTrue(
+                        waiting.wait(2), "writer never reached SQLite admission"
+                    )
+                    clock[0] = NOW + 1
+                finally:
+                    held.rollback()
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], LedgerAuthoringExpired)
+        self.assertEqual(self.ledger_a.known_page(cursor=None)["events"], [])
 
 
 class KnownFeedTests(RootLedgerFixture):

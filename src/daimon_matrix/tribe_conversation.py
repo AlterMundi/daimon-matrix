@@ -31,7 +31,13 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
-from .ledger import Clock, Ledger, LedgerError, LedgerStorageBusy
+from .ledger import (
+    Clock,
+    Ledger,
+    LedgerAuthoringExpired,
+    LedgerError,
+    LedgerStorageBusy,
+)
 from .messaging_store import TribeRecordStore
 from .relationship_store import RelationshipStore, RelationshipStoreError
 from .sealed import (
@@ -652,6 +658,7 @@ class TribeConversation:
         ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
         response_context: Mapping[str, Any] | None = None,
         destination: Mapping[str, str] | None = None,
+        effect_not_after_ms: int | None = None,
     ) -> dict[str, Any]:
         """Freeze before authoring; durably return one exact sealed carrier.
 
@@ -685,6 +692,13 @@ class TribeConversation:
         if destination is not None:
             destination = direct_destination(destination)
             parameters["destination"] = destination
+        if effect_not_after_ms is not None:
+            if (
+                type(effect_not_after_ms) is not int
+                or not 0 < effect_not_after_ms < 2**53
+            ):
+                raise TribeConversationError("tribe_lane_effect_horizon_invalid")
+            parameters["effect_not_after_ms"] = effect_not_after_ms
         plan = self.records.reserve(
             "send",
             request,
@@ -736,6 +750,7 @@ class TribeConversation:
             sensitivity=sensitivity,
             occurred_at_ms=issued,
             causal_parents=(),
+            effect_not_after_ms=effect_not_after_ms,
         )
         resolution = self._author(
             client_id=TRIBE_RESOLUTION_CLIENT_ID,
@@ -1090,6 +1105,7 @@ class TribeConversation:
         sensitivity: str,
         occurred_at_ms: int,
         causal_parents: Sequence[str],
+        effect_not_after_ms: int | None = None,
     ) -> Event:
         """Author one ledger event, or return the one an earlier attempt made."""
         digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
@@ -1106,7 +1122,10 @@ class TribeConversation:
                 sensitivity=sensitivity,
                 occurred_at_ms=occurred_at_ms,
                 causal_parents=causal_parents,
+                effect_not_after_ms=effect_not_after_ms,
             )
+        except LedgerAuthoringExpired:
+            raise
         except (LedgerError, WeaveProtocolError) as exception:
             raise TribeConversationError("tribe_lane_authoring_rejected") from exception
 

@@ -398,6 +398,147 @@ class ReceivingOwnerApiFixture(unittest.TestCase):
         )
 
 
+class NativeAuthoringHorizonTests(ReceivingOwnerApiFixture):
+    controlled_readers = False
+
+    def build(self, group):
+        return HostedWeave(
+            group.ledger,
+            group.signer,
+            {cap.capability_id: cap for cap in (self.controller, self.observer)},
+            group.lane.clock,
+            "dm:runtime:v1:" + "A" * 43,
+            "synthetic",
+            communication=group.communication,
+            messaging=self.messaging,
+        )
+
+    def setUp(self):
+        super().setUp()
+        from daimon_matrix.local_api import create_messaging_capability
+
+        self.author = create_messaging_capability(
+            b"a" * 32,
+            client_id="bounded-native-author",
+            methods=["messaging.send", "messaging.reply", "messaging.delivery"],
+            not_before_ms=0,
+        )
+        self.group.ledger.clock = self.group.lane.clock
+        self.service = replace(
+            self.service,
+            capabilities={
+                **self.service.capabilities,
+                self.author.capability_id: self.author,
+            },
+            messaging=replace(
+                self.messaging,
+                client_channels={self.author.client_id: frozenset({"tribe"})},
+                # Current-capability custody/revocation is a fixture seam;
+                # authenticated requests, writer admission and authoring are real.
+                capability_guard=lambda cap: None,
+            ),
+        )
+
+    def _author_request(self, method, **parameters):
+        return self.request(parameters, method=method, capability=self.author)
+
+    def _parent(self):
+        result = group_fixtures.GroupRuntimeTests.send_and_settle(
+            self,
+            self.groups[1],
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="retained parent for native reply",
+        )
+        return result["message_id"]
+
+    def test_authenticated_send_and_reply_waiting_on_writer_expire_before_authoring(
+        self,
+    ):
+        parent = self._parent()
+        for method in ("messaging.send", "messaging.reply"):
+            with self.subTest(method=method):
+                expiry = self.fixture.now + 50
+                params = dict(
+                    channel_id="tribe",
+                    send_id=str(uuid.uuid4()),
+                    text="must not author after native writer delay",
+                    effect_not_after_ms=expiry,
+                )
+                params.update(
+                    {"thread_id": str(uuid.uuid4())}
+                    if method == "messaging.send"
+                    else {"received_channel_id": "tribe", "message_id": parent}
+                )
+                request = self._author_request(method, **params)
+                count = len(self.group.ledger.events())
+                waiting = threading.Event()
+                outcomes = []
+                storage = self.group.ledger.local_storage
+
+                @contextmanager
+                def delayed(*args, waiting=waiting, storage=storage, **kwargs):
+                    waiting.set()
+                    with storage(*args, **kwargs):
+                        yield
+
+                self.group.ledger._storage_gate.acquire()
+                try:
+                    with patch.object(self.group.ledger, "local_storage", delayed):
+                        worker = threading.Thread(
+                            target=lambda outcomes=outcomes, request=request: (
+                                outcomes.append(self.service.handle(request))
+                            )
+                        )
+                        worker.start()
+                        self.assertTrue(
+                            waiting.wait(3),
+                            "authenticated request never reached native writer",
+                        )
+                        self.fixture.now = expiry
+                finally:
+                    self.group.ledger._storage_gate.release()
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(len(outcomes), 1)
+                self.assertEqual(
+                    outcomes[0]["error"]["code"],
+                    "messaging_authoring_authority_expired",
+                )
+                self.assertEqual(len(self.group.ledger.events()), count)
+
+    def test_authenticated_accepted_send_and_reply_recover_after_authoring_expiry(self):
+        parent = self._parent()
+        for method in ("messaging.send", "messaging.reply"):
+            with self.subTest(method=method):
+                expiry = self.fixture.now + 50
+                params = dict(
+                    channel_id="tribe",
+                    send_id=str(uuid.uuid4()),
+                    text="one authenticated bounded message",
+                    effect_not_after_ms=expiry,
+                )
+                params.update(
+                    {"thread_id": str(uuid.uuid4())}
+                    if method == "messaging.send"
+                    else {"received_channel_id": "tribe", "message_id": parent}
+                )
+                request = self._author_request(method, **params)
+                response = self.service.handle(request)
+                self.assertTrue(response["ok"], response)
+                for server in [*self.servers, self.servers[0]]:
+                    server._threads.join()
+                count = len(self.group.ledger.events())
+                self.fixture.now = expiry
+                recovered = self.service.handle(request)
+                self.assertTrue(recovered["ok"], recovered)
+                self.assertEqual(
+                    recovered["result"]["message_id"], response["result"]["message_id"]
+                )
+                self.assertEqual(len(self.group.ledger.events()), count)
+
+
 class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
     def test_bounded_select_waiting_on_native_writer_cannot_outlive_authority(self):
         row = self.credential_reader()

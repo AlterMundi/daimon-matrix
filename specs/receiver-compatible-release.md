@@ -172,6 +172,18 @@ selected reader's signed credential, undo an accepted selection or renew an
 unaccepted request. Native delayed handling/physical-lock contention, rollback
 before commit and accepted exact retry qualify these separate cases.
 
+`messaging-authoring-effect-horizon/v1` advertises the same optional positive
+`effect_not_after_ms` UTC bound for native membership-group send and reply,
+including a structured direct destination. It does not extend the legacy pair
+transport. The exact request and group plan retain this bound. New message
+authoring checks it after Ledger writer admission and again before committing
+the event/local-operation transaction. Expiry rolls back fresh authoring and
+returns `messaging_authoring_authority_expired` from the authenticated API.
+Already committed message recovery, remaining resolution and carrier completion
+remain historical continuation; carrier TTL and credential validity do not
+replace or renew first-authoring authority. Callers must require advertised
+receiving support and retain the exact bound before request emission.
+
 The authenticated reader journal records this as V2, preserving prior finite V1
 controls and tombstones unchanged. Old V1 rows retain their original expiry;
 installing new software does not reinterpret or renew them. A new explicitly

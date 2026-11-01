@@ -40,6 +40,7 @@ from .labels import LabelError, LabelIndex
 from .ledger import (
     SCHEMA_VERSION,
     Ledger,
+    LedgerAuthoringExpired,
     LedgerEquivocationError,
     LedgerError,
     LedgerGapError,
@@ -1555,9 +1556,14 @@ class HostedWeave:
 
     def _messaging_reply(self, params: Any, *, client_id: str) -> dict[str, Any]:
         """Application-correlated response, NOT the canonical direct-reply contract."""
-        value = _closed(
-            params,
-            {"channel_id", "send_id", "received_channel_id", "message_id", "text"},
+        fields = {"channel_id", "send_id", "received_channel_id", "message_id", "text"}
+        if isinstance(params, Mapping) and "effect_not_after_ms" in params:
+            fields.add("effect_not_after_ms")
+        value = _closed(params, fields)
+        bound: dict[str, Any] = (
+            {"effect_not_after_ms": _uint(value["effect_not_after_ms"], minimum=1)}
+            if "effect_not_after_ms" in value
+            else {}
         )
         for field_name in ("channel_id", "received_channel_id"):
             if (
@@ -1578,6 +1584,8 @@ class HostedWeave:
                 raise ValueError
             incoming = context.channels[value["received_channel_id"]]
             delivery = context.deliveries[value["channel_id"]]
+            if bound and not isinstance(delivery, GroupMessaging):
+                raise ValueError("bounded_authoring_requires_tribe")
             if isinstance(delivery, MessagingDelivery) and not isinstance(
                 incoming, MessagingChannel
             ):
@@ -1595,7 +1603,10 @@ class HostedWeave:
                     value["channel_id"],
                     value["received_channel_id"],
                 ),
+                **bound,
             )
+        except LedgerAuthoringExpired:
+            raise ServiceError("messaging_authoring_authority_expired") from None
         except Exception:
             raise ServiceError("messaging_rejected") from None
 
@@ -1634,9 +1645,16 @@ class HostedWeave:
             except Exception:
                 raise ServiceError("messaging_rejected") from None
         fields = {"channel_id", "send_id", "thread_id", "text"}
+        if isinstance(params, Mapping) and "effect_not_after_ms" in params:
+            fields.add("effect_not_after_ms")
         if isinstance(params, Mapping) and "destination" in params:
             fields.add("destination")
         value = _closed(params, fields)
+        bound: dict[str, Any] = (
+            {"effect_not_after_ms": _uint(value["effect_not_after_ms"], minimum=1)}
+            if "effect_not_after_ms" in value
+            else {}
+        )
         channel_id = value["channel_id"]
         if (
             not isinstance(channel_id, str)
@@ -1652,6 +1670,8 @@ class HostedWeave:
             if channel_id not in context.client_channels.get(client_id, frozenset()):
                 raise ValueError
             delivery = context.deliveries[channel_id]
+            if bound and not isinstance(delivery, GroupMessaging):
+                raise ValueError("bounded_authoring_requires_tribe")
             directed: dict[str, Any] = {}
             if "destination" in value:
                 if not isinstance(delivery, GroupMessaging):
@@ -1666,7 +1686,10 @@ class HostedWeave:
                 text=text,
                 authorize=self._messaging_guard(context, client_id, channel_id),
                 **directed,
+                **bound,
             )
+        except LedgerAuthoringExpired:
+            raise ServiceError("messaging_authoring_authority_expired") from None
         except Exception:
             raise ServiceError("messaging_rejected") from None
 
@@ -2689,6 +2712,7 @@ class HostedWeave:
                             "signed-roster-cas/v1",
                             "credential-bound-reader-validity/v1",
                             "reader-selection-effect-horizon/v1",
+                            "messaging-authoring-effect-horizon/v1",
                         ]
                         + (
                             ["durable-reader-recovery/v1"]
