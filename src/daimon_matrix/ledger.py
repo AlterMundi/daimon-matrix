@@ -53,6 +53,13 @@ class LedgerStorageBusy(LedgerError):
         super().__init__("ledger_storage_deadline")
 
 
+class LedgerAuthoringExpired(LedgerError):
+    """Fresh authoring exceeded its original authenticated effect horizon."""
+
+    def __init__(self) -> None:
+        super().__init__("ledger_authoring_authority_expired")
+
+
 class LedgerGapError(LedgerError):
     """A page skipped an immutable origin-chain predecessor."""
 
@@ -970,10 +977,15 @@ class Ledger:
         occurred_at_ms: int | None = None,
         event_id: str | None = None,
         expected_state_hash: str | None = None,
+        effect_not_after_ms: int | None = None,
     ) -> Event:
         """Author one event and its local-operation receipt in one transaction."""
 
         self._validate_rpc_identity(client_id, request_id, request_hash)
+        if effect_not_after_ms is not None and (
+            type(effect_not_after_ms) is not int or not 0 < effect_not_after_ms < 2**53
+        ):
+            raise LedgerError("invalid_authoring_effect_horizon")
         if expected_state_hash is not None and (
             not isinstance(expected_state_hash, str)
             or len(expected_state_hash) != 64
@@ -1013,6 +1025,11 @@ class Ledger:
                         result: Event = json.loads(bytes(row["event_json"]))
                     else:
                         if (
+                            effect_not_after_ms is not None
+                            and self.clock() >= effect_not_after_ms
+                        ):
+                            raise LedgerAuthoringExpired()
+                        if (
                             expected_state_hash is not None
                             and self._state_hash(database) != expected_state_hash
                         ):
@@ -1033,6 +1050,11 @@ class Ledger:
                             "INSERT INTO local_operations VALUES (?, ?, ?, ?)",
                             (client_id, request_id, request_hash, result["event_id"]),
                         )
+                        if (
+                            effect_not_after_ms is not None
+                            and self.clock() >= effect_not_after_ms
+                        ):
+                            raise LedgerAuthoringExpired()
                     database.commit()
                 except BaseException:
                     database.rollback()

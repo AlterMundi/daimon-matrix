@@ -1,5 +1,28 @@
 # Native agent messaging: foreign inbox foundation
 
+## Current Tribe first-authoring horizon
+
+`messaging-authoring-effect-horizon/v1` advertises the optional authenticated
+native `effect_not_after_ms` parameter on `messaging.send` and `messaging.reply`
+for membership-based Tribe conversations, including directed messages. It is a
+positive UTC millisecond integer below2^53. Bounded authoring on a legacy pair
+transport is unsupported. Existing unbounded requests remain compatible.
+
+The bound belongs to the exact original request, independently of credential
+validity and sealed-carrier TTL. Retain it before the first dispatch; a retry
+must use the same request and deadline. A shorter caller observation budget
+does not renew the original bound. Callers require the actual receiving feature
+before depending on it; publishing a descriptor is not receiving adoption.
+
+Fresh message authoring checks the original bound inside the existing Ledger
+write transaction, after writer admission and immediately before commit. Expiry
+rolls back the new event and local-operation receipt. The native API returns
+`messaging_authoring_authority_expired`. An already committed original message
+remains recoverable after expiry: completing its resolution, carrier or delivery
+does not constitute another first authoring. Request journals retain the bound
+so changing it under the same send ID is a conflict, never permission renewal.
+No new timer, queue, inference attention or delivery retry service is installed.
+
 ## Explicit semantic-receipt successor (application V2)
 
 `dm.messaging.application/v2` adds **reply-triggered authenticated durable-intake

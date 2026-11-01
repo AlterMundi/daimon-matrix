@@ -329,6 +329,28 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_first_authoring_horizon_preserves_completed_native_send(self):
+        from daimon_matrix.ledger import LedgerAuthoringExpired
+
+        sender, receiver = self.groups
+        sender.ledger.clock = sender.lane.clock
+        args = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="bounded original speech",
+            destination={"kind": "being", "being_ref": receiver.lane.being_ref},
+            effect_not_after_ms=self.fixture.now + 10,
+        )
+        original = self.send_and_settle(sender, **args)
+        self.fixture.now += 11
+        retry = self.send_and_settle(sender, **args)
+        self.assertEqual(retry["message_id"], original["message_id"])
+        with self.assertRaises(ValueError):
+            sender.send(**{**args, "effect_not_after_ms": self.fixture.now + 10})
+        with self.assertRaises(LedgerAuthoringExpired):
+            sender.send(**{**args, "send_id": str(uuid.uuid4())})
+
     def _expired_unattempted(self, *, group=False):
         from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
 

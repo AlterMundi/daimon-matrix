@@ -2382,6 +2382,7 @@ class GroupMessaging:
         response_to: tuple[Any, str] | None = None,
         authorize: Callable[[], None] | None = None,
         destination: Mapping[str, str] | None = None,
+        effect_not_after_ms: int | None = None,
     ) -> dict[str, Any]:
         if authorize is not None:
             authorize()
@@ -2417,13 +2418,20 @@ class GroupMessaging:
             destination = reply_destination
         if destination is not None:
             destination = direct_destination(destination)
-        parameters = {
+        parameters: dict[str, Any] = {
             "client_id": client_id,
             "thread_id": thread_id,
             "text": text,
             "response_to": None if response_to is None else response_to[1],
             **({"destination": dict(destination)} if destination is not None else {}),
         }
+        if effect_not_after_ms is not None:
+            if (
+                type(effect_not_after_ms) is not int
+                or not 0 < effect_not_after_ms < 2**53
+            ):
+                raise ValueError("messaging_authoring_effect_horizon_invalid")
+            parameters["effect_not_after_ms"] = effect_not_after_ms
         self.records.reserve("request", send_id, parameters, lambda: parameters)
         if self.records.get("send", send_id) is None:
             snapshot = self.lane.snapshot(self.policy.tribe_ref, self.lane.clock())
@@ -2447,6 +2455,7 @@ class GroupMessaging:
             }[self.policy.classification],
             response_context=response,
             destination=destination,
+            effect_not_after_ms=effect_not_after_ms,
         )
         message, resolution = prepared["message"], prepared["resolution"]
         identifiers = {
