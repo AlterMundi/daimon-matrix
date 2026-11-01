@@ -630,8 +630,11 @@ class OwnerConversationClientTests(SealedFixture):
         self.assertEqual(result["deliveries"][0]["state"], "delivered")
         receipt_id = result["deliveries"][0]["receipt_event_id"]
         self.assertIsNotNone(self.ledger_b.event(receipt_id))
-        message = self.ledger_b.event(result["message_id"])
-        assert message is not None
+        message = next(
+            event
+            for event in self.ledger_b.conversation_evidence()
+            if event["event_id"] == result["message_id"]
+        )
         self.assertEqual(
             message["payload"]["body"]["text"],
             "portable skills",
@@ -665,7 +668,10 @@ class OwnerConversationClientTests(SealedFixture):
         code, output, _err = self.run_client("say", "--retry", request_id)
         self.assertEqual(code, 0)
         message_id = json.loads(output)["result"]["message_id"]
-        self.assertIsNotNone(self.ledger_b.event(message_id))
+        self.assertIn(
+            message_id,
+            {event["event_id"] for event in self.ledger_b.conversation_evidence()},
+        )
         self.assertEqual(self.delivery_attempts, 1)
 
     def test_misbound_or_missing_profile_refuses_before_any_effect(self) -> None:

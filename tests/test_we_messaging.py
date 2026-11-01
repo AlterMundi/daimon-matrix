@@ -10,6 +10,7 @@ from collections.abc import Callable
 from contextlib import closing
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 from daimon_matrix.communication import RESOLUTION_PAYLOAD_SCHEMA
 from daimon_matrix.identity import (
@@ -17,7 +18,12 @@ from daimon_matrix.identity import (
     create_incarnation_authorization,
     x25519_public,
 )
-from daimon_matrix.ledger import Ledger
+from daimon_matrix.ledger import (
+    Ledger,
+    LedgerEquivocationError,
+    LedgerError,
+    LedgerGapError,
+)
 from daimon_matrix.local_api import create_capability
 from daimon_matrix.native_egress import NativeEgressError
 from daimon_matrix.peer_transport import (
@@ -59,6 +65,197 @@ REMOTE = "embodiment:daimonmatrix"
 
 
 class WeLaneTests(SealedFixture):
+    def test_interrupted_sparse_intake_recovers_original_without_duplicate_speech(
+        self,
+    ) -> None:
+        self.append(self.ledger_a, "legion", "private history before speech")
+        message, resolution, _thread, payload, _opened = self.send_and_receive()
+        receiver = self.lane("daimonmatrix", at_ms=NOW + 5)
+        with (
+            patch.object(receiver, "_author_receipt", side_effect=RuntimeError("cut")),
+            self.assertRaisesRegex(RuntimeError, "cut"),
+        ):
+            receiver.intake(payload)
+        self.assertEqual(self.ledger_b.conversation_evidence(), [message, resolution])
+        self.assertEqual(self.ledger_b.events(), [])
+        first = self.lane("daimonmatrix", at_ms=NOW + 6).intake(payload)
+        second = self.lane("daimonmatrix", at_ms=NOW + 7).intake(payload)
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.ledger_b.conversation_evidence()), 2)
+        self.assertEqual(len(self.ledger_b.events()), 1)
+
+    def test_sparse_intake_capacity_has_safe_local_diagnostic_and_no_receipt(
+        self,
+    ) -> None:
+        _message, _resolution, _thread, payload, _opened = self.send_and_receive()
+        with (
+            patch("daimon_matrix.ledger.CONVERSATION_EVIDENCE_MAX_EVENTS", 1),
+            self.assertLogs("daimon_matrix.we_messaging", level="WARNING") as logs,
+            self.assertRaisesRegex(WeLaneError, "we_lane_intake_rejected"),
+        ):
+            self.lane("daimonmatrix", at_ms=NOW + 5).intake(payload)
+        self.assertIn("reason=conversation_evidence_capacity", logs.output[0])
+        self.assertNotIn("hola", logs.output[0])
+        self.assertEqual(self.ledger_b.events(), [])
+        self.assertEqual(self.ledger_b.conversation_evidence(), [])
+
+    def test_conversation_and_receipt_cross_history_gaps_with_reader_continuity(
+        self,
+    ) -> None:
+        sender_private = self.append(self.ledger_a, "legion", "sender private history")
+        receiver_private = self.append(
+            self.ledger_b, "daimonmatrix", "receiver private history"
+        )
+        old_cursor = self.ledger_b.known_page(cursor="tail")["cursor"]
+        sender = self.lane("legion", at_ms=NOW + 1)
+        receiver = self.lane("daimonmatrix", at_ms=NOW + 5)
+        request = str(uuid.uuid4())
+        retained_payloads = []
+
+        def deliver(_recipient: str, payload: Any) -> Any:
+            retained_payloads.append(payload)
+            return receiver.intake(payload)
+
+        kwargs = dict(
+            text="useful conversation without private history sync",
+            addressees=[REMOTE],
+            request_id=request,
+            targets=self.canonical_targets(),
+            ttl_ms=30_000,
+            deliver=deliver,
+        )
+        first = sender.converse(**kwargs)
+        self.assertEqual(first["deliveries"][0]["state"], "delivered")
+        self.assertIsNone(self.ledger_b.event(sender_private["event_id"]))
+        self.assertIsNone(self.ledger_a.event(receiver_private["event_id"]))
+        capability = create_capability(
+            seed("sparse-reader"),
+            client_id="client:sparse-reader",
+            methods=["we.conversation.page"],
+            not_before_ms=NOW - 10,
+            not_after_ms=NOW + 100,
+        )
+        service = HostedWeave(
+            self.ledger_b,
+            self.signers["daimonmatrix"],
+            {capability.capability_id: capability},
+            lambda: NOW + 6,
+            "dm:runtime:v1:" + "a" * 43,
+            "test-receiver",
+        )
+        page = service._we_conversation_page({"cursor": old_cursor})
+        self.assertEqual({e["kind"] for e in page["entries"]}, {"message", "receipt"})
+        self.assertIn(first["message_id"], {e["event_id"] for e in page["entries"]})
+        cursor = page["cursor"]
+        self.assertEqual(sender.converse(**kwargs), first)
+        self.assertEqual(retained_payloads[0], retained_payloads[1])
+        self.assertEqual(
+            service._we_conversation_page({"cursor": cursor})["entries"], []
+        )
+        self.assertEqual(
+            {e["event_id"] for e in service._we_conversation_page({})["entries"]},
+            {e["event_id"] for e in page["entries"]},
+        )
+        # Full history remains a distinct valid operation. It must not present
+        # speech/receipts again, even when its origin timestamps are old.
+        self.ledger_b.ingest(self.ledger_a.events(), source="test:later-full-sync")
+        self.ledger_a.ingest(self.ledger_b.events(), source="test:later-return-sync")
+        self.assertEqual(
+            service._we_conversation_page({"cursor": cursor})["entries"], []
+        )
+        receipt_id = first["deliveries"][0]["receipt_event_id"]
+        self.assertIsNotNone(self.ledger_a.event(receipt_id))
+        self.assertIsNotNone(self.ledger_b.event(sender_private["event_id"]))
+
+    def test_sparse_speech_evidence_does_not_import_unrelated_history(self) -> None:
+        private = self.append(self.ledger_a, "legion", "unrelated private experience")
+        message, resolution, _thread = self.author()
+        with self.assertRaises(LedgerGapError):
+            self.ledger_b.ingest([message, resolution], source="test:sparse")
+        self.ledger_b.retain_conversation_evidence([message, resolution])
+        self.assertEqual(self.ledger_b.events(), [])
+        self.assertEqual(self.ledger_b.heads(), [])
+        self.assertEqual(self.ledger_b.known_page(cursor=None)["events"], [])
+        self.assertIsNone(self.ledger_b.event(private["event_id"]))
+        reopened = Ledger(
+            self.ledger_b.path,
+            authority=self.authority,
+            local_origin=self.origins["daimonmatrix"],
+        )
+        reopened.retain_conversation_evidence([message, resolution])
+        self.assertEqual(reopened.conversation_evidence(), [message, resolution])
+        reopened.ingest(self.ledger_a.events(), source="test:later-full-sync")
+        self.assertEqual(reopened.events(), self.ledger_a.events())
+        self.assertEqual(reopened.conversation_evidence(), [])
+
+    def test_sparse_speech_identity_conflict_rejects_later_full_history(self) -> None:
+        self.append(self.ledger_a, "legion", "unrelated private experience")
+        message, resolution, _thread = self.author()
+        self.ledger_b.retain_conversation_evidence([message, resolution])
+        fork = create_event(
+            self.authority,
+            message["origin"],
+            self.signers["legion"],
+            event_id=str(uuid.uuid4()),
+            sequence=message["sequence"],
+            previous_event_id=message["previous_event_id"],
+            occurred_at_ms=message["occurred_at_ms"],
+            causal_parents=(),
+            kind=message["kind"],
+            subject=message["subject"],
+            payload=message["payload"],
+            supersedes=None,
+            sensitivity=message["sensitivity"],
+        )
+        with self.assertRaises(LedgerEquivocationError):
+            self.ledger_b.retain_conversation_evidence([fork])
+        with self.assertRaises(LedgerEquivocationError):
+            self.ledger_b.ingest([self.ledger_a.events()[0], fork], source="test:fork")
+        self.assertEqual(self.ledger_b.events(), [])
+        self.assertEqual(self.ledger_b.conversation_evidence(), [message, resolution])
+
+    def test_sparse_speech_capacity_rolls_back_and_repeats_need_no_space(self) -> None:
+        message, resolution, _thread = self.author()
+        with (
+            patch("daimon_matrix.ledger.CONVERSATION_EVIDENCE_MAX_EVENTS", 1),
+            self.assertRaisesRegex(LedgerError, "conversation_evidence_capacity"),
+        ):
+            self.ledger_b.retain_conversation_evidence([message, resolution])
+        self.assertEqual(self.ledger_b.conversation_evidence(), [])
+        self.ledger_b.retain_conversation_evidence([message, resolution])
+        with patch("daimon_matrix.ledger.CONVERSATION_EVIDENCE_MAX_BYTES", 0):
+            self.ledger_b.retain_conversation_evidence([message, resolution])
+        self.assertEqual(self.ledger_b.conversation_evidence(), [message, resolution])
+
+    def test_sparse_speech_rejects_bad_signature_and_existing_history_fork(
+        self,
+    ) -> None:
+        message, resolution, _thread = self.author()
+        altered = copy.deepcopy(message)
+        altered["payload"]["body"]["text"] = "tampered"
+        with self.assertRaises(ValueError):
+            self.ledger_b.retain_conversation_evidence([altered, resolution])
+        self.assertEqual(self.ledger_b.conversation_evidence(), [])
+        self.ledger_b.ingest(self.ledger_a.events(), source="test:full")
+        fork = create_event(
+            self.authority,
+            message["origin"],
+            self.signers["legion"],
+            event_id=str(uuid.uuid4()),
+            sequence=message["sequence"],
+            previous_event_id=message["previous_event_id"],
+            occurred_at_ms=message["occurred_at_ms"],
+            causal_parents=(),
+            kind=message["kind"],
+            subject=message["subject"],
+            payload=message["payload"],
+            supersedes=None,
+            sensitivity=message["sensitivity"],
+        )
+        with self.assertRaises(LedgerEquivocationError):
+            self.ledger_b.retain_conversation_evidence([fork])
+        self.assertEqual(self.ledger_b.events(), self.ledger_a.events())
+
     def target(self, embodiment_id: str) -> dict[str, Any]:
         return {
             "evidence_cursor": "dm:scope-evidence:v1:" + "A" * 43,
@@ -424,8 +621,9 @@ class WeLaneTests(SealedFixture):
         self.assertEqual(receipt["payload"]["recipient_type"], "embodiment")
         self.assertEqual(receipt["payload"]["thread_id"], thread_id)
         self.assertEqual(receipt["payload"]["outcome"], "delivered")
-        for event in (message, resolution, receipt):
-            self.assertIsNotNone(self.ledger_b.event(event["event_id"]), event)
+        self.assertEqual(self.ledger_b.conversation_evidence(), [message, resolution])
+        self.assertIsNotNone(self.ledger_b.event(receipt["event_id"]))
+        self.assertIsNone(self.ledger_b.event(message["event_id"]))
 
     def test_an_exact_intake_retry_returns_the_same_receipt(self) -> None:
         _message, _resolution, _thread, payload, _opened = self.send_and_receive()
@@ -510,11 +708,11 @@ class WeLaneTests(SealedFixture):
         # The sibling's own signed receipt is kept by the sender, so one being can
         # see which of its bodies heard the message.
         receipt_id = result["deliveries"][0]["receipt_event_id"]
-        self.assertIsNotNone(self.ledger_a.event(receipt_id))
+        evidence = {e["event_id"]: e for e in self.ledger_a.conversation_evidence()}
+        self.assertIn(receipt_id, evidence)
         self.assertIsNotNone(self.ledger_a.event(result["message_id"]))
         self.assertIsNotNone(self.ledger_a.event(result["resolution_id"]))
-        retained = self.ledger_a.event(receipt_id)
-        assert retained is not None
+        retained = evidence[receipt_id]
         self.assertEqual(retained["origin"]["embodiment_id"], REMOTE)
 
     def test_an_exact_converse_retry_says_it_once(self) -> None:
@@ -692,7 +890,10 @@ class WeLaneTests(SealedFixture):
             )
             delivered = result["deliveries"][1]
             self.assertEqual(delivered["state"], "delivered")
-            self.assertIsNotNone(self.ledger_a.event(delivered["receipt_event_id"]))
+            self.assertIn(
+                delivered["receipt_event_id"],
+                {e["event_id"] for e in self.ledger_a.conversation_evidence()},
+            )
 
     def test_expired_saved_payload_refuses_before_another_delivery(self) -> None:
         request_id = str(uuid.uuid4())

@@ -1219,6 +1219,10 @@ class PeerTransportTests(PeerTransportFixture):
         storage_failure: bool = False,
     ) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
+        sender_private = self.append(self.ledger_a, "legion", "private sender history")
+        receiver_private = self.append(
+            self.ledger_b, "daimonmatrix", "private receiver history"
+        )
         transports: list[SyntheticEchoTransport] = []
         if mirror:
             controllers = []
@@ -1383,8 +1387,9 @@ class PeerTransportTests(PeerTransportFixture):
                 receipts[0]["payload"]["message_ref"]["event_hash"],
                 result["message_hash"],
             )
-            self.assertIsNotNone(self.ledger_b.event(result["message_id"]))
-            self.assertIsNotNone(self.ledger_b.event(result["resolution_id"]))
+            evidence = {e["event_id"] for e in self.ledger_b.conversation_evidence()}
+            self.assertIn(result["message_id"], evidence)
+            self.assertIn(result["resolution_id"], evidence)
             self.assertIsNone(self.ledger_a.event(receipts[0]["event_id"]))
             verify_response(
                 response,
@@ -1413,15 +1418,21 @@ class PeerTransportTests(PeerTransportFixture):
         )
         receipt_id = result["deliveries"][0]["receipt_event_id"]
         # The hearing body kept the message, its audience and its own receipt.
-        self.assertIsNotNone(self.ledger_b.event(result["message_id"]))
-        self.assertIsNotNone(self.ledger_b.event(result["resolution_id"]))
+        evidence = {e["event_id"] for e in self.ledger_b.conversation_evidence()}
+        self.assertIn(result["message_id"], evidence)
+        self.assertIn(result["resolution_id"], evidence)
+        self.assertIsNone(self.ledger_b.event(sender_private["event_id"]))
+        self.assertIsNone(self.ledger_a.event(receiver_private["event_id"]))
         heard = self.ledger_b.event(receipt_id)
         assert heard is not None
         self.assertEqual(heard["origin"]["embodiment_id"], sibling)
         self.assertEqual(heard["payload"]["thread_id"], result["thread_id"])
         # The sending body kept the sibling's receipt, so authorship stays visible.
-        retained = self.ledger_a.event(receipt_id)
-        assert retained is not None
+        retained = next(
+            e
+            for e in self.ledger_a.conversation_evidence()
+            if e["event_id"] == receipt_id
+        )
         self.assertEqual(retained["origin"]["embodiment_id"], sibling)
 
         # A cold exact retry must reuse the original sealed payload through the

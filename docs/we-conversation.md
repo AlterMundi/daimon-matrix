@@ -60,19 +60,56 @@ sender keeps every sibling receipt it receives, which is how one being can see
 which of its bodies heard a message. A receipt's identity covers everything but
 the instant it was observed, so a retried intake returns the same signed receipt.
 
-Byte-exact transport retry belongs to the peer outbox, not to this lane: re-sealing
-an already authored message is legitimate and produces a fresh envelope for it. An
-envelope's deadline may not outlive the shortest credential validity in the carrier
-set. Nothing here widens resource authority, and nothing creates relationship,
-membership or grant evidence.
+Receiving conversation evidence does not require synchronizing unrelated earlier
+experiences. The authenticated message and frozen audience are atomically retained
+in the protected ledger's separate `conversation_evidence` table; returned sibling
+receipts use that same path. Every signature is verified. Event IDs and origin
+positions must agree byte-for-byte with both retained conversation evidence and
+any existing or subsequently imported history. Evidence does not advance a chain
+head, known-event feed, peer sync cursor, adoption or causal completeness.
+
+The recipient's receipt is an ordinary idempotent local signed event. Its payload
+binds the exact message and resolution IDs/hashes, recipient, thread, outcome and
+observation time; these references attest durable speech retention, not history
+uptake. New receipts therefore do not require the remote message as a known
+causal parent. Previously authored receipts and their original causal edges are
+preserved and returned unchanged on exact retry.
+
+The sparse evidence reservoir rejects a new intake before acknowledgment if it
+would exceed 10000 events or64MiB of canonical event bytes. Exact repeats consume
+no additional capacity. A later valid full sync reclaims only a redundant sparse
+copy once the exact original is known in history; the original and conversation
+read position remain intact. No automatic history fetch, eviction, archive,
+background reader or model activation is involved. Capacity/integrity failures
+retain a bounded reason code in the existing runtime journal; carrier rejection
+alone never establishes whether a recipient already retained speech.
+
+The randomized sealed payload is persisted before transport. Exact retry recovers
+the same payload; an expired saved inner payload is not silently resealed. The
+existing peer outbox may renew an outer carrier only while the original inner
+payload remains valid. Its deadline may not outlive the shortest credential
+validity in the carrier set. Nothing here widens resource authority, and nothing
+creates relationship, membership or grant evidence.
 
 ## Visibility
 
 The lane is inventoried in `docs/mandatory-telegram-visibility.md` as intra-being.
 It carries no inter-daimon message, so the mandatory inter-daimon mirror does not
 apply; the lane remains authorized, digest-bound and journaled as egress
-operations, and every event stays in the being's ledger where an operator can read
-it on request. Cross-being conversation keeps its confirmed echo.
+operations. Received speech stays in the being's protected conversation evidence
+until full-history synchronization owns those exact bytes; the conversation
+reader covers both stores. Cross-being conversation keeps its confirmed echo.
+
+`we.conversation.page` stable pagination uses a store-bound
+`dm.we.conversation-cursor/v1` over retained intake order. It includes known local
+events and independently retained speech without presenting the same event again
+when a later full sync makes it known. Existing `dm.we.known-cursor/v1` reader
+cursors are verified against their original boundary and translated to the same
+event in the conversation feed. They are not interpreted as arbitrary positions
+in a different feed. Wrong-store, restored-away and malformed boundaries reject.
+The older timestamp reader remains available; new integrations should use stable
+cursor pagination, which also discovers late arrivals with older origin dates.
+The generic known-event reader and sync cursor semantics remain unchanged.
 
 ## Surface
 

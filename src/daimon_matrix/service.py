@@ -3029,7 +3029,14 @@ class HostedWeave:
         )
         thread_id = _optional_text(params.get("thread_id"), 36)
         rows: list[dict[str, Any]] = []
-        for event in self.ledger.events(include_incomplete=False):
+        retained = {
+            event["event_id"]: event
+            for event in (
+                *self.ledger.events(include_incomplete=False),
+                *self.ledger.conversation_evidence(),
+            )
+        }
+        for event in retained.values():
             entry = _we_conversation_entry(event)
             if entry is None or entry["occurred_at_ms"] <= after:
                 continue
@@ -3063,7 +3070,7 @@ class HostedWeave:
         }:
             raise ServiceError("conversation_peer_unknown")
         try:
-            page = self.ledger.known_page(cursor=params["cursor"], limit=limit)
+            page = self.ledger.conversation_page(cursor=params["cursor"], limit=limit)
         except LedgerError as exception:
             raise ServiceError(str(exception)) from exception
         entries = []
