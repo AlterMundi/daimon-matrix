@@ -67,27 +67,37 @@ Changing the visibility-before-delivery policy requires a design decision.
 
 ## I/O and model admission
 
-Tribu is the public projection. I/O is Source's selected private persistent
-conversation shared by eligible Nicolas mentions and direct input.
-[#310](https://github.com/AlterMundi/daimon-matrix/issues/310) selects one writer,
-a 300-second running-turn deadline, durable admission/uncertainty and disabled
-goal continuation/subagents. Only eligible paired-human explicit requests
-activate it; peer messages and technical events do not. Existing controls remain
-`/tribu pause`, `/tribu resume`, `/tribu status` and `/tribu reconcile`.
+Nicolas clarified the current direction on 2026-11-01: communications review and
+response belong to the existing continuing native integrating conversation used
+through Daimon Interaction. I/O is its attributed ingress/egress responsibility,
+not a separate context-owning reasoning agent. Interaction is the client/controller
+surface; the native conversation owns continuity. Other work sessions retain their
+own histories; authorized source-linked retrieval does not automatically pool every
+private transcript into the integrator.
 
-The first native I/O turn completed while listener admission stayed undetermined.
-Recovery deployment and end-to-end acceptance remain pending.
-[Telecodex PR #85](https://github.com/AlterMundi/telecodex/pull/85) supplies candidate
-local reconciliation/restricted retry, not proof of live selection. Preserve
-uncertain submissions and reconcile actual native evidence; never replay to
-clear a state. Public reply delivery is independent of model completion.
+[#310](https://github.com/AlterMundi/daimon-matrix/issues/310) owns adapting
+Matrix/Tribu ingress to that actual binding through the supported admission and
+controller contract. Preserve original authorship/correlation, exact group/direct
+and public/private audiences, deduplication, pause, single-writer admission and
+uncertain outcomes. Current Telecodex explicitly rejects overlapping legacy I/O
+and Interaction bindings: pointing both profiles at one thread is not a deployment
+fix. Do not impose the old dedicated-thread deadline/disabled-goal restrictions
+wholesale on the general-purpose integrator.
 
-The [router #313](https://github.com/AlterMundi/daimon-matrix/issues/313),
-[renewal #305](https://github.com/AlterMundi/daimon-matrix/issues/305) and
-[bounded coordination #312](https://github.com/AlterMundi/daimon-matrix/issues/312)
-are later designs. A topic name does not implement routing. A wall-clock limit
-is not a guaranteed token/spend ceiling. No peer lifecycle activation follows
-from transport, an active goal or this documentation.
+The old dedicated I/O thread/journal and undetermined admission remain retained.
+Its first native turn completed; that does not authorize replay, reset or renewed
+activation of old inputs. Its dated 300-second profile and recovery evidence remain
+in #310 as history. Public reply delivery is independent of model completion;
+private integrator results are not automatically published to Tribu.
+
+Reuse existing local routing under
+[#313](https://github.com/AlterMundi/daimon-matrix/issues/313); cross-body integration
+belongs to [#367](https://github.com/AlterMundi/daimon-matrix/issues/367). This plan
+alignment is not live receiving acceptance. Passive peer delivery, technical events
+and receipts do not activate inference. Future peer-triggered work stays under
+[#312](https://github.com/AlterMundi/daimon-matrix/issues/312), with concrete selected
+authority/limits and actual enforcement before activation. A deadline alone is not
+a spending fence. Preserve paused/blocked goals and existing uncertain work.
 
 ## Receiving memory profiles
 
