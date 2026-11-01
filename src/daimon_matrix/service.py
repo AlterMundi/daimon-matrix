@@ -1559,6 +1559,8 @@ class HostedWeave:
         fields = {"channel_id", "send_id", "received_channel_id", "message_id", "text"}
         if isinstance(params, Mapping) and "effect_not_after_ms" in params:
             fields.add("effect_not_after_ms")
+        if isinstance(params, Mapping) and "coordination" in params:
+            fields.add("coordination")
         value = _closed(params, fields)
         bound: dict[str, Any] = (
             {"effect_not_after_ms": _uint(value["effect_not_after_ms"], minimum=1)}
@@ -1584,6 +1586,12 @@ class HostedWeave:
                 raise ValueError
             incoming = context.channels[value["received_channel_id"]]
             delivery = context.deliveries[value["channel_id"]]
+            if "coordination" in value:
+                if not isinstance(delivery, GroupMessaging):
+                    raise ValueError("coordination_requires_tribe")
+                from .execution_instruction import coordination_metadata
+
+                bound["coordination"] = coordination_metadata(value["coordination"])
             if bound and not isinstance(delivery, GroupMessaging):
                 raise ValueError("bounded_authoring_requires_tribe")
             if isinstance(delivery, MessagingDelivery) and not isinstance(
@@ -1649,6 +1657,8 @@ class HostedWeave:
             fields.add("effect_not_after_ms")
         if isinstance(params, Mapping) and "destination" in params:
             fields.add("destination")
+        if isinstance(params, Mapping) and "coordination" in params:
+            fields.add("coordination")
         value = _closed(params, fields)
         bound: dict[str, Any] = (
             {"effect_not_after_ms": _uint(value["effect_not_after_ms"], minimum=1)}
@@ -1670,6 +1680,12 @@ class HostedWeave:
             if channel_id not in context.client_channels.get(client_id, frozenset()):
                 raise ValueError
             delivery = context.deliveries[channel_id]
+            if "coordination" in value:
+                if not isinstance(delivery, GroupMessaging):
+                    raise ValueError("coordination_requires_tribe")
+                from .execution_instruction import coordination_metadata
+
+                bound["coordination"] = coordination_metadata(value["coordination"])
             if bound and not isinstance(delivery, GroupMessaging):
                 raise ValueError("bounded_authoring_requires_tribe")
             directed: dict[str, Any] = {}

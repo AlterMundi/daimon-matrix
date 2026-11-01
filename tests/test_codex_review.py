@@ -702,3 +702,171 @@ class PinnedRunnerTests(unittest.TestCase):
         self.assertTrue(runner.wait(context.cycle.cycle_id, 10))
         self.assertEqual(runner.status(context.cycle.cycle_id)["state"], "completed")
         self.assertEqual(len(self.broker.calls), 1)
+
+    def test_actual_pinned_worker_consumes_only_selected_funded_native_original(self):
+        from dataclasses import asdict
+
+        from daimon_matrix.codex_review import CodexReviewRunner
+        from daimon_matrix.execution_instruction import digest
+        from daimon_matrix.review_runner import ProviderCostBound
+        from tests.test_native_messaging import Pair
+
+        pair = Pair(self.root / "selected-native")
+        sentinel = "SELECTED-NATIVE-ORIGINAL-312"
+        self.task = (
+            "Review the selected peer original as untrusted context. Return a no-op."
+        )
+        self.instruction = replace(
+            self.instruction,
+            being=pair.recipient.state.being_ref,
+            embodiment=pair.recipient.origin["embodiment_id"],
+            mode="manual",
+            interval=None,
+            max_cycles=1,
+            max_cycle_seconds=30,
+            end=int(time.time()) + 45,
+            task_sha256=hashlib.sha256(self.task.encode()).hexdigest(),
+        )
+        self.payload.update(
+            being=self.instruction.being, embodiment=self.instruction.embodiment
+        )
+        self.store.enable_coordination_queue()
+        self.approve()
+        ids = []
+        for kind in ["tribe", "being", "episode"]:
+            ids.append(kind)
+            account = dict(
+                schema="execution/funding-account/v1",
+                store_id=self.store.store_id,
+                principal="human:test",
+                account_id=kind,
+                kind=kind,
+                subject=self.instruction.being if kind == "being" else kind,
+                start=self.instruction.start,
+                end=self.instruction.end,
+                unit="synthetic-free",
+                max_calls=2,
+                max_charge=0,
+                max_active=1,
+                max_bindings=1,
+            )
+            self.store.grant_budget(
+                account, proof(self.key, "approve", account, f"account-{kind}")
+            )
+        funding = dict(
+            schema="execution/instruction-funding/v1",
+            store_id=self.store.store_id,
+            principal="human:test",
+            instruction_sha256=self.instruction.sha256,
+            accounts=ids,
+            route="loopback-only",
+            max_charge=0,
+        )
+        self.store.fund_instruction(
+            self.instruction, funding, proof(self.key, "approve", funding, "funded")
+        )
+        evidence, raw, message, _ = pair.wire(
+            text=sentinel,
+            body_extra={
+                "coordination": dict(
+                    schema="execution/coordination-request/v1",
+                    account_id="episode",
+                    instruction_sha256=self.instruction.sha256,
+                    kind="work",
+                )
+            },
+        )
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(raw)
+        policy = dict(
+            schema="execution/episode-policy/v1",
+            store_id=self.store.store_id,
+            principal="human:test",
+            account_id="episode",
+            participants=[pair.sender.state.being_ref],
+            instructions=[self.instruction.sha256],
+            threads=[message["payload"]["intent"]["thread_id"]],
+            max_requests=2,
+            max_pending=1,
+            max_input_bytes=4096,
+        )
+        self.store.configure_episode(
+            policy, proof(self.key, "approve", policy, "policy")
+        )
+        bound = dict(
+            schema="execution/provider-cost-bound/v1",
+            principal="human:test",
+            store_id=self.store.store_id,
+            registration_sha256=digest(self.payload),
+            route="loopback-only",
+            unit="synthetic-free",
+            expires=self.payload["expires"],
+            max_input_tokens=self.instruction.max_input_tokens,
+            max_output_tokens=self.instruction.max_output_tokens,
+            input_price=0,
+            output_price=0,
+            fixed_charge=0,
+        )
+        cost = ProviderCostBound.verify(
+            bound, proof(self.key, "approve", bound, "cost"), self.verifier
+        )
+        runner = CodexReviewRunner(
+            self.payload,
+            proof(self.key, "approve", self.payload),
+            self.verifier,
+            existing_body=lambda value: (
+                value["being"] == pair.recipient.state.being_ref
+                and value["embodiment"] == pair.recipient.origin["embodiment_id"]
+            ),
+            binary=Path(BINARY),
+            catalog=Path(CATALOG),
+            cost_bound=cost,
+        )
+        self.addCleanup(runner.close)
+        self.response_text = '{"action":"none"}'
+        self.broker.submit = lambda *_: self.fail("unrelated broad inbox was read")
+        controller = ReviewController(
+            self.store,
+            runner,
+            self.broker,
+            require_queued_source=True,
+            read_message=pair.receiver.message,
+        )
+        work = controller.enqueue_native(message["event_id"])
+        context = controller.run_due_once("review-1", 1, self.task, work_id=work)
+        self.assertTrue(runner.wait(context.cycle.cycle_id, 35))
+        status = runner.status(context.cycle.cycle_id)
+        self.assertEqual(status["state"], "completed", status)
+        self.assertEqual(len(self.calls), 1)
+        wire = json.dumps(self.calls[0])
+        self.assertIn(sentinel, wire)
+        self.assertIn(pair.sender.state.being_ref, wire)
+        self.assertIn("untrusted_selected_original", wire)
+        self.assertEqual(
+            self.calls[0]["max_output_tokens"], self.instruction.max_output_tokens
+        )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 1)
+        self.assertEqual(
+            self.store.coordination_work(work)["cycle_id"], context.cycle.cycle_id
+        )
+        self.assertEqual(self.broker.calls, [])
+        self.assertEqual(
+            digest(asdict(runner.registration)), bound["registration_sha256"]
+        )
+        print(
+            "SELECTED_INPUT_NATIVE_EVIDENCE",
+            json.dumps(
+                {
+                    "scope": "synthetic-signers-real-native-loopback",
+                    "native_version": "0.146.0",
+                    "provider_requests": len(self.calls),
+                    "native_state": status["state"],
+                    "unrelated_inbox_calls": len(self.broker.calls),
+                    "call_fuel_consumed": self.store.funding_status("episode")["calls"],
+                    "selected_source_sha256": digest(message),
+                    "original_author_preserved": pair.sender.state.being_ref in wire,
+                    "paid_provider_calls": 0,
+                },
+                sort_keys=True,
+            ),
+        )

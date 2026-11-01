@@ -31,6 +31,7 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
+from .execution_instruction import coordination_metadata
 from .ledger import (
     Clock,
     Ledger,
@@ -659,6 +660,7 @@ class TribeConversation:
         response_context: Mapping[str, Any] | None = None,
         destination: Mapping[str, str] | None = None,
         effect_not_after_ms: int | None = None,
+        coordination: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Freeze before authoring; durably return one exact sealed carrier.
 
@@ -672,6 +674,9 @@ class TribeConversation:
             raise TribeConversationError("tribe_lane_ttl_invalid")
         tribe = _text(tribe_ref, "tribe_lane_tribe_ref_invalid")
         content = _text(text, "tribe_lane_text_invalid", maximum=MAX_TRIBE_TEXT_BYTES)
+        metadata = (
+            coordination_metadata(coordination) if coordination is not None else None
+        )
         if sensitivity not in {"personal", "private", "shareable"}:
             raise TribeConversationError("tribe_lane_sensitivity_invalid")
         thread = (
@@ -689,6 +694,8 @@ class TribeConversation:
             ttl_ms=ttl,
             response_context=response_context,
         )
+        if metadata is not None:
+            parameters["coordination"] = metadata
         if destination is not None:
             destination = direct_destination(destination)
             parameters["destination"] = destination
@@ -727,6 +734,7 @@ class TribeConversation:
             payload={
                 "body": {
                     "text": content,
+                    **({"coordination": metadata} if metadata is not None else {}),
                     "audience": rows,
                     **(
                         {"destination": plan["destination"]}
@@ -969,6 +977,7 @@ class TribeConversation:
         ttl_ms: int = DEFAULT_TRIBE_TTL_MS,
         deliver: DeliverTribeConversation | None = None,
         destination: Mapping[str, str] | None = None,
+        coordination: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Author, seal and hand over one message to the whole tribe.
 
@@ -983,6 +992,9 @@ class TribeConversation:
         not reach. An ``undelivered`` row is retryable under the same request id, which
         re-authors the same event and re-attempts delivery rather than saying it twice.
         """
+        metadata: dict[str, Any] = (
+            {"coordination": coordination} if coordination is not None else {}
+        )
         prepared = self.prepare(
             text=text,
             request_id=request_id,
@@ -991,6 +1003,7 @@ class TribeConversation:
             sensitivity=sensitivity,
             ttl_ms=ttl_ms,
             destination=destination,
+            **metadata,
         )
         message, resolution = prepared["message"], prepared["resolution"]
         rows, payload = prepared["rows"], prepared["payload"]

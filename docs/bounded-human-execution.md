@@ -588,3 +588,76 @@ installed exclusive provider route remain human-selected activation residuals.
 No real credentials, provider choice, background model use, production migration
 or peer activation follows from this API. Current real full-access development
 sessions are not silently enrolled as funded runners.
+
+
+### Exact queued-source input in existing workers — successor qualification
+
+For a queued cycle, `CycleContext.selected_original()` revalidates the exact
+retained source with the current native reader, checks instruction/funding and
+rechecks the deadline after the read. It returns peer material as untrusted
+context; it grants no tools, destination, task rewrite or wider authority.
+Codex/Hermes workers use that selected signed original instead of eagerly
+reading every approved inbox. A queued request without that source cannot fall
+back to broad inbox retrieval. Ordinary explicit nonqueued review retains its
+existing scoped-inbox path and native mediation.
+
+The actual SHA-pinned Codex0.146.0 App Server was exercised with synthetic
+signers, actual authenticated native source intake and a loopback Responses
+provider. The first useful provider request contained the exact original and
+its sender under `untrusted_selected_original`; no broad inbox was read. The
+registered cost/funding boundary consumed exactly one durable call, forced the
+approved output cap, and preserved source→cycle correlation. The process
+completed; its profile was reaped and removed. A separate existing real-native
+ordinary scoped review also passed unchanged. Both are adapter qualification,
+not a real paid inference, independent participant use or production adoption.
+Hermes shares the selected-source path; its full native selected-source worker
+journey remains unobserved until that optional fixture is available/selected.
+
+The native fixture command is the existing unittest with explicit source and
+pinned tool/catalog, never a replacement for the receiving body's native daemon:
+
+```sh
+PYTHONPATH=src CODEX_REVIEW_BINARY=/path/to/exact/codex-0.146.0 \
+CODEX_REVIEW_CATALOG=/path/to/reviewed/text-only-models.json \
+python -W error::ResourceWarning -m unittest \
+  tests.test_codex_review.PinnedRunnerTests.test_actual_pinned_worker_consumes_only_selected_funded_native_original -v
+```
+
+The optional public qualification cache retains one exact pinned native tool and
+one filtered public catalog, at most512MiB. Download streams the official pinned
+archive, verifies the existing adapter binary SHA256 and keeps no archive or
+failed partial. It copies no credentials or native histories. Reuse that tool
+for the owning pin; retire only its test-owned files when it is no longer used.
+The current body/harness model, accounting, private runtime and ordinary sessions
+remain unchanged. Existing Interaction return/writer
+integration, operator visibility and actual receiving/paid-route selection remain
+separate requirements under #312.
+
+
+### Public structured authoring into the native Tribe path
+
+`messaging_send` and `messaging_reply` optionally accept `coordination` with the
+closed fields `schema=execution/coordination-request/v1`, `account_id`,
+`instruction_sha256` and `kind`. The account and instruction identify an existing
+human-selected finite episode; they are not grants supplied by a peer. The same
+validator is used by the public tool, owner handler, signed group authoring and
+queue intake. Metadata is included in the immutable request and signed speech
+body. Changed metadata under the same send ID is refused. Omitting the field
+preserves ordinary message authoring. Bilateral legacy lanes do not acquire this
+coordination path.
+
+`work` is eligible only under the receiver's existing episode policy, current
+source lookup and funded instruction. `result`, `ack`, `status`, `reaction` and
+`error` remain passive. A group/direct delivery receipt proves neither queue
+admission nor inference. Structured metadata changes no audience, parent, grant
+or execution switch. Reply authoring preserves the original group or directed
+thread; it does not silently narrow its audience.
+
+The public-contract qualification composes typed MCP arguments, the owner
+handler, actual signed membership-group encryption/HTTP intake, native reading
+and the real SQLite queue. It verifies optional/closed validation, exact retry,
+changed-root rejection and a passive result reply. Its owner context is a fixture;
+it does not claim a production owner-RPC grant or paid inference. Canonical
+`daimon-chat` guidance and both packaged installer surfaces describe the optional
+field only when advertised by the receiving tool. Production selection and
+existing Interaction writer/return integration remain separate #312 requirements.

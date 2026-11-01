@@ -683,13 +683,19 @@ class CodexReviewRunner:
         watcher = asyncio.create_task(watchdog(main))
         try:
             check()
-            inbox = []
-            for index, scope in enumerate(request.instruction.scope):
-                if scope.tool == "messaging_inbox":
-                    native_unknown = True
-                    result = context.native(scope, {})
-                    native_unknown = False
-                    inbox.append({"scope": index, "untrusted_native_data": result})
+            inbox: list[dict[str, Any]] = []
+            selected = context.selected_original()
+            if selected is not None:
+                inbox.append({"untrusted_selected_original": dict(selected)})
+            elif request.work is not None:
+                raise ExecutionDenied("queued work lacks an authorized source")
+            else:
+                for index, scope in enumerate(request.instruction.scope):
+                    if scope.tool == "messaging_inbox":
+                        native_unknown = True
+                        result = context.native(scope, {})
+                        native_unknown = False
+                        inbox.append({"scope": index, "untrusted_native_data": result})
             native_context = canonical(inbox).decode()
             if len(native_context) > request.instruction.max_input_tokens:
                 raise ExecutionDenied("native context exceeds input budget")

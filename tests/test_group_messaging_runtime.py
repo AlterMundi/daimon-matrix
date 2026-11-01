@@ -329,6 +329,152 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_public_typed_coordination_reaches_signed_group_and_passive_queue(self):
+        from types import SimpleNamespace
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from daimon_matrix.execution_instruction import Instruction
+        from daimon_matrix.execution_store import ExecutionStore
+        from daimon_matrix.mcp_server import _messaging_tool_params
+        from daimon_matrix.service import HostedWeave, ServiceError
+        from tests.test_execution_instruction import proof, request, verifier
+
+        sender, receiver = self.groups
+        now = self.fixture.now // 1000
+        key = Ed25519PrivateKey.generate()
+        store = ExecutionStore.create(
+            Path(self.fixture.journey.root) / "execution.sqlite",
+            verifier(key),
+            clock=lambda: self.fixture.now / 1000,
+        )
+        store.enable_coordination_queue()
+        instruction = Instruction.from_dict(
+            request(
+                store_id=store.store_id,
+                being=receiver.lane.being_ref,
+                embodiment=receiver.lane.local_embodiment_id,
+                start=now,
+                end=now + 60,
+            )
+        )
+        store.approve(instruction, proof(key, "approve", instruction.to_dict()))
+        ids = []
+        for kind in ["tribe", "being", "episode"]:
+            ids.append(kind)
+            account = dict(
+                schema="execution/funding-account/v1",
+                store_id=store.store_id,
+                principal="human:test",
+                account_id=kind,
+                kind=kind,
+                subject=instruction.being if kind == "being" else kind,
+                start=now,
+                end=now + 60,
+                unit="synthetic-free",
+                max_calls=2,
+                max_charge=0,
+                max_active=1,
+                max_bindings=1,
+            )
+            store.grant_budget(
+                account, proof(key, "approve", account, f"account-{kind}")
+            )
+        funding = dict(
+            schema="execution/instruction-funding/v1",
+            store_id=store.store_id,
+            principal="human:test",
+            instruction_sha256=instruction.sha256,
+            accounts=ids,
+            route="synthetic",
+            max_charge=0,
+        )
+        store.fund_instruction(
+            instruction, funding, proof(key, "approve", funding, "funding")
+        )
+        thread = str(uuid.uuid4())
+        policy = dict(
+            schema="execution/episode-policy/v1",
+            store_id=store.store_id,
+            principal="human:test",
+            account_id="episode",
+            participants=[sender.lane.being_ref],
+            instructions=[instruction.sha256],
+            threads=[thread],
+            max_requests=2,
+            max_pending=1,
+            max_input_bytes=65536,
+        )
+        store.configure_episode(policy, proof(key, "approve", policy, "policy"))
+        metadata = dict(
+            schema="execution/coordination-request/v1",
+            account_id="episode",
+            instruction_sha256=instruction.sha256,
+            kind="work",
+        )
+
+        def service(group):
+            context = SimpleNamespace(
+                client_channels={"test": frozenset({"tribe"})},
+                deliveries={"tribe": group},
+                channels={"tribe": group},
+            )
+            return SimpleNamespace(
+                _messaging_context=lambda: context,
+                _messaging_guard=lambda *args: lambda: None,
+            )
+
+        arguments = dict(
+            channel_id="tribe",
+            send_id=str(uuid.uuid4()),
+            thread_id=thread,
+            text="explicit finite work request",
+            coordination=metadata,
+        )
+        _, params, _ = _messaging_tool_params("messaging_send", arguments)
+        first = HostedWeave._messaging_send(service(sender), params, client_id="test")
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        first = sender.inspect(client_id="test", send_id=arguments["send_id"])
+        self.assertTrue(first["semantic"]["terminal"])
+        message = receiver.message(first["message_id"])
+        self.assertEqual(message["payload"]["body"]["coordination"], metadata)
+        self.assertEqual(len(message["payload"]["body"]["audience"]), len(self.groups))
+        work = store.enqueue_coordination(first["message_id"], receiver.message)
+        self.assertIsNotNone(work)
+        self.assertEqual(store.coordination_work(work)["state"], "queued")
+        self.assertEqual(store.funding_status("episode")["calls"], 0)
+        retry = HostedWeave._messaging_send(service(sender), params, client_id="test")
+        self.assertEqual(retry["message_id"], first["message_id"])
+        changed = params | {"coordination": metadata | {"account_id": "other-root"}}
+        with self.assertRaises(ServiceError):
+            HostedWeave._messaging_send(service(sender), changed, client_id="test")
+        self.assertEqual(len(receiver.page(after=0, limit=100)), 1)
+        reply = dict(
+            channel_id="tribe",
+            received_channel_id="tribe",
+            send_id=str(uuid.uuid4()),
+            message_id=first["message_id"],
+            text="technical retained result",
+            coordination=metadata | {"kind": "result"},
+        )
+        _, reply_params, _ = _messaging_tool_params("messaging_reply", reply)
+        result = HostedWeave._messaging_reply(
+            service(receiver), reply_params, client_id="test"
+        )
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        received = sender.message(result["message_id"])
+        self.assertEqual(received["payload"]["body"]["coordination"]["kind"], "result")
+        self.assertEqual(
+            received["payload"]["body"]["response_context"]["message_id"],
+            first["message_id"],
+        )
+        self.assertIsNone(
+            store.enqueue_coordination(result["message_id"], sender.message)
+        )
+        self.assertEqual(store.funding_status("episode")["calls"], 0)
+
     def test_first_authoring_horizon_preserves_completed_native_send(self):
         from daimon_matrix.ledger import LedgerAuthoringExpired
 

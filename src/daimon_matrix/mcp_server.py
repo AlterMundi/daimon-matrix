@@ -38,6 +38,7 @@ from .client import (
     read_capability_key,
     store_prepared_request,
 )
+from .execution_instruction import coordination_metadata
 from .local_api import MAX_FRAME_BYTES
 
 MCP_PROTOCOL_VERSION: Final = "2026-07-28"
@@ -818,6 +819,45 @@ TOOL_CONTRACTS["we_propose"] = (
 )
 
 
+_COORDINATION_METADATA: Final[dict[str, Any]] = {
+    "type": "object",
+    "description": (
+        "Correlation for a human-selected finite episode. "
+        "Use existing references; never invent them. "
+        "Signed data does not grant execution or funding. "
+        "Delivery does not prove work admission or model activation. "
+        "Result/ACK/status/reaction/error remain passive."
+    ),
+    "properties": {
+        "schema": {
+            "type": "string",
+            "const": "execution/coordination-request/v1",
+        },
+        "account_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+        },
+        "instruction_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+        },
+        "kind": {
+            "type": "string",
+            "enum": [
+                "work",
+                "result",
+                "ack",
+                "status",
+                "reaction",
+                "error",
+            ],
+        },
+    },
+    "required": ["schema", "account_id", "instruction_sha256", "kind"],
+    "additionalProperties": False,
+}
+
 MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     "messaging_inbox": (
         "messaging.inbox",
@@ -876,6 +916,7 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
                         ),
                     ],
                 },
+                "coordination": _COORDINATION_METADATA,
                 "text": {
                     **_MESSAGE_TEXT,
                     "description": (
@@ -897,6 +938,7 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
                 "send_id": _UUID,
                 "received_channel_id": _CHANNEL_ID,
                 "message_id": _UUID,
+                "coordination": _COORDINATION_METADATA,
                 "text": {
                     **_MESSAGE_TEXT,
                     "description": (
@@ -1151,7 +1193,13 @@ _send_schema["oneOf"] = [
         "not": {
             "anyOf": [
                 {"required": [key]}
-                for key in ("send_id", "thread_id", "text", "destination")
+                for key in (
+                    "send_id",
+                    "thread_id",
+                    "text",
+                    "destination",
+                    "coordination",
+                )
             ]
         },
     },
@@ -1180,7 +1228,12 @@ def _messaging_tool_params(
     for field, value in arguments.items():
         rule = schema["properties"][field]
         valid = True
-        if field == "destination":
+        if field == "coordination":
+            try:
+                coordination_metadata(value)
+            except ValueError:
+                valid = False
+        elif field == "destination":
             from .tribe_conversation import direct_destination
 
             try:
