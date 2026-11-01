@@ -153,6 +153,25 @@ actual verified signed credential. Existing loaded-code, selection, wire,
 authority-epoch, revocation and process requirements remain necessary for egress.
 An until-revoked row does not bypass these requirements or activate a model.
 
+`reader-selection-effect-horizon/v1` additionally advertises the optional
+authenticated V2 select field `effect_not_after_ms`, a positive UTC millisecond
+bound below2^53. It bounds a fresh positive control, independently of reader
+credential validity. Senders use it only after the actual receiver advertises
+support. V1 commands and unbounded V2 commands retain their existing contracts;
+neither a field on revoke nor an unknown legacy extension is accepted.
+
+The native receiver checks that bound after acquiring the physical writer and
+roster authorization, before applying a fresh selection. Persistence uses the
+minimum of its existing processing budget and the original effect horizon,
+with a final wall-clock check before committing the control transaction. An
+expired transaction rolls back and does not masquerade as an uncertain commit.
+A handler's fresh processing budget cannot renew the effect permission.
+Exact already-accepted requests and recovery of their committed records remain
+historical observations after effect expiry. Effect expiry does not shorten a
+selected reader's signed credential, undo an accepted selection or renew an
+unaccepted request. Native delayed handling/physical-lock contention, rollback
+before commit and accepted exact retry qualify these separate cases.
+
 The authenticated reader journal records this as V2, preserving prior finite V1
 controls and tombstones unchanged. Old V1 rows retain their original expiry;
 installing new software does not reinterpret or renew them. A new explicitly

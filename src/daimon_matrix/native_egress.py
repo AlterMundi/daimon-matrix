@@ -44,6 +44,13 @@ class NativeEgressError(ValueError):
     recovery_failure: dict[str, str] | None = None
 
 
+class ReaderSelectionAuthorityExpired(NativeEgressError):
+    """Fresh control refused before mutation or after a confirmed rollback."""
+
+    def __init__(self) -> None:
+        super().__init__("reader_selection_authority_expired")
+
+
 READER_VALIDITY_SCHEMA: Final = "dm.receiving.reader/v2"
 READER_CONTROL_SCHEMA: Final = "dm.runtime.reader-selection/v2"
 READER_STARTUP_TIMEOUT_NS: Final = 60_000_000_000
@@ -1003,6 +1010,15 @@ class MandatoryEgressController:
         )
         if typed:
             fields.add("schema")
+        if isinstance(value, Mapping) and "effect_not_after_ms" in value:
+            if (
+                not typed
+                or value.get("phase") != "select"
+                or type(value["effect_not_after_ms"]) is not int
+                or not 0 < value["effect_not_after_ms"] < 2**53
+            ):
+                raise NativeEgressError("reader_selection_invalid")
+            fields.add("effect_not_after_ms")
         if not isinstance(value, Mapping) or set(value) != fields:
             raise NativeEgressError("reader_selection_invalid")
         if not _valid_text(value["channel_id"], maximum=128) or not isinstance(
@@ -1151,6 +1167,20 @@ class MandatoryEgressController:
             if command_sha256 != previous.control_sha256:
                 raise NativeEgressError("reader_request_conflict")
             return current
+        effect_expiry = value.get("effect_not_after_ms")
+        if effect_expiry is not None:
+            # Observe monotonic BEFORE wall time: scheduling between samples
+            # can shorten this fixed horizon, never restart its duration.
+            started_ns = time.monotonic_ns()
+            remaining_ms = effect_expiry - self._clock()
+            if remaining_ms <= 0:
+                raise ReaderSelectionAuthorityExpired()
+            effect_deadline = started_ns + remaining_ms * 1_000_000
+            deadline_ns = (
+                min(deadline_ns, effect_deadline)
+                if deadline_ns is not None
+                else effect_deadline
+            )
         if value["expected_head"] != previous.head:
             raise NativeEgressError("reader_selection_conflict")
         same_operation = (value["operation_id"], value["release_digest"]) == (
@@ -1183,6 +1213,10 @@ class MandatoryEgressController:
             version=2 if value.get("schema") == READER_CONTROL_SCHEMA else 1,
         )
         recovery = self._reader_recovery.get(value["channel_id"])
+        if effect_expiry is not None and self._clock() >= effect_expiry:
+            raise ReaderSelectionAuthorityExpired()
+        if deadline_ns is not None:
+            self._remaining_attempt_seconds(deadline_ns)
         if recovery is not None:
             document = {
                 "action": "control",
@@ -1199,6 +1233,10 @@ class MandatoryEgressController:
                     document,
                     deadline_ns=deadline_ns,
                 )
+            except ReaderSelectionAuthorityExpired:
+                # The persistence primitive confirms rollback before raising.
+                # This refusal is not an uncertain commit or a new reservation.
+                raise
             except Exception:
                 # Commit may have succeeded before its result was lost. Reconcile
                 # that exact command, never append a new operation to hide it.

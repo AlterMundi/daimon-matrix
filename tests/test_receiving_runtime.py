@@ -399,6 +399,77 @@ class ReceivingOwnerApiFixture(unittest.TestCase):
 
 
 class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
+    def test_bounded_select_waiting_on_native_writer_cannot_outlive_authority(self):
+        row = self.credential_reader()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        before = self.group.egress.reader_snapshot("tribe", deadline_ns=budget())
+        expiry = self.fixture.now + 50
+        request = self.request(
+            command(
+                self.group.egress,
+                phase="select",
+                readers=[row],
+                expected_roster_sha256=self.group.receiving_roster()["roster_sha256"],
+                effect_not_after_ms=expiry,
+            )
+        )
+        waiting = threading.Event()
+        outcomes = []
+        remaining = self.group.egress._remaining_attempt_seconds
+
+        def observed(deadline):
+            waiting.set()
+            return remaining(deadline)
+
+        self.group.egress._fence.acquire()
+        try:
+            with patch.object(
+                self.group.egress, "_remaining_attempt_seconds", side_effect=observed
+            ):
+                worker = threading.Thread(
+                    target=lambda: outcomes.append(self.service.handle(request))
+                )
+                worker.start()
+                self.assertTrue(
+                    waiting.wait(3), "authenticated select never reached native writer"
+                )
+                self.fixture.now = expiry
+        finally:
+            self.group.egress._fence.release()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(
+            outcomes[0]["error"]["code"], "reader_selection_authority_expired"
+        )
+        self.assertEqual(
+            self.group.egress.reader_snapshot("tribe", deadline_ns=budget()), before
+        )
+
+    def test_bounded_select_accepted_retry_remains_historical_after_effect_expiry(self):
+        row = self.credential_reader()
+        self.assertTrue(
+            self.service.handle(self.request(command(self.group.egress)))["ok"]
+        )
+        expiry = self.fixture.now + 50
+        params = command(
+            self.group.egress,
+            phase="select",
+            readers=[row],
+            expected_roster_sha256=self.group.receiving_roster()["roster_sha256"],
+            effect_not_after_ms=expiry,
+        )
+        request = self.request(params)
+        accepted = self.service.handle(request)
+        self.assertTrue(accepted["ok"], accepted)
+        self.fixture.now = expiry
+        self.assertEqual(self.service.handle(request), accepted)
+        # A different authenticated request cannot acquire the expired effect.
+        refused = self.service.handle(self.request(params))
+        self.assertEqual(refused["error"]["code"], "reader_selection_authority_expired")
+
     def test_credential_bound_finite_selection_refuses_broader_validity(self):
         row = self.credential_reader()
         self.assertEqual(row["validity"]["mode"], "finite")
@@ -1590,6 +1661,40 @@ class ReaderSelectionTests(unittest.TestCase):
 
 
 class DurableReaderRecoveryTests(unittest.TestCase):
+    def test_effect_expiry_before_durable_commit_rolls_back_without_selection(self):
+        controller = self.restart()
+        select(controller, command(controller))
+        before = controller.reader_snapshot("tribe", deadline_ns=budget())
+        head = self.records.reader_control_head("tribe")
+        expiry = self.now + 50
+        value = command(
+            controller,
+            phase="select",
+            readers=[reader_v2()],
+            effect_not_after_ms=expiry,
+        )
+        reserve = self.records._reserve_in_transaction
+
+        def expire_after_insert(*args, **kwargs):
+            result = reserve(*args, **kwargs)
+            if args[1] == "reader-control":
+                self.now = expiry
+            return result
+
+        with (
+            patch.object(
+                self.records, "_reserve_in_transaction", side_effect=expire_after_insert
+            ),
+            self.assertRaisesRegex(
+                NativeEgressError, "reader_selection_authority_expired"
+            ),
+        ):
+            select(controller, value)
+        self.assertEqual(self.records.reader_control_head("tribe"), head)
+        self.assertEqual(
+            controller.reader_snapshot("tribe", deadline_ns=budget()), before
+        )
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

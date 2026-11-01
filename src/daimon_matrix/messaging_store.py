@@ -18,6 +18,7 @@ from .native_egress import (
     MandatoryEgressController,
     NativeEgressError,
     OperationBinding,
+    ReaderSelectionAuthorityExpired,
 )
 from .relationship_store import _prepare_path
 
@@ -370,6 +371,12 @@ class TribeRecordStore:
                 result = self._reserve_in_transaction(
                     database, "reader-control", record_id, fingerprint, lambda: value
                 )
+                if (
+                    document["action"] == "control"
+                    and document["command"].get("effect_not_after_ms") is not None
+                    and self.clock() >= document["command"]["effect_not_after_ms"]
+                ):
+                    raise ReaderSelectionAuthorityExpired()
                 self._reader_budget(deadline_ns)
                 database.commit()
                 return result
