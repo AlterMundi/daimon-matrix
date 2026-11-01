@@ -165,6 +165,15 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(report["work"], {})
         self.assertTrue(all(account["calls"] == 0 for account in report["accounts"]))
 
+    def test_combined_report_is_available_without_reporting_migration(self):
+        report = self.store.episode_report("episode")
+        self.assertEqual(report["snapshot"]["account_id"], "episode")
+        self.assertFalse(report["reporting_enabled"])
+        self.assertIsNone(report["notice"])
+        self.store.enable_episode_reporting()
+        self.assertTrue(self.store.episode_report("episode")["reporting_enabled"])
+        self.assertEqual(self.f.calls, [])
+
     def notice_policy(self, account, instructions):
         policy = self.policy | {
             "account_id": account,

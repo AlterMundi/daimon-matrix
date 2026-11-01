@@ -740,3 +740,11 @@ source and loopback provider: one request, one durable call, exact source/author
 zero broad inbox calls, completed/reaped process and zero paid calls. This checks
 the new journal generation through the real adapter boundary; it does not select
 that generation on a living body's execution journal or qualify a real price.
+
+
+`episode-report ACCOUNT_ID` combines the snapshot and retained notice in one
+journal transaction for the existing Interaction reader. On schema3 it reports
+`reporting_enabled=false` without migrating or preparing a notice. A configured
+frontend pins the store/principal and verifies its displayed objective against
+one exact policy-listed approved instruction; display labels are never authority.
+The reader publishes no Matrix speech and grants no writer or inference access.

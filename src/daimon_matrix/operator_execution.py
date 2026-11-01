@@ -227,6 +227,8 @@ def main(
     commands.add_parser("enable-episode-reporting")
     notice = commands.add_parser("episode-notice")
     notice.add_argument("account_id")
+    report = commands.add_parser("episode-report")
+    report.add_argument("account_id")
     propose = commands.add_parser("propose")
     propose.add_argument("instruction")
     for name in ("approve", "renew"):
@@ -259,6 +261,8 @@ def main(
                     "reporting_enabled": True,
                     "execution_started": False,
                 }
+            elif args.command == "episode-report":
+                result = store.episode_report(args.account_id)
             elif args.command == "episode-notice":
                 result = store.episode_notice(args.account_id)
             elif args.command == "episode-status":

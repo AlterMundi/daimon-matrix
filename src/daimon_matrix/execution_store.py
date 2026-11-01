@@ -1336,55 +1336,69 @@ class ExecutionStore:
             db.execute("ALTER TABLE episode_policies ADD COLUMN notice TEXT")
             db.execute("PRAGMA user_version=4")
 
-    def episode_notice(self, account_id: str) -> dict[str, Any] | None:
-        """Prepare a stable passive notice; delivery uses its immutable identity.
+    def episode_report(self, account_id: str) -> dict[str, Any]:
+        """One consistent operator card/notice observation; no external effects."""
+        with self._transaction() as db:
+            snapshot = self._episode_status_snapshot(db, account_id)
+            enabled = db.execute("PRAGMA user_version").fetchone()[0] == 4
+            return {
+                "schema": "execution/episode-report/v1",
+                "snapshot": snapshot,
+                "reporting_enabled": enabled,
+                "notice": self._episode_notice_snapshot(db, account_id, snapshot)
+                if enabled
+                else None,
+            }
 
-        Repeated reads return the same object, never another notice or a model
-        request. This is not a sender, arrival listener or execution grant.
-        """
+    def episode_notice(self, account_id: str) -> dict[str, Any] | None:
+        """Return one retained passive notice; not a sender or execution grant."""
         with self._transaction() as db:
             if db.execute("PRAGMA user_version").fetchone()[0] != 4:
                 raise ExecutionDenied("explicit reporting migration required")
-            self._episode(db, account_id)
-            previous = db.execute(
-                "SELECT notice FROM episode_policies WHERE account_id=?", (account_id,)
-            ).fetchone()["notice"]
-            if previous is not None:
-                return cast(dict[str, Any], json.loads(previous))
-            snapshot = self._episode_status_snapshot(db, account_id)
-            unavailable = {"call_fuel_exhausted", "charge_exposure_unavailable"}
-            routes = snapshot["instructions"]
-            if not all(
-                unavailable.intersection(row["funding_constraints"]) for row in routes
-            ):
-                return None
-            notice = {
-                "schema": "execution/episode-notice/v1",
-                "notice_id": digest(
-                    {
-                        "store_id": self.store_id,
-                        "account_id": account_id,
-                        "kind": "funding_unavailable",
-                    }
-                ),
-                "store_id": self.store_id,
-                "account_id": account_id,
-                "kind": "funding_unavailable",
-                "observed_at": snapshot["observed_at"],
-                "instructions": [row["instruction_sha256"] for row in routes],
-                "constraints": sorted(
-                    unavailable.intersection(snapshot["funding_constraints"])
-                ),
-                "execution": (
-                    "No model activated; inspect retained reservations "
-                    "and episode controls"
-                ),
-            }
-            db.execute(
-                "UPDATE episode_policies SET notice=? WHERE account_id=?",
-                (canonical(notice).decode(), account_id),
+            return self._episode_notice_snapshot(
+                db, account_id, self._episode_status_snapshot(db, account_id)
             )
-            return notice
+
+    def _episode_notice_snapshot(
+        self, db: sqlite3.Connection, account_id: str, snapshot: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        previous = db.execute(
+            "SELECT notice FROM episode_policies WHERE account_id=?", (account_id,)
+        ).fetchone()["notice"]
+        if previous is not None:
+            return cast(dict[str, Any], json.loads(previous))
+        unavailable = {"call_fuel_exhausted", "charge_exposure_unavailable"}
+        routes = snapshot["instructions"]
+        if not all(
+            unavailable.intersection(row["funding_constraints"]) for row in routes
+        ):
+            return None
+        notice = {
+            "schema": "execution/episode-notice/v1",
+            "notice_id": digest(
+                {
+                    "store_id": self.store_id,
+                    "account_id": account_id,
+                    "kind": "funding_unavailable",
+                }
+            ),
+            "store_id": self.store_id,
+            "account_id": account_id,
+            "kind": "funding_unavailable",
+            "observed_at": snapshot["observed_at"],
+            "instructions": [row["instruction_sha256"] for row in routes],
+            "constraints": sorted(
+                unavailable.intersection(snapshot["funding_constraints"])
+            ),
+            "execution": (
+                "No model activated; inspect retained reservations and episode controls"
+            ),
+        }
+        db.execute(
+            "UPDATE episode_policies SET notice=? WHERE account_id=?",
+            (canonical(notice).decode(), account_id),
+        )
+        return notice
 
     def withdraw_coordination(
         self, payload: Mapping[str, Any], proof: Mapping[str, Any]
