@@ -58,7 +58,7 @@ class ExecutionStore:
                 "execution store missing; explicit provisioning required"
             )
         with closing(self._connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2, 3}:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2, 3, 4}:
                 raise ExecutionDenied("unsupported execution store")
             self.store_id = db.execute("SELECT store_id FROM metadata").fetchone()[0]
 
@@ -626,7 +626,7 @@ class ExecutionStore:
         )
         with self._transaction() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version in {2, 3}:
+            if version in {2, 3, 4}:
                 return
             if version != 1:
                 raise ExecutionDenied("unsupported funding migration")
@@ -636,7 +636,7 @@ class ExecutionStore:
 
     @staticmethod
     def _funding_schema(db: sqlite3.Connection) -> bool:
-        return bool(db.execute("PRAGMA user_version").fetchone()[0] in {2, 3})
+        return bool(db.execute("PRAGMA user_version").fetchone()[0] in {2, 3, 4})
 
     @staticmethod
     def _positive(value: object, *, zero: bool = False) -> bool:
@@ -1013,7 +1013,7 @@ class ExecutionStore:
         """Explicit additive schema2 -> 3 migration; no dispatcher is started."""
         self.enable_funding()
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] == 3:
+            if db.execute("PRAGMA user_version").fetchone()[0] in {3, 4}:
                 return
             db.execute(
                 "CREATE TABLE episode_policies(account_id TEXT PRIMARY KEY, "
@@ -1069,7 +1069,7 @@ class ExecutionStore:
         if len(canonical(dict(payload))) > 65536:
             raise ExecutionDenied("episode policy too large")
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
                 raise ExecutionDenied("explicit queue migration required")
             account, state = self._account(db, payload["account_id"])
             if (
@@ -1096,7 +1096,8 @@ class ExecutionStore:
             self._event(db, "approve", dict(payload), proof)
             try:
                 db.execute(
-                    "INSERT INTO episode_policies VALUES (?,?,?)",
+                    "INSERT INTO episode_policies(account_id,payload,proof) "
+                    "VALUES (?,?,?)",
                     (
                         payload["account_id"],
                         canonical(dict(payload)).decode(),
@@ -1107,7 +1108,7 @@ class ExecutionStore:
                 raise ExecutionDenied("immutable episode policy exists") from exc
 
     def _episode(self, db: sqlite3.Connection, account_id: str) -> dict[str, Any]:
-        if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
             raise ExecutionDenied("coordination queue unavailable")
         row = db.execute(
             "SELECT * FROM episode_policies WHERE account_id=?", (account_id,)
@@ -1206,7 +1207,7 @@ class ExecutionStore:
         return work_id
 
     def _work(self, db: sqlite3.Connection, work_id: str) -> dict[str, Any]:
-        if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
             raise ExecutionDenied("coordination queue unavailable")
         row = db.execute(
             "SELECT * FROM coordination_work WHERE work_id=?", (work_id,)
@@ -1221,107 +1222,169 @@ class ExecutionStore:
             return self._work(db, work_id)
 
     def episode_status(self, account_id: str) -> dict[str, Any]:
-        """One bounded operator snapshot; no dispatch, reset or arrival hook.
+        """One bounded operator snapshot; no dispatch or budget/queue mutation."""
+        with self._transaction() as db:
+            return self._episode_status_snapshot(db, account_id)
 
-        Reads the existing authoritative journal, not a replica's cached balance.
-        Clock faults remain visible while inspection and signed pause still work.
+    def _episode_status_snapshot(
+        self, db: sqlite3.Connection, account_id: str
+    ) -> dict[str, Any]:
+        policy = self._episode(db, account_id)
+        root, _ = self._account(db, account_id)
+        try:
+            observed_at: float | None = self._now(db)
+        except ExecutionDenied:
+            observed_at = None
+        reasons = set()
+        if observed_at is None:
+            reasons.add("clock_untrusted")
+        accounts: dict[str, dict[str, Any]] = {}
+        instructions: list[dict[str, Any]] = []
+        for sha in policy["instructions"]:
+            row = db.execute(
+                "SELECT payload,proof FROM instruction_funding "
+                "WHERE instruction_sha256=?",
+                (sha,),
+            ).fetchone()
+            if row is None:
+                raise ExecutionDenied("episode funding missing")
+            funding = json.loads(row["payload"])
+            self.verifier.verify("approve", funding, json.loads(row["proof"]))
+            if (
+                funding["store_id"] != self.store_id
+                or funding["instruction_sha256"] != sha
+                or account_id not in funding["accounts"]
+            ):
+                raise ExecutionDenied("episode funding differs")
+            local_reasons: set[str] = set()
+            instructions.append(
+                {
+                    "instruction_sha256": sha,
+                    "route": funding["route"],
+                    "max_charge": funding["max_charge"],
+                    "accounts": funding["accounts"],
+                }
+            )
+            for identity in funding["accounts"]:
+                if identity not in accounts:
+                    account, state = self._account(db, identity)
+                    balance = self._balance(db, identity)
+                    accounts[identity] = (
+                        account
+                        | balance
+                        | {
+                            "paused": bool(state["paused"]),
+                            "control_revision": state["control_revision"],
+                            "available_calls": account["max_calls"] - balance["calls"],
+                            "available_charge": account["max_charge"]
+                            - balance["charged"],
+                        }
+                    )
+                account = accounts[identity]
+                if account["paused"]:
+                    local_reasons.add("paused")
+                if observed_at is not None:
+                    if observed_at < account["start"]:
+                        local_reasons.add("not_started")
+                    if observed_at >= account["end"]:
+                        local_reasons.add("expired")
+                if account["available_calls"] <= 0:
+                    local_reasons.add("call_fuel_exhausted")
+                if account["available_charge"] < funding["max_charge"]:
+                    local_reasons.add("charge_exposure_unavailable")
+                if account["active"] >= account["max_active"]:
+                    local_reasons.add("concurrency_full")
+                if account["uncertain"]:
+                    local_reasons.add("uncertain_exposure")
+            instructions[-1]["funding_constraints"] = sorted(local_reasons)
+            reasons.update(local_reasons)
+        counts = {
+            row["state"]: row["total"]
+            for row in db.execute(
+                "SELECT state,count(*) AS total FROM coordination_work "
+                "WHERE account_id=? GROUP BY state",
+                (account_id,),
+            )
+        }
+        return {
+            "schema": "execution/episode-status/v1",
+            "store_id": self.store_id,
+            "account_id": account_id,
+            "principal": root["principal"],
+            "participants": policy["participants"],
+            "instructions": instructions,
+            "start": root["start"],
+            "end": root["end"],
+            "observed_at": observed_at,
+            "funding_constraints": sorted(reasons),
+            "accounts": [accounts[k] for k in sorted(accounts)],
+            "work": counts,
+            "pending_limit": policy["max_pending"],
+            "request_limit": policy["max_requests"],
+            "execution": (
+                "Funding snapshot only; constraints can affect different routes. "
+                "Current source/instruction/writer admission remains required."
+            ),
+        }
+
+    def enable_episode_reporting(self) -> None:
+        """Explicit additive schema3 -> 4; one retained notice slot per root."""
+        self.enable_coordination_queue()
+        with self._transaction() as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 4:
+                return
+            db.execute("ALTER TABLE episode_policies ADD COLUMN notice TEXT")
+            db.execute("PRAGMA user_version=4")
+
+    def episode_notice(self, account_id: str) -> dict[str, Any] | None:
+        """Prepare a stable passive notice; delivery uses its immutable identity.
+
+        Repeated reads return the same object, never another notice or a model
+        request. This is not a sender, arrival listener or execution grant.
         """
         with self._transaction() as db:
-            policy = self._episode(db, account_id)
-            root, _ = self._account(db, account_id)
-            try:
-                observed_at: float | None = self._now(db)
-            except ExecutionDenied:
-                observed_at = None
-            reasons = set()
-            if observed_at is None:
-                reasons.add("clock_untrusted")
-            accounts: dict[str, dict[str, Any]] = {}
-            instructions = []
-            for sha in policy["instructions"]:
-                row = db.execute(
-                    "SELECT payload,proof FROM instruction_funding "
-                    "WHERE instruction_sha256=?",
-                    (sha,),
-                ).fetchone()
-                if row is None:
-                    raise ExecutionDenied("episode funding missing")
-                funding = json.loads(row["payload"])
-                self.verifier.verify("approve", funding, json.loads(row["proof"]))
-                if (
-                    funding["store_id"] != self.store_id
-                    or funding["instruction_sha256"] != sha
-                    or account_id not in funding["accounts"]
-                ):
-                    raise ExecutionDenied("episode funding differs")
-                instructions.append(
+            if db.execute("PRAGMA user_version").fetchone()[0] != 4:
+                raise ExecutionDenied("explicit reporting migration required")
+            self._episode(db, account_id)
+            previous = db.execute(
+                "SELECT notice FROM episode_policies WHERE account_id=?", (account_id,)
+            ).fetchone()["notice"]
+            if previous is not None:
+                return cast(dict[str, Any], json.loads(previous))
+            snapshot = self._episode_status_snapshot(db, account_id)
+            unavailable = {"call_fuel_exhausted", "charge_exposure_unavailable"}
+            routes = snapshot["instructions"]
+            if not all(
+                unavailable.intersection(row["funding_constraints"]) for row in routes
+            ):
+                return None
+            notice = {
+                "schema": "execution/episode-notice/v1",
+                "notice_id": digest(
                     {
-                        "instruction_sha256": sha,
-                        "route": funding["route"],
-                        "max_charge": funding["max_charge"],
-                        "accounts": funding["accounts"],
+                        "store_id": self.store_id,
+                        "account_id": account_id,
+                        "kind": "funding_unavailable",
                     }
-                )
-                for identity in funding["accounts"]:
-                    if identity not in accounts:
-                        account, state = self._account(db, identity)
-                        balance = self._balance(db, identity)
-                        accounts[identity] = (
-                            account
-                            | balance
-                            | {
-                                "paused": bool(state["paused"]),
-                                "control_revision": state["control_revision"],
-                                "available_calls": account["max_calls"]
-                                - balance["calls"],
-                                "available_charge": account["max_charge"]
-                                - balance["charged"],
-                            }
-                        )
-                    account = accounts[identity]
-                    if account["paused"]:
-                        reasons.add("paused")
-                    if observed_at is not None:
-                        if observed_at < account["start"]:
-                            reasons.add("not_started")
-                        if observed_at >= account["end"]:
-                            reasons.add("expired")
-                    if account["available_calls"] <= 0:
-                        reasons.add("call_fuel_exhausted")
-                    if account["available_charge"] < funding["max_charge"]:
-                        reasons.add("charge_exposure_unavailable")
-                    if account["active"] >= account["max_active"]:
-                        reasons.add("concurrency_full")
-                    if account["uncertain"]:
-                        reasons.add("uncertain_exposure")
-            counts = {
-                row["state"]: row["total"]
-                for row in db.execute(
-                    "SELECT state,count(*) AS total FROM coordination_work "
-                    "WHERE account_id=? GROUP BY state",
-                    (account_id,),
-                )
-            }
-            return {
-                "schema": "execution/episode-status/v1",
+                ),
                 "store_id": self.store_id,
                 "account_id": account_id,
-                "principal": root["principal"],
-                "participants": policy["participants"],
-                "instructions": instructions,
-                "start": root["start"],
-                "end": root["end"],
-                "observed_at": observed_at,
-                "funding_constraints": sorted(reasons),
-                "accounts": [accounts[k] for k in sorted(accounts)],
-                "work": counts,
-                "pending_limit": policy["max_pending"],
-                "request_limit": policy["max_requests"],
+                "kind": "funding_unavailable",
+                "observed_at": snapshot["observed_at"],
+                "instructions": [row["instruction_sha256"] for row in routes],
+                "constraints": sorted(
+                    unavailable.intersection(snapshot["funding_constraints"])
+                ),
                 "execution": (
-                    "Funding snapshot only; constraints can affect different routes. "
-                    "Current source/instruction/writer admission remains required."
+                    "No model activated; inspect retained reservations "
+                    "and episode controls"
                 ),
             }
+            db.execute(
+                "UPDATE episode_policies SET notice=? WHERE account_id=?",
+                (canonical(notice).decode(), account_id),
+            )
+            return notice
 
     def withdraw_coordination(
         self, payload: Mapping[str, Any], proof: Mapping[str, Any]

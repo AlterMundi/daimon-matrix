@@ -12,6 +12,47 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_isolated_execution_store_keeps_real_consumers_and_installed_package(self):
+        from tools.ci_scope import EXECUTION_OPERATOR_FILES
+
+        self.assertEqual(profile(list(EXECUTION_OPERATOR_FILES)), "execution-operator")
+        for extra in (
+            "src/daimon_matrix/service.py",
+            "src/daimon_matrix/mcp_server.py",
+            "src/daimon_matrix/review_runner.py",
+            "src/daimon_matrix/codex_review.py",
+            "src/daimon_matrix/hermes_review.py",
+            "src/daimon_matrix/execution_instruction.py",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "specs/tribe-conversation.md",
+        ):
+            self.assertEqual(
+                profile(["src/daimon_matrix/execution_store.py", extra]), "full"
+            )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        self.assertIn(
+            "if: needs.scope.outputs.profile == 'execution-operator'", workflow
+        )
+        for required in (
+            "tests.test_coordination_funding",
+            "tests.test_coordination_queue",
+            "tests.test_passive_messaging_execution",
+            "tests.test_codex_review",
+            "tests.test_hermes_review",
+            "tests.test_human_execution_frontend",
+        ):
+            self.assertIn(required, workflow)
+        self.assertIn("dm-execution-operator-wheel", workflow)
+        portability = (
+            Path(__file__).parents[1] / ".github/workflows/telegram-portability.yml"
+        ).read_text()
+        self.assertIn(
+            "needs.scope.outputs.profile != 'execution-operator'", portability
+        )
+
     def test_read_only_behavior_inventory_does_not_run_native_runtime_suites(self):
         from tools.ci_scope import BEHAVIOR_INVENTORY_FILES
 

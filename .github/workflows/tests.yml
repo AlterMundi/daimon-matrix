@@ -517,6 +517,49 @@ jobs:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
           HMK_CURRENT_ROOT: ${{ github.workspace }}/.hmk-current
 
+  execution-operator:
+    name: installed bounded execution operator (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'execution-operator'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-build.txt
+            requirements-dev.txt
+            requirements-vectors.txt
+      - run: python -m pip install -r requirements-dev.txt -r requirements-vectors.txt .
+      - run: python tools/check_frozen_invariants.py --skip-generated
+      - run: python tools/generate_dm041_vectors.py --check
+      - run: python -m ruff format --check src/daimon_matrix/execution_store.py src/daimon_matrix/operator_execution.py tools/ci_scope.py tests/test_ci_scope.py tests/test_coordination_queue.py
+      - run: python -m ruff check src/daimon_matrix/execution_store.py src/daimon_matrix/operator_execution.py tools/ci_scope.py tests/test_ci_scope.py tests/test_coordination_queue.py
+      - run: MYPYPATH=src python -m mypy src/daimon_matrix/execution_store.py src/daimon_matrix/operator_execution.py
+      - name: Build and install exact operator wheel
+        run: |
+          python tools/reproducible_build.py --output dist
+          python tools/scan_secrets.py dist
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+      - name: Qualify installed store and every direct controller consumer
+        run: |
+          python - <<'PYCODE'
+          import daimon_matrix
+          from pathlib import Path
+          assert Path.cwd() not in Path(daimon_matrix.__file__).resolve().parents
+          PYCODE
+          python -W error::ResourceWarning -m unittest tests.test_ci_scope tests.test_execution_instruction tests.test_execution_store tests.test_coordination_funding tests.test_coordination_queue tests.test_human_execution_frontend tests.test_passive_messaging_execution tests.test_codex_review tests.test_hermes_review -v
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dm-execution-operator-wheel-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   tests:
     needs: scope
     if: needs.scope.outputs.profile == 'full'

@@ -165,6 +165,89 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(report["work"], {})
         self.assertTrue(all(account["calls"] == 0 for account in report["accounts"]))
 
+    def notice_policy(self, account, instructions):
+        policy = self.policy | {
+            "account_id": account,
+            "instructions": sorted(i.sha256 for i in instructions),
+        }
+        self.store.configure_episode(policy, self.f.signed(policy))
+
+    def test_reporting_migration_preserves_policy_and_one_notice_survives_restart(self):
+        with closing(sqlite3.connect(self.f.path)) as db:
+            before = db.execute(
+                "SELECT account_id,payload,proof FROM episode_policies"
+            ).fetchall()
+        self.store.enable_episode_reporting()
+        self.store.enable_episode_reporting()
+        with closing(sqlite3.connect(self.f.path)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(
+                db.execute(
+                    "SELECT account_id,payload,proof FROM episode_policies"
+                ).fetchall(),
+                before,
+            )
+        self.f.account("one-call", "episode", max_calls=1)
+        instruction = self.f.instruction(
+            "one-call",
+            accounts=["tribe", "native-being", "one-call"],
+            maximum=0,
+            being=self.instruction.being,
+        )
+        self.notice_policy("one-call", [instruction])
+        self.assertIsNone(self.store.episode_notice("one-call"))
+        cycle = self.f.cycle(instruction)
+        self.f.send(instruction, cycle, self.f.exposure(instruction, maximum=0))
+        self.f.usage(cycle, 0)
+        self.store.finish(cycle, "completed")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            notices = list(
+                pool.map(lambda _: self.store.episode_notice("one-call"), range(8))
+            )
+        self.assertTrue(all(n == notices[0] for n in notices))
+        notice = notices[0]
+        self.assertIn("call_fuel_exhausted", notice["constraints"])
+        reopened = ExecutionStore(self.f.path, self.store.verifier, clock=self.f.clock)
+        self.assertEqual(reopened.episode_notice("one-call"), notice)
+        self.assertEqual(len(self.f.calls), 1)
+        with closing(sqlite3.connect(self.f.path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT count(*) FROM episode_policies WHERE notice IS NOT NULL"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_one_exhausted_member_does_not_exhaust_other_episode_routes(self):
+        self.store.enable_episode_reporting()
+        self.f.account("multi", "episode")
+        self.f.account("limited-being", "being", max_calls=1)
+        self.f.account("healthy-being", "being")
+        first = self.f.instruction(
+            "limited", accounts=["tribe", "limited-being", "multi"], maximum=0
+        )
+        other = self.f.instruction(
+            "healthy", accounts=["tribe", "healthy-being", "multi"], maximum=0
+        )
+        self.notice_policy("multi", [first, other])
+        cycle = self.f.cycle(first)
+        self.f.send(first, cycle, self.f.exposure(first, maximum=0))
+        self.f.usage(cycle, 0)
+        self.store.finish(cycle, "completed")
+        snapshot = self.store.episode_status("multi")
+        self.assertIn("call_fuel_exhausted", snapshot["funding_constraints"])
+        routes = {r["instruction_sha256"]: r for r in snapshot["instructions"]}
+        self.assertEqual(routes[other.sha256]["funding_constraints"], [])
+        self.assertIsNone(self.store.episode_notice("multi"))
+
+    def test_notice_requires_explicit_migration_and_pause_alone_is_not_exhaustion(self):
+        with self.assertRaises(ExecutionDenied):
+            self.store.episode_notice("episode")
+        self.store.enable_episode_reporting()
+        self.f.pause()
+        self.assertIsNone(self.store.episode_notice("episode"))
+        self.assertEqual(self.f.calls, [])
+
     def test_native_source_queue_context_and_exact_duplicate_after_restart(self):
         work = self.enqueue()
         self.assertEqual(self.enqueue(), work)
