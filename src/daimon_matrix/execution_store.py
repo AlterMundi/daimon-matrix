@@ -45,17 +45,19 @@ class ExecutionStore:
         verifier: ApprovalVerifier,
         *,
         clock: Callable[[], float] = time.time,
+        usage_verifier: ApprovalVerifier | None = None,
     ):
         self.path = Path(path)
         self.verifier = verifier
         self.clock = clock
+        self.usage_verifier = usage_verifier
         self._local = threading.local()
         if not self.path.is_file():
             raise ExecutionDenied(
                 "execution store missing; explicit provisioning required"
             )
         with closing(self._connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2}:
                 raise ExecutionDenied("unsupported execution store")
             self.store_id = db.execute("SELECT store_id FROM metadata").fetchone()[0]
 
@@ -66,6 +68,7 @@ class ExecutionStore:
         verifier: ApprovalVerifier,
         *,
         clock: Callable[[], float] = time.time,
+        usage_verifier: ApprovalVerifier | None = None,
     ) -> ExecutionStore:
         path = Path(path)
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -100,7 +103,7 @@ class ExecutionStore:
                 "INSERT INTO metadata(store_id,high_water) VALUES (?,0)",
                 (str(uuid.uuid4()),),
             )
-        return cls(path, verifier, clock=clock)
+        return cls(path, verifier, clock=clock, usage_verifier=usage_verifier)
 
     def _connect(self, *, timeout: float = 10.0) -> sqlite3.Connection:
         # mode=rw is essential: a lost journal must not silently become a new journal.
@@ -497,6 +500,7 @@ class ExecutionStore:
             or not instruction.start <= now < min(instruction.end, cycle.deadline)
         ):
             raise ExecutionDenied("cycle fenced")
+        self._funding(db, instruction)
         return instruction
 
     def check(self, cycle: Cycle) -> Instruction:
@@ -523,6 +527,8 @@ class ExecutionStore:
         scope: Scope | None,
         checkpoint: Callable[[], None],
         submit: Callable[[], T],
+        *,
+        exposure: Mapping[str, Any] | None = None,
     ) -> T:
         """Trusted bounded submission only; never run a model/tool loop under the lock.
 
@@ -556,9 +562,18 @@ class ExecutionStore:
                     canonical(scope.__dict__).decode() if scope else None,
                 ),
             )
+            if kind == "provider":
+                self._reserve_charge(db, cycle, instruction, operation_id, exposure)
         try:
             with self._transaction() as db:
-                self._guard(db, cycle)
+                instruction = self._guard(db, cycle)
+                if kind == "provider":
+                    funding = self._funding(db, instruction)
+                    if funding is not None and any(
+                        self._balance(db, aid)["uncertain"]
+                        for aid in funding["accounts"]
+                    ):
+                        raise ExecutionDenied("shared funding became uncertain")
                 checkpoint()
                 result = submit()
                 db.execute(
@@ -569,6 +584,406 @@ class ExecutionStore:
         except BaseException:
             self.mark_ambiguous(cycle)
             raise
+
+    def enable_funding(self) -> None:
+        """Explicit schema1 -> 2 additive migration; never a new budget journal.
+
+        Existing instructions/cycles/proofs remain byte-identical. This enables
+        deterministic storage only, not a runner, signing key or arrival hook.
+        """
+        statements = (
+            "CREATE TABLE funding_accounts(account_id TEXT PRIMARY KEY, "
+            "payload TEXT NOT NULL, proof TEXT NOT NULL, paused INTEGER NOT NULL "
+            "DEFAULT 0, control_revision INTEGER NOT NULL DEFAULT 0)",
+            "CREATE TABLE instruction_funding(instruction_sha256 TEXT PRIMARY KEY, "
+            "payload TEXT NOT NULL, proof TEXT NOT NULL)",
+            "CREATE TABLE funding_members(instruction_sha256 TEXT NOT NULL, "
+            "account_id TEXT NOT NULL, PRIMARY KEY(instruction_sha256,account_id))",
+            "CREATE INDEX funding_members_account ON funding_members(account_id)",
+            "CREATE TABLE call_charges(cycle_id TEXT PRIMARY KEY, "
+            "operation_id TEXT NOT NULL UNIQUE, instruction_sha256 TEXT NOT NULL, "
+            "maximum INTEGER NOT NULL, actual INTEGER, receipt TEXT)",
+            "CREATE INDEX call_charges_instruction ON call_charges(instruction_sha256)",
+        )
+        with self._transaction() as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version == 2:
+                return
+            if version != 1:
+                raise ExecutionDenied("unsupported funding migration")
+            for statement in statements:
+                db.execute(statement)
+            db.execute("PRAGMA user_version=2")
+
+    @staticmethod
+    def _funding_schema(db: sqlite3.Connection) -> bool:
+        return bool(db.execute("PRAGMA user_version").fetchone()[0] == 2)
+
+    @staticmethod
+    def _positive(value: object, *, zero: bool = False) -> bool:
+        return type(value) is int and (0 if zero else 1) <= value <= 2**53 - 1
+
+    def grant_budget(
+        self, payload: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> None:
+        """An isolated funding authority creates one immutable finite account.
+
+        Charge units are explicit integers, never guessed prices or floating
+        currency. A real adapter still needs an enforceable upper charge bound.
+        """
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "account_id",
+            "kind",
+            "subject",
+            "start",
+            "end",
+            "unit",
+            "max_calls",
+            "max_charge",
+            "max_active",
+            "max_bindings",
+        } or (
+            payload["schema"] != "execution/funding-account/v1"
+            or payload["store_id"] != self.store_id
+            or payload["kind"] not in ("tribe", "being", "episode")
+            or not all(
+                isinstance(payload[k], str) and 0 < len(payload[k]) <= 200
+                for k in ("principal", "account_id", "subject", "unit")
+            )
+            or not all(
+                self._positive(payload[k])
+                for k in ("start", "end", "max_calls", "max_active", "max_bindings")
+            )
+            or not self._positive(payload["max_charge"], zero=True)
+            or payload["start"] >= payload["end"]
+        ):
+            raise ExecutionDenied("invalid funding account")
+        with self._transaction() as db:
+            if not self._funding_schema(db):
+                raise ExecutionDenied("explicit funding migration required")
+            if self._now(db) >= payload["end"]:
+                raise ExecutionDenied("expired funding")
+            self._event(db, "approve", dict(payload), proof)
+            try:
+                db.execute(
+                    "INSERT INTO funding_accounts(account_id,payload,proof) "
+                    "VALUES (?,?,?)",
+                    (
+                        payload["account_id"],
+                        canonical(dict(payload)).decode(),
+                        canonical(dict(proof)).decode(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ExecutionDenied("immutable funding account exists") from exc
+
+    def _account(
+        self, db: sqlite3.Connection, account_id: str
+    ) -> tuple[dict[str, Any], sqlite3.Row]:
+        if not isinstance(account_id, str) or not 0 < len(account_id) <= 200:
+            raise ExecutionDenied("invalid funding account identity")
+        row = db.execute(
+            "SELECT * FROM funding_accounts WHERE account_id=?", (account_id,)
+        ).fetchone()
+        if row is None:
+            raise ExecutionDenied("unknown funding account")
+        payload = json.loads(row["payload"])
+        self.verifier.verify("approve", payload, json.loads(row["proof"]))
+        if payload["store_id"] != self.store_id or payload["account_id"] != account_id:
+            raise ExecutionDenied("wrong funding audience")
+        return payload, row
+
+    def fund_instruction(
+        self,
+        instruction: Instruction,
+        payload: Mapping[str, Any],
+        proof: Mapping[str, Any],
+    ) -> None:
+        """Bind an exact approved instruction to the same three conserved ceilings.
+
+        A renewed session/instruction does not renew these balances. Additional
+        descendants require explicit signed bindings and consume shared accounts.
+        """
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "instruction_sha256",
+            "accounts",
+            "route",
+            "max_charge",
+        } or (
+            payload["schema"] != "execution/instruction-funding/v1"
+            or payload["store_id"] != self.store_id
+            or payload["principal"] != instruction.principal
+            or payload["instruction_sha256"] != instruction.sha256
+            or not isinstance(payload["accounts"], list)
+            or len(payload["accounts"]) != 3
+            or not all(isinstance(v, str) for v in payload["accounts"])
+            or len(set(payload["accounts"])) != 3
+            or not isinstance(payload["route"], str)
+            or not 0 < len(payload["route"]) <= 200
+            or not self._positive(payload["max_charge"], zero=True)
+        ):
+            raise ExecutionDenied("invalid instruction funding")
+        with self._transaction() as db:
+            if not self._funding_schema(db):
+                raise ExecutionDenied("explicit funding migration required")
+            now = self._now(db)
+            row = self._row(db, instruction.instruction_id, instruction.revision)
+            if row["state"] != "active" or self._instruction(row) != instruction:
+                raise ExecutionDenied("funding needs the exact active instruction")
+            accounts = [self._account(db, aid) for aid in payload["accounts"]]
+            if {p["kind"] for p, _ in accounts} != {"tribe", "being", "episode"}:
+                raise ExecutionDenied("three distinct funding ceilings required")
+            if len({p["unit"] for p, _ in accounts}) != 1:
+                raise ExecutionDenied("funding charge units differ")
+            for account, state in accounts:
+                if (
+                    account["principal"] != instruction.principal
+                    or state["paused"]
+                    or not account["start"] <= now < account["end"]
+                    or not account["start"]
+                    <= instruction.start
+                    < instruction.end
+                    <= account["end"]
+                    or (
+                        account["kind"] == "being"
+                        and account["subject"] != instruction.being
+                    )
+                    or payload["max_charge"] > account["max_charge"]
+                ):
+                    raise ExecutionDenied("funding scope/window mismatch")
+                count = db.execute(
+                    "SELECT count(*) FROM funding_members WHERE account_id=?",
+                    (account["account_id"],),
+                ).fetchone()[0]
+                if count >= account["max_bindings"]:
+                    raise ExecutionDenied("funding fanout exhausted")
+            self._event(db, "approve", dict(payload), proof)
+            try:
+                db.execute(
+                    "INSERT INTO instruction_funding VALUES (?,?,?)",
+                    (
+                        instruction.sha256,
+                        canonical(dict(payload)).decode(),
+                        canonical(dict(proof)).decode(),
+                    ),
+                )
+                db.executemany(
+                    "INSERT INTO funding_members VALUES (?,?)",
+                    [(instruction.sha256, aid) for aid in payload["accounts"]],
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ExecutionDenied("instruction already funded") from exc
+
+    def _funding(
+        self,
+        db: sqlite3.Connection,
+        instruction: Instruction,
+        *,
+        required: bool = False,
+    ) -> dict[str, Any] | None:
+        row = None
+        if self._funding_schema(db):
+            row = db.execute(
+                "SELECT * FROM instruction_funding WHERE instruction_sha256=?",
+                (instruction.sha256,),
+            ).fetchone()
+        if row is None:
+            if required:
+                raise ExecutionDenied(
+                    "coordination requires explicit conserved funding"
+                )
+            return None
+        payload = json.loads(row["payload"])
+        self.verifier.verify("approve", payload, json.loads(row["proof"]))
+        if (
+            payload["store_id"] != self.store_id
+            or payload["instruction_sha256"] != instruction.sha256
+        ):
+            raise ExecutionDenied("funding binding mismatch")
+        now = self._now(db)
+        for aid in payload["accounts"]:
+            account, state = self._account(db, aid)
+            if state["paused"] or not account["start"] <= now < account["end"]:
+                raise ExecutionDenied("funding paused or expired")
+        return cast(dict[str, Any], payload)
+
+    def check_funding(self, instruction: Instruction) -> None:
+        with self._transaction() as db:
+            self._funding(db, instruction, required=True)
+
+    def _reserve_charge(
+        self,
+        db: sqlite3.Connection,
+        cycle: Cycle,
+        instruction: Instruction,
+        operation_id: str,
+        exposure: Mapping[str, Any] | None,
+    ) -> None:
+        funding = self._funding(db, instruction)
+        if funding is None:
+            if exposure is not None:
+                raise ExecutionDenied("exposure supplied without funding")
+            return  # legacy explicit human review, never a coordination runner
+        expected = {
+            "route": funding["route"],
+            "max_charge": funding["max_charge"],
+            "provider": instruction.provider,
+            "model": instruction.model,
+            "max_input_tokens": instruction.max_input_tokens,
+            "max_output_tokens": instruction.max_output_tokens,
+        }
+        if (
+            exposure is None
+            or dict(exposure) != expected
+            or any(
+                type(exposure.get(k)) is not int
+                for k in ("max_charge", "max_input_tokens", "max_output_tokens")
+            )
+        ):
+            raise ExecutionDenied("qualified adapter exposure required")
+        for aid in funding["accounts"]:
+            account, _ = self._account(db, aid)
+            balance = self._balance(db, aid)
+            if (
+                balance["uncertain"]
+                or balance["calls"] >= account["max_calls"]
+                or balance["active"] >= account["max_active"]
+                or balance["charged"] + funding["max_charge"] > account["max_charge"]
+            ):
+                raise ExecutionDenied("funding exhausted, busy or uncertain")
+        db.execute(
+            "INSERT INTO call_charges(cycle_id,operation_id,"
+            "instruction_sha256,maximum) "
+            "VALUES (?,?,?,?)",
+            (cycle.cycle_id, operation_id, instruction.sha256, funding["max_charge"]),
+        )
+
+    @staticmethod
+    def _balance(db: sqlite3.Connection, account_id: str) -> dict[str, int]:
+        # Aggregate in SQLite; do not load complete paid-call history per admission.
+        row = db.execute(
+            "SELECT count(*) AS calls, "
+            "coalesce(sum(coalesce(c.actual,0)),0) AS spent, "
+            "coalesce(sum(CASE WHEN c.actual IS NULL THEN c.maximum ELSE 0 END),0) "
+            "AS reserved, "
+            "coalesce(sum(c.actual IS NULL OR y.state IN ('intent','ambiguous')),0) "
+            "AS active, "
+            "coalesce(sum(y.state='ambiguous' OR "
+            "(c.actual IS NULL AND y.state!='intent')),0) AS uncertain "
+            "FROM call_charges c JOIN funding_members m USING(instruction_sha256) "
+            "JOIN cycles y USING(cycle_id) WHERE m.account_id=?",
+            (account_id,),
+        ).fetchone()
+        result = {key: int(value) for key, value in dict(row).items()}
+        result["charged"] = result["spent"] + result["reserved"]
+        return result
+
+    def funding_status(self, account_id: str) -> dict[str, Any]:
+        with self._transaction() as db:
+            if not self._funding_schema(db):
+                raise ExecutionDenied("funding unavailable")
+            account, row = self._account(db, account_id)
+            balance = self._balance(db, account_id)
+            return (
+                account
+                | balance
+                | {
+                    "paused": bool(row["paused"]),
+                    "control_revision": row["control_revision"],
+                    "available_calls": account["max_calls"] - balance["calls"],
+                    "available_charge": account["max_charge"] - balance["charged"],
+                }
+            )
+
+    def control_funding(
+        self, payload: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> None:
+        """Signed monotonic pause/resume; restart and older controls never resume."""
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "account_id",
+            "revision",
+            "paused",
+        } or (
+            payload["schema"] != "execution/funding-control/v1"
+            or payload["store_id"] != self.store_id
+            or not self._positive(payload["revision"])
+            or type(payload["paused"]) is not bool
+        ):
+            raise ExecutionDenied("invalid funding control")
+        with self._transaction() as db:
+            if not self._funding_schema(db):
+                raise ExecutionDenied("funding unavailable")
+            account, row = self._account(db, payload["account_id"])
+            if (
+                payload["principal"] != account["principal"]
+                or payload["revision"] != row["control_revision"] + 1
+            ):
+                raise ExecutionDenied("funding control authority/revision mismatch")
+            self._event(db, "approve", dict(payload), proof)
+            db.execute(
+                "UPDATE funding_accounts SET paused=?,control_revision=? "
+                "WHERE account_id=?",
+                (payload["paused"], payload["revision"], payload["account_id"]),
+            )
+
+    def settle_charge(
+        self, cycle: Cycle, payload: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> None:
+        """Trusted authenticated usage only; unavailable usage keeps full exposure.
+
+        The store's usage verifier is operator-owned provider/accounting trust.
+        Settlement does not imply delivery, completion or cancellation.
+        """
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "cycle_id",
+            "operation_id",
+            "actual",
+        } or (
+            payload["schema"] != "execution/usage/v1"
+            or payload["store_id"] != self.store_id
+            or payload["cycle_id"] != cycle.cycle_id
+            or not self._positive(payload["actual"], zero=True)
+        ):
+            raise ExecutionDenied("invalid usage receipt")
+        if self.usage_verifier is None:
+            raise ExecutionDenied("no authenticated usage authority configured")
+        self.usage_verifier.verify("approve", payload, proof)
+        with self._transaction() as db:
+            self._cycle(db, cycle)
+            if not self._funding_schema(db):
+                raise ExecutionDenied("funding unavailable")
+            row = db.execute(
+                "SELECT * FROM call_charges WHERE cycle_id=?", (cycle.cycle_id,)
+            ).fetchone()
+            if (
+                row is None
+                or payload["operation_id"] != row["operation_id"]
+                or payload["actual"] > row["maximum"]
+            ):
+                raise ExecutionDenied("usage exceeds or mismatches reservation")
+            receipt = canonical(
+                {"payload": dict(payload), "proof": dict(proof)}
+            ).decode()
+            if row["receipt"] is not None:
+                if row["receipt"] != receipt:
+                    raise ExecutionDenied("conflicting usage receipt")
+                return
+            db.execute(
+                "UPDATE call_charges SET actual=?,receipt=? WHERE cycle_id=?",
+                (payload["actual"], receipt, cycle.cycle_id),
+            )
 
     def mark_ambiguous(self, cycle: Cycle) -> None:
         with self._transaction() as db:

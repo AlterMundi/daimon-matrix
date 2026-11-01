@@ -184,7 +184,9 @@ class CycleContext:
             self._fenced = True
             raise
 
-    def inference(self, submit: Callable[[], object]) -> object:
+    def inference(
+        self, submit: Callable[[], object], *, exposure: Mapping[str, Any] | None = None
+    ) -> object:
         """One actual provider request after asynchronous startup, no retries.
 
         submit must only enqueue bounded transport bytes, not wait for a model;
@@ -193,7 +195,7 @@ class CycleContext:
         """
         self.check()
         return self._store.dispatch(
-            self.cycle, "provider", None, self._checkpoint, submit
+            self.cycle, "provider", None, self._checkpoint, submit, exposure=exposure
         )
 
     def native(self, scope: Scope, payload: Mapping[str, Any]) -> object:
@@ -219,11 +221,13 @@ class ReviewController:
         broker: NativeBroker,
         *,
         monotonic: Callable[[], float] = time.monotonic,
+        require_funding: bool = False,
     ):
         self.store = store
         self.runner = runner
         self.broker = broker
         self.monotonic = monotonic
+        self.require_funding = require_funding
         self._contexts: dict[tuple[str, int, str], CycleContext] = {}
         self._contexts_lock = threading.Lock()
 
@@ -247,6 +251,10 @@ class ReviewController:
         if status["state"] != "active":
             return None
         instruction = self.store.get_instruction(identity, revision)
+        if self.require_funding:
+            # Explicit operator profile, never selected by peer/model text. The
+            # actual provider boundary independently requires exact exposure.
+            self.store.check_funding(instruction)
         if instruction.principal != self.runner.expected_principal:
             raise ExecutionDenied(
                 "instruction principal is not the registered principal"
