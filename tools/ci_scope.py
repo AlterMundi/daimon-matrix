@@ -405,7 +405,9 @@ def profile(paths: list[str]) -> str:
     # existing documentation/invariant checks even without a checkpoint edit.
     # Keep source and normative contract mixtures on their broader profiles.
     if "docs/current-architecture.md" in changed and changed <= {
-        "docs/current-architecture.md", "tools/ci_scope.py", "tests/test_ci_scope.py"
+        "docs/current-architecture.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
     }:
         return "context-docs"
     if changed & {"AGENTS.md", "CURRENT-STATE.md"} and changed <= CONTEXT_DOC_FILES:
