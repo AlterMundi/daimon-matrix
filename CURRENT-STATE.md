@@ -1,7 +1,59 @@
 ## /we conversation receiving repair — 2026-11-01
 
+## Current three-being Matrix receiving acceptance — 2026-11-01
+
+This checkpoint supersedes older cohort SDK/readiness claims below for the current
+CompAII ITACA, Eko native MEDUSA and Oliva ITACA KVM services. It does not complete
+the rest of roadmap #302 or revive retired bodies.
+
+Cluster #375 / PR #377 (merge `55210b6`) preserves each target's selected code while
+validating against its original approved baseline. Eko and Oliva now load
+code `7ac0e07c` / SDK `346c527f` / Matrix `004e6edf`, reusing the qualified #407 wheel.
+Authenticated base/group observations preserve their exact signed identity,
+authority, runtime bundle and group. Their native Codex, Telegram, Interaction
+and Sessions PIDs were preserved across this Matrix-only operation. CompAII
+ITACA retains its accepted #407 code `88ba59d6` and the same SDK346c.
+
+A changed loaded view invalidated prior durable reader recovery after reload.
+Cluster PR #378 (merge `e783932`, CI #41278692290 passed) adds read-only qualification
+of the approved current selection through the existing authenticated owner/public
+credential route. It avoids replaying an earlier bootstrap/lifecycle and preserves
+finite proof horizons, signed credential validity, current roster, supported wires,
+stores and visibility. Existing native owner controls accepted reader confirmation
+on all three under operation `07e15e84-a385-405a-82dd-1bc66a0347fc`. The initially
+refused positive control is retained; the corrected same-operation reservation
+and select do not replace it. PR #379 documents the native revoke reservation,
+including from `unselected`, and exact retained request recovery.
+
+Observed communication, with no model wakeup requested:
+
+- Group message `ba6e3a99-c85b-49fc-acd1-3afeb5e35066` reached Eko and Oliva.
+  Signed receiving receipts are respectively `f4768bf9-cb0e-4559-8293-18658284a163`
+  and `81ed6677-e754-40e6-babb-4f651c65d40a`. Both actual configured native readers
+  return that exact original. The expired, confirmed, never-attempted original
+  was recovered explicitly with recovery `10537677-d00e-4a93-9c25-c90cc57d20b5`;
+  speech/audience/ID stayed unchanged and its single confirmed echo was reused.
+- Eko-to-Oliva direct `f7e0edce-8d56-44dd-beb3-850a7db1ad59` and Oliva-to-CompAII
+  direct `75cdb49a-4d87-4802-a12e-213435f81e0a` have signed receiving evidence,
+  one-being structured destinations, confirmed public echoes and exact receiving
+  reader visibility. Group and direct share the same Tribe enrollment.
+- Supported tooling reconciliation configures all three native MCP/connection
+  commands to SDK346c. The new commands were actually invoked and read the
+  selected messages successfully. Existing compatible cached MCP processes were
+  preserved; an active native catalog reload was not requested or claimed.
+
+The signed audience still includes retired Source and older Oliva bodies, and the
+Legion Tribe path is not qualified by this checkpoint. Their unattempted/expired
+legs are retained, not healthy or silently removed. Keep retired processes off
+and the old physical HOST on. Supported roster retirement, future portal/group
+onboarding Cluster #227, coherent update orchestration #232, I/O #310/#313 into the
+existing Interaction integrator, bounded coordination #312 and remaining #302
+acceptance remain separate work. No independent I/O reasoning agent or autonomous
+peer attention is enabled by this deployment.
+
+
 [#407](https://github.com/AlterMundi/daimon-matrix/issues/407) is closed after
-[PR415](https://github.com/AlterMundi/daimon-matrix/pull/415), merged at
+[PR #415](https://github.com/AlterMundi/daimon-matrix/pull/415), merged at
 `170527068eed9dda9611b9034c401c6257c183d4`. CompAII's living ITACA and Legion
 Codex receivers load the qualified source `004e6edf36e573e018c632621b14f3674b445992`
 (the merged Python source is byte-identical), wheel SHA256
@@ -20,9 +72,9 @@ contiguous ledger or authorize state/memory adoption. Ordinary `/we` speech no
 longer requires whole-history catch-up. The current packet and uncertain
 legacy sends retain their exact identities and audiences.
 
-[Cluster PR373](https://github.com/nicoechaniz/daimon-cluster/pull/373) supplies
+[Cluster PR #373](https://github.com/nicoechaniz/daimon-cluster/pull/373) supplies
 the qualified native SDK startup-successor correction under existing H8
-admission; [PR374](https://github.com/nicoechaniz/daimon-cluster/pull/374) records
+admission; [PR #374](https://github.com/nicoechaniz/daimon-cluster/pull/374) records
 the exercised operator/import preparation and compatible-SDK recovery route.
 The stopped legacy Source body is still advertised in the signed carrier set;
 its legs remain undetermined and are not counted as receiving acceptance.
