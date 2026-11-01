@@ -35,6 +35,8 @@ from .weave import (
 SCHEMA_VERSION: Final = 3
 BUSY_TIMEOUT_MS: Final = 5_000
 STATE_DOMAIN: Final = b"daimon/ledger/state/v1\x00"
+CONVERSATION_EVIDENCE_MAX_BYTES: Final = 64 * 1024 * 1024
+CONVERSATION_EVIDENCE_MAX_EVENTS: Final = 10_000
 
 Clock = Callable[[], int]
 UUIDFactory = Callable[[], uuid.UUID]
@@ -292,6 +294,14 @@ class Ledger:
                     parent_event_id TEXT NOT NULL,
                     PRIMARY KEY(event_id, parent_event_id)
                 ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS conversation_evidence (
+                    event_id TEXT PRIMARY KEY,
+                    incarnation_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    event_json BLOB NOT NULL,
+                    UNIQUE(incarnation_id, sequence)
+                );
                 CREATE TABLE IF NOT EXISTS peer_cursors (
                     peer_id TEXT NOT NULL,
                     incarnation_id TEXT NOT NULL,
@@ -406,7 +416,61 @@ class Ledger:
                 else:
                     raise LedgerStateError("ledger_metadata_mismatch")
             self._initialize_known_feed(database)
+            self._initialize_conversation_feed(database)
         _assert_owner_file(self.path)
+
+    @staticmethod
+    def _initialize_conversation_feed(database: sqlite3.Connection) -> None:
+        """Index speech retention separately from causal knowledge.
+
+        Seed existing known positions first so pre-upgrade conversation readers
+        can continue their store-bound cursors. Deduplication also prevents a
+        later full sync from presenting retained speech a second time.
+        """
+        database.execute("BEGIN IMMEDIATE")
+        try:
+            exists = database.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='conversation_event_feed'"
+            ).fetchone()
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS conversation_event_feed ("
+                "position INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "event_id TEXT NOT NULL UNIQUE)"
+            )
+            if exists is None:
+                database.execute(
+                    "INSERT INTO conversation_event_feed(event_id) "
+                    "SELECT event_id FROM known_event_feed ORDER BY position"
+                )
+                database.execute(
+                    "INSERT OR IGNORE INTO conversation_event_feed(event_id) "
+                    "SELECT event_id FROM conversation_evidence "
+                    "ORDER BY incarnation_id, sequence, event_id"
+                )
+            database.execute(
+                "CREATE TRIGGER IF NOT EXISTS conversation_known_insert "
+                "AFTER INSERT ON events WHEN NEW.status='known' BEGIN "
+                "INSERT OR IGNORE INTO conversation_event_feed(event_id) "
+                "VALUES (NEW.event_id); END"
+            )
+            database.execute(
+                "CREATE TRIGGER IF NOT EXISTS conversation_known_promotion "
+                "AFTER UPDATE OF status ON events "
+                "WHEN OLD.status!='known' AND NEW.status='known' BEGIN "
+                "INSERT OR IGNORE INTO conversation_event_feed(event_id) "
+                "VALUES (NEW.event_id); END"
+            )
+            database.execute(
+                "CREATE TRIGGER IF NOT EXISTS conversation_evidence_insert "
+                "AFTER INSERT ON conversation_evidence BEGIN "
+                "INSERT OR IGNORE INTO conversation_event_feed(event_id) "
+                "VALUES (NEW.event_id); END"
+            )
+            database.commit()
+        except BaseException:
+            database.rollback()
+            raise
 
     @staticmethod
     def _initialize_known_feed(database: sqlite3.Connection) -> None:
@@ -462,9 +526,33 @@ class Ledger:
         A retained cursor also checks its boundary so another store or a
         restored earlier database cannot silently skip or replay the feed.
         """
+        return self._intake_page(cursor=cursor, limit=limit, conversation=False)
+
+    def conversation_page(
+        self, *, cursor: str | None, limit: int = 64
+    ) -> dict[str, Any]:
+        """Read retained conversation plus known events, never adoption evidence."""
+        return self._intake_page(cursor=cursor, limit=limit, conversation=True)
+
+    def _intake_page(
+        self, *, cursor: str | None, limit: int, conversation: bool
+    ) -> dict[str, Any]:
         if type(limit) is not int or not 1 <= limit <= 256:
             raise LedgerError("invalid_known_page_limit")
         self.initialize()
+        feed = "conversation_event_feed" if conversation else "known_event_feed"
+        event_view = (
+            "(SELECT event_id, content_hash, event_json FROM events "
+            "WHERE status='known' "
+            "UNION ALL SELECT event_id, content_hash, event_json "
+            "FROM conversation_evidence c WHERE NOT EXISTS "
+            "(SELECT 1 FROM events e WHERE e.event_id=c.event_id AND e.status='known'))"
+            if conversation
+            else "events"
+        )
+        schema = (
+            "dm.we.conversation-cursor/v1" if conversation else "dm.we.known-cursor/v1"
+        )
         with self._database() as database:
             database.execute("BEGIN")
             store_id = str(
@@ -476,7 +564,7 @@ class Ledger:
             if cursor == "tail":
                 position = int(
                     database.execute(
-                        "SELECT COALESCE(MAX(position), 0) FROM known_event_feed"
+                        f"SELECT COALESCE(MAX(position), 0) FROM {feed}"
                     ).fetchone()[0]
                 )
             elif cursor is not None:
@@ -496,21 +584,41 @@ class Ledger:
                             "content_hash",
                         }
                         or canonical_bytes(value) != raw
-                        or value["schema"] != "dm.we.known-cursor/v1"
+                        or value["schema"]
+                        not in (
+                            {schema, "dm.we.known-cursor/v1"}
+                            if conversation
+                            else {schema}
+                        )
                         or value["store_id"] != store_id
                         or type(value["position"]) is not int
                         or not 0 <= value["position"] <= 2**63 - 1
                     ):
                         raise ValueError
                     position = value["position"]
-                    boundary = self._known_cursor(database, store_id, position)
+                    legacy = conversation and value["schema"] == "dm.we.known-cursor/v1"
+                    boundary = self._known_cursor(
+                        database,
+                        store_id,
+                        position,
+                        conversation=conversation and not legacy,
+                    )
                     if boundary != cursor:
                         raise ValueError
+                    if legacy and position:
+                        mapped = database.execute(
+                            "SELECT position FROM conversation_event_feed "
+                            "WHERE event_id=?",
+                            (value["event_id"],),
+                        ).fetchone()
+                        if mapped is None:
+                            raise ValueError
+                        position = int(mapped[0])
                 except (CanonicalError, ValueError, TypeError, KeyError) as exception:
                     raise LedgerError("invalid_known_cursor") from exception
             rows = database.execute(
-                "SELECT f.position, e.event_json FROM known_event_feed f "
-                "JOIN events e ON e.event_id=f.event_id "
+                f"SELECT f.position, e.event_json FROM {feed} f "
+                f"JOIN {event_view} e ON e.event_id=f.event_id "
                 "WHERE f.position>? ORDER BY f.position LIMIT ?",
                 (position, limit + 1),
             ).fetchall()
@@ -524,20 +632,35 @@ class Ledger:
                 events.append(json.loads(raw))
                 position = int(row["position"])
             return {
-                "cursor": self._known_cursor(database, store_id, position),
+                "cursor": self._known_cursor(
+                    database, store_id, position, conversation=conversation
+                ),
                 "events": events,
                 "more": len(rows) > len(events),
             }
 
     @staticmethod
     def _known_cursor(
-        database: sqlite3.Connection, store_id: str, position: int
+        database: sqlite3.Connection,
+        store_id: str,
+        position: int,
+        *,
+        conversation: bool = False,
     ) -> str:
         event_id = content_hash = None
         if position:
+            feed = "conversation_event_feed" if conversation else "known_event_feed"
+            event_view = (
+                "(SELECT event_id, content_hash FROM events WHERE status='known' "
+                "UNION ALL SELECT event_id, content_hash FROM conversation_evidence c "
+                "WHERE NOT EXISTS (SELECT 1 FROM events e WHERE "
+                "e.event_id=c.event_id AND e.status='known'))"
+                if conversation
+                else "events"
+            )
             row = database.execute(
-                "SELECT e.event_id, e.content_hash FROM known_event_feed f "
-                "JOIN events e ON e.event_id=f.event_id WHERE f.position=?",
+                f"SELECT e.event_id, e.content_hash FROM {feed} f "
+                f"JOIN {event_view} e ON e.event_id=f.event_id WHERE f.position=?",
                 (position,),
             ).fetchone()
             if row is None:
@@ -546,7 +669,11 @@ class Ledger:
         return b64url(
             canonical_bytes(
                 {
-                    "schema": "dm.we.known-cursor/v1",
+                    "schema": (
+                        "dm.we.conversation-cursor/v1"
+                        if conversation
+                        else "dm.we.known-cursor/v1"
+                    ),
                     "store_id": store_id,
                     "position": position,
                     "event_id": event_id,
@@ -1101,6 +1228,120 @@ class Ledger:
                 )
             ]
 
+    @staticmethod
+    def _check_conversation_identity(
+        database: sqlite3.Connection, event: Mapping[str, Any]
+    ) -> None:
+        """Sparse speech evidence and contiguous history share immutable identities.
+
+        Evidence does not establish a chain head, causal completeness or adoption.
+        A later history import must nevertheless agree with its signed bytes.
+        """
+        for table in ("events", "conversation_evidence"):
+            rows = database.execute(
+                f"SELECT event_id, content_hash, event_json FROM {table} "
+                "WHERE event_id=? OR (incarnation_id=? AND sequence=?)",
+                (
+                    event["event_id"],
+                    event["origin"]["incarnation_id"],
+                    event["sequence"],
+                ),
+            ).fetchall()
+            for row in rows:
+                if bytes(row["event_json"]) != canonical_bytes(event):
+                    raise LedgerEquivocationError(
+                        {
+                            "schema": "dm.we.equivocation/v1",
+                            "lane": "conversation_identity",
+                            "incarnation_id": event["origin"]["incarnation_id"],
+                            "sequence": event["sequence"],
+                            "existing_event_id": row["event_id"],
+                            "existing_content_hash": row["content_hash"],
+                            "presented_event_id": event["event_id"],
+                            "presented_content_hash": event["content_hash"],
+                        }
+                    )
+
+    def retain_conversation_evidence(self, events: Sequence[Mapping[str, Any]]) -> None:
+        """Retain authenticated speech evidence without importing private history.
+
+        The lane must validate the conversation/audience before calling this
+        sink. This method independently verifies signatures and restricts the
+        retained subjects. No sync cursor, known feed or chain head is advanced.
+        Originals are never evicted: the explicit capacity rejects new evidence
+        before a caller may acknowledge delivery. Exact repeats need no capacity.
+        """
+        if not 1 <= len(events) <= 3 or len(page_bytes(events)) > MAX_PAGE_BYTES:
+            raise LedgerError("conversation_evidence_page_invalid")
+        validated = [verify_event(event, self.authority) for event in events]
+        allowed = {"communication", "communication-resolution", "communication-receipt"}
+        if any(
+            event["kind"] != "experience.observed" or event["subject"] not in allowed
+            for event in validated
+        ):
+            raise LedgerError("conversation_evidence_subject_invalid")
+        self.initialize()
+        try:
+            with self._database() as database:
+                database.execute("BEGIN IMMEDIATE")
+                try:
+                    for event in validated:
+                        self._check_conversation_identity(database, event)
+                        if (
+                            database.execute(
+                                "SELECT 1 FROM events WHERE event_id=? "
+                                "AND status='known'",
+                                (event["event_id"],),
+                            ).fetchone()
+                            is not None
+                        ):
+                            continue
+                        if (
+                            database.execute(
+                                "SELECT 1 FROM conversation_evidence WHERE event_id=?",
+                                (event["event_id"],),
+                            ).fetchone()
+                            is not None
+                        ):
+                            continue
+                        count, size = database.execute(
+                            "SELECT COUNT(*), COALESCE(SUM(length(event_json)), 0) "
+                            "FROM conversation_evidence"
+                        ).fetchone()
+                        raw = canonical_bytes(event)
+                        if (
+                            count >= CONVERSATION_EVIDENCE_MAX_EVENTS
+                            or size + len(raw) > CONVERSATION_EVIDENCE_MAX_BYTES
+                        ):
+                            raise LedgerError("conversation_evidence_capacity")
+                        database.execute(
+                            "INSERT INTO conversation_evidence VALUES (?, ?, ?, ?, ?)",
+                            (
+                                event["event_id"],
+                                event["origin"]["incarnation_id"],
+                                event["sequence"],
+                                event["content_hash"],
+                                raw,
+                            ),
+                        )
+                    database.commit()
+                except BaseException:
+                    database.rollback()
+                    raise
+        except LedgerEquivocationError as exception:
+            self._record_equivocation(exception.evidence)
+            raise
+
+    def conversation_evidence(self) -> list[Event]:
+        """Explicit evidence reader; never expose sparse speech as known history."""
+        self.initialize()
+        with self._database() as database:
+            rows = database.execute(
+                "SELECT event_json FROM conversation_evidence "
+                "ORDER BY incarnation_id, sequence, event_id"
+            ).fetchall()
+        return [json.loads(bytes(row["event_json"])) for row in rows]
+
     def _insert(
         self,
         database: sqlite3.Connection,
@@ -1109,6 +1350,7 @@ class Ledger:
         source: str,
         status: str,
     ) -> None:
+        self._check_conversation_identity(database, event)
         next_order = int(
             database.execute(
                 "SELECT COALESCE(MAX(inserted_order), 0) + 1 FROM events"
@@ -1137,6 +1379,11 @@ class Ledger:
                 for parent in sorted(self._dependencies(event))
             ],
         )
+        if status == "known":
+            database.execute(
+                "DELETE FROM conversation_evidence WHERE event_id=?",
+                (event["event_id"],),
+            )
 
     def _ordered_page(self, events: Sequence[Mapping[str, Any]]) -> list[Event]:
         if len(events) > MAX_PAGE_EVENTS or len(page_bytes(events)) > MAX_PAGE_BYTES:
@@ -1171,6 +1418,7 @@ class Ledger:
             )
         }
         for event in validated:
+            self._check_conversation_identity(database, event)
             existing_id = database.execute(
                 "SELECT incarnation_id, sequence, content_hash, event_json "
                 "FROM events WHERE event_id=?",
@@ -1334,6 +1582,13 @@ class Ledger:
     @staticmethod
     def _promote(database: sqlite3.Connection) -> None:
         while True:
+            # A complete history import now owns the exact original bytes. Its
+            # existing conversation feed position survives; reclaim only the
+            # redundant sparse copy, never the original or its read position.
+            database.execute(
+                "DELETE FROM conversation_evidence WHERE event_id IN "
+                "(SELECT event_id FROM events WHERE status='known')"
+            )
             rows = database.execute(
                 """
                 SELECT e.event_id FROM events e

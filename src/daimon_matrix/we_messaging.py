@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
@@ -730,9 +731,9 @@ class WeConversation:
                 )
                 continue
             receipt = self._accept_sibling_receipt(
-                delivered, sibling=sibling, message=message
+                delivered, sibling=sibling, message=message, resolution=resolution
             )
-            self._retain((receipt,), source=f"we:{sibling}")
+            self._retain((receipt,))
             deliveries.append(
                 {
                     "embodiment_id": sibling,
@@ -783,7 +784,12 @@ class WeConversation:
             raise WeLaneError("we_lane_authoring_rejected") from exception
 
     def _accept_sibling_receipt(
-        self, result: Any, *, sibling: str, message: Mapping[str, Any]
+        self,
+        result: Any,
+        *,
+        sibling: str,
+        message: Mapping[str, Any],
+        resolution: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         """Bind one returned intake result to this message and this sibling."""
         if not isinstance(result, Mapping) or set(result) != {
@@ -821,6 +827,14 @@ class WeConversation:
             or payload.get("message_ref", {}).get("event_id") != message["event_id"]
         ):
             raise WeLaneError("we_lane_intake_result_invalid")
+        observed = _uint(receipt.get("occurred_at_ms"), "we_lane_intake_result_invalid")
+        if observed < message["occurred_at_ms"] or payload != we_receipt_payload(
+            message=message,
+            resolution=resolution,
+            local_embodiment_id=sibling,
+            observed_at_ms=observed,
+        ):
+            raise WeLaneError("we_lane_intake_result_invalid")
         return receipt
 
     def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -837,7 +851,7 @@ class WeConversation:
         sender = _text(message["origin"]["embodiment_id"], "we_lane_origin_invalid")
         if sender == self.local_embodiment_id:
             raise WeLaneError("we_lane_sender_is_local")
-        self._retain((message, opened["resolution"]), source=f"we:{sender}")
+        self._retain((message, opened["resolution"]))
         receipt = self._author_receipt(
             message, opened["resolution"], observed_at_ms=now
         )
@@ -850,19 +864,25 @@ class WeConversation:
             "recipient_embodiment_id": self.local_embodiment_id,
         }
 
-    def _retain(self, events: Sequence[Mapping[str, Any]], *, source: str) -> None:
-        """Keep the message and its signed audience, once, in dependency order."""
-        pending = [
-            event
-            for event in events
-            if self.ledger.event(_text(event["event_id"], "we_lane_message_invalid"))
-            is None
-        ]
-        if not pending:
-            return
+    def _retain(self, events: Sequence[Mapping[str, Any]]) -> None:
+        """Retain signed speech without claiming contiguous-history uptake."""
         try:
-            self.ledger.ingest(pending, source=source)
+            self.ledger.retain_conversation_evidence(events)
         except (LedgerError, WeaveProtocolError) as exception:
+            reason = str(exception)
+            if reason not in {
+                "origin_equivocation",
+                "conversation_evidence_capacity",
+                "conversation_evidence_page_invalid",
+                "conversation_evidence_subject_invalid",
+            }:
+                reason = "authentication_or_integrity_rejected"
+            # The normal runtime journal retains the safe cause even when the
+            # carrier aborts its processing claim. Never log decrypted speech,
+            # bindings, custody, or arbitrary exception strings.
+            logging.getLogger(__name__).warning(
+                "we_conversation_intake_failed reason=%s", reason
+            )
             raise WeLaneError("we_lane_intake_rejected") from exception
 
     def _author_receipt(
@@ -902,7 +922,10 @@ class WeConversation:
                     message["sensitivity"], "we_lane_message_invalid", maximum=32
                 ),
                 occurred_at_ms=observed_at_ms,
-                causal_parents=(_text(message["event_id"], "we_lane_message_invalid"),),
+                # Signed payload references identify exactly what was retained.
+                # The remote event need not be causally known: receiving speech
+                # is not an assertion that the sender's private history synced.
+                causal_parents=(),
             )
         except (LedgerError, WeaveProtocolError) as exception:
             raise WeLaneError("we_lane_receipt_rejected") from exception
