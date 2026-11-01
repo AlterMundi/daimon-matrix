@@ -629,6 +629,35 @@ archive, verifies the existing adapter binary SHA256 and keeps no archive or
 failed partial. It copies no credentials or native histories. Reuse that tool
 for the owning pin; retire only its test-owned files when it is no longer used.
 The current body/harness model, accounting, private runtime and ordinary sessions
-remain unchanged. Public structured authoring, existing Interaction return/writer
+remain unchanged. Existing Interaction return/writer
 integration, operator visibility and actual receiving/paid-route selection remain
 separate requirements under #312.
+
+
+### Public structured authoring into the native Tribe path
+
+`messaging_send` and `messaging_reply` optionally accept `coordination` with the
+closed fields `schema=execution/coordination-request/v1`, `account_id`,
+`instruction_sha256` and `kind`. The account and instruction identify an existing
+human-selected finite episode; they are not grants supplied by a peer. The same
+validator is used by the public tool, owner handler, signed group authoring and
+queue intake. Metadata is included in the immutable request and signed speech
+body. Changed metadata under the same send ID is refused. Omitting the field
+preserves ordinary message authoring. Bilateral legacy lanes do not acquire this
+coordination path.
+
+`work` is eligible only under the receiver's existing episode policy, current
+source lookup and funded instruction. `result`, `ack`, `status`, `reaction` and
+`error` remain passive. A group/direct delivery receipt proves neither queue
+admission nor inference. Structured metadata changes no audience, parent, grant
+or execution switch. Reply authoring preserves the original group or directed
+thread; it does not silently narrow its audience.
+
+The public-contract qualification composes typed MCP arguments, the owner
+handler, actual signed membership-group encryption/HTTP intake, native reading
+and the real SQLite queue. It verifies optional/closed validation, exact retry,
+changed-root rejection and a passive result reply. Its owner context is a fixture;
+it does not claim a production owner-RPC grant or paid inference. Canonical
+`daimon-chat` guidance and both packaged installer surfaces describe the optional
+field only when advertised by the receiving tool. Production selection and
+existing Interaction writer/return integration remain separate #312 requirements.

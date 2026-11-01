@@ -28,6 +28,43 @@ from tools.install_agent_chat import install, refresh_guidance
 
 
 class AgentChatTests(unittest.TestCase):
+    def test_coordination_metadata_is_optional_closed_data_before_native_io(self):
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import _messaging_tool_params
+
+        base = dict(
+            channel_id="out",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="speech",
+        )
+        metadata = dict(
+            schema="execution/coordination-request/v1",
+            account_id="known-root",
+            instruction_sha256="a" * 64,
+            kind="work",
+        )
+        _, ordinary, _ = _messaging_tool_params("messaging_send", base)
+        self.assertNotIn("coordination", ordinary)
+        for kind in ["work", "result", "ack", "status", "reaction", "error"]:
+            _, params, _ = _messaging_tool_params(
+                "messaging_send", base | {"coordination": metadata | {"kind": kind}}
+            )
+            self.assertEqual(params["coordination"]["kind"], kind)
+        for invalid in [
+            None,
+            {},
+            metadata | {"human_authorized": True},
+            metadata | {"kind": "inference"},
+            metadata | {"instruction_sha256": "z" * 64},
+            metadata | {"account_id": "x" * 201},
+        ]:
+            with self.subTest(invalid=invalid), self.assertRaises(MCPError):
+                _messaging_tool_params(
+                    "messaging_send", base | {"coordination": invalid}
+                )
+
     def tooling_fixture(
         self, *, disabled=False, binding_filename="binding.json", startup=""
     ):

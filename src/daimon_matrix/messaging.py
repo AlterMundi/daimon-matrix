@@ -34,6 +34,7 @@ from .communication import (
     _message_payload,
     _resolution_payload,
 )
+from .execution_instruction import coordination_metadata
 from .identity import (
     VerificationError,
     validity_attenuates,
@@ -2383,9 +2384,13 @@ class GroupMessaging:
         authorize: Callable[[], None] | None = None,
         destination: Mapping[str, str] | None = None,
         effect_not_after_ms: int | None = None,
+        coordination: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if authorize is not None:
             authorize()
+        metadata = (
+            coordination_metadata(coordination) if coordination is not None else None
+        )
         response = None
         if response_to is not None:
             if response_to[0] is not self:
@@ -2425,6 +2430,8 @@ class GroupMessaging:
             "response_to": None if response_to is None else response_to[1],
             **({"destination": dict(destination)} if destination is not None else {}),
         }
+        if metadata is not None:
+            parameters["coordination"] = metadata
         if effect_not_after_ms is not None:
             if (
                 type(effect_not_after_ms) is not int
@@ -2456,6 +2463,7 @@ class GroupMessaging:
             response_context=response,
             destination=destination,
             effect_not_after_ms=effect_not_after_ms,
+            **({"coordination": metadata} if metadata is not None else {}),
         )
         message, resolution = prepared["message"], prepared["resolution"]
         identifiers = {

@@ -37,6 +37,29 @@ def _name(value: object) -> bool:
     )
 
 
+def coordination_metadata(value: object) -> dict[str, str]:
+    """Closed correlation data only: never funding, task or execution authority."""
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"schema", "account_id", "instruction_sha256", "kind"}
+        or (
+            value["schema"] != "execution/coordination-request/v1"
+            or value["kind"]
+            not in ("work", "result", "ack", "status", "reaction", "error")
+            or not isinstance(value["account_id"], str)
+            or not 0 < len(value["account_id"]) <= 200
+            or not isinstance(value["instruction_sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", value["instruction_sha256"]) is None
+        )
+    ):
+        raise ExecutionDenied("invalid coordination metadata")
+    try:
+        value["account_id"].encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ExecutionDenied("invalid coordination metadata") from exc
+    return {key: str(item) for key, item in value.items()}
+
+
 @dataclass(frozen=True)
 class Scope:
     channel: str

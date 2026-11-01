@@ -22,6 +22,7 @@ from .execution_instruction import (
     Instruction,
     Scope,
     canonical,
+    coordination_metadata,
     digest,
 )
 
@@ -1140,19 +1141,9 @@ class ExecutionStore:
         request = body.get("coordination")
         if body.get("semantic_receipt") is not None or request is None:
             return None
-        if (
-            not isinstance(request, Mapping)
-            or set(request) != {"schema", "account_id", "instruction_sha256", "kind"}
-            or request["schema"] != "execution/coordination-request/v1"
-        ):
-            raise ExecutionDenied("invalid structured coordination request")
+        request = coordination_metadata(request)
         if request["kind"] != "work":
             return None  # answers, ACKs, reactions, errors never consume a queue slot
-        if not all(
-            isinstance(request[k], str) and 0 < len(request[k]) <= 200
-            for k in ("account_id", "instruction_sha256")
-        ):
-            raise ExecutionDenied("invalid coordination destination")
         record = {
             "message_id": message_id,
             "source_sha256": digest(source),
