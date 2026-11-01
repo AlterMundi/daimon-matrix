@@ -165,6 +165,61 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(report["work"], {})
         self.assertTrue(all(account["calls"] == 0 for account in report["accounts"]))
 
+    def test_signed_operator_pause_preserves_native_queue_and_requires_fresh_resume(
+        self,
+    ):
+        import io
+        import json
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from daimon_matrix.operator_execution import main
+
+        work = self.enqueue()
+        original = self.store.episode_status("episode")["work"]
+        trust = self.f.path.parent / "public-trust-control.json"
+        trust.write_text(
+            json.dumps(
+                {"human:test": self.f.human.public_key().public_bytes_raw().hex()}
+            )
+        )
+        base = ["--store", str(self.f.path), "--trust", str(trust)]
+
+        def run(*args, expected=0):
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                result = main([*base, *args], clock=self.f.clock)
+            self.assertEqual(result, expected)
+            return json.loads(output.getvalue()) if output.getvalue() else None
+
+        payload = run("funding-control-payload", "episode", "0", "pause")
+        selection = self.f.path.parent / "control.json"
+        signature = self.f.path.parent / "control-proof.json"
+        selection.write_text(json.dumps(payload))
+        signature.write_text(json.dumps(self.f.signed(payload)))
+        # A public payload/read grant is insufficient to control the account.
+        forged = payload | {"paused": False}
+        selection.write_text(json.dumps(forged))
+        run("funding-control", str(selection), str(signature), expected=2)
+        selection.write_text(json.dumps(payload))
+        result = run("funding-control", str(selection), str(signature))
+        self.assertTrue(result["account"]["paused"])
+        self.assertFalse(result["execution_started"])
+        self.assertEqual(self.store.episode_status("episode")["work"], original)
+        controller, runner = self.controller()
+        with self.assertRaisesRegex(ExecutionDenied, "funding paused"):
+            controller.run_due_once("queued", 1, "task", work_id=work)
+        self.assertEqual(runner.starts, [])
+        self.assertEqual(self.store.episode_status("episode")["work"], original)
+        run("funding-control-payload", "episode", "0", "resume", expected=2)
+        resume = run("funding-control-payload", "episode", "1", "resume")
+        selection.write_text(json.dumps(resume))
+        signature.write_text(json.dumps(self.f.signed(resume)))
+        result = run("funding-control", str(selection), str(signature))
+        self.assertFalse(result["account"]["paused"])
+        self.assertEqual(self.store.episode_status("episode")["work"], original)
+        self.assertEqual(self.f.calls, [])
+        self.assertEqual(runner.starts, [])
+
     def test_combined_report_is_available_without_reporting_migration(self):
         report = self.store.episode_report("episode")
         self.assertEqual(report["snapshot"]["account_id"], "episode")

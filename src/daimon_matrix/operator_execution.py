@@ -42,6 +42,40 @@ def _read(path: str) -> dict[str, Any]:
     return data
 
 
+def funding_control_payload(
+    store: ExecutionStore,
+    account_id: str,
+    principal: str,
+    expected_revision: int,
+    paused: bool,
+) -> dict[str, Any]:
+    """Bind a human's selected state to the exact observed control revision.
+
+    Reading an account or constructing this payload grants no authority. The
+    existing journal still verifies the external signature and revision atomically.
+    """
+    if (
+        type(expected_revision) is not int
+        or expected_revision < 0
+        or type(paused) is not bool
+    ):
+        raise ExecutionDenied("invalid funding control selection")
+    current = store.funding_status(account_id)
+    if (
+        current["principal"] != principal
+        or current["control_revision"] != expected_revision
+    ):
+        raise ExecutionDenied("funding control authority/revision mismatch")
+    return {
+        "schema": "execution/funding-control/v1",
+        "store_id": store.store_id,
+        "principal": principal,
+        "account_id": account_id,
+        "revision": expected_revision + 1,
+        "paused": paused,
+    }
+
+
 class HumanExecutionOperator:
     """Authenticated frontend integration for the actual Codex/Hermes boundaries.
 
@@ -148,6 +182,31 @@ class HumanExecutionOperator:
         self.frontend.authenticate(turn)
         return self.bindings[runner_type][0].statuses()
 
+    def prepare_funding_control(
+        self,
+        turn: HumanTurn,
+        runner_type: Literal["codex", "hermes"],
+        account_id: str,
+        expected_revision: int,
+        *,
+        paused: bool,
+    ) -> dict[str, Any]:
+        """Use the existing human frontend; never sign from a model tool."""
+        self.frontend.authenticate(turn)
+        if runner_type not in self.bindings:
+            raise ExecutionDenied("unsupported runner type")
+        store, _ = self.bindings[runner_type]
+        payload = funding_control_payload(
+            store, account_id, turn.principal, expected_revision, paused
+        )
+        return self.frontend.issue(
+            turn,
+            operation="funding-control",
+            runner_type=runner_type,
+            payload=payload,
+            task=None,
+        )
+
     def prepare_cancel(
         self,
         turn: HumanTurn,
@@ -192,6 +251,14 @@ class HumanExecutionOperator:
         self, turn: HumanTurn, challenge_id: str, displayed: Mapping[str, Any]
     ) -> CycleContext | dict[str, Any]:
         challenge = self.frontend.consume(turn, challenge_id, displayed)
+        if challenge.operation == "funding-control":
+            store, _ = self.bindings[challenge.runner_type]
+            store.control_funding(challenge.payload, challenge.proof)
+            return {
+                "control": challenge.payload,
+                "account": store.funding_status(challenge.payload["account_id"]),
+                "execution_started": False,
+            }
         if challenge.operation not in {"review-now", "finite-periodic"}:
             raise ExecutionDenied("review confirmation required")
         if challenge.task is None:
@@ -229,6 +296,13 @@ def main(
     notice.add_argument("account_id")
     report = commands.add_parser("episode-report")
     report.add_argument("account_id")
+    control_payload = commands.add_parser("funding-control-payload")
+    control_payload.add_argument("account_id")
+    control_payload.add_argument("expected_revision", type=int)
+    control_payload.add_argument("state", choices=("pause", "resume"))
+    control = commands.add_parser("funding-control")
+    control.add_argument("payload")
+    control.add_argument("proof")
     propose = commands.add_parser("propose")
     propose.add_argument("instruction")
     for name in ("approve", "renew"):
@@ -259,6 +333,23 @@ def main(
                 result = {
                     "store_id": store.store_id,
                     "reporting_enabled": True,
+                    "execution_started": False,
+                }
+            elif args.command == "funding-control-payload":
+                account = store.funding_status(args.account_id)
+                result = funding_control_payload(
+                    store,
+                    args.account_id,
+                    account["principal"],
+                    args.expected_revision,
+                    args.state == "pause",
+                )
+            elif args.command == "funding-control":
+                payload = _read(args.payload)
+                store.control_funding(payload, _read(args.proof))
+                result = {
+                    "control": payload,
+                    "account": store.funding_status(payload["account_id"]),
                     "execution_started": False,
                 }
             elif args.command == "episode-report":

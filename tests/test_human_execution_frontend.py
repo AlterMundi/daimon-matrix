@@ -116,6 +116,157 @@ class HumanFrontendTests(unittest.TestCase):
         )
         return Instruction.from_dict(values), task
 
+    def funded_instruction(self, kind):
+        store, _ = self.operator.bindings[kind]
+        store.enable_funding()
+        for name in ("tribe", "being", "episode"):
+            payload = dict(
+                schema="execution/funding-account/v1",
+                store_id=store.store_id,
+                principal="human:test",
+                account_id=name,
+                kind=name,
+                subject="being:test" if name == "being" else name,
+                start=100,
+                end=200,
+                unit="synthetic",
+                max_calls=5,
+                max_charge=100,
+                max_active=3,
+                max_bindings=10,
+            )
+            store.grant_budget(
+                payload, proof(self.key, "approve", payload, "grant-" + name)
+            )
+        instruction, _ = self.instruction(kind, mode="periodic")
+        store.approve(
+            instruction,
+            proof(self.key, "approve", instruction.to_dict(), "instruction"),
+        )
+        funding = dict(
+            schema="execution/instruction-funding/v1",
+            store_id=store.store_id,
+            principal="human:test",
+            instruction_sha256=instruction.sha256,
+            accounts=["tribe", "being", "episode"],
+            route="isolated-fake",
+            max_charge=30,
+        )
+        store.fund_instruction(
+            instruction, funding, proof(self.key, "approve", funding, "funding")
+        )
+        return store, instruction
+
+    def test_human_pause_fences_reserved_transport_and_preserves_unknown_exposure(self):
+        for kind in ("codex", "hermes"):
+            with self.subTest(kind=kind):
+                store, instruction = self.funded_instruction(kind)
+                cycle = store.reserve(
+                    instruction.instruction_id, 1, instruction.binding
+                )
+                sends = []
+                exposure = dict(
+                    route="isolated-fake",
+                    max_charge=30,
+                    provider=instruction.provider,
+                    model=instruction.model,
+                    max_input_tokens=instruction.max_input_tokens,
+                    max_output_tokens=instruction.max_output_tokens,
+                )
+
+                def send(store=store, cycle=cycle, sends=sends, exposure=exposure):
+                    return store.dispatch(
+                        cycle,
+                        "provider",
+                        None,
+                        lambda: None,
+                        lambda: sends.append("provider-bytes"),
+                        exposure=exposure,
+                    )
+
+                pause = self.operator.prepare_funding_control(
+                    self.turn(kind + "-pause"), kind, "episode", 0, paused=True
+                )
+                # The immutable display binds pause; it cannot become resume.
+                with self.assertRaisesRegex(ExecutionDenied, "display changed"):
+                    self.operator.confirm(
+                        self.turn(kind + "-mutated"),
+                        pause["challenge_id"],
+                        pause | {"payload": pause["payload"] | {"paused": False}},
+                    )
+                result = self.operator.confirm(
+                    self.turn(kind + "-confirm"), pause["challenge_id"], pause
+                )
+                self.assertFalse(result["execution_started"])
+                self.assertTrue(result["account"]["paused"])
+                with self.assertRaises(ExecutionDenied):
+                    send()
+                reopened = ExecutionStore(store.path, store.verifier, clock=self.clock)
+                self.assertTrue(reopened.funding_status("episode")["paused"])
+                self.assertEqual(reopened.funding_status("episode")["calls"], 0)
+                self.assertEqual(sends, [])
+                self.assertEqual(self.counters[kind], 0)
+                resume = self.operator.prepare_funding_control(
+                    self.turn(kind + "-resume"), kind, "episode", 1, paused=False
+                )
+                self.operator.confirm(
+                    self.turn(kind + "-resume-confirm"), resume["challenge_id"], resume
+                )
+                # Resume does not invoke a provider or replay the reserved work.
+                self.assertEqual(sends, [])
+                send()
+                before = store.funding_status("episode")
+                self.assertEqual((before["calls"], before["reserved"]), (1, 30))
+                again = self.operator.prepare_funding_control(
+                    self.turn(kind + "-again"), kind, "episode", 2, paused=True
+                )
+                self.operator.confirm(
+                    self.turn(kind + "-again-confirm"), again["challenge_id"], again
+                )
+                after = store.funding_status("episode")
+                for field in ("calls", "spent", "reserved", "active", "uncertain"):
+                    self.assertEqual(after[field], before[field])
+                self.assertEqual(self.counters[kind], 0)
+                self.assertEqual(sends, ["provider-bytes"])
+
+    def test_pause_requires_current_account_authority_and_rejects_stale_confirmation(
+        self,
+    ):
+        store, _ = self.funded_instruction("codex")
+        for origin in ("peer", "bot", "forward", "incoming"):
+            with self.assertRaisesRegex(ExecutionDenied, "direct human"):
+                self.operator.prepare_funding_control(
+                    self.turn("pause-" + origin, origin),
+                    "codex",
+                    "episode",
+                    0,
+                    paused=True,
+                )
+        foreign = HumanTurn("human:other", "foreign", "direct-human", "session:foreign")
+        with self.assertRaisesRegex(ExecutionDenied, "authority/revision"):
+            self.operator.prepare_funding_control(
+                foreign, "codex", "episode", 0, paused=True
+            )
+        with self.assertRaises(ExecutionDenied):
+            self.operator.prepare_funding_control(
+                self.turn("wrong-revision"), "codex", "episode", True, paused=True
+            )
+        old = self.operator.prepare_funding_control(
+            self.turn("old-resume"), "codex", "episode", 0, paused=False
+        )
+        pause = self.operator.prepare_funding_control(
+            self.turn("new-pause"), "codex", "episode", 0, paused=True
+        )
+        self.operator.confirm(self.turn("pause-confirm"), pause["challenge_id"], pause)
+        with self.assertRaisesRegex(ExecutionDenied, "authority/revision"):
+            self.operator.confirm(self.turn("old-confirm"), old["challenge_id"], old)
+        with self.assertRaisesRegex(ExecutionDenied, "replay"):
+            self.operator.confirm(
+                self.turn("pause-repeat"), pause["challenge_id"], pause
+            )
+        self.assertTrue(store.funding_status("episode")["paused"])
+        self.assertEqual(self.counters, {"codex": 0, "hermes": 0})
+
     def test_signing_and_trust_material_never_enters_runner_or_challenge_state(
         self,
     ) -> None:

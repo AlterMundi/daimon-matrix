@@ -35,7 +35,7 @@ class HumanTurn:
 
 @dataclass(frozen=True)
 class ConsumedChallenge:
-    operation: Literal["review-now", "finite-periodic", "cancel"]
+    operation: Literal["review-now", "finite-periodic", "cancel", "funding-control"]
     runner_type: Literal["codex", "hermes"]
     payload: dict[str, Any]
     task: str | None
@@ -112,13 +112,20 @@ class HumanExecutionFrontend:
         self,
         turn: HumanTurn,
         *,
-        operation: Literal["review-now", "finite-periodic", "cancel"],
+        operation: Literal[
+            "review-now", "finite-periodic", "cancel", "funding-control"
+        ],
         runner_type: Literal["codex", "hermes"],
         payload: Mapping[str, Any],
         task: str | None,
     ) -> dict[str, Any]:
         self.authenticate(turn)
-        if operation not in {"review-now", "finite-periodic", "cancel"}:
+        if operation not in {
+            "review-now",
+            "finite-periodic",
+            "cancel",
+            "funding-control",
+        }:
             raise ExecutionDenied("unsupported human operation")
         if runner_type not in {"codex", "hermes"}:
             raise ExecutionDenied("unsupported runner type")
