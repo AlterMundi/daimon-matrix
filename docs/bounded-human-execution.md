@@ -462,6 +462,30 @@ Pausing fences new provider/native effects without inventing a stopped receipt.
 The existing controller's exact cycle interruption remains separate. Clock faults
 fence admission; signed pause and authenticated reconciliation remain possible.
 
+The existing `HumanExecutionOperator.prepare_funding_control` prepares this exact
+control through the same direct-human authenticator and external signing callback
+as ordinary execution approval. The caller pins the displayed current control
+revision and explicitly selects `paused=True` or `False`; account principal,
+unchanged display, challenge expiry and the journal's atomic revision check all
+remain enforced. `confirm` commits the signed control and returns its exact
+payload plus current account status. It never starts/retries work, interrupts an
+active process, changes a limit or clears an uncertain reservation. The existing
+human frontend may compose this into one authenticated UI action; this adds no
+mandatory conversational confirmation or new trust/signing service.
+
+The operator-only CLI exposes `funding-control-payload ACCOUNT CURRENT_REVISION
+pause|resume` and `funding-control PAYLOAD_JSON EXTERNAL_PROOF_JSON`. Preparing a
+payload or holding a shared observation grant is not signing authority. A stale
+revision is rejected even when the requested state happens to match. After a lost
+commit response, inspect the retained journal/current control revision; never
+issue a fresh resume to disguise uncertainty. Existing challenge proofs remain
+single-use and are not silently replayed. Pause remains usable during a clock
+fault; it is not a refill, process-stop receipt or automatic restart on resume.
+Production accounts, external authenticator/signer and UI control bindings still
+require their actual owner selection. Publishing these APIs neither supplies
+those grants nor activates an executor; Interaction's budget inspector is still
+read-only until that distinct receiving integration is qualified.
+
 Status reports spent/reserved/available charge, consumed/remaining call fuel,
 active/uncertain exposure and current control revision. Each account bounds its
 own retained bindings/calls; there is no per-poll or per-rejected-arrival log.
@@ -748,3 +772,16 @@ journal transaction for the existing Interaction reader. On schema3 it reports
 frontend pins the store/principal and verifies its displayed objective against
 one exact policy-listed approved instruction; display labels are never authority.
 The reader publishes no Matrix speech and grants no writer or inference access.
+
+
+### Human funding control qualification and CI scope
+
+The isolated execution-operator profile also accepts changes confined to
+`human_execution_frontend.py`: its sole source consumer is `operator_execution`,
+and its Codex/Hermes integrations already run in that installed-wheel job.
+The same job checks the frontend's formatting, lint and strict types and all
+existing direct consumer suites. A focused classifier regression pins that
+coverage; instruction/verifier, provider/runner, runtime, identity, transport,
+dependency and unknown changes still select the full profile. This removes
+unrelated transport requalification for a host-only control change. The exact
+classifier/job diff is reversible; artifact retention remains seven days.

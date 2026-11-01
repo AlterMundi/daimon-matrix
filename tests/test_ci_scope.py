@@ -53,6 +53,36 @@ class CIScopeTests(unittest.TestCase):
             "needs.scope.outputs.profile != 'execution-operator'", portability
         )
 
+    def test_human_execution_frontend_keeps_all_direct_operator_consumers(self):
+        self.assertEqual(
+            profile(["src/daimon_matrix/human_execution_frontend.py"]),
+            "execution-operator",
+        )
+        self.assertEqual(
+            profile(
+                [
+                    "src/daimon_matrix/human_execution_frontend.py",
+                    "src/daimon_matrix/execution_instruction.py",
+                ]
+            ),
+            "full",
+        )
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  execution-operator:", 1)[1].split("\n  tests:", 1)[0]
+        for line in job.splitlines():
+            if "python -m ruff" in line or "python -m mypy" in line:
+                self.assertIn("src/daimon_matrix/human_execution_frontend.py", line)
+        for suite in (
+            "human_execution_frontend",
+            "codex_review",
+            "hermes_review",
+            "coordination_funding",
+            "coordination_queue",
+        ):
+            self.assertIn("tests.test_" + suite, job)
+
     def test_read_only_behavior_inventory_does_not_run_native_runtime_suites(self):
         from tools.ci_scope import BEHAVIOR_INVENTORY_FILES
 

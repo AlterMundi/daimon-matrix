@@ -342,6 +342,7 @@ EXECUTION_OPERATOR_FILES = frozenset(
     {
         "src/daimon_matrix/execution_store.py",
         "src/daimon_matrix/operator_execution.py",
+        "src/daimon_matrix/human_execution_frontend.py",
         "tests/test_execution_store.py",
         "tests/test_coordination_funding.py",
         "tests/test_coordination_queue.py",
@@ -365,6 +366,7 @@ def profile(paths: list[str]) -> str:
     if changed <= EXECUTION_OPERATOR_FILES and changed & {
         "src/daimon_matrix/execution_store.py",
         "src/daimon_matrix/operator_execution.py",
+        "src/daimon_matrix/human_execution_frontend.py",
     }:
         return "execution-operator"
     if (

@@ -834,6 +834,50 @@ class PinnedRunnerTests(unittest.TestCase):
             read_message=pair.receiver.message,
         )
         work = controller.enqueue_native(message["event_id"])
+        from daimon_matrix.hermes_review import HermesReviewRunner
+        from daimon_matrix.human_execution_frontend import HumanTurn
+        from daimon_matrix.operator_execution import HumanExecutionOperator
+
+        # The same human operator controls the real native runner's sole journal.
+        # No second runner is started; the unused binding satisfies its existing
+        # supported Codex/Hermes host shape without another funding database.
+        unused = object.__new__(HermesReviewRunner)
+        unused.registration = SimpleNamespace(
+            binding=self.instruction.binding, principal="human:test"
+        )
+        ids = iter(f"pause-native-{i}" for i in range(4))
+        operator = HumanExecutionOperator(
+            challenge_path=self.root / "pause-challenges.sqlite",
+            bindings={
+                "codex": (self.store, controller),
+                "hermes": (
+                    self.store,
+                    ReviewController(self.store, unused, self.broker),
+                ),
+            },
+            authenticate=lambda turn: turn.authentication == "synthetic-human-session",
+            signer=lambda principal, data: self.key.sign(data),
+            challenge_id=lambda: next(ids),
+        )
+
+        def human(label):
+            return HumanTurn(
+                "human:test", label, "direct-human", "synthetic-human-session"
+            )
+
+        pause = operator.prepare_funding_control(
+            human("pause"), "codex", "episode", 0, paused=True
+        )
+        operator.confirm(human("pause-confirm"), pause["challenge_id"], pause)
+        with self.assertRaisesRegex(ExecutionDenied, "funding paused"):
+            controller.run_due_once("review-1", 1, self.task, work_id=work)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.coordination_work(work)["state"], "queued")
+        resume = operator.prepare_funding_control(
+            human("resume"), "codex", "episode", 1, paused=False
+        )
+        operator.confirm(human("resume-confirm"), resume["challenge_id"], resume)
+        self.assertEqual(self.calls, [])  # Resume alone never dispatches/replays.
         context = controller.run_due_once("review-1", 1, self.task, work_id=work)
         self.assertTrue(runner.wait(context.cycle.cycle_id, 35))
         status = runner.status(context.cycle.cycle_id)
