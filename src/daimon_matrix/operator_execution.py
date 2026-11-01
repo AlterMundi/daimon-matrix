@@ -222,6 +222,13 @@ def main(
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="explicitly provision a fresh, empty journal")
     commands.add_parser("status")
+    episode = commands.add_parser("episode-status")
+    episode.add_argument("account_id")
+    commands.add_parser("enable-episode-reporting")
+    notice = commands.add_parser("episode-notice")
+    notice.add_argument("account_id")
+    report = commands.add_parser("episode-report")
+    report.add_argument("account_id")
     propose = commands.add_parser("propose")
     propose.add_argument("instruction")
     for name in ("approve", "renew"):
@@ -247,7 +254,20 @@ def main(
             result: object = {"store_id": store.store_id}
         else:
             store = ExecutionStore(args.store, verifier, clock=clock)
-            if args.command == "status":
+            if args.command == "enable-episode-reporting":
+                store.enable_episode_reporting()
+                result = {
+                    "store_id": store.store_id,
+                    "reporting_enabled": True,
+                    "execution_started": False,
+                }
+            elif args.command == "episode-report":
+                result = store.episode_report(args.account_id)
+            elif args.command == "episode-notice":
+                result = store.episode_notice(args.account_id)
+            elif args.command == "episode-status":
+                result = store.episode_status(args.account_id)
+            elif args.command == "status":
                 statuses = store.statuses()
                 result = {
                     "store_id": store.store_id,

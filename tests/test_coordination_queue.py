@@ -84,6 +84,179 @@ class QueueTests(unittest.TestCase):
         )
         return control, runner
 
+    def test_operator_episode_snapshot_conserves_and_never_activates(self):
+        before = self.store.episode_status("episode")
+        self.assertEqual(before["funding_constraints"], [])
+        self.assertEqual(before["work"], {})
+        self.assertEqual(len(before["accounts"]), 3)
+        work = self.enqueue()
+        queued = self.store.episode_status("episode")
+        self.assertEqual(queued["work"], {"queued": 1})
+        control, runner = self.controller()
+        context = control.run_due_once("queued", 1, "task", work_id=work)
+        context.inference(lambda: None, exposure=self.f.exposure(self.instruction))
+        snapshot = self.store.episode_status("episode")
+        self.assertEqual(snapshot["work"], {"intent": 1})
+        for account in snapshot["accounts"]:
+            self.assertEqual(
+                account["calls"] + account["available_calls"], account["max_calls"]
+            )
+            self.assertEqual(
+                account["spent"] + account["reserved"] + account["available_charge"],
+                account["max_charge"],
+            )
+            self.assertEqual(account["calls"], 1)
+        starts = len(runner.starts)
+        self.store.episode_status("episode")
+        self.assertEqual(len(runner.starts), starts)
+        self.assertEqual(self.f.calls, [])
+
+    def test_operator_snapshot_remains_available_during_clock_fault_and_pause(self):
+        payload = dict(
+            schema="execution/funding-control/v1",
+            store_id=self.store.store_id,
+            principal="human:test",
+            account_id="episode",
+            revision=1,
+            paused=True,
+        )
+        self.store.control_funding(payload, self.f.signed(payload))
+        self.f.clock.now = 99
+        report = self.store.episode_status("episode")
+        self.assertIsNone(report["observed_at"])
+        self.assertIn("clock_untrusted", report["funding_constraints"])
+        self.assertIn("paused", report["funding_constraints"])
+        self.f.clock.now = 150
+        reopened = ExecutionStore(self.f.path, self.store.verifier, clock=self.f.clock)
+        self.assertIn(
+            "clock_untrusted", reopened.episode_status("episode")["funding_constraints"]
+        )
+        self.assertEqual(reopened.funding_status("episode")["calls"], 0)
+
+    def test_operator_cli_uses_existing_journal_without_activation(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        from daimon_matrix.operator_execution import main
+
+        trust = self.f.path.parent / "public-trust.json"
+        trust.write_text(
+            json.dumps(
+                {"human:test": self.f.human.public_key().public_bytes_raw().hex()}
+            )
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = main(
+                [
+                    "--store",
+                    str(self.f.path),
+                    "--trust",
+                    str(trust),
+                    "episode-status",
+                    "episode",
+                ],
+                clock=self.f.clock,
+            )
+        self.assertEqual(result, 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["account_id"], "episode")
+        self.assertEqual(report["work"], {})
+        self.assertTrue(all(account["calls"] == 0 for account in report["accounts"]))
+
+    def test_combined_report_is_available_without_reporting_migration(self):
+        report = self.store.episode_report("episode")
+        self.assertEqual(report["snapshot"]["account_id"], "episode")
+        self.assertFalse(report["reporting_enabled"])
+        self.assertIsNone(report["notice"])
+        self.store.enable_episode_reporting()
+        self.assertTrue(self.store.episode_report("episode")["reporting_enabled"])
+        self.assertEqual(self.f.calls, [])
+
+    def notice_policy(self, account, instructions):
+        policy = self.policy | {
+            "account_id": account,
+            "instructions": sorted(i.sha256 for i in instructions),
+        }
+        self.store.configure_episode(policy, self.f.signed(policy))
+
+    def test_reporting_migration_preserves_policy_and_one_notice_survives_restart(self):
+        with closing(sqlite3.connect(self.f.path)) as db:
+            before = db.execute(
+                "SELECT account_id,payload,proof FROM episode_policies"
+            ).fetchall()
+        self.store.enable_episode_reporting()
+        self.store.enable_episode_reporting()
+        with closing(sqlite3.connect(self.f.path)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(
+                db.execute(
+                    "SELECT account_id,payload,proof FROM episode_policies"
+                ).fetchall(),
+                before,
+            )
+        self.f.account("one-call", "episode", max_calls=1)
+        instruction = self.f.instruction(
+            "one-call",
+            accounts=["tribe", "native-being", "one-call"],
+            maximum=0,
+            being=self.instruction.being,
+        )
+        self.notice_policy("one-call", [instruction])
+        self.assertIsNone(self.store.episode_notice("one-call"))
+        cycle = self.f.cycle(instruction)
+        self.f.send(instruction, cycle, self.f.exposure(instruction, maximum=0))
+        self.f.usage(cycle, 0)
+        self.store.finish(cycle, "completed")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            notices = list(
+                pool.map(lambda _: self.store.episode_notice("one-call"), range(8))
+            )
+        self.assertTrue(all(n == notices[0] for n in notices))
+        notice = notices[0]
+        self.assertIn("call_fuel_exhausted", notice["constraints"])
+        reopened = ExecutionStore(self.f.path, self.store.verifier, clock=self.f.clock)
+        self.assertEqual(reopened.episode_notice("one-call"), notice)
+        self.assertEqual(len(self.f.calls), 1)
+        with closing(sqlite3.connect(self.f.path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT count(*) FROM episode_policies WHERE notice IS NOT NULL"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_one_exhausted_member_does_not_exhaust_other_episode_routes(self):
+        self.store.enable_episode_reporting()
+        self.f.account("multi", "episode")
+        self.f.account("limited-being", "being", max_calls=1)
+        self.f.account("healthy-being", "being")
+        first = self.f.instruction(
+            "limited", accounts=["tribe", "limited-being", "multi"], maximum=0
+        )
+        other = self.f.instruction(
+            "healthy", accounts=["tribe", "healthy-being", "multi"], maximum=0
+        )
+        self.notice_policy("multi", [first, other])
+        cycle = self.f.cycle(first)
+        self.f.send(first, cycle, self.f.exposure(first, maximum=0))
+        self.f.usage(cycle, 0)
+        self.store.finish(cycle, "completed")
+        snapshot = self.store.episode_status("multi")
+        self.assertIn("call_fuel_exhausted", snapshot["funding_constraints"])
+        routes = {r["instruction_sha256"]: r for r in snapshot["instructions"]}
+        self.assertEqual(routes[other.sha256]["funding_constraints"], [])
+        self.assertIsNone(self.store.episode_notice("multi"))
+
+    def test_notice_requires_explicit_migration_and_pause_alone_is_not_exhaustion(self):
+        with self.assertRaises(ExecutionDenied):
+            self.store.episode_notice("episode")
+        self.store.enable_episode_reporting()
+        self.f.pause()
+        self.assertIsNone(self.store.episode_notice("episode"))
+        self.assertEqual(self.f.calls, [])
+
     def test_native_source_queue_context_and_exact_duplicate_after_restart(self):
         work = self.enqueue()
         self.assertEqual(self.enqueue(), work)

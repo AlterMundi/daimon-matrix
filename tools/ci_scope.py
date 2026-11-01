@@ -338,8 +338,35 @@ LEDGER_GROUP_FILES = RECEIVING_CONTROL_FILES | frozenset(
 )
 
 
+EXECUTION_OPERATOR_FILES = frozenset(
+    {
+        "src/daimon_matrix/execution_store.py",
+        "src/daimon_matrix/operator_execution.py",
+        "tests/test_execution_store.py",
+        "tests/test_coordination_funding.py",
+        "tests/test_coordination_queue.py",
+        "tests/test_codex_review.py",
+        "tests/test_human_execution_frontend.py",
+        "docs/bounded-human-execution.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+        ".github/workflows/telegram-portability.yml",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
+    }
+)
+
+
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if changed <= EXECUTION_OPERATOR_FILES and changed & {
+        "src/daimon_matrix/execution_store.py",
+        "src/daimon_matrix/operator_execution.py",
+    }:
+        return "execution-operator"
     if (
         changed & {"tools/behavior_inventory.py", "tests/test_behavior_inventory.py"}
         and changed <= BEHAVIOR_INVENTORY_FILES

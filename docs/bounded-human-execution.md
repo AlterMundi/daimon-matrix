@@ -661,3 +661,90 @@ it does not claim a production owner-RPC grant or paid inference. Canonical
 `daimon-chat` guidance and both packaged installer surfaces describe the optional
 field only when advertised by the receiving tool. Production selection and
 existing Interaction writer/return integration remain separate #312 requirements.
+
+
+### Operator episode funding snapshot — successor implementation
+
+The existing host-only operator CLI adds `episode-status ACCOUNT_ID`; it reads
+`ExecutionStore.episode_status()` from the same authoritative journal. This is
+one explicit, bounded snapshot of signed participants/instruction references,
+three-ceiling spent/reserved/available call and charge balances, work counts,
+window and current funding constraints. It neither queues nor starts work,
+creates a journal, migrates a schema, resets limits nor enables peer attention.
+It remains inspectable after a latched clock fault and while paused.
+
+The funding constraints are observations across configured instructions/accounts,
+not a claim that every route is blocked or that a native writer is available.
+Current source, instruction, writer and provider admission remain independent
+checks. A frontend must resolve each exact task digest to its approved objective;
+there is no guessed objective derived from peer text. The existing signed
+`control_funding` pause remains the operator control; this read creates no new
+human confirmation ceremony, recurring job, notification stream or credential.
+A rendered Interaction card and one-shot exhaustion publication remain separate
+integration work; this CLI is not their receiving acceptance.
+
+
+### Passive, stable exhaustion notice — explicit reporting successor
+
+`enable_episode_reporting()` explicitly adds one nullable notice slot to each
+existing episode policy (journal schema3→4). Original signed policy/proof bytes
+and work/funding rows are preserved. Opening a journal or reading status does not
+migrate it. `episode_notice(account_id)` requires that selected migration and
+prepares at most one immutable `execution/episode-notice/v1` object per episode.
+Concurrent callers, restart and lost response observation return the same notice
+ID and bytes. A consumer must upsert/deduplicate by that ID; returning an object
+is not proof of delivery and is not an exactly-once network send.
+
+The notice is prepared only when every policy-listed instruction is constrained
+by unavailable call fuel or charge exposure. A single exhausted member does not
+stop otherwise funded routes. Pause, concurrency, uncertainty or a clock fault
+alone does not generate a budget-exhaustion notice. Charge reservations can be
+reconciled later; the retained notice describes its original observation, while
+`episode-status` supplies the current balances and per-instruction constraints.
+No balances are refunded or replenished by reading either surface.
+
+The existing operator CLI exposes `enable-episode-reporting` and
+`episode-notice ACCOUNT_ID`; neither sends a message, subscribes to arrival,
+schedules work nor activates a model. Notice storage is bounded to one small
+object per already-authorized episode. It shares that episode's retained audit
+lifetime; no extra archive, recurring log or reminder stream is created. Actual
+Interaction rendering/delivery and its existing pause control remain integration
+work, not acceptance inferred from the CLI tests. Schema4 is not selected on a
+production execution journal by publishing this code.
+
+
+### Focused installed qualification
+
+The `execution-operator` CI profile applies only to a closed allowlist containing
+this journal/operator implementation, their tests and guidance, generated package
+evidence and the selector/workflow itself. It builds the normal reproducible
+wheel, verifies frozen source evidence, installs it, and runs the instruction,
+store, funding, queue, authenticated frontend, passive intake and existing
+Codex/Hermes controller-consumer suites against that installed package. The
+qualified wheel artifact is retained seven days. The profile avoids unrelated
+whole-repository/native-history/collective-memory qualification for that isolated
+change; it does not omit this component's actual consumers or wheel boundary.
+
+Provider/runner changes, execution-instruction changes, transport/service/MCP,
+identity, dependencies, specs and unknown files still select full CI. Selector
+regressions cover those widening cases. Current PR429 includes shared messaging
+changes and remains on its original full CI. Revert this optimization by removing
+the `EXECUTION_OPERATOR_FILES` classifier and job; the default returns to full
+qualification without changing runtime behavior. No production gate or test is
+removed to hide a software failure.
+
+
+The selected-source actual Codex0.146.0 fixture also explicitly enables reporting
+schema4 before funding/queue setup. It passed against the same signed-native
+source and loopback provider: one request, one durable call, exact source/author,
+zero broad inbox calls, completed/reaped process and zero paid calls. This checks
+the new journal generation through the real adapter boundary; it does not select
+that generation on a living body's execution journal or qualify a real price.
+
+
+`episode-report ACCOUNT_ID` combines the snapshot and retained notice in one
+journal transaction for the existing Interaction reader. On schema3 it reports
+`reporting_enabled=false` without migrating or preparing a notice. A configured
+frontend pins the store/principal and verifies its displayed objective against
+one exact policy-listed approved instruction; display labels are never authority.
+The reader publishes no Matrix speech and grants no writer or inference access.
