@@ -1,3 +1,38 @@
+## /we conversation receiving repair — 2026-11-01
+
+[#407](https://github.com/AlterMundi/daimon-matrix/issues/407) is closed after
+[PR415](https://github.com/AlterMundi/daimon-matrix/pull/415), merged at
+`170527068eed9dda9611b9034c401c6257c183d4`. CompAII's living ITACA and Legion
+Codex receivers load the qualified source `004e6edf36e573e018c632621b14f3674b445992`
+(the merged Python source is byte-identical), wheel SHA256
+`634498c887bf242f6deaede515708db839a68e4a1bfcdf8ff3656ece4e14b86d`, SDK digest
+`346c527f83b637a91aea958cdb1e82f01a09674fd23f47cd26adef12b3526d78`.
+Their signed runtime identities, bundles and state roots remain unchanged.
+
+The real two-way journey has signed receiving receipts and exactly two messages
+plus two receipts in both native readers. Legion's contiguous known ITACA prefix
+remained0 while reading ITACA sequence24 speech and sequence26 receipt; ITACA's
+known Legion prefix remained45 while reading Legion sequence47 speech. No
+private-history sync, projection adoption, model wakeup or native/bot restart
+was performed. [Exact acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
+Sparse conversation evidence is separately bounded; it does not advance the
+contiguous ledger or authorize state/memory adoption. Ordinary `/we` speech no
+longer requires whole-history catch-up. The current packet and uncertain
+legacy sends retain their exact identities and audiences.
+
+[Cluster PR373](https://github.com/nicoechaniz/daimon-cluster/pull/373) supplies
+the qualified native SDK startup-successor correction under existing H8
+admission; [PR374](https://github.com/nicoechaniz/daimon-cluster/pull/374) records
+the exercised operator/import preparation and compatible-SDK recovery route.
+The stopped legacy Source body is still advertised in the signed carrier set;
+its legs remain undetermined and are not counted as receiving acceptance.
+Do not reactivate it or replay those legs. Signed roster retirement remains a
+separate operational residual; the old physical HOST stays ON under Nicolas's
+hold. Broader Tribe/cohort qualification, I/O ingress into the existing
+Interaction integrator and bounded coordination remain under the active #302
+roadmap. This entry neither enables autonomous attention nor declares that
+whole roadmap complete.
+
 ## Current receiving deployment and maintenance — 2026-10-27
 
 CompAII, Eko on native MEDUSA and Oliva load body/observer `f6b369a9`,
