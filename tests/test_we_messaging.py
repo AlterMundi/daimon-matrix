@@ -116,15 +116,17 @@ class WeLaneTests(SealedFixture):
             retained_payloads.append(payload)
             return receiver.intake(payload)
 
-        kwargs = dict(
-            text="useful conversation without private history sync",
-            addressees=[REMOTE],
-            request_id=request,
-            targets=self.canonical_targets(),
-            ttl_ms=30_000,
-            deliver=deliver,
-        )
-        first = sender.converse(**kwargs)
+        def send() -> dict[str, Any]:
+            return sender.converse(
+                text="useful conversation without private history sync",
+                addressees=[REMOTE],
+                request_id=request,
+                targets=self.canonical_targets(),
+                ttl_ms=30_000,
+                deliver=deliver,
+            )
+
+        first = send()
         self.assertEqual(first["deliveries"][0]["state"], "delivered")
         self.assertIsNone(self.ledger_b.event(sender_private["event_id"]))
         self.assertIsNone(self.ledger_a.event(receiver_private["event_id"]))
@@ -147,7 +149,7 @@ class WeLaneTests(SealedFixture):
         self.assertEqual({e["kind"] for e in page["entries"]}, {"message", "receipt"})
         self.assertIn(first["message_id"], {e["event_id"] for e in page["entries"]})
         cursor = page["cursor"]
-        self.assertEqual(sender.converse(**kwargs), first)
+        self.assertEqual(send(), first)
         self.assertEqual(retained_payloads[0], retained_payloads[1])
         self.assertEqual(
             service._we_conversation_page({"cursor": cursor})["entries"], []
