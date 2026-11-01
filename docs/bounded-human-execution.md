@@ -400,3 +400,89 @@ receipt is fabricated. The original independent probes and new unavailable,
 corrupt, missing-row, rollback-atomicity and direct-context-clock cases are now
 standard unittest regressions. These are implementer fixes, pending independent
 re-review of the new delta.
+
+
+## Conserved coordination funding core — issue #312, 2026-11-01
+
+This is deterministic implementation and synthetic qualification, not an installed
+peer executor or permission to activate one. The existing continuing Interaction
+integrator owns communications context; I/O is ingress/egress, not a new reasoning
+session. Ordinary human work remains separate from an explicitly funded profile.
+
+`ExecutionStore.enable_funding()` explicitly upgrades the existing journal from
+schema1 to2, adding tables without rewriting existing identities, instructions,
+cycles, events or uncertainty. Opening a schema1 store never silently migrates it;
+missing stores are never recreated. Legacy explicit human-review behavior remains
+compatible. There is no second balance database, scheduler or arrival hook.
+
+An isolated authorized human/funding frontend signs immutable
+`execution/funding-account/v1` grants with explicit account/store/principal,
+kind (`tribe`, `being`, `episode`), subject, start/end, integer charge unit, finite
+call/spend/concurrency and instruction-binding limits. There are no numerical
+production defaults or inferred prices. Each exact approved instruction needs a
+signed `execution/instruction-funding/v1` binding to all three accounts, one
+operator-qualified route and its maximum per-call charge. The being account must
+match the instruction's being; all accounts use the same unit/principal and cover
+its whole time window. The episode account is the authenticated causal root;
+threads, new sessions and instruction revisions cannot create another root or
+balance. Another funded descendant needs an explicit signed binding and consumes
+the same ceilings. Bindings count against finite fanout even if never dispatched.
+
+The operator constructs `ReviewController(..., require_funding=True)` for this
+profile. Admission rejects an unfunded instruction before runner startup. The
+existing `CycleContext.inference`/store provider boundary then requires exact
+adapter exposure: route, provider/model, input/output maxima and maximum charge.
+Before any provider transport, one transaction reserves one durable call and its
+full maximum charge against all three accounts, plus an active slot. The final
+serialized boundary rechecks current instruction, expiry, pause and shared
+uncertainty. Competing roots cannot spend from stale balances. A zero-priced call
+still consumes fuel. A second provider call in one cycle remains rejected.
+
+These declarations do not turn an unfenced adapter into a billing fence. The
+current Codex/Hermes review adapters supply no qualified monetary exposure and
+are therefore rejected at this boundary for funded instructions. A real selected
+adapter must independently enforce full-context/token/charge maxima, credential
+isolation, all retries/helper calls and the exclusive provider route. No real
+provider is qualified, configured or invoked by this increment. Ordinary full
+shell access and post-call usage do not provide these guarantees.
+
+Only an `execution/usage/v1` receipt authenticated by the store's separately
+configured operator-owned accounting/provider verifier settles the exact retained
+cycle/operation. Settlement cannot exceed its reservation, erase call fuel, mark
+a runtime stopped or prove message delivery. Exact repeats inspect the same
+receipt; conflicting receipts fail. Unknown submission retains the full charge,
+call and slot and fences affected shared funding. Known process termination with
+missing authenticated usage still leaves a conservative reservation and stops
+further affected dispatch. A valid usage receipt can release only the unused
+charge; it never releases fuel or proves an uncertain runtime terminal.
+
+Signed `execution/funding-control/v1` pause/resume uses strictly consecutive
+control revisions. Pauses survive restart; old controls cannot resume them.
+Pausing fences new provider/native effects without inventing a stopped receipt.
+The existing controller's exact cycle interruption remains separate. Clock faults
+fence admission; signed pause and authenticated reconciliation remain possible.
+
+Status reports spent/reserved/available charge, consumed/remaining call fuel,
+active/uncertain exposure and current control revision. Each account bounds its
+own retained bindings/calls; there is no per-poll or per-rejected-arrival log.
+Retain original funding, usage and deduplication evidence with the existing
+journal. No automatic pruning/refill, new snapshots or database recreation is a
+recovery path. An operator may deliberately fund additional roots, never peer
+text or a changed thread identifier. These test fixtures use temporary stores
+and discard only their own completed synthetic allocation.
+
+Qualification: `tests.test_coordination_funding` uses real SQLite, independent
+synthetic human/accounting keys and the actual controller/provider boundary.
+It checks simultaneous ceilings, competing roots, alternating beings exhausting
+finite fuel, independent expensive-call rejection, forged/mismatched exposure,
+pause between reservation and transport, missing ACK/usage and restart, usage
+conflicts, binding fanout, clock faults and byte-preserving explicit migration.
+No model/provider/network call is made. Existing execution/passive/Core adapter
+regressions remain applicable.
+
+Remaining #312 work: authenticated selected-original queue/deduplication and
+bounded backlog admission; integration of supported causal requests/results with
+actual Interaction routing; concrete isolated real-adapter qualification and
+operator-visible exhaustion/episode controls. A real trial still requires human
+selection of participants, funding authority, limits and enforceable provider
+route. This core is not complete #312 acceptance or autonomous activation.
