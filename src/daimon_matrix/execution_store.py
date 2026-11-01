@@ -57,7 +57,7 @@ class ExecutionStore:
                 "execution store missing; explicit provisioning required"
             )
         with closing(self._connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2}:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2, 3}:
                 raise ExecutionDenied("unsupported execution store")
             self.store_id = db.execute("SELECT store_id FROM metadata").fetchone()[0]
 
@@ -411,7 +411,12 @@ class ExecutionStore:
             }
 
     def reserve(
-        self, identity: str, revision: int, binding: tuple[str, str, str, str]
+        self,
+        identity: str,
+        revision: int,
+        binding: tuple[str, str, str, str],
+        *,
+        work_id: str | None = None,
     ) -> Cycle | None:
         with self._transaction() as db:
             now = self._now(db)
@@ -422,6 +427,13 @@ class ExecutionStore:
             if row is None or row["state"] != "active" or row["proof"] is None:
                 return None
             instruction = self._instruction(row)
+            if work_id is not None:
+                work = self._work(db, work_id)
+                if work["state"] != "queued":
+                    return None
+                if work["instruction_sha256"] != instruction.sha256:
+                    raise ExecutionDenied("queued instruction mismatch")
+                self._funding(db, instruction, required=True)
             if (
                 instruction.binding != binding
                 or not instruction.start <= now < instruction.end
@@ -463,6 +475,12 @@ class ExecutionStore:
                 )
             except sqlite3.IntegrityError:
                 return None
+            if work_id is not None:
+                db.execute(
+                    "UPDATE coordination_work SET state='intent',cycle_id=? "
+                    "WHERE work_id=?",
+                    (cycle.cycle_id, work_id),
+                )
             return cycle
 
     @staticmethod
@@ -607,7 +625,7 @@ class ExecutionStore:
         )
         with self._transaction() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version == 2:
+            if version in {2, 3}:
                 return
             if version != 1:
                 raise ExecutionDenied("unsupported funding migration")
@@ -617,7 +635,7 @@ class ExecutionStore:
 
     @staticmethod
     def _funding_schema(db: sqlite3.Connection) -> bool:
-        return bool(db.execute("PRAGMA user_version").fetchone()[0] == 2)
+        return bool(db.execute("PRAGMA user_version").fetchone()[0] in {2, 3})
 
     @staticmethod
     def _positive(value: object, *, zero: bool = False) -> bool:
@@ -838,6 +856,11 @@ class ExecutionStore:
             "max_input_tokens": instruction.max_input_tokens,
             "max_output_tokens": instruction.max_output_tokens,
         }
+        if exposure is not None and "unit" in exposure:
+            # Existing synthetic host-boundary callers use the original shape.
+            # Real cost-bound adapters always bind their signed pricing unit.
+            account, _ = self._account(db, funding["accounts"][0])
+            expected["unit"] = account["unit"]
         if (
             exposure is None
             or dict(exposure) != expected
@@ -984,6 +1007,281 @@ class ExecutionStore:
                 "UPDATE call_charges SET actual=?,receipt=? WHERE cycle_id=?",
                 (payload["actual"], receipt, cycle.cycle_id),
             )
+
+    def enable_coordination_queue(self) -> None:
+        """Explicit additive schema2 -> 3 migration; no dispatcher is started."""
+        self.enable_funding()
+        with self._transaction() as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 3:
+                return
+            db.execute(
+                "CREATE TABLE episode_policies(account_id TEXT PRIMARY KEY, "
+                "payload TEXT NOT NULL, proof TEXT NOT NULL)"
+            )
+            db.execute(
+                "CREATE TABLE coordination_work(work_id TEXT PRIMARY KEY, "
+                "account_id TEXT NOT NULL, instruction_sha256 TEXT NOT NULL, "
+                "source TEXT NOT NULL, state TEXT NOT NULL, cycle_id TEXT UNIQUE, "
+                "withdrawal TEXT)"
+            )
+            db.execute(
+                "CREATE INDEX coordination_work_root "
+                "ON coordination_work(account_id,state)"
+            )
+            db.execute("PRAGMA user_version=3")
+
+    def configure_episode(
+        self, payload: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> None:
+        """Immutable root eligibility from funding authority, not incoming text."""
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "account_id",
+            "participants",
+            "instructions",
+            "threads",
+            "max_requests",
+            "max_pending",
+            "max_input_bytes",
+        } or (
+            payload["schema"] != "execution/episode-policy/v1"
+            or payload["store_id"] != self.store_id
+            or not all(
+                self._positive(payload[k])
+                for k in ("max_requests", "max_pending", "max_input_bytes")
+            )
+            or payload["max_pending"] > payload["max_requests"]
+            or payload["max_input_bytes"] > 65536
+        ):
+            raise ExecutionDenied("invalid episode policy")
+        for key in ("participants", "instructions", "threads"):
+            values = payload[key]
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(isinstance(v, str) and 0 < len(v) <= 200 for v in values)
+                or sorted(set(values)) != values
+            ):
+                raise ExecutionDenied("invalid episode eligibility")
+        if len(canonical(dict(payload))) > 65536:
+            raise ExecutionDenied("episode policy too large")
+        with self._transaction() as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+                raise ExecutionDenied("explicit queue migration required")
+            account, state = self._account(db, payload["account_id"])
+            if (
+                account["kind"] != "episode"
+                or payload["principal"] != account["principal"]
+                or state["paused"]
+                or not account["start"] <= self._now(db) < account["end"]
+            ):
+                raise ExecutionDenied("episode authority unavailable")
+            for sha in payload["instructions"]:
+                row = db.execute(
+                    "SELECT payload FROM instruction_funding "
+                    "WHERE instruction_sha256=?",
+                    (sha,),
+                ).fetchone()
+                if (
+                    row is None
+                    or payload["account_id"]
+                    not in json.loads(row["payload"])["accounts"]
+                ):
+                    raise ExecutionDenied(
+                        "episode instruction is not funded by this root"
+                    )
+            self._event(db, "approve", dict(payload), proof)
+            try:
+                db.execute(
+                    "INSERT INTO episode_policies VALUES (?,?,?)",
+                    (
+                        payload["account_id"],
+                        canonical(dict(payload)).decode(),
+                        canonical(dict(proof)).decode(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ExecutionDenied("immutable episode policy exists") from exc
+
+    def _episode(self, db: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+        if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            raise ExecutionDenied("coordination queue unavailable")
+        row = db.execute(
+            "SELECT * FROM episode_policies WHERE account_id=?", (account_id,)
+        ).fetchone()
+        if row is None:
+            raise ExecutionDenied("unknown coordination episode")
+        payload = json.loads(row["payload"])
+        self.verifier.verify("approve", payload, json.loads(row["proof"]))
+        if payload["store_id"] != self.store_id or payload["account_id"] != account_id:
+            raise ExecutionDenied("episode audience mismatch")
+        return cast(dict[str, Any], payload)
+
+    def enqueue_coordination(
+        self, message_id: str, read_message: Callable[[str], Mapping[str, Any]]
+    ) -> str | None:
+        """Explicit owner call with its CURRENT authenticated native reader.
+
+        read_message must be the maintained native message lookup, not raw JSON,
+        a model-supplied verifier or a cached Telegram echo. Receipt/status/result
+        traffic has no eligibility; this method never launches a model.
+        """
+        source = read_message(message_id)
+        if source.get("event_id") != message_id:
+            raise ExecutionDenied("source lookup mismatch")
+        if (
+            source.get("kind") != "experience.observed"
+            or source.get("subject") != "communication"
+        ):
+            return None
+        body = source["payload"]["body"]
+        request = body.get("coordination")
+        if body.get("semantic_receipt") is not None or request is None:
+            return None
+        if (
+            not isinstance(request, Mapping)
+            or set(request) != {"schema", "account_id", "instruction_sha256", "kind"}
+            or request["schema"] != "execution/coordination-request/v1"
+        ):
+            raise ExecutionDenied("invalid structured coordination request")
+        if request["kind"] != "work":
+            return None  # answers, ACKs, reactions, errors never consume a queue slot
+        if not all(
+            isinstance(request[k], str) and 0 < len(request[k]) <= 200
+            for k in ("account_id", "instruction_sha256")
+        ):
+            raise ExecutionDenied("invalid coordination destination")
+        record = {
+            "message_id": message_id,
+            "source_sha256": digest(source),
+            "being": source["being_ref"],
+            "origin": source["origin"]["embodiment_id"],
+            "thread": source["payload"]["intent"]["thread_id"],
+            "instruction_sha256": request["instruction_sha256"],
+        }
+        work_id = digest(
+            {k: record[k] for k in ("message_id", "being", "instruction_sha256")}
+        )
+        with self._transaction() as db:
+            policy = self._episode(db, request["account_id"])
+            previous = db.execute(
+                "SELECT * FROM coordination_work WHERE work_id=?", (work_id,)
+            ).fetchone()
+            if previous is not None:
+                if (
+                    previous["source"] != canonical(record).decode()
+                    or previous["account_id"] != request["account_id"]
+                ):
+                    raise ExecutionDenied("immutable source/work conflict")
+                return work_id  # inspect the same retained result; no replay or renewal
+            if (
+                record["being"] not in policy["participants"]
+                or record["thread"] not in policy["threads"]
+                or request["instruction_sha256"] not in policy["instructions"]
+                or len(canonical(body)) > policy["max_input_bytes"]
+            ):
+                raise ExecutionDenied("source outside selected episode eligibility")
+            account, state = self._account(db, request["account_id"])
+            if (
+                state["paused"]
+                or not account["start"] <= self._now(db) < account["end"]
+            ):
+                raise ExecutionDenied("episode paused or expired")
+            counts = db.execute(
+                "SELECT count(*) AS total, coalesce(sum(w.state='queued' OR "
+                "(w.state='intent' AND c.state IN ('intent','ambiguous'))),0) "
+                "AS pending "
+                "FROM coordination_work w LEFT JOIN cycles c USING(cycle_id) "
+                "WHERE w.account_id=?",
+                (request["account_id"],),
+            ).fetchone()
+            if (
+                counts["total"] >= policy["max_requests"]
+                or counts["pending"] >= policy["max_pending"]
+            ):
+                raise ExecutionDenied("episode backlog exhausted")
+            db.execute(
+                "INSERT INTO coordination_work(work_id,account_id,instruction_sha256,"
+                "source,state,cycle_id) VALUES (?,?,?,?,'queued',NULL)",
+                (
+                    work_id,
+                    request["account_id"],
+                    request["instruction_sha256"],
+                    canonical(record).decode(),
+                ),
+            )
+        return work_id
+
+    def _work(self, db: sqlite3.Connection, work_id: str) -> dict[str, Any]:
+        if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            raise ExecutionDenied("coordination queue unavailable")
+        row = db.execute(
+            "SELECT * FROM coordination_work WHERE work_id=?", (work_id,)
+        ).fetchone()
+        if row is None:
+            raise ExecutionDenied("unknown coordination work")
+        self._episode(db, row["account_id"])
+        return dict(row) | {"source": json.loads(row["source"])}
+
+    def coordination_work(self, work_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return self._work(db, work_id)
+
+    def withdraw_coordination(
+        self, payload: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> None:
+        """Signed withdrawal is terminal for a queued original, not an input replay.
+
+        An intent may already be executing: use exact instruction cancellation
+        and the existing bounded controller interruption instead of erasing it.
+        """
+        if set(payload) != {
+            "schema",
+            "store_id",
+            "principal",
+            "work_id",
+            "source_sha256",
+        } or (
+            payload["schema"] != "execution/work-withdrawal/v1"
+            or payload["store_id"] != self.store_id
+        ):
+            raise ExecutionDenied("invalid work withdrawal")
+        self.verifier.verify("approve", payload, proof)
+        with self._transaction() as db:
+            work = self._work(db, payload["work_id"])
+            policy = self._episode(db, work["account_id"])
+            if (
+                payload["principal"] != policy["principal"]
+                or payload["source_sha256"] != work["source"]["source_sha256"]
+            ):
+                raise ExecutionDenied("withdrawal authority/source mismatch")
+            receipt = canonical(
+                {"payload": dict(payload), "proof": dict(proof)}
+            ).decode()
+            if work["state"] == "withdrawn":
+                if work["withdrawal"] != receipt:
+                    raise ExecutionDenied("conflicting withdrawal")
+                return
+            if work["state"] != "queued":
+                raise ExecutionDenied(
+                    "retained intent requires exact native cancellation"
+                )
+            self._event(db, "approve", dict(payload), proof)
+            db.execute(
+                "UPDATE coordination_work SET state='withdrawn',withdrawal=? "
+                "WHERE work_id=?",
+                (receipt, payload["work_id"]),
+            )
+
+    def check_work_source(
+        self, work_id: str, read_message: Callable[[str], Mapping[str, Any]]
+    ) -> None:
+        work = self.coordination_work(work_id)
+        source = work["source"]
+        if digest(read_message(source["message_id"])) != source["source_sha256"]:
+            raise ExecutionDenied("queued source changed or lost authorization")
 
     def mark_ambiguous(self, cycle: Cycle) -> None:
         with self._transaction() as db:

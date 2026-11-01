@@ -31,7 +31,7 @@ from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
 
 from .execution_instruction import ApprovalVerifier, ExecutionDenied, canonical, digest
-from .review_runner import CycleContext, ReviewRequest
+from .review_runner import CycleContext, ProviderCostBound, ReviewRequest
 
 HERMES_COMMIT = "5c8870c1625761956a56fd2b225720dbe9083e45"
 HERMES_ARCHIVE_SHA256 = (
@@ -234,9 +234,11 @@ class ChatGate:
         check: Callable[[], None],
         headers: Callable[[Registration], Mapping[str, str]],
         token: str,
+        cost_bound: ProviderCostBound | None = None,
     ):
         self.registration, self.context, self.check = registration, context, check
         self.headers, self.token = headers, token
+        self.cost_bound = cost_bound
         self.claimed = self.sent = self.confirmed = False
         self.error: Exception | None = None
         self.response_id: str | None = None
@@ -411,7 +413,12 @@ class ChatGate:
                 self.sent = True
                 up_writer.write(wire)
 
-            self.context.inference(enqueue)
+            exposure = (
+                self.cost_bound.exposure(self.context, asdict(self.registration))
+                if self.cost_bound is not None
+                else None
+            )
+            self.context.inference(enqueue, exposure=exposure)
             await up_writer.drain()
             line, _, response_raw = await read_http(
                 up_reader, self.registration.max_response_bytes
@@ -552,6 +559,7 @@ class HermesReviewRunner:
         source_archive: Path,
         python: Path,
         provider_headers: Callable[[Registration], Mapping[str, str]],
+        cost_bound: ProviderCostBound | None = None,
     ) -> None:
         self._payload, self._proof = (
             strict_json(canonical(payload)),
@@ -560,6 +568,7 @@ class HermesReviewRunner:
         self._verifier, self._existing_body = verifier, existing_body
         self.registration = Registration.verify(payload, proof, verifier, existing_body)
         self._headers = provider_headers
+        self._cost_bound = cost_bound
         self.python = Path(python).absolute()
         self.environment = self.python.parent.parent
         self._validate_environment()
@@ -857,7 +866,14 @@ class HermesReviewRunner:
             ):
                 raise ExecutionDenied("registration revoked/expired")
 
-        gate = ChatGate(self.registration, context, check, self._headers, token)
+        gate = ChatGate(
+            self.registration,
+            context,
+            check,
+            self._headers,
+            token,
+            cost_bound=self._cost_bound,
+        )
         main = asyncio.current_task()
         assert main is not None
 

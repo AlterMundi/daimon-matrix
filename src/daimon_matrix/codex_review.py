@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 from .codex_body import CODEX_BINARY_SHA256
 from .execution_instruction import ApprovalVerifier, ExecutionDenied, canonical, digest
-from .review_runner import CycleContext, ReviewRequest
+from .review_runner import CycleContext, ProviderCostBound, ReviewRequest
 
 
 @dataclass(frozen=True)
@@ -176,6 +176,7 @@ class CodexReviewRunner:
         binary: Path,
         catalog: Path,
         authorization: Callable[[], str | None] = lambda: None,
+        cost_bound: ProviderCostBound | None = None,
     ) -> None:
         self._payload = _json(canonical(payload))
         self._proof = _json(canonical(proof))
@@ -185,6 +186,7 @@ class CodexReviewRunner:
         self.binary = Path(binary).resolve(strict=True)
         self.catalog = Path(catalog).resolve(strict=True)
         self._authorization = authorization
+        self._cost_bound = cost_bound
         if hashlib.sha256(self.binary.read_bytes()).hexdigest() != CODEX_BINARY_SHA256:
             raise ExecutionDenied("unsupported Codex binary")
         self._binary_stat = self.binary.stat()
@@ -521,7 +523,14 @@ class CodexReviewRunner:
                     + f"Content-Length: {len(raw)}\r\n\r\n"
                 ).encode() + raw
                 # Actual provider submission is serialized with cancellation.
-                context.inference(lambda: upstream_writer.write(wire))
+                exposure = (
+                    self._cost_bound.exposure(context, asdict(self.registration))
+                    if self._cost_bound is not None
+                    else None
+                )
+                context.inference(
+                    lambda: upstream_writer.write(wire), exposure=exposure
+                )
                 provider_sent = True
                 await upstream_writer.drain()
                 response_header = await upstream_reader.readuntil(b"\r\n\r\n")
