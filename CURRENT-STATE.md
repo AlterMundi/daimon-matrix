@@ -1,3 +1,78 @@
+## Current operational roadmap and receiving selection — 2026-11-01
+
+This section supersedes software/readiness/proposal status in the dated records
+below. Migration and same-being adoption #376 are complete. CompAII is native on
+ITACA, Eko native on MEDUSA, and Oliva in its existing ITACA KVM. Preserve their
+living identity, complete histories, private memory and native goals/accounting.
+The old physical Source HOST stays ON: no shutdown/drill/timer, cleanup/deletion,
+provider cancellation or revival of its stopped identities/containers.
+
+- Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
+  signed receiving receipts and both native readers; no whole-history sync.
+  Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
+- The current three load Matrix79be478 / SDKd2e398b8. Existing tools are configured,
+  current readers reselected, and the useful original message9125f9dc appears in
+  Eko/Oliva native readers with independent signed receiving receipts. Its
+  earlier never-attempted send was recovered under its original identity and
+  single confirmed echo; other excluded/stopped body legs stay undelivered.
+  Cached optional native tool catalogs remain distinct from configuration.
+- The real warm onboarding worker selects that qualified SDK for default/named
+  runtime paths, with its PID, completed Eko/Oliva job hashes and nonruntime
+  settings unchanged. Group-only policy authorizes no new member without its
+  ordinary protected complete cohort binding; it cannot fall back to pair setup.
+  Prior isolated admission/group/direct/reply evidence is reusable, not another
+  real enrollment to repeat. Worker operator dependencies remain separate.
+- I/O #310/#313 is deployed on ITACA through Telecodex508. New authenticated
+  paired-human Tribu mentions enter the SAME continuing Interaction integrator.
+  I/O is ingress/egress, not another reasoning session. Old uncertain originals
+  stay retained without replay; technical/peer receipt does not wake a model.
+  Fresh genuine human mention/response acceptance remains unobserved.
+- #312 source now supplies conserved three-ceiling funding, bounded signed-source
+  queue, provider admission/exposure, stable passive reporting and signed human
+  pause/resume through the existing journal/frontend (PR424/427/429/431/433).
+  Installed-wheel qualification and actual pinned Codex selected-original
+  pause→retained queue→resume without dispatch→explicit one-call loopback pass.
+  Matrix433 operator wheel is a qualified next candidate; current body SDKd2 is
+  unchanged. No paid provider or production executor is qualified by that test.
+- Telecodex530 is web-adopted on ITACA at sourcef8d3c482 / UI0713531a6390. The
+  complete74-file Realtime528 base was preserved; current source/runtime files,
+  relevant local/public assets, shell, health and protected native/Core/bot/Matrix
+  configuration/processes were checked. Actual HTTP→Matrix human frontend/store
+  qualification covers signed pause, stale/repeated controls and preserved
+  uncertainty. Shared login is reused; a read grant never grants signing.
+  Production has NO operator factory, selected accounts or new control grants:
+  the UI/control adapter is disabled without actual authority. Peer/model
+  activation stays OFF. Limits, authority, trusted frontend isolation and a real
+  enforceable inference route remain explicit human/owner selections.
+- Contribution guidance2.0.14 is published and installed on the current three.
+  Legion's last existing SSH-route probe returned No route to host; SDK312 and
+  that guidance remain pending there. Do not infer powered-off state, wake it,
+  switch credentials or revive a stopped Source leg. Earlier `/we` acceptance
+  and the useful exact-version #228 pilot remain valid dated evidence.
+
+Remaining roadmap work: actual integrator writer/return integration and singleton
+accounting/exclusive inference qualification; selected receiving authority and
+real human/device use; optional catalog/offline gaps; and the wider #302 useful
+Field/Nexus/research participant-use requirements. #228's exact-reference→signed
+receiving→selective skill application→signed result pilot and #376 are complete;
+that does not absorb independent Field/species/curator programs or prove every
+participant's use. Preserve unrelated paused/blocked goals. No activation defaults.
+
+One maintained progress checkpoint and owning-source links:
+https://github.com/AlterMundi/daimon-matrix/issues/302#issuecomment-6553025045.
+Current #312 state: https://github.com/AlterMundi/daimon-matrix/issues/312.
+Receiving deployment/grants and unresolved acceptance are maintained through
+Shared Resources `docs/services/interaction-receiving.md` and its service record.
+Telecodex531 tracks the verified unnecessary APK/decoder repetition for unrelated
+UI changes; current qualification was retained until its dependency split is safe.
+
+## Earlier dated receiving records — historical
+
+The entries below preserve their original evidence. Their old SDK selections,
+proposal-only status, maintenance-permission gaps and incomplete-work statements
+are superseded by the current section where explicitly addressed above. They
+never authorize repeating enrollment, input, lifecycle or completed model work.
+
 ## /we conversation receiving repair — 2026-11-01
 
 ## Current three-being Matrix receiving acceptance — 2026-11-01
