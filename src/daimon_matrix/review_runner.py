@@ -13,10 +13,16 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, Literal, Protocol
 
-from .execution_instruction import ExecutionDenied, Instruction, Scope
+from .execution_instruction import (
+    ApprovalVerifier,
+    ExecutionDenied,
+    Instruction,
+    Scope,
+    digest,
+)
 from .execution_store import Cycle, ExecutionStore
 
 
@@ -27,6 +33,95 @@ class ReviewRequest:
     cycle_id: str
     deadline: float
     work: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ProviderCostBound:
+    """Operator-verified conservative pricing for one exact fenced registration.
+
+    No prices, providers or activation defaults. An actual provider contract and
+    isolated credential route must independently qualify the declared bound.
+    """
+
+    schema: str
+    principal: str
+    store_id: str
+    registration_sha256: str
+    route: str
+    unit: str
+    expires: int
+    max_input_tokens: int
+    max_output_tokens: int
+    input_price: int
+    output_price: int
+    fixed_charge: int
+
+    @classmethod
+    def verify(
+        cls,
+        payload: Mapping[str, Any],
+        proof: Mapping[str, Any],
+        verifier: ApprovalVerifier,
+    ) -> ProviderCostBound:
+        if set(payload) != {f.name for f in fields(cls)}:
+            raise ExecutionDenied("closed provider cost bound required")
+        verifier.verify("approve", payload, proof)
+        result = cls(**payload)
+        if (
+            result.schema != "execution/provider-cost-bound/v1"
+            or not all(
+                isinstance(payload[k], str) and 0 < len(payload[k]) <= 200
+                for k in ("principal", "store_id", "route", "unit")
+            )
+            or not isinstance(result.registration_sha256, str)
+            or len(result.registration_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in result.registration_sha256)
+            or not all(
+                ExecutionStore._positive(payload[k])
+                for k in ("expires", "max_input_tokens", "max_output_tokens")
+            )
+            or not all(
+                ExecutionStore._positive(payload[k], zero=True)
+                for k in ("input_price", "output_price", "fixed_charge")
+            )
+        ):
+            raise ExecutionDenied("invalid provider cost bound")
+        return result
+
+    def exposure(
+        self, context: CycleContext, registration: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        instruction = context.instruction
+        if (
+            digest(dict(registration)) != self.registration_sha256
+            or self.principal != instruction.principal
+            or self.store_id != instruction.store_id
+            or registration.get("store_id") != self.store_id
+            or registration.get("principal") != self.principal
+            or registration.get("provider") != instruction.provider
+            or registration.get("model") != instruction.model
+            or instruction.max_input_tokens > self.max_input_tokens
+            or instruction.max_output_tokens > self.max_output_tokens
+            or context.cycle.deadline > self.expires
+            or context._store.observe_clock() >= self.expires
+        ):
+            raise ExecutionDenied("provider cost registration/bounds mismatch")
+        amount = (
+            self.fixed_charge
+            + self.input_price * instruction.max_input_tokens
+            + self.output_price * instruction.max_output_tokens
+        )
+        if not ExecutionStore._positive(amount, zero=True):
+            raise ExecutionDenied("provider exposure outside exact integer range")
+        return {
+            "route": self.route,
+            "unit": self.unit,
+            "max_charge": amount,
+            "provider": instruction.provider,
+            "model": instruction.model,
+            "max_input_tokens": instruction.max_input_tokens,
+            "max_output_tokens": instruction.max_output_tokens,
+        }
 
 
 class ReviewRunner(Protocol):

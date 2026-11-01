@@ -11,7 +11,7 @@ import threading
 import time
 import unittest
 from contextlib import closing, suppress
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -360,6 +360,106 @@ class GateBoundaryTests(unittest.IsolatedAsyncioTestCase):
     def cancel(self):
         payload = self.store.cancellation_payload("review-1", 1)
         self.store.cancel("review-1", 1, proof(self.key, "cancel", payload, "cancel"))
+
+    def fund_gate(self, *, unit="synthetic-charge", registration_hash=None):
+        from daimon_matrix.execution_instruction import digest
+        from daimon_matrix.review_runner import ProviderCostBound
+
+        self.store.enable_funding()
+        self.gate.registration = replace(
+            self.gate.registration,
+            store_id=self.store.store_id,
+            expires=self.instruction.end + 1,
+        )
+        amount = (
+            self.instruction.max_input_tokens
+            + 2 * self.instruction.max_output_tokens
+            + 5
+        )
+        ids = []
+        for kind in ["tribe", "being", "episode"]:
+            account_id = f"fund-{kind}"
+            ids.append(account_id)
+            account = dict(
+                schema="execution/funding-account/v1",
+                store_id=self.store.store_id,
+                principal="human:test",
+                account_id=account_id,
+                kind=kind,
+                subject=self.instruction.being if kind == "being" else account_id,
+                start=self.instruction.start,
+                end=self.instruction.end,
+                unit="synthetic-charge",
+                max_calls=3,
+                max_charge=amount * 3,
+                max_active=1,
+                max_bindings=1,
+            )
+            self.store.grant_budget(
+                account, proof(self.key, "approve", account, f"account-{kind}")
+            )
+        funding = dict(
+            schema="execution/instruction-funding/v1",
+            store_id=self.store.store_id,
+            principal="human:test",
+            instruction_sha256=self.instruction.sha256,
+            accounts=ids,
+            route="qualified-loopback",
+            max_charge=amount,
+        )
+        self.store.fund_instruction(
+            self.instruction, funding, proof(self.key, "approve", funding, "funding")
+        )
+        cost = dict(
+            schema="execution/provider-cost-bound/v1",
+            principal="human:test",
+            store_id=self.store.store_id,
+            registration_sha256=registration_hash
+            or digest(asdict(self.gate.registration)),
+            route="qualified-loopback",
+            unit=unit,
+            expires=self.instruction.end + 1,
+            max_input_tokens=self.instruction.max_input_tokens,
+            max_output_tokens=self.instruction.max_output_tokens,
+            input_price=1,
+            output_price=2,
+            fixed_charge=5,
+        )
+        self.gate.cost_bound = ProviderCostBound.verify(
+            cost, proof(self.key, "approve", cost, "cost-bound"), verifier(self.key)
+        )
+        return amount
+
+    async def test_funded_actual_gate_reserves_before_forced_cap_and_no_retry(self):
+        amount = self.fund_gate()
+        self.assertTrue(
+            (await self.send(self.body | {"max_tokens": 1})).startswith(b"HTTP/1.1 200")
+        )
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(
+            json.loads(self.calls[0][2])["max_tokens"],
+            self.instruction.max_output_tokens,
+        )
+        for kind in ["tribe", "being", "episode"]:
+            status = self.store.funding_status(f"fund-{kind}")
+            self.assertEqual((status["calls"], status["reserved"]), (1, amount))
+        self.gate.claimed = False  # controlled retry against the same durable cycle
+        self.assertTrue((await self.send()).startswith(b"HTTP/1.1 400"))
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.store.funding_status("fund-episode")["reserved"], amount)
+
+    async def test_funded_gate_rejects_cost_unit_before_any_provider_request(self):
+        self.fund_gate(unit="wrong-currency")
+        self.assertTrue((await self.send()).startswith(b"HTTP/1.1 400"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.funding_status("fund-episode")["calls"], 0)
+        self.assertFalse(self.gate.sent)
+
+    async def test_funded_gate_rejects_different_exact_registration(self):
+        self.fund_gate(registration_hash="f" * 64)
+        self.assertTrue((await self.send()).startswith(b"HTTP/1.1 400"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.funding_status("fund-episode")["calls"], 0)
 
     async def test_second_summary_fallback_and_concurrent_requests_submit_once(
         self,
@@ -1240,7 +1340,7 @@ import json, time
 from tests.test_hermes_review import ActualHermesTests
 case = ActualHermesTests()
 case.setUp()
-from dataclasses import replace
+from dataclasses import asdict, replace
 case.instruction = replace(case.instruction, max_cycle_seconds=60)
 case.release.clear()
 case.approve()

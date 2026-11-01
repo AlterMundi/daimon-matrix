@@ -856,6 +856,11 @@ class ExecutionStore:
             "max_input_tokens": instruction.max_input_tokens,
             "max_output_tokens": instruction.max_output_tokens,
         }
+        if exposure is not None and "unit" in exposure:
+            # Existing synthetic host-boundary callers use the original shape.
+            # Real cost-bound adapters always bind their signed pricing unit.
+            account, _ = self._account(db, funding["accounts"][0])
+            expected["unit"] = account["unit"]
         if (
             exposure is None
             or dict(exposure) != expected

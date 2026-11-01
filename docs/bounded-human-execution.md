@@ -548,3 +548,43 @@ cycle/native correlation and conservative billing exposure. Real supported
 structured-request authoring and actual Interaction/qualified adapter consumption
 remain separate from this queue qualification; a synthetic native packet alone
 is not proof those public tools or consuming harnesses are deployed.
+
+
+### Explicit provider cost bound at the existing transport gates
+
+`ProviderCostBound.verify` accepts a separately signed closed
+`execution/provider-cost-bound/v1` declaration for one exact full existing
+adapter registration hash, journal/principal, route, charge unit, validity,
+input/output maxima, integer worst-case input/output unit prices and fixed charge.
+It supplies no pricing/provider/account defaults. The existing-body/provider
+contract must independently qualify those declared prices, token accounting,
+complete billed exposure and exclusive isolated route. A signed assertion alone
+is not external proof of a provider's billing behavior.
+
+CodexReviewRunner and HermesReviewRunner accept that optional host-owned bound;
+it never enters the worker, model input or provider authorization headers. Their
+existing strict one-shot gateways already reject alternate routes/tools/non-text
+input, bound the entire conservative UTF-8 request and force the provider output
+maximum. Immediately before actual request bytes, the gateway derives exposure
+from the exact immutable registration and approved instruction; then the existing
+SQLite provider boundary checks route/amount/unit and reserves before transport.
+Charge is fixed + input_price × input_limit + output_price × output_limit, with
+exact integer-range checks. Missing, expired, mismatched or insufficiently capped
+bounds cannot enable a funded request. There is no automatic provider retry or
+route fallback. An unfunded ordinary human-review registration remains separate.
+
+The loopback Hermes ChatGate tests observe the actual upstream request with its
+forced output cap and all three durable reservations. A controlled second attempt
+reaches no provider; wrong pricing unit and changed registration are rejected
+before any upstream request. These are actual transport-gate/SQlite checks with
+synthetic pricing and provider responses, not paid provider qualification or a
+new full native-worker/sandbox acceptance claim. Codex wiring shares this cost
+boundary but its optional exact pinned-native tests remain separately qualified.
+Authenticated usage settlement is still the separate accounting-authority path;
+a successful response alone does not refund the conservative charge.
+
+Real pricing/protocol verification, funding authority/participants/limits and an
+installed exclusive provider route remain human-selected activation residuals.
+No real credentials, provider choice, background model use, production migration
+or peer activation follows from this API. Current real full-access development
+sessions are not silently enrolled as funded runners.
