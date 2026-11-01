@@ -732,3 +732,11 @@ changes and remains on its original full CI. Revert this optimization by removin
 the `EXECUTION_OPERATOR_FILES` classifier and job; the default returns to full
 qualification without changing runtime behavior. No production gate or test is
 removed to hide a software failure.
+
+
+The selected-source actual Codex0.146.0 fixture also explicitly enables reporting
+schema4 before funding/queue setup. It passed against the same signed-native
+source and loopback provider: one request, one durable call, exact source/author,
+zero broad inbox calls, completed/reaped process and zero paid calls. This checks
+the new journal generation through the real adapter boundary; it does not select
+that generation on a living body's execution journal or qualify a real price.

@@ -731,6 +731,7 @@ class PinnedRunnerTests(unittest.TestCase):
             being=self.instruction.being, embodiment=self.instruction.embodiment
         )
         self.store.enable_coordination_queue()
+        self.store.enable_episode_reporting()
         self.approve()
         ids = []
         for kind in ["tribe", "being", "episode"]:

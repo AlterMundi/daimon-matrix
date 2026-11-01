@@ -345,6 +345,7 @@ EXECUTION_OPERATOR_FILES = frozenset(
         "tests/test_execution_store.py",
         "tests/test_coordination_funding.py",
         "tests/test_coordination_queue.py",
+        "tests/test_codex_review.py",
         "tests/test_human_execution_frontend.py",
         "docs/bounded-human-execution.md",
         "tools/ci_scope.py",
