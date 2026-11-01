@@ -68,9 +68,8 @@ class QueueTests(unittest.TestCase):
         return message
 
     def enqueue(self, message=None):
-        return self.store.enqueue_coordination(
-            (message or self.message)["event_id"], self.pair.receiver.message
-        )
+        control, _ = self.controller()
+        return control.enqueue_native((message or self.message)["event_id"])
 
     def controller(self):
         runner = BoundedFakeRunner()
