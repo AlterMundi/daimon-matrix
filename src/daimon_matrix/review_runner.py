@@ -223,7 +223,7 @@ class CycleContext:
         monotonic: Callable[[], float],
         monotonic_deadline: float,
         on_terminal: Callable[[CycleContext], None] | None = None,
-        source_check: Callable[[], None] | None = None,
+        source_check: Callable[[], Mapping[str, Any]] | None = None,
     ):
         self.cycle = cycle
         self.instruction = instruction
@@ -271,6 +271,24 @@ class CycleContext:
             # A bounded authorization read can still consume the remaining
             # horizon. Never submit using the pre-read time observation.
             self.remaining()
+
+    def selected_original(self) -> Mapping[str, Any] | None:
+        """Exact currently authorized queued source, never a whole inbox import.
+
+        The returned peer speech is untrusted context. Funding and task/scope
+        authority remain the signed instruction and controller, not this text.
+        """
+        if self._source_check is None:
+            return None
+        try:
+            self._store.check(self.cycle)
+            self.remaining()
+            original = self._source_check()
+            self.remaining()
+            return original
+        except Exception:
+            self._fenced = True
+            raise
 
     def _finish(self, outcome: Literal["completed", "stopped"]) -> None:
         self._store.finish(self.cycle, outcome)
@@ -368,8 +386,8 @@ class ReviewController:
             if reader is None:
                 raise ExecutionDenied("no current authenticated source reader")
 
-            def source_check() -> None:
-                self.store.check_work_source(work_id, reader)
+            def source_check() -> Mapping[str, Any]:
+                return self.store.check_work_source(work_id, reader)
 
             source_check()
             work = self.store.coordination_work(work_id)

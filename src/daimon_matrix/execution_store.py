@@ -1277,11 +1277,13 @@ class ExecutionStore:
 
     def check_work_source(
         self, work_id: str, read_message: Callable[[str], Mapping[str, Any]]
-    ) -> None:
+    ) -> Mapping[str, Any]:
         work = self.coordination_work(work_id)
         source = work["source"]
-        if digest(read_message(source["message_id"])) != source["source_sha256"]:
+        original = read_message(source["message_id"])
+        if digest(original) != source["source_sha256"]:
             raise ExecutionDenied("queued source changed or lost authorization")
+        return original
 
     def mark_ambiguous(self, cycle: Cycle) -> None:
         with self._transaction() as db:
