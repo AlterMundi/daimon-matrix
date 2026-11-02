@@ -1172,7 +1172,7 @@ class NativeMessagingCLITests(unittest.TestCase):
             ),
         )
 
-    def test_cli_selected_thread_preserves_legacy_defaults(self):
+    def test_cli_selected_thread_preserves_legacy_defaults(self) -> None:
         from daimon_matrix.cli import _method_params, parser
 
         thread = _uuid("selected-cli-thread")
@@ -1295,7 +1295,7 @@ class NativeInboxRpcTests(unittest.TestCase):
         with self.assertRaisesRegex(ClientError, "daemon_unavailable"):
             client.send(request)
 
-    def test_selected_thread_inbox_is_authenticated_bounded_and_revocable(self):
+    def test_selected_thread_inbox_is_authenticated_bounded_and_revocable(self) -> None:
         from daimon_matrix.mcp_server import _messaging_tool_params
 
         pair = Pair(self.root)
