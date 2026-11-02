@@ -1172,6 +1172,34 @@ class NativeMessagingCLITests(unittest.TestCase):
             ),
         )
 
+    def test_cli_selected_thread_preserves_legacy_defaults(self):
+        from daimon_matrix.cli import _method_params, parser
+
+        thread = _uuid("selected-cli-thread")
+        args = parser().parse_args(
+            [
+                *self.BASE,
+                "messaging",
+                "inbox",
+                "--channel-id",
+                "incoming",
+                "--thread-id",
+                thread,
+            ]
+        )
+        self.assertEqual(
+            _method_params(args),
+            (
+                "messaging.inbox",
+                {
+                    "channel_id": "incoming",
+                    "after": 0,
+                    "limit": 50,
+                    "thread_id": thread,
+                },
+            ),
+        )
+
 
 class NativeInboxRpcTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -1266,6 +1294,39 @@ class NativeInboxRpcTests(unittest.TestCase):
         # Exact retry must pass the same method gate and reach the socket check.
         with self.assertRaisesRegex(ClientError, "daemon_unavailable"):
             client.send(request)
+
+    def test_selected_thread_inbox_is_authenticated_bounded_and_revocable(self):
+        from daimon_matrix.mcp_server import _messaging_tool_params
+
+        pair = Pair(self.root)
+        evidence, message, event, _ = pair.wire()
+        pair.receiver.receive_evidence(evidence)
+        pair.receiver.receive_message(message)
+        hosted = self.hosted(pair)
+        thread = event["payload"]["intent"]["thread_id"]
+        args = {"channel_id": "founder", "thread_id": thread, "limit": 1}
+        _, params, _ = _messaging_tool_params("messaging_inbox", args)
+        self.assertEqual(params, args | {"after": 0})
+        result = self.invoke(hosted, self.request(pair, "selected", **params))
+        self.assertTrue(result["ok"])
+        rows = result["result"]["items"]
+        self.assertEqual([r["message"]["event_id"] for r in rows], [event["event_id"]])
+        for label, selection in (
+            ("other", {"thread_id": _uuid("other-thread")}),
+            ("next", {"thread_id": thread, "after": rows[0]["inbox_sequence"]}),
+        ):
+            result = self.invoke(hosted, self.request(pair, label, **selection))
+            self.assertEqual(result["result"]["items"], [])
+        for index, invalid in enumerate((None, "invalid", thread.upper())):
+            self.assert_rejected(
+                hosted,
+                self.request(pair, f"invalid-{index}", thread_id=invalid),
+                "invalid_params",
+            )
+        self.assignments[self.capability.client_id] = frozenset()
+        self.assert_rejected(
+            hosted, self.request(pair, "selected-revoked", thread_id=thread)
+        )
 
     def test_cached_inbox_rechecks_real_signed_grant_revocation(self) -> None:
         pair = Pair(self.root)

@@ -24,8 +24,14 @@ Unavailable registrations leave explicit pending legs; they cannot shrink the
 audience. Admission and receiving deployment must distribute the updated trusted
 Root inventory and group roster through the maintained cohort procedure.
 
-`messaging.inbox`, `messaging.reply` and `messaging.delivery` keep their existing
-argument shapes. `messaging.send` adds an optional explicit `destination` for
+`messaging.reply` and `messaging.delivery` keep their existing argument shapes.
+`messaging.inbox` accepts an optional canonical UUID `thread_id` to read only
+that existing conversation. Omission preserves the original request shape.
+Filtering happens in the existing inbox query before the page limit and retained
+signature/authority validation; cursors remain global `inbox_sequence` values.
+This narrows a manual read, never grants access, acknowledges consumption or
+starts attention/model work. A receiver without this additive capability rejects
+it; do not substitute a broad inbox scan or treat an empty page as completion. `messaging.send` adds an optional explicit `destination` for
 member/body directs; omission keeps the old group request bytes. This is source
 support, not proof of a selected readiness adapter or live direct. The same
 channel ID is incoming and outgoing

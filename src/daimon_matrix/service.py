@@ -1762,7 +1762,11 @@ class HostedWeave:
             raise ServiceError("messaging_rejected") from None
 
     def _messaging_inbox(self, params: Any, *, client_id: str) -> dict[str, Any]:
-        value = _closed(params, {"channel_id", "after", "limit"})
+        fields = {"channel_id", "after", "limit"}
+        if isinstance(params, Mapping) and "thread_id" in params:
+            fields.add("thread_id")
+        value = _closed(params, fields)
+        thread_id = _uuid(value["thread_id"]) if "thread_id" in value else None
         channel_id = value["channel_id"]
         if (
             not isinstance(channel_id, str)
@@ -1778,7 +1782,11 @@ class HostedWeave:
             channel = context.channels[channel_id]
             policy_hash = channel._policy_hash(self.clock())
             inbox = channel.inbox
-            items = channel.page(after=after, limit=limit)
+            items = channel.page(
+                after=after,
+                limit=limit,
+                **({"thread_id": thread_id} if thread_id is not None else {}),
+            )
             current = self._messaging_context()
             if (
                 channel_id not in current.client_channels.get(client_id, frozenset())

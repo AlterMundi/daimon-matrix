@@ -1604,7 +1604,7 @@ class MessagingInboxStore:
         }
 
     def _page(
-        self, *, after: int, limit: int, policy_hash: str
+        self, *, after: int, limit: int, policy_hash: str, thread_id: str | None = None
     ) -> list[dict[str, Any]]:
         if (
             type(after) is not int
@@ -1613,6 +1613,10 @@ class MessagingInboxStore:
             or not 1 <= limit <= 100
         ):
             raise MessagingInboxError("messaging_page_bounds")
+        if thread_id is not None and (
+            not isinstance(thread_id, str) or str(uuid.UUID(thread_id)) != thread_id
+        ):
+            raise MessagingInboxError("messaging_page_thread")
         with self._database() as database:
             admission = (
                 "admission_version"
@@ -1622,8 +1626,10 @@ class MessagingInboxStore:
             rows = database.execute(
                 f"SELECT inbox_sequence, message, evidence, {admission} FROM inbox "
                 "WHERE inbox_sequence>? AND policy_hash=? "
+                "AND (? IS NULL OR json_extract(message, "
+                "'$.payload.intent.thread_id')=?) "
                 "ORDER BY inbox_sequence LIMIT ?",
-                (after, policy_hash, limit),
+                (after, policy_hash, thread_id, thread_id, limit),
             ).fetchall()
         return [
             {

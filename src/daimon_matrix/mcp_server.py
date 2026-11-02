@@ -864,6 +864,7 @@ MESSAGING_TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         _object_schema(
             {
                 "channel_id": _CHANNEL_ID,
+                "thread_id": _UUID,
                 "after": {"type": "integer", "minimum": 0, "maximum": 2**53 - 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
