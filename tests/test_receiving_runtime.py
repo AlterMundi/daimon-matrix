@@ -1950,7 +1950,61 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             )
             self.records._reader_budget(3_000_000_000)
         self.assertEqual(head["command"]["phase"], "select")
-        self.assertEqual(len(large_passes), head["revision"])
+        self.assertEqual(large_passes, [])
+
+    def test_warm_reader_control_preserves_budget_with_large_retained_history(self):
+        current, _ = self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        monotonic = [1_000_000_000]
+
+        def costly_canonical(value):
+            if isinstance(value, dict) and ("boot" in value or "document" in value):
+                monotonic[0] += 600_000_000
+            return canonical_bytes(value)
+
+        with (
+            patch("time.monotonic_ns", lambda: monotonic[0]),
+            patch("daimon_matrix.messaging_store.canonical_bytes", costly_canonical),
+        ):
+            current.select_readers(
+                command(current),
+                request_sha256="f" * 64,
+                deadline_ns=monotonic[0] + 2_000_000_000,
+            )
+        self.assertEqual(
+            current.reader_snapshot("tribe", deadline_ns=budget())["phase"], "revoke"
+        )
+
+    def test_warm_reader_cache_rejects_noncanonical_replacement_bytes(self):
+        self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        with closing(sqlite3.connect(self.records.path)) as database, database:
+            row = database.execute(
+                "SELECT sequence,document FROM tribe_records "
+                "WHERE kind='reader-control' ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            raw = bytes(row[1]) + b" "
+            database.execute(
+                "UPDATE tribe_records SET document=?,document_hash=? WHERE sequence=?",
+                (raw, hashlib.sha256(raw).hexdigest(), row[0]),
+            )
+        with self.assertRaisesRegex(ValueError, "tribe_record_corrupt"):
+            self.records.reader_control_head("tribe")
+
+    def test_warm_reader_cache_rechecks_clock_predicate_after_rollback(self):
+        original = self.records.verify
+
+        def clock_sensitive_verify(value, binding):
+            original(value, binding)
+            if value["recorded_at_ms"] > self.now:
+                raise ValueError("synthetic_record_from_future")
+
+        self.records.verify = clock_sensitive_verify
+        self.enabled_v2()
+        self.records.reader_control_head("tribe")
+        self.now -= 1
+        with self.assertRaisesRegex(ValueError, "synthetic_record_from_future"):
+            self.records.reader_control_head("tribe")
 
     def test_warm_reader_hash_reuse_rejects_changed_document_and_signed_fork(self):
         self.enabled_v2()
