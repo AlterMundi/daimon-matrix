@@ -1405,6 +1405,7 @@ class RelationshipRuntimeTests(RuntimeFixture):
         self.assertIsInstance(
             sources.registry.disclosure_authorizer, RelationshipSourceDisclosure
         )
+        assert sources.registry.disclosure_authorizer is not None
         with sources.registry.disclosure_scope():
             self.assertFalse(
                 sources.registry.disclosure_authorizer(
