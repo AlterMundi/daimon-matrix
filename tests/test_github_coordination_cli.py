@@ -24,6 +24,7 @@ from coordination.github_claims import (
     render_block,
     sign_command,
     validate_command,
+    validate_receipt,
 )
 from tests.test_github_claims import (
     NOW,
@@ -610,6 +611,69 @@ class ReceiptPoisoningTests(unittest.TestCase):
 
 
 class ClaimabilityTests(unittest.TestCase):
+    def test_resource_overlap_allows_only_the_exact_authenticated_owner(self) -> None:
+        key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        command = signed_command(key)
+        wrapper = decide_command(
+            command,
+            None,
+            now=NOW,
+            workflow_sha=WORKFLOW_SHA,
+            issue_ready=True,
+        )
+        current = validate_receipt(wrapper)
+        other_key = Ed25519PrivateKey.from_private_bytes(bytes(range(2, 34)))
+        other_session = signed_command(other_key)
+        cases = (
+            (command.principal, command.session_id, None),
+            (command.principal, other_session.session_id, "resource_conflict"),
+            ("compaii@localhost", command.session_id, "resource_conflict"),
+        )
+        with (
+            mock.patch.object(cli, "_issues_with_label", return_value=[6]),
+            mock.patch.object(cli, "_state", return_value=(current, [current])),
+        ):
+            for principal, session_id, expected in cases:
+                with self.subTest(principal=principal, session_id=session_id):
+                    self.assertEqual(
+                        cli._resource_conflict(
+                            "AlterMundi/daimon-matrix",
+                            7,
+                            (
+                                "issue:AlterMundi/daimon-matrix#7",
+                                "path:coordination/**",
+                            ),
+                            principal=principal,
+                            session_id=session_id,
+                            now=NOW,
+                            registry=cli._registry(),
+                        ),
+                        expected,
+                    )
+
+    def test_resource_overlap_keeps_unknown_ownership_closed(self) -> None:
+        command = signed_command(
+            Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        )
+        with (
+            mock.patch.object(cli, "_issues_with_label", return_value=[6]),
+            mock.patch.object(
+                cli, "_state", side_effect=CoordinationError("broken chain")
+            ),
+        ):
+            self.assertEqual(
+                cli._resource_conflict(
+                    "AlterMundi/daimon-matrix",
+                    7,
+                    ("issue:AlterMundi/daimon-matrix#7", "path:coordination/**"),
+                    principal=command.principal,
+                    session_id=command.session_id,
+                    now=NOW,
+                    registry=cli._registry(),
+                ),
+                "resource_state_unavailable",
+            )
+
     def test_open_blocked_by_card_prevents_claimability(self) -> None:
         issue = {
             "body": "## Blocked by\n\nDM-000 and DM-016.\n\n## Acceptance criteria"
