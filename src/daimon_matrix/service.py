@@ -2035,6 +2035,15 @@ class HostedWeave:
                     return registry.append_publication(payload, signer=self.signer)
                 return registry.append_import_decision(payload, signer=self.signer)
             if method == "source.status":
+                if params.get("view") == "known":
+                    value = _closed(
+                        params, {"view", "limit", "after", "expected_snapshot"}
+                    )
+                    return registry.known_sources(
+                        limit=value["limit"],
+                        after=value["after"],
+                        expected_snapshot=value["expected_snapshot"],
+                    )
                 value = _closed(params, {"selector"})
                 selector = value["selector"]
                 if not isinstance(selector, Mapping):

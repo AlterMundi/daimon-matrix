@@ -558,6 +558,74 @@ class SourceRegistryTests(RootLedgerFixture):
         self.core = source_core()
         self.selector = source_selector(self.core)
 
+    def test_known_sources_are_bounded_retained_metadata_not_private_experience(
+        self,
+    ) -> None:
+        empty = self.registry_a.known_sources()
+        self.assertEqual(empty["items"], [])
+        # These two fixture bodies are the same being, so the empty view agrees.
+        self.assertEqual(
+            empty["snapshot_id"], self.registry_b.known_sources()["snapshot_id"]
+        )
+        with mock.patch.object(
+            SourceRegistry, "local_me_id", new_callable=mock.PropertyMock
+        ) as observer:
+            observer.return_value = "dm:being:v1:" + "B" * 43
+            self.assertNotEqual(
+                empty["snapshot_id"], self.registry_b.known_sources()["snapshot_id"]
+            )
+        self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="private:known-test",
+            payload={"text": "PRIVATE-NON-SOURCE-HISTORY"},
+            signer=self.signers["legion"],
+            sensitivity="private",
+            occurred_at_ms=NOW,
+        )
+        self.assertEqual(self.registry_a.known_sources(), empty)
+        for suffix in ("one", "two"):
+            self.core = source_core()
+            self.core["canonical_reference"] += ":" + suffix
+            self.selector = source_selector(self.core)
+            claim, _, _ = self._claim(self.registry_a, label="legion")
+            self._publish(claim, suffix=suffix)
+        before = self.cas_a.path.read_bytes()
+        first = self.registry_a.known_sources(limit=1)
+        second = self.registry_a.known_sources(
+            limit=1, after=first["next_after"], expected_snapshot=first["snapshot_id"]
+        )
+        self.assertEqual(before, self.cas_a.path.read_bytes())
+        self.assertEqual(first["known_sources"], 2)
+        self.assertIsNone(second["next_after"])
+        self.assertNotEqual(
+            first["items"][0]["selector"], second["items"][0]["selector"]
+        )
+        for row in first["items"] + second["items"]:
+            self.assertEqual(row["selector"], source_selector(row["source_core"]))
+            self.assertEqual(row["claim_series_count"], 1)
+            self.assertEqual(row["publication_series_count"], 1)
+        self.assertNotIn(b"PRIVATE-NON-SOURCE-HISTORY", canonical_bytes(first))
+        self.assertEqual(first["freshness"], "local-retained-evidence-only")
+        self.assertEqual(first["ancestry_assessment"], "not-implied")
+        self.assertEqual(first["remote_reads"], 0)
+        self.assertLess(len(canonical_bytes(first)), 131072)
+        self.core = source_core()
+        self.core["canonical_reference"] += ":three"
+        self.selector = source_selector(self.core)
+        self._claim(self.registry_a, label="legion")
+        with self.assertRaisesRegex(SourceError, "source_known_view_changed") as raised:
+            self.registry_a.known_sources(
+                limit=1,
+                after=first["next_after"],
+                expected_snapshot=first["snapshot_id"],
+            )
+        self.assertTrue(raised.exception.retryable)
+        for invalid in (0, 65, True):
+            with self.assertRaisesRegex(SourceError, "invalid_source_known_limit"):
+                self.registry_a.known_sources(limit=invalid)
+        with self.assertRaisesRegex(SourceError, "source_known_snapshot_required"):
+            self.registry_a.known_sources(after=self.selector["source_id"])
+
     def test_selected_source_keeps_private_origin_out_of_bundle_and_weave(self) -> None:
         private = self.ledger_a.append_local(
             kind="experience.observed",
@@ -2747,6 +2815,24 @@ class HostedSourceRuntimeTests(RuntimeFixture):
         self.assertTrue(response["ok"], response)
         self.assertEqual(response["result"]["selector"], selector)
         self.assertEqual(response["result"]["claims"], [])
+        known_request = create_request(
+            capability,
+            request_id="40000000-0000-4000-8000-000000000002",
+            issued_at_ms=NOW,
+            method="source.status",
+            params={
+                "view": "known",
+                "limit": 1,
+                "after": None,
+                "expected_snapshot": None,
+            },
+            nonce=b"k" * 16,
+        )
+        known = runtime.service.handle(known_request)
+        self.assertTrue(known["ok"], known.get("error"))
+        self.assertEqual(known["result"]["schema"], "dm.source-known/v1")
+        self.assertEqual(known["result"]["items"], [])
+        self.assertEqual(known["result"]["remote_reads"], 0)
 
         collision = copy.deepcopy(bundle)
         collision["sources"]["cas_filename"] = collision["ledger"]

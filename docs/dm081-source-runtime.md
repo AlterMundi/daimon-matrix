@@ -196,3 +196,33 @@ and 16× expansion limits before constructing the runtime object.
 Rollback reverts code and removes only disposable synthetic roots. Accepted
 canonical events, content, tombstones, decisions, receipts and cursor
 high-waters are never deleted as an operational rollback technique.
+
+## Navigating already known Sources
+
+The existing authenticated `source.status` read accepts the additive closed
+request `{view:"known", limit:32, after:null, expected_snapshot:null}`.
+CLI: `daimon source known --limit 32`.
+The existing `source_status` MCP tool accepts `view:"known"`; its default
+exact-selector form remains unchanged. No new tool or capability is created.
+
+`dm.source-known/v1` returns exact selectors/source cores and retained claim and
+publication series counts, sorted by source ID. These are derived from verified
+retained Source events in the existing registry, not another index. A source core
+can be unknown when only incomplete publication evidence is retained. Counts are
+retained series, including retracted or unresolved series; they imply neither
+admitted ancestry nor species membership. Follow an exact selector with ordinary
+status/assessment and selective preview before any adoption.
+
+Pages contain at most64 source rows and128KiB. `next_after` is null at the end;
+otherwise pass that source ID and the exact returned `snapshot_id` as
+`expected_snapshot`. A changed retained Source event set refuses continuation
+with retryable `source_known_view_changed`; restart navigation instead of merging
+pages from different observations. Unrelated private experience does not change
+this Source-only snapshot. Invalid bounds/cursors refuse; no capacity is resized.
+
+The view explicitly reports `local-retained-evidence-only` freshness,
+`not-implied` ancestry assessment and zero remote reads. It contains no content
+blobs, private autobiography, database handles/paths or custody. It starts no
+network fetch, assessment, import, promotion, model request, timer or persistent
+cursor. Fresh remote discovery and the foundation's ancestry/species aggregation
+remain separate work; a known selector does not establish publisher convergence.

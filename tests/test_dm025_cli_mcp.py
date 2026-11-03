@@ -57,6 +57,40 @@ META = {
 
 
 class InstalledSurfaceTests(RuntimeFixture):
+    def test_known_source_navigation_uses_existing_status_tool(self) -> None:
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import _tool_params
+
+        args = cli_parser().parse_args(
+            [
+                "--socket",
+                "/tmp/known-source-test.sock",
+                "--client-config",
+                "/tmp/known-source-test.json",
+                "--capability-key-fd",
+                "0",
+                "source",
+                "known",
+                "--limit",
+                "1",
+            ]
+        )
+        method, params = _method_params(args)
+        self.assertEqual(method, "source.status")
+        self.assertEqual(
+            params,
+            {"view": "known", "limit": 1, "after": None, "expected_snapshot": None},
+        )
+        tool_method, normalized, _ = _tool_params(
+            "source_status", {"view": "known", "limit": 1}
+        )
+        self.assertEqual((tool_method, normalized), (method, params))
+        with self.assertRaises(MCPError):
+            _tool_params("source_status", {"view": "known", "selector": {}})
+        with self.assertRaises(MCPError):
+            _tool_params("source_status", {})
+
     def setUp(self) -> None:
         super().setUp()
         self.state_root, bundle, self.capability, _ = self.make_process_bundle()
