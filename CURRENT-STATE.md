@@ -20,8 +20,10 @@ Reader operation09c3ea9e accepted all three selections with39.389seconds left at
 commit. Its initial SSH observation timed out before any revoke/select; fresh
 observation continued the SAME operation. Earlier90c1/c590 and original213f
 uncertainties remain history. Current native tool configurations/server catalogs
-are accepted on ITACA and Oliva; Eko tooling continuation remains pending.
-Replaced discovery/known-Source guidance is installed on all three. No model input or message was sent.
+and replaced discovery/known-Source guidance are accepted on all three. Eko's
+retained tooling503084e6 completed after native preparation of its same private
+candidate; failed attempts and diagnostics remain retained. No model input or
+message was sent.
 Server-catalog acceptance is distinct from independent receiving-model use.
 
 Scoped authority restart exposed OSError98 and an exact loopback bind refusal
