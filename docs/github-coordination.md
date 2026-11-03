@@ -48,8 +48,8 @@ ready --claim--> in_progress --review--> in_review
 
 - A claim is accepted only when the issue has `status:ready`, every `DM-NNN`
   card named in its `## Blocked by` section is closed, its required issue
-  resource is present, no live receipt owns the issue, and no other live claim
-  overlaps an exact resource. Missing dependency cards fail closed.
+  resource is present, no live receipt owns the issue, and no independently
+  owned live claim overlaps an exact resource. Missing dependency cards fail closed.
 - All claim mutations share one workflow concurrency group. A second command
   is evaluated only after the first receipt is visible.
 - A lease lasts from 60 seconds through 24 hours. `/heartbeat` renews from the
@@ -73,6 +73,15 @@ Resources are sorted exact strings. Every claim includes
 `service:`, `project:`, or `protocol:`. There are no globs beyond the literal
 text a claimant publishes and no semantic overlap inference: agents must name
 the shared collision boundary explicitly.
+
+Claims from the exact same authenticated principal and session ID may overlap
+across issues/branches. That operator owns serialization of its work and may
+continue implementation while another finished branch waits for CI. Another
+session remains excluded, including one using the same GitHub login/principal;
+another principal is also excluded even if it reuses the key. Unknown ownership
+still fails closed. Issue-specific ownership, leases, predecessor receipts,
+branch/PR binding and required review/CI remain unchanged. These development
+claims never replace runtime service/resource fences or authorize deployment.
 
 ## Creating a command
 

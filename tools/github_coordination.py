@@ -251,6 +251,8 @@ def handle_comment(
                 repo,
                 issue_number,
                 command.resources,
+                principal=command.principal,
+                session_id=command.session_id,
                 now=now,
                 registry=registry,
             )
@@ -343,6 +345,8 @@ def _resource_conflict(
     issue_number: int,
     resources: tuple[str, ...],
     *,
+    principal: str,
+    session_id: str,
     now: dt.datetime,
     registry: dict[str, Any],
 ) -> str | None:
@@ -361,6 +365,11 @@ def _resource_conflict(
             # auditable rejection can be posted.
             return "resource_state_unavailable"
         if other is None or not other.is_live(now):
+            continue
+        # One authenticated operator can serialize its own branch work while
+        # an earlier PR waits for CI. Another session remains an independent
+        # writer even when it shares the same GitHub login/principal.
+        if other.principal == principal and other.session_id == session_id:
             continue
         overlap = sorted(set(resources).intersection(other.resources))
         if overlap:
