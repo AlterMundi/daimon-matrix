@@ -58,10 +58,17 @@ recovery. Unavailable targets remain unavailable; no provider fallback or model
 activation is attempted.
 
 For explicitly requested periodic review, use the existing service manager with
-one `daimon-source-review.service`/`.timer` per receiving host, running as the
-existing receiver owner and selecting `--scheduled`. The scheduled configuration
-uses only that owner’s local native API; it contains no administrative SSH route. No
-scheduler is installed by the tool or a goal edit. The selected human contract
+one existing `daimon-source-review.service`/`.timer` per selected operator host,
+selecting `--scheduled`. A receiver-local contract runs as its existing owner.
+A human-selected cohort contract may instead use the maintained host-operator
+placement routes (for example Incus for an existing KVM and pinned SSH for a
+native receiver). Run each probe as that receiver’s actual owner with its own
+observer capability; do not copy credentials or widen native grants. When those
+routes require the existing host operator, the driver runs under that operator
+with a protected fixed configuration. This does not grant generic peer execution
+or model attention. Keep the existing process-group and service bounds; size the
+whole-run deadline for the finite target count. No scheduler is installed by the
+tool or a goal edit. The selected human contract
 must specify the interval, expiry, run count and participants. The scheduled
 mode prints only a small summary. `calendar_slots` generates a finite list of
 absolute UTC `OnCalendar` dates, each before expiry and at most `max_runs`. Use
@@ -97,7 +104,36 @@ private history into Matrix.
 
 Installed configuration, first live result, actual service/timer state and
 remaining device/model acceptance belong in the existing project checkpoint.
-Timer selection does not establish remote publication discovery/convergence or
-independent Eko/Oliva model learning. A successful empty or partial local review
+A successful exact-identity publisher-local probe establishes only that selected
+publisher’s metadata at the report time. A transport failure stays unavailable,
+and local retained foreign evidence never substitutes for that publisher read.
+Timer selection alone establishes neither an actual remote observation,
+publisher convergence nor independent Eko/Oliva model learning. A successful empty or partial local review
 is not full foundation coverage; supported remote discovery and selected uptake
 remain separate work.
+
+## Replacing a selected finite contract
+
+Do not edit a live configuration behind its bound state digest. For an explicitly
+selected successor, stop the existing task timer, use the driver’s terminal
+`--control stop` on the predecessor, and retain its consumed count. Prepare a
+new protected configuration/state location with at most the remaining attempts
+and the original expiry. Account for any task-owned foreground comparison being
+carried into this contract; it does not replenish the budget. Reuse the same
+service/timer and original finite absolute calendar rather than installing a
+parallel monitor or extending the schedule. A lower count or shorter expiry is
+valid. Preserve other receivers’ separately selected contracts.
+
+Inspect the current unit before changing its selected configuration, owner,
+writable directory or whole-run deadline. Preserve memory/CPU limits, process
+cleanup, read-only protection and actual native/bot/web/Matrix services. Start the
+selected existing review unit once and inspect its retained report and actual
+limits; service success alone is not exact-identity cohort acceptance. Pause,
+resume and terminal stop use the new selected configuration/state. An expired
+or exhausted successor remains terminal even if a finite timer date fires.
+
+Retain one predecessor contract/control receipt and the successor’s bounded state
+and latest report; do not create per-run archives. This operator transition
+changes metadata observation only. Content transfer still needs the existing
+resource disclosure grant, exact receiving assessment/promotion and selective
+application; the review never supplies them implicitly.
