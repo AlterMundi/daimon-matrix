@@ -2034,7 +2034,11 @@ class HostedWeave:
                 selector = value["selector"]
                 if not isinstance(selector, Mapping):
                     raise ServiceError("invalid_params")
-                return registry.create_cursor(selector, signer=self.signer)
+                created = registry.create_cursor(selector, signer=self.signer)
+                return {
+                    **created,
+                    "envelope": registry.cursor_envelope(created["event"]),
+                }
             if method == "source.diff":
                 value = _closed(
                     params,
