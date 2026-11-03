@@ -2365,7 +2365,9 @@ class SelectedSourceLearningTests(unittest.TestCase):
             SourceError, "source_intake_result_capacity_exhausted"
         ):
             receiver._commit_intake(first, {"result": "too large"})
-        self.assertEqual(receiver._intake_row(first)["state"], "prepared")
+        retained = receiver._intake_row(first)
+        assert retained is not None
+        self.assertEqual(retained["state"], "prepared")
 
     def test_later_full_sync_deduplicates_exact_sparse_evidence(self) -> None:
         journey = self.journey
