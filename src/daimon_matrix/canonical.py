@@ -24,6 +24,10 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, float):
         raise CanonicalError("floating-point values are forbidden in V1 artifacts")
     if isinstance(value, str):
+        # ASCII is already NFC and contains no surrogate code points. Use the
+        # native predicate rather than a Python scan of every signed character.
+        if str.isascii(value):
+            return value
         normalized = unicodedata.normalize("NFC", value)
         if normalized != value:
             raise CanonicalError("strings must already be NFC-normalized")
