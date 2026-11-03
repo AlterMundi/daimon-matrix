@@ -755,6 +755,150 @@ class HostedScopeSurfaceTests(ScopeFixture):
         )
 
 
+class NativeSurfaceTests(ScopeFixture):
+    def reader(self, changes: Mapping[str, Any] | None = None) -> Any:
+        fixture = self
+
+        class Reader:
+            def __call__(self, *args: Any) -> Mapping[str, Any]:
+                return fixture.body_snapshot(*args)
+
+            def surface(
+                self, body: str, embodiment: str, incarnation: str, at: int
+            ) -> Mapping[str, Any]:
+                return {
+                    "schema": "dm.cluster-surface-snapshot/v1",
+                    "body_ref": body,
+                    "embodiment_id": embodiment,
+                    "incarnation_id": incarnation,
+                    "observed_at_ms": at,
+                    "state": "running",
+                    "domain": "native-linux-os",
+                    "surface_ref": "dm:surface:v1:" + "a" * 64,
+                    **(changes or {}),
+                }
+
+        return Reader()
+
+    def resolver(self, reader: Any) -> ScopeResolver:
+        return ScopeResolver(self.ledger_a, clock=lambda: self.now, body_reader=reader)
+
+    def test_exact_surface_does_not_project_history_or_invent_a_roster(self) -> None:
+        resolver = self.resolver(self.reader())
+        result = resolver.surface()
+        self.assertEqual(result["origin"], self.origins["legion"])
+        self.assertEqual(result["evaluated_at_ms"], self.now)
+        self.assertEqual(result["surface"]["domain"], "native-linux-os")
+        self.assertFalse({"heads", "effective", "members", "targets"} & set(result))
+        self.assertEqual(resolver.me()["schema"], "dm.scope.me/v1")
+        with self.assertRaisesRegex(ScopeError, "surface_snapshot_unavailable"):
+            self.resolver_a.surface()
+        # A legacy body callback still supplies the unchanged default view.
+        self.assertEqual(self.resolver_a.me()["body"]["state"], "running")
+
+    def test_surface_refuses_stale_foreign_or_non_native_evidence(self) -> None:
+        cases: list[dict[str, Any]] = [
+            {"body_ref": "foreign"},
+            {"embodiment_id": "foreign"},
+            {"incarnation_id": "foreign"},
+            {"observed_at_ms": self.now - 1},
+            {"observed_at_ms": self.now + 1},
+            {"observed_at_ms": True},
+            {"state": "unavailable"},
+            {"domain": "physical-hypervisor"},
+            {"surface_ref": "host:itaca"},
+            {"surface_ref": "dm:surface:v1:" + "g" * 64},
+            {"private": "/private/machine-id"},
+        ]
+        for change in cases:
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(ScopeError, "surface_snapshot_rejected"),
+            ):
+                self.resolver(self.reader(change)).surface()
+
+    def test_parent_unavailability_is_not_reported_as_a_malformed_surface(self) -> None:
+        for error in (OSError("private socket"), ValueError("private parent refusal")):
+            reader = self.reader()
+            with patch.object(reader, "surface", side_effect=error):
+                with self.assertRaises(ScopeError) as raised:
+                    self.resolver(reader).surface()
+            self.assertEqual(raised.exception.code, "surface_snapshot_unavailable")
+            self.assertTrue(raised.exception.retryable)
+
+    def test_authenticated_daemon_exposes_surface_with_existing_own_body_grant(
+        self,
+    ) -> None:
+        key = b"p" * 32
+        capability = create_capability(
+            key,
+            client_id="client:surface-reader",
+            methods=["scope.me"],
+            not_before_ms=NOW - 1,
+            not_after_ms=NOW + 10_000,
+        )
+        resolver = self.resolver(self.reader())
+        service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {capability.capability_id: capability},
+            lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "surface",
+            scopes=resolver,
+        )
+        info = self.root_path.lstat()
+        runtime = HostedRuntime(
+            service,
+            self.root_path,
+            (info.st_dev, info.st_ino),
+            self.root_path / "surface.sock",
+            synthetic_visibility(clock=lambda: self.now),
+        )
+        param_sets: tuple[dict[str, Any], ...] = (
+            {},
+            {"view": "surface"},
+            {"view": "surface", "foreign": True},
+        )
+        for index, params in enumerate(param_sets):
+            request = create_request(
+                capability,
+                request_id=request_id(400 + index),
+                issued_at_ms=NOW,
+                method="scope.me",
+                params=params,
+                nonce=bytes([index + 1]) * 16,
+            )
+            client, server = socket.socketpair()
+            client.settimeout(5)
+            worker = threading.Thread(target=serve_connection, args=(runtime, server))
+            worker.start()
+            try:
+                client.sendall(encode_frame(request))
+                response = decode_frame(client.recv(64 * 1024))
+            finally:
+                worker.join(5)
+                client.close()
+                server.close()
+            self.assertFalse(worker.is_alive())
+            verify_response(
+                response,
+                capability,
+                expected_request_id=request["request_id"],
+                expected_request_hash=request_hash(request),
+                expected_server=self.origins["legion"],
+                expected_runtime=service.runtime_identity,
+            )
+            if index == 2:
+                self.assertFalse(response["ok"])
+            else:
+                self.assertTrue(response["ok"])
+                self.assertEqual(
+                    response["result"]["schema"],
+                    "dm.scope.me/v1" if index == 0 else "dm.scope.me-surface/v1",
+                )
+
+
 class ScopeSchemaTests(ScopeFixture):
     def test_published_scope_and_tribe_documents_are_closed(self) -> None:
         snapshot = self.tribe_snapshot()

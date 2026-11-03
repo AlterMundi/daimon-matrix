@@ -25,6 +25,7 @@ from .cluster import (
     BODY_SNAPSHOT_SCHEMA,
     ClusterEvidenceError,
     validate_body_snapshot,
+    validate_surface_snapshot,
 )
 from .identity import VerificationError, verify_embodiment_credential
 from .ledger import Ledger
@@ -308,6 +309,44 @@ class ScopeResolver:
     def identity(self) -> dict[str, Any]:
         """Current identity and real body admission, without projecting history."""
         return self._identity_at(_uint(self.clock(), "invalid_scope_time"))
+
+    def surface(self) -> dict[str, Any]:
+        """Read this admitted body's OS surface without claiming a /here roster."""
+        reader = getattr(self.body_reader, "surface", None)
+        if not callable(reader):
+            raise ScopeError("surface_snapshot_unavailable", retryable=True)
+        now = _uint(self.clock(), "invalid_scope_time")
+        origin = self.local_origin
+        try:
+            value = reader(
+                origin["body_ref"],
+                origin["embodiment_id"],
+                origin["incarnation_id"],
+                now,
+            )
+        except (OSError, ValueError) as exception:
+            raise ScopeError(
+                "surface_snapshot_unavailable", retryable=True
+            ) from exception
+        try:
+            surface = validate_surface_snapshot(
+                value,
+                body_ref=origin["body_ref"],
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                evaluated_at_ms=now,
+            )
+        except ClusterEvidenceError as exception:
+            raise ScopeError("surface_snapshot_rejected") from exception
+        self.authority.validate_origin(origin, require_active=True)
+        return {
+            "schema": "dm.scope.me-surface/v1",
+            "being_ref": self.authority.manifest.being_ref,
+            "manifest_hash": self.authority.manifest.digest,
+            "origin": origin,
+            "evaluated_at_ms": now,
+            "surface": surface,
+        }
 
     def _identity_at(self, now: int) -> dict[str, Any]:
         origin = self.local_origin

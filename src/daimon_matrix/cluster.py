@@ -17,6 +17,7 @@ from typing import Any, Final, Protocol, cast
 from .canonical import CanonicalError, canonical_bytes
 
 BODY_SNAPSHOT_SCHEMA: Final = "dm.cluster-body-snapshot/v1"
+SURFACE_SNAPSHOT_SCHEMA: Final = "dm.cluster-surface-snapshot/v1"
 FENCE_EVIDENCE_SCHEMA: Final = "dm.cluster-resource-fence-evidence/v1"
 FENCE_VERIFICATION_SCHEMA: Final = "dm.cluster-resource-fence-verification/v1"
 FENCE_POSITION_SCHEMA: Final = "dm.cluster-resource-fence-position/v1"
@@ -168,6 +169,45 @@ def validate_observed_postcondition(value: Any) -> dict[str, Any]:
     if len(_canonical(value, "invalid_postcondition")) > MAX_POSTCONDITION_BYTES:
         raise ClusterEvidenceError("postcondition_too_large")
     return copy.deepcopy(dict(value))
+
+
+def validate_surface_snapshot(
+    value: Any,
+    *,
+    body_ref: str,
+    embodiment_id: str,
+    incarnation_id: str,
+    evaluated_at_ms: int,
+) -> dict[str, Any]:
+    """Accept an exact, current native OS surface, never a host-label alias."""
+    code = "surface_snapshot_rejected"
+    row = _closed(
+        value,
+        {
+            "schema",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "observed_at_ms",
+            "state",
+            "domain",
+            "surface_ref",
+        },
+        code,
+    )
+    if (
+        row["schema"] != SURFACE_SNAPSHOT_SCHEMA
+        or row["body_ref"] != _text(body_ref, code)
+        or row["embodiment_id"] != _text(embodiment_id, code)
+        or row["incarnation_id"] != _text(incarnation_id, code)
+        or _uint(row["observed_at_ms"], code) != _uint(evaluated_at_ms, code)
+        or row["state"] != "running"
+        or row["domain"] != "native-linux-os"
+        or re.fullmatch(r"dm:surface:v1:[0-9a-f]{64}", _text(row["surface_ref"], code))
+        is None
+    ):
+        raise ClusterEvidenceError(code)
+    return copy.deepcopy(dict(row))
 
 
 def validate_body_snapshot(
