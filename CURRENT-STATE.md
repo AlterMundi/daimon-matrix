@@ -12,36 +12,45 @@ provider cancellation or revival of its stopped identities/containers.
   selected-thread435 and semantic-only source440 V1 are qualified/merged.
   Source447/751a414 additionally exposes the complete signed cursor envelope and
   refuses new unsigned-cursor intake before durable effects, preserving earlier
-  staged failures. Actual selected assessment/application, reciprocal learning
-  and the remaining foundation domains are unfinished.
+  staged failures. The exact new contribution skill2.0.17 was published,
+  received with committed quarantine decisions on both peers, assessed through
+  native receiver authority, and promoted/applied on Oliva through the maintained
+  selective updater. Eko promotion/application, actual model consumption,
+  reciprocal learning and the remaining foundation domains are unfinished.
   See [the V1 contract](specs/source-selective-learning.md) and
   [the maintained live checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
 - Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
   signed receiving receipts and both native readers; no whole-history sync.
   Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
-- CompAII ITACA and Oliva KVM now load Matrix1da774b / SDKd000731c, qualified
-  by all applicable CI and process-connected receiving observations. Original
-  identity/state and native/bot/web processes are preserved. Eko MEDUSA selected
-  the same SDK but native structured diagnostics show its shared startup budget
-  expiring during cold reader-chain verification. Its Matrix retry loop is
-  stopped for bounded read-only recovery; native Codex, Telegram and both web
-  service PIDs remain unchanged. Native configured-tool adoption is still pending.
-- The original cohort reader operation remains incomplete: prior ITACA/Oliva
-  revokes were accepted and Eko retained a persistence-uncertain refusal. Keep
-  those exact outcomes; software changes require fresh process/roster observation
-  through the owning successor route. Daemon selection alone proves no current
-  Tribe communication readiness. Earlier accepted message9125f9dc and its
-  independent signed receipts remain valid history; no message/carrier replay.
-- PR449/ff2482d addresses measured canonical serialization cost with a native
-  ASCII predicate, retaining exact signed bytes and non-ASCII checks. The real
-  MEDUSA 327-record read-only comparison passed all signatures/chain checks with
-  the same head: 4.92386s existing versus 2.87332s diagnostic candidate. 14 identity
-  plus 109 ledger/recovery/source/CLI tests and final static/frozen checks pass;
-  source CI41631779500 is still running. No current MEDUSA startup acceptance,
-  timeout increase, installed-code patch or history rewrite is claimed.
-- The real warm onboarding worker selects that qualified SDK for default/named
-  runtime paths, with its PID, completed Eko/Oliva job hashes and nonruntime
-  settings unchanged. Group-only policy authorizes no new member without its
+- CompAII ITACA and Oliva KVM load Matrixff2482d / SDK80ea8dc, qualified
+  by all applicable CI41631779500 and process-connected receiving observations.
+  Eko MEDUSA loaded that same exact SDK after the earlier observation window,
+  preserving identity/state and all native/bot/web PIDs. The actual current
+  three-reader operation5bd152e0 accepted revoke/select, and messagef7c29c4d
+  has independent signed delivered receipts from Eko and Oliva plus confirmed
+  Tribu echo. No model wakeup or message replay occurred.
+- MEDUSA later had three verified Matrix process restarts with exit1; its
+  retry loop is now stopped. The successful startup, message and source-intake
+  receipts remain valid history; they do not prove current cohort stability.
+  Codex, Telegram and both web PIDs remain unchanged. The cause is not established:
+  current parent diagnostics omit the existing supervisor termination reason.
+  [Cluster386](https://github.com/nicoechaniz/daimon-cluster/issues/386) owns
+  that concrete diagnostic gap and forward receiving repair. Preserve the exact
+  pending source-cursor request; do not mint a replacement to hide uncertainty.
+- The older1bc reader operation remains incomplete with its original Eko
+  persistence-uncertain refusal. The later software/process-bound operation
+  does not relabel that result. Native configured-tool successor adoption is
+  still pending; current old catalog messaging nonetheless returned actual
+  receiving receipts through the qualified new daemon.
+- PR449/ff2482d merged as10306e06 after all applicable checks passed. Its
+  native ASCII predicate preserves exact signed bytes and non-ASCII validation.
+  Real327-record MEDUSA comparison verified the same signed head and full chain:
+  4.92386s existing versus2.87332s diagnostic candidate. Initial cold startup is
+  now observed; subsequent runtime instability above remains unresolved. No
+  timeout increase, installed-code patch or history rewrite was used.
+- The real warm onboarding worker retains its separately accepted default/named
+  runtime selection and completed Eko/Oliva jobs; it has not been requalified
+  against the newff2482d body SDK by this scoped update. Group-only policy authorizes no new member without its
   ordinary protected complete cohort binding; it cannot fall back to pair setup.
   Prior isolated admission/group/direct/reply evidence is reusable, not another
   real enrollment to repeat. Worker operator dependencies remain separate.
@@ -67,7 +76,14 @@ provider cancellation or revival of its stopped identities/containers.
   the UI/control adapter is disabled without actual authority. Peer/model
   activation stays OFF. Limits, authority, trusted frontend isolation and a real
   enforceable inference route remain explicit human/owner selections.
-- Contribution guidance2.0.16 is published and installed on the current three.
+- Contribution guidance2.0.17 is published and installed on ITACA/Oliva. Its
+  exact13,023-byte public source delta (Skillsa70c7bf, SHA256443264e9) reached
+  committed quarantine on both peers; Oliva promoted it as an external reference
+  and installed it with linked decision/transaction evidence. Its checkout,
+  services and private memory were preserved. This is operator-directed applied
+  learning, not a receiving-model judgment. Eko retains2.0.16 pending repair.
+  Full publication/assessment/provenance stays attributed; foreign autobiography
+  was neither exported nor pooled.
   Legion's last existing SSH-route probe returned No route to host; SDK312 and
   that guidance remain pending there. Do not infer powered-off state, wake it,
   switch credentials or revive a stopped Source leg. Earlier `/we` acceptance
