@@ -820,9 +820,11 @@ class NativeSurfaceTests(ScopeFixture):
     def test_parent_unavailability_is_not_reported_as_a_malformed_surface(self) -> None:
         for error in (OSError("private socket"), ValueError("private parent refusal")):
             reader = self.reader()
-            with patch.object(reader, "surface", side_effect=error):
-                with self.assertRaises(ScopeError) as raised:
-                    self.resolver(reader).surface()
+            with (
+                patch.object(reader, "surface", side_effect=error),
+                self.assertRaises(ScopeError) as raised,
+            ):
+                self.resolver(reader).surface()
             self.assertEqual(raised.exception.code, "surface_snapshot_unavailable")
             self.assertTrue(raised.exception.retryable)
 
