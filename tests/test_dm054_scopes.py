@@ -1115,17 +1115,128 @@ class ClusterDiscoveryTests(ScopeFixture):
         self.assertTrue(raised.exception.retryable)
         with self.assertRaisesRegex(ScopeError, "unsupported_discovery_scope"):
             self.discovery_resolver().discovery(
-                scope="/here", request_id=request_id(804)
+                scope="/near", request_id=request_id(804)
+            )
+
+    def surface_census(self, other: str | None = "same") -> Any:
+        origin = self.origins["legion"]
+        value = self.inventory_reader().inventory(
+            origin["body_ref"],
+            origin["embodiment_id"],
+            origin["incarnation_id"],
+            self.now,
+        )
+        local = self.origins["legion"]["body_ref"]
+        ref = "dm:surface:v1:" + "a" * 64
+        value["schema"] = "dm.cluster-surface-inventory-snapshot/v1"
+        value["surface"] = {
+            "schema": "dm.cluster-surface-snapshot/v1",
+            "domain": "native-linux-os",
+            "surface_ref": ref,
+            "state": "running",
+            "observed_at_ms": self.now,
+            **{
+                key: origin[key]
+                for key in ("body_ref", "embodiment_id", "incarnation_id")
+            },
+        }
+        value["inventory"]["schema"] = "dm.cluster.admission-surfaces/v1"
+        for row in value["inventory"]["items"]:
+            row["surface"] = (
+                {
+                    "domain": "native-linux-os",
+                    "surface_ref": ref,
+                    "reported_at_ms": self.now,
+                    "evidence": "admitted-launch-report",
+                }
+                if row["body_ref"] == local or other == "same"
+                else None
+                if other is None
+                else {
+                    "domain": "native-linux-os",
+                    "surface_ref": "dm:surface:v1:" + "b" * 64,
+                    "reported_at_ms": self.now,
+                    "evidence": "admitted-launch-report",
+                }
+            )
+        return value
+
+    def here_resolver(self, value: Any) -> ScopeResolver:
+        reader = self.inventory_reader()
+        reader.surface_inventory = lambda *_args: value
+        return ScopeResolver(self.ledger_a, clock=lambda: self.now, body_reader=reader)
+
+    def test_here_compares_os_surfaces_and_retains_unknown_participants(self) -> None:
+        for other, count, unknown in [
+            ("same", 2, 0),
+            ("different", 1, 0),
+            (None, 1, 1),
+        ]:
+            with self.subTest(other=other):
+                result = self.here_resolver(self.surface_census(other)).discovery(
+                    scope="/here", request_id=request_id(806)
+                )
+                self.assertEqual(len(result["members"]), count)
+                self.assertEqual(len(result["unavailable"]), unknown)
+                self.assertEqual(result["partial"], bool(unknown))
+                self.assertEqual(result["surface"]["domain"], "native-linux-os")
+                self.assertTrue(
+                    all(
+                        x["process_response"] == "not-observed"
+                        for x in result["members"]
+                    )
+                )
+                self.assertNotIn("targets", result)
+
+    def test_here_rejects_foreign_local_surface_and_invalid_reports(self) -> None:
+        valid = self.surface_census()
+        for field, bad in [
+            ("domain", "geography"),
+            ("surface_ref", "/private/path"),
+            ("reported_at_ms", self.now + 1000),
+            ("evidence", "host-label"),
+        ]:
+            value = copy.deepcopy(valid)
+            value["inventory"]["items"][0]["surface"][field] = bad
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(ScopeError, "cluster_inventory_rejected"),
+            ):
+                self.here_resolver(value).discovery(
+                    scope="/here", request_id=request_id(807)
+                )
+        value = copy.deepcopy(valid)
+        value["surface"]["body_ref"] = "body:foreign"
+        with self.assertRaisesRegex(ScopeError, "cluster_inventory_rejected"):
+            self.here_resolver(value).discovery(
+                scope="/here", request_id=request_id(808)
+            )
+        value = copy.deepcopy(valid)
+        local = next(
+            x
+            for x in value["inventory"]["items"]
+            if x["body_ref"] == self.origins["legion"]["body_ref"]
+        )
+        local["surface"]["surface_ref"] = "dm:surface:v1:" + "c" * 64
+        with self.assertRaisesRegex(ScopeError, "cluster_inventory_rejected"):
+            self.here_resolver(value).discovery(
+                scope="/here", request_id=request_id(809)
             )
 
     def test_mcp_discovery_uses_existing_authenticated_resolution_read_grant(
         self,
     ) -> None:
+        self._authenticated_discovery_read("/all")
+
+    def test_here_uses_existing_authenticated_resolution_read_grant(self) -> None:
+        self._authenticated_discovery_read("/here")
+
+    def _authenticated_discovery_read(self, scope: str) -> None:
         from daimon_matrix.mcp_server import _tool_params
 
         method, params, _ = _tool_params(
             "scope_resolve",
-            dict(request_id=request_id(805), scope="/all", view="discovery"),
+            dict(request_id=request_id(805), scope=scope, view="discovery"),
         )
         self.assertEqual(params["tribe_ref"], None)
         key = b"d" * 32
@@ -1143,7 +1254,11 @@ class ClusterDiscoveryTests(ScopeFixture):
             lambda: self.now,
             "dm:runtime:v1:" + "a" * 43,
             "discovery",
-            scopes=self.discovery_resolver(),
+            scopes=(
+                self.here_resolver(self.surface_census())
+                if scope == "/here"
+                else self.discovery_resolver()
+            ),
         )
         info = self.root_path.lstat()
         runtime = HostedRuntime(
