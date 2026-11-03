@@ -364,6 +364,11 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         return "source.cursor.create", {"selector": _bounded_file(args.selector)}
     if command == ("source", "diff"):
         return "source.diff", {
+            **(
+                {"closure_mode": args.closure_mode}
+                if args.closure_mode != "full-origin-v0"
+                else {}
+            ),
             "continuation": (
                 None if args.continuation is None else _bounded_file(args.continuation)
             ),
@@ -589,6 +594,11 @@ def parser() -> argparse.ArgumentParser:
     source_diff.add_argument("--max-items", type=int, default=64)
     source_diff.add_argument("--max-bytes", type=int, default=4_194_304)
     source_diff.add_argument("--continuation")
+    source_diff.add_argument(
+        "--closure-mode",
+        choices=("full-origin-v0", "selected-source-v1"),
+        default="full-origin-v0",
+    )
     source_incoming = source_commands.add_parser(
         "incoming", help="side-effect-free validation of one diff bundle"
     )

@@ -72,6 +72,31 @@ and page content. An unchanged authorized page keeps its exact original bytes
 and expiry. An expired, changed or no-longer-authorized page is refused; the
 retained historical success is neither erased nor continuing disclosure authority.
 
+## Selective learning without foreign autobiography
+
+The additive [selected source V1 contract](../specs/source-selective-learning.md)
+is available through `source.diff` with `closure_mode: "selected-source-v1"`
+(or CLI `--closure-mode selected-source-v1`). Older callers retain full-origin
+V0. Select the mode explicitly on every continuation request.
+
+V1 sends original signed claim/publication envelopes and their exact semantic
+predecessors, publisher claim, content and provenance. It does not traverse the
+body journal. Each carried publication classification still needs its ordinary
+resource read grant; this is not a grant to origin history. Sparse envelopes
+land in SourceCAS, not in a foreign incomplete Weave autobiography. Incoming is
+a read-only preview; pull remains quarantined; assessment, promotion and actual
+skill/configuration consumption are separate effects. A passing synthetic test
+is not a live peer adoption receipt.
+
+SourceCAS now enforces explicit positive constructor limits: 8,192 selected
+source envelopes /64 MiB, 65,536 content entries /256 MiB, 4,096 intake operations /16 MiB retained results.
+New writes stop at capacity without deleting accepted evidence. Existing exact
+bytes and committed retries remain readable. A selected page's envelopes and
+content commit together or roll back together; do not retry with new operation
+IDs to hide a capacity error. Stop intake and review the current owning store
+and capacity setting. No automatic resizing, historical environment archive,
+provider request or background review loop is installed by this change.
+
 ## Intake transaction
 
 The portable flow is:

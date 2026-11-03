@@ -1312,8 +1312,30 @@ def _prepare_private_path(path: Path) -> None:
 class SourceCAS:
     """Owner-local exact-byte CAS.  References contain no retrieval hints."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        max_source_events: int = 8192,
+        max_source_event_bytes: int = 64 * 1024 * 1024,
+        max_content_bytes: int = 256 * 1024 * 1024,
+        max_content_items: int = 65536,
+        max_intake_operations: int = 4096,
+        max_intake_result_bytes: int = 16 * 1024 * 1024,
+    ) -> None:
         self.path = Path(os.path.abspath(path))
+        self.max_source_events = _uint(max_source_events, "invalid_source_capacity", 1)
+        self.max_source_event_bytes = _uint(
+            max_source_event_bytes, "invalid_source_capacity", 1
+        )
+        self.max_content_bytes = _uint(max_content_bytes, "invalid_source_capacity", 1)
+        self.max_content_items = _uint(max_content_items, "invalid_source_capacity", 1)
+        self.max_intake_operations = _uint(
+            max_intake_operations, "invalid_source_capacity", 1
+        )
+        self.max_intake_result_bytes = _uint(
+            max_intake_result_bytes, "invalid_source_capacity", 1
+        )
 
     @contextmanager
     def _database(self) -> Iterator[sqlite3.Connection]:
@@ -1346,8 +1368,145 @@ class SourceCAS:
                 "state TEXT NOT NULL CHECK(state IN "
                 "('prepared','blobs','events','decisions','committed')), "
                 "result_json BLOB) WITHOUT ROWID;"
+                "CREATE TABLE IF NOT EXISTS source_events ("
+                "event_id TEXT NOT NULL, event_hash TEXT NOT NULL, "
+                "event_json BLOB NOT NULL, "
+                "PRIMARY KEY(event_id, event_hash)) WITHOUT ROWID;"
             )
         os.chmod(self.path, 0o600)
+
+    def source_events(self, event_id: str | None = None) -> list[dict[str, Any]]:
+        """Read retained sparse evidence without creating or migrating a store."""
+        if not self.path.exists():
+            return []
+        with self._database() as database:
+            if (
+                database.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE name='source_events' AND type='table'"
+                ).fetchone()
+                is None
+            ):
+                return []
+            rows = database.execute(
+                "SELECT event_id, event_hash, event_json FROM source_events"
+                + (" WHERE event_id=?" if event_id is not None else "")
+                + " ORDER BY event_id, event_hash",
+                () if event_id is None else (event_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                event = json.loads(
+                    bytes(row["event_json"]), object_pairs_hook=_unique_object
+                )
+                if (
+                    not isinstance(event, dict)
+                    or event.get("event_id") != row["event_id"]
+                    or event.get("content_hash") != row["event_hash"]
+                    or _canonical(event, "source_evidence_corrupt")
+                    != bytes(row["event_json"])
+                ):
+                    raise SourceError("source_evidence_corrupt")
+            except (ValueError, TypeError) as error:
+                raise SourceError("source_evidence_corrupt") from error
+            result.append(event)
+        return result
+
+    def retain_source_events(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        *,
+        blobs: Sequence[tuple[Mapping[str, Any], bytes]] = (),
+    ) -> None:
+        """Atomically retain already verified selected envelopes, including forks.
+
+        SourceRegistry verifies signatures/semantic closure before this write and
+        re-verifies retained signatures on read. Never evict accepted evidence.
+        """
+        encoded: dict[tuple[str, str], bytes] = {}
+        for event in events:
+            if event.get("kind") not in {CLAIM_EVENT_KIND, PUBLICATION_EVENT_KIND}:
+                raise SourceError("source_evidence_kind_rejected")
+            key = (str(event["event_id"]), str(event["content_hash"]))
+            raw = _canonical(event, "source_evidence_corrupt")
+            if key in encoded and encoded[key] != raw:
+                raise SourceError("source_evidence_conflict")
+            encoded[key] = raw
+        normalized_blobs = [(validate_content_ref(ref), raw) for ref, raw in blobs]
+        for ref, raw in normalized_blobs:
+            verify_content(ref, raw)
+        self.initialize()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                count, size = database.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(length(event_json)), 0) "
+                    "FROM source_events"
+                ).fetchone()
+                additions = []
+                for (event_id, event_hash), raw in encoded.items():
+                    existing = database.execute(
+                        "SELECT event_json FROM source_events "
+                        "WHERE event_id=? AND event_hash=?",
+                        (event_id, event_hash),
+                    ).fetchone()
+                    if existing is not None:
+                        if bytes(existing[0]) != raw:
+                            raise SourceError("source_evidence_conflict")
+                    else:
+                        additions.append((event_id, event_hash, raw))
+                if (
+                    count + len(additions) > self.max_source_events
+                    or size + sum(len(row[2]) for row in additions)
+                    > self.max_source_event_bytes
+                ):
+                    raise SourceError("source_evidence_capacity_exhausted")
+                database.executemany(
+                    "INSERT INTO source_events VALUES (?, ?, ?)", additions
+                )
+                for reference, raw in normalized_blobs:
+                    self._put_content(database, reference, raw)
+                database.commit()
+            except BaseException:
+                database.rollback()
+                raise
+
+    def _put_content(
+        self, database: sqlite3.Connection, reference: Mapping[str, Any], raw: bytes
+    ) -> None:
+        existing = database.execute(
+            "SELECT media_type, byte_length, sha256, raw FROM content "
+            "WHERE content_id=?",
+            (reference["content_id"],),
+        ).fetchone()
+        if existing is not None:
+            if (
+                existing["media_type"] != reference["media_type"]
+                or int(existing["byte_length"]) != len(raw)
+                or existing["sha256"] != reference["sha256"]
+                or bytes(existing["raw"]) != raw
+            ):
+                raise SourceError("source_cas_metadata_conflict")
+            return
+        count, size = database.execute(
+            "SELECT COUNT(*), COALESCE(SUM(length(raw)),0) FROM content"
+        ).fetchone()
+        if (
+            count + 1 > self.max_content_items
+            or size + len(raw) > self.max_content_bytes
+        ):
+            raise SourceError("source_content_capacity_exhausted")
+        database.execute(
+            "INSERT INTO content VALUES (?, ?, ?, ?, ?)",
+            (
+                reference["content_id"],
+                reference["media_type"],
+                reference["byte_length"],
+                reference["sha256"],
+                raw,
+            ),
+        )
 
     def put(self, raw: bytes, media_type: str) -> dict[str, Any]:
         reference = source_content_ref(raw, media_type)
@@ -1355,29 +1514,7 @@ class SourceCAS:
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
-                existing = database.execute(
-                    "SELECT media_type, byte_length, sha256, raw FROM content "
-                    "WHERE content_id=?",
-                    (reference["content_id"],),
-                ).fetchone()
-                if existing is None:
-                    database.execute(
-                        "INSERT INTO content VALUES (?, ?, ?, ?, ?)",
-                        (
-                            reference["content_id"],
-                            reference["media_type"],
-                            reference["byte_length"],
-                            reference["sha256"],
-                            raw,
-                        ),
-                    )
-                elif (
-                    existing["media_type"] != reference["media_type"]
-                    or int(existing["byte_length"]) != len(raw)
-                    or existing["sha256"] != reference["sha256"]
-                    or bytes(existing["raw"]) != raw
-                ):
-                    raise SourceError("source_cas_conflict")
+                self._put_content(database, reference, raw)
                 database.commit()
             except BaseException:
                 database.rollback()
@@ -1551,7 +1688,40 @@ class SourceRegistry:
 
     def _events(self) -> list[dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
+        sparse = [self._verify_sparse_event(row) for row in self.cas.source_events()]
+        positions: dict[tuple[str, str, int], tuple[str, str]] = {}
+        for event in sparse:
+            position = (
+                event["being_ref"],
+                event["origin"]["incarnation_id"],
+                event["sequence"],
+            )
+            marker = (event["event_id"], event["content_hash"])
+            if position in positions and positions[position] != marker:
+                raise SourceError("source_known_origin_equivocation")
+            positions[position] = marker
+            existing = result.get(event["event_id"])
+            if existing is not None and existing != event:
+                raise SourceError("source_known_event_conflict")
+            result[event["event_id"]] = event
         for ledger in self.known_ledgers.values():
+            if sparse:
+                # Later full sync must expose conflicts with retained sparse
+                # evidence, even if the full ledger quarantines that position.
+                for row in ledger.events(include_incomplete=True):
+                    retained = result.get(row["event_id"])
+                    if retained is not None and retained != row:
+                        raise SourceError("source_known_event_conflict")
+                    position = (
+                        row["being_ref"],
+                        row["origin"]["incarnation_id"],
+                        row["sequence"],
+                    )
+                    if position in positions and positions[position] != (
+                        row["event_id"],
+                        row["content_hash"],
+                    ):
+                        raise SourceError("source_known_origin_equivocation")
             for event in ledger.events(include_incomplete=False):
                 if event["kind"] not in SOURCE_EVENT_KINDS:
                     continue
@@ -1571,6 +1741,11 @@ class SourceRegistry:
 
     def _event(self, event_id: str) -> dict[str, Any] | None:
         found: dict[str, Any] | None = None
+        for value in self.cas.source_events(event_id):
+            event = self._verify_sparse_event(value)
+            if found is not None and found != event:
+                raise SourceError("source_known_event_conflict")
+            found = event
         for ledger in self.known_ledgers.values():
             event = ledger.event(event_id)
             if event is None:
@@ -1579,6 +1754,20 @@ class SourceRegistry:
                 raise SourceError("source_known_event_conflict")
             found = copy.deepcopy(dict(event))
         return found
+
+    def _verify_sparse_event(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        from .weave import WeaveProtocolError, verify_event
+
+        known = self.known_ledgers.get(str(value.get("being_ref")))
+        if known is None:
+            raise SourceError("source_event_authority_unknown", incomplete=True)
+        try:
+            event = verify_event(value, known.authority)
+        except WeaveProtocolError as error:
+            raise SourceError("invalid_source_diff_event") from error
+        if event["kind"] not in {CLAIM_EVENT_KIND, PUBLICATION_EVENT_KIND}:
+            raise SourceError("source_evidence_kind_rejected")
+        return event
 
     @staticmethod
     def _group(
@@ -1688,7 +1877,9 @@ class SourceRegistry:
                 missing.append(entry["artifact"]["artifact_id"])
         return not missing, sorted(missing)
 
-    def _claim_lanes(self, events: Sequence[Mapping[str, Any]]) -> dict[str, _Lane]:
+    def _claim_lanes(
+        self, events: Sequence[Mapping[str, Any]], *, check_content: bool = True
+    ) -> dict[str, _Lane]:
         result: dict[str, _Lane] = {}
         for series, rows in self._group(
             events, CLAIM_EVENT_KIND, "claim_series_id"
@@ -1706,7 +1897,7 @@ class SourceRegistry:
                 ),
                 retraction_relations=True,
             )
-            if lane.state == "current" and lane.current is not None:
+            if check_content and lane.state == "current" and lane.current is not None:
                 complete, missing = self._evidence_complete(lane.current)
                 if not complete:
                     lane = _Lane(
@@ -2385,6 +2576,110 @@ class SourceRegistry:
             ),
         )
 
+    @staticmethod
+    def _semantic_dependencies(
+        event: Mapping[str, Any],
+    ) -> list[tuple[str, str, str | None]]:
+        payload = event["payload"]
+        if event["kind"] == CLAIM_EVENT_KIND:
+            predecessor = payload["previous_claim_event_id"]
+            return (
+                []
+                if predecessor is None
+                else [
+                    (
+                        predecessor,
+                        CLAIM_EVENT_KIND,
+                        payload["previous_claim_event_hash"],
+                    )
+                ]
+            )
+        if event["kind"] != PUBLICATION_EVENT_KIND:
+            raise SourceError("source_evidence_kind_rejected")
+        result: list[tuple[str, str, str | None]] = [
+            (payload["publisher_claim_event_id"], CLAIM_EVENT_KIND, None)
+        ]
+        if payload["previous_publication_event_id"] is not None:
+            result.append(
+                (
+                    payload["previous_publication_event_id"],
+                    PUBLICATION_EVENT_KIND,
+                    payload["previous_publication_event_hash"],
+                )
+            )
+        return result
+
+    @staticmethod
+    def _check_semantic_dependency(
+        event: Mapping[str, Any],
+        dependency: Mapping[str, Any],
+        expected_kind: str,
+        expected_hash: str | None,
+    ) -> None:
+        if (
+            dependency["kind"] != expected_kind
+            or dependency["subject"] != event["subject"]
+            or (
+                expected_hash is not None
+                and dependency["content_hash"] != expected_hash
+            )
+        ):
+            raise SourceError("source_diff_semantic_dependency_mismatch")
+        if event["kind"] == expected_kind:
+            field = (
+                "claim_series_id"
+                if expected_kind == CLAIM_EVENT_KIND
+                else "publication_id"
+            )
+            if event["payload"][field] != dependency["payload"][field]:
+                raise SourceError("source_diff_semantic_dependency_mismatch")
+        elif (
+            dependency["payload"]["claimant_me_id"]
+            != event["payload"]["publisher_me_id"]
+        ):
+            raise SourceError("source_diff_semantic_dependency_mismatch")
+
+    def _semantic_closure(
+        self, seeds: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        pending = [str(event["event_id"]) for event in seeds]
+        result: dict[str, dict[str, Any]] = {}
+        size = 0
+        while pending:
+            event_id = pending.pop()
+            if event_id in result:
+                continue
+            event = self._event(event_id)
+            if event is None:
+                raise SourceError("source_diff_semantic_gap", incomplete=True)
+            if (
+                event["kind"] not in {CLAIM_EVENT_KIND, PUBLICATION_EVENT_KIND}
+                or event["subject"] != seeds[0]["subject"]
+            ):
+                raise SourceError("source_diff_unrelated_event")
+            result[event_id] = event
+            size += len(_canonical(event, "invalid_source_diff_event"))
+            if (
+                len(result) > self.cas.max_source_events
+                or size > self.cas.max_source_event_bytes
+            ):
+                raise SourceError("source_evidence_capacity_exhausted")
+            for identifier, kind, expected_hash in self._semantic_dependencies(event):
+                dependency = self._event(identifier)
+                if dependency is None:
+                    raise SourceError("source_diff_semantic_gap", incomplete=True)
+                self._check_semantic_dependency(event, dependency, kind, expected_hash)
+                pending.append(identifier)
+        return sorted(
+            result.values(),
+            key=lambda event: (
+                event["being_ref"],
+                event["origin"]["incarnation_id"],
+                event["sequence"],
+                event["event_id"],
+            ),
+        )
+
     def _blob_references(
         self,
         source_events: Sequence[Mapping[str, Any]],
@@ -2439,14 +2734,30 @@ class SourceRegistry:
         lane_events: Sequence[Mapping[str, Any]],
         requester_me_id: str,
         publication_heads: Mapping[str, str],
+        selective: bool = False,
     ) -> dict[str, Any]:
-        closure = self._event_closure(lane_events, requester_me_id=requester_me_id)
+        closure = (
+            self._semantic_closure(lane_events)
+            if selective
+            else self._event_closure(lane_events, requester_me_id=requester_me_id)
+        )
         source_events = [
             event
             for event in closure
             if event["kind"] in {CLAIM_EVENT_KIND, PUBLICATION_EVENT_KIND}
             and event["subject"] == lane_events[0]["subject"]
         ]
+        if selective:
+            for event in source_events:
+                payload = event["payload"]
+                if (
+                    event["kind"] == PUBLICATION_EVENT_KIND
+                    and payload["action"] == "publish"
+                    and not self._disclosure_allowed(
+                        requester_me_id, payload["source_id"], payload["classification"]
+                    )
+                ):
+                    raise SourceError("source_disclosure_denied")
         for series, lane in self._publication_lanes(source_events).items():
             if (
                 lane.state == "current"
@@ -2479,11 +2790,16 @@ class SourceRegistry:
         }
 
     @staticmethod
-    def _continuation_token(body: Mapping[str, Any]) -> dict[str, Any]:
+    def _continuation_token(
+        body: Mapping[str, Any], *, selective: bool = False
+    ) -> dict[str, Any]:
+        version = "v1" if selective else "v0"
         return {
             **copy.deepcopy(dict(body)),
-            "schema": "dm.source-continuation/v0",
-            "token_hash": b64url(digest("daimon/source-continuation/v0", dict(body))),
+            "schema": f"dm.source-continuation/{version}",
+            "token_hash": b64url(
+                digest(f"daimon/source-continuation/{version}", dict(body))
+            ),
         }
 
     @staticmethod
@@ -2501,7 +2817,10 @@ class SourceRegistry:
             "token_hash",
         }
         row = _closed(value, fields, "invalid_source_continuation")
-        if row["schema"] != "dm.source-continuation/v0":
+        if row["schema"] not in {
+            "dm.source-continuation/v0",
+            "dm.source-continuation/v1",
+        }:
             raise SourceError("invalid_source_continuation")
         _uuid(row["request_event_id"], "invalid_source_continuation")
         for field in ("requester_me_id", "responder_me_id"):
@@ -2517,7 +2836,11 @@ class SourceRegistry:
         body = {
             key: copy.deepcopy(row[key]) for key in fields - {"schema", "token_hash"}
         }
-        if row["token_hash"] != b64url(digest("daimon/source-continuation/v0", body)):
+        if row["token_hash"] != b64url(
+            digest(
+                "daimon/source-continuation/" + row["schema"].rsplit("/", 1)[1], body
+            )
+        ):
             raise SourceError("source_continuation_hash_mismatch")
         return copy.deepcopy(dict(row))
 
@@ -2533,10 +2856,18 @@ class SourceRegistry:
         max_items: int,
         max_bytes: int,
         continuation: Mapping[str, Any] | None = None,
+        closure_mode: str = "full-origin-v0",
     ) -> dict[str, Any]:
         """Return one disclosure-authorized, content-bound, side-effect-free page."""
 
         selected = validate_source_selector(selector)
+        if not isinstance(closure_mode, str) or closure_mode not in {
+            "full-origin-v0",
+            "selected-source-v1",
+        }:
+            raise SourceError("invalid_source_closure_mode")
+        selective = closure_mode == "selected-source-v1"
+        version = "v1" if selective else "v0"
         request_id = _uuid(request_event_id, "invalid_source_diff_request")
         requester = _me_id(requester_me_id, "invalid_source_diff_request")
         item_limit = _uint(max_items, "invalid_source_diff_request", 1)
@@ -2575,6 +2906,8 @@ class SourceRegistry:
         previous_page_hash: str | None = None
         if continuation is not None:
             token = self._validate_continuation(continuation)
+            if token["schema"] != f"dm.source-continuation/{version}":
+                raise SourceError("source_continuation_scope_mismatch")
             if (
                 token["request_event_id"] != request_id
                 or token["requester_me_id"] != requester
@@ -2616,6 +2949,7 @@ class SourceRegistry:
                     lane_events=lane.events,
                     requester_me_id=requester,
                     publication_heads=publication_heads,
+                    selective=selective,
                 )
             except SourceError as error:
                 if error.code in {
@@ -2652,6 +2986,7 @@ class SourceRegistry:
                     lane_events=lane.events,
                     requester_me_id=requester,
                     publication_heads=publication_heads,
+                    selective=selective,
                 )
             except SourceError as error:
                 if error.code in {
@@ -2680,7 +3015,7 @@ class SourceRegistry:
         expires_at_ms = int(self.clock()) + 300_000
         page_hash = b64url(
             digest(
-                "daimon/source-diff-page/v0",
+                f"daimon/source-diff-page/{version}",
                 {"items": page_items, "page_index": page_index},
             )
         )
@@ -2697,7 +3032,8 @@ class SourceRegistry:
                     "requester_me_id": requester,
                     "responder_cursor_hash": responder_cursor_hash,
                     "responder_me_id": self.local_me_id,
-                }
+                },
+                selective=selective,
             )
         )
         core = {
@@ -2716,8 +3052,8 @@ class SourceRegistry:
         }
         return {
             **core,
-            "bundle_hash": b64url(digest("daimon/source-diff-bundle/v0", core)),
-            "schema": "dm.source-diff-bundle/v0",
+            "bundle_hash": b64url(digest(f"daimon/source-diff-bundle/{version}", core)),
+            "schema": f"dm.source-diff-bundle/{version}",
         }
 
     @staticmethod
@@ -2774,8 +3110,12 @@ class SourceRegistry:
             > MAX_BUNDLE_DECOMPRESSED_BYTES
         ):
             raise SourceError("source_diff_bundle_too_large")
-        if row["schema"] != "dm.source-diff-bundle/v0":
+        if row["schema"] not in {
+            "dm.source-diff-bundle/v0",
+            "dm.source-diff-bundle/v1",
+        }:
             raise SourceError("invalid_source_diff_bundle")
+        version = row["schema"].rsplit("/", 1)[1]
         _hash43(row["bundle_hash"], "invalid_source_diff_bundle")
         _hash43(row["page_hash"], "invalid_source_diff_bundle")
         _uuid(row["request_event_id"], "invalid_source_diff_bundle")
@@ -2802,7 +3142,7 @@ class SourceRegistry:
             raise SourceError("source_diff_items_not_sorted")
         if row["page_hash"] != b64url(
             digest(
-                "daimon/source-diff-page/v0",
+                f"daimon/source-diff-page/{version}",
                 {"items": normalized_items, "page_index": page_index},
             )
         ):
@@ -2810,7 +3150,8 @@ class SourceRegistry:
         if row["continuation"] is not None:
             token = self._validate_continuation(row["continuation"])
             if (
-                token["request_event_id"] != row["request_event_id"]
+                token["schema"] != f"dm.source-continuation/{version}"
+                or token["request_event_id"] != row["request_event_id"]
                 or token["requester_me_id"] != row["requester_me_id"]
                 or token["responder_me_id"] != row["responder_me_id"]
                 or token["page_hash"] != row["page_hash"]
@@ -2820,7 +3161,9 @@ class SourceRegistry:
         core = {
             key: copy.deepcopy(row[key]) for key in fields - {"bundle_hash", "schema"}
         }
-        if row["bundle_hash"] != b64url(digest("daimon/source-diff-bundle/v0", core)):
+        if row["bundle_hash"] != b64url(
+            digest(f"daimon/source-diff-bundle/{version}", core)
+        ):
             raise SourceError("source_diff_bundle_hash_mismatch")
         result = copy.deepcopy(dict(row))
         result["items"] = normalized_items
@@ -2848,9 +3191,13 @@ class SourceRegistry:
                 raise SourceError("source_intake_journal_corrupt") from exception
             if (
                 isinstance(result, Mapping)
-                and result.get("schema") == "dm.source-pull-result/v0"
+                and result.get("schema")
+                in {"dm.source-pull-result/v0", "dm.source-pull-result/v1"}
                 and result.get("request_event_id") == bundle["request_event_id"]
             ):
+                expected_schema = bundle["schema"].replace("diff-bundle", "pull-result")
+                if result["schema"] != expected_schema:
+                    raise SourceError("source_incoming_page_mode_mismatch")
                 index = result.get("page_index")
                 if not isinstance(index, int) or isinstance(index, bool):
                     raise SourceError("source_intake_journal_corrupt")
@@ -2941,7 +3288,25 @@ class SourceRegistry:
         from .weave import WeaveProtocolError, verify_event
 
         result: dict[str, dict[str, Any]] = {}
+        selective = bundle["schema"] == "dm.source-diff-bundle/v1"
         positions: dict[tuple[str, str, int], tuple[str, str]] = {}
+        if selective:
+            # Include incomplete Weave positions: sparse evidence must not hide
+            # an already observed origin fork merely because ancestry is absent.
+            self._events()
+            retained_rows = self.cas.source_events()
+            for ledger in self.known_ledgers.values():
+                retained_rows.extend(ledger.events(include_incomplete=True))
+            for retained_row in retained_rows:
+                position = (
+                    retained_row["being_ref"],
+                    retained_row["origin"]["incarnation_id"],
+                    retained_row["sequence"],
+                )
+                marker = (retained_row["event_id"], retained_row["content_hash"])
+                if position in positions and positions[position] != marker:
+                    raise SourceError("source_known_origin_equivocation")
+                positions[position] = marker
         for item in bundle["items"]:
             item_markers: list[tuple[str, str, int, str]] = []
             item_events: dict[str, dict[str, Any]] = {}
@@ -2958,7 +3323,15 @@ class SourceRegistry:
                     event = verify_event(value, known.authority)
                 except WeaveProtocolError as exception:
                     raise SourceError("invalid_source_diff_event") from exception
+                if selective and (
+                    event["kind"] not in {CLAIM_EVENT_KIND, PUBLICATION_EVENT_KIND}
+                    or event["subject"] != bundle["selector"]["source_id"]
+                ):
+                    raise SourceError("source_diff_unrelated_event")
                 event_id = event["event_id"]
+                retained = self._event(event_id)
+                if retained is not None and retained != event:
+                    raise SourceError("source_diff_event_conflict")
                 existing = result.get(event_id)
                 if existing is not None and existing != event:
                     raise SourceError("source_diff_event_conflict")
@@ -3000,16 +3373,36 @@ class SourceRegistry:
                     continue
                 reachable_event = item_events[event_id]
                 reachable.add(event_id)
-                if reachable_event["previous_event_id"] in item_events:
-                    pending.append(reachable_event["previous_event_id"])
-                pending.extend(
-                    dependency
-                    for dependency in reachable_event["causal_parents"]
-                    if dependency in item_events
-                )
+                if selective:
+                    pending.extend(
+                        identifier
+                        for identifier, _, _ in self._semantic_dependencies(
+                            reachable_event
+                        )
+                        if identifier in item_events
+                    )
+                else:
+                    if reachable_event["previous_event_id"] in item_events:
+                        pending.append(reachable_event["previous_event_id"])
+                    pending.extend(
+                        dependency
+                        for dependency in reachable_event["causal_parents"]
+                        if dependency in item_events
+                    )
             if reachable != set(item_events):
                 raise SourceError("source_diff_unrelated_event")
         for event in result.values():
+            if selective:
+                for identifier, kind, expected_hash in self._semantic_dependencies(
+                    event
+                ):
+                    dependency = result.get(identifier) or self._event(identifier)
+                    if dependency is None:
+                        raise SourceError("source_diff_semantic_gap", incomplete=True)
+                    self._check_semantic_dependency(
+                        event, dependency, kind, expected_hash
+                    )
+                continue
             previous_id = event["previous_event_id"]
             if previous_id is not None:
                 previous = result.get(previous_id) or self._event(previous_id)
@@ -3123,7 +3516,26 @@ class SourceRegistry:
             missing: list[str] = []
             reasons: list[str] = []
             try:
-                publication_lanes = self._publication_lanes(item_source_events)
+                combined_source_events = {
+                    event["event_id"]: event
+                    for event in [*self._events(), *item_source_events]
+                    if event["subject"] == normalized["selector"]["source_id"]
+                }
+                combined = list(combined_source_events.values())
+                publication_lanes = self._publication_lanes(combined)
+                claim_lanes = self._claim_lanes(combined, check_content=False)
+                forked_lanes = []
+                for event in item_source_events:
+                    payload = event["payload"]
+                    lane = (
+                        claim_lanes[payload["claim_series_id"]]
+                        if event["kind"] == CLAIM_EVENT_KIND
+                        else publication_lanes[payload["publication_id"]]
+                    )
+                    if lane.state in {"invalid", "incomplete"}:
+                        raise SourceError("source_diff_semantic_series_invalid")
+                    if lane.state == "forked":
+                        forked_lanes.append(event["kind"])
                 current_publication_events = {
                     str(lane.current["event_id"])
                     for lane in publication_lanes.values()
@@ -3175,6 +3587,16 @@ class SourceRegistry:
                                 missing.append(reference["content_id"])
                 if missing:
                     outcome = "incomplete"
+                elif forked_lanes:
+                    outcome = "quarantined"
+                    reasons = sorted(
+                        {
+                            "quarantined:claim-fork"
+                            if kind == CLAIM_EVENT_KIND
+                            else "quarantined:publication-fork"
+                            for kind in forked_lanes
+                        }
+                    )
                 elif all(
                     event["event_id"] in locally_known for event in item_source_events
                 ):
@@ -3182,8 +3604,14 @@ class SourceRegistry:
                 else:
                     lane_events = [
                         event
-                        for event in item_source_events
-                        if (
+                        for event in combined_source_events.values()
+                        if event["kind"]
+                        == (
+                            CLAIM_EVENT_KIND
+                            if item["kind"] == "claim"
+                            else PUBLICATION_EVENT_KIND
+                        )
+                        and (
                             event["payload"].get("claim_series_id") == item["series_id"]
                             or event["payload"].get("publication_id")
                             == item["series_id"]
@@ -3313,6 +3741,11 @@ class SourceRegistry:
                     (operation_id,),
                 ).fetchone()
                 if row is None:
+                    count = database.execute(
+                        "SELECT COUNT(*) FROM source_intake"
+                    ).fetchone()[0]
+                    if count >= self.cas.max_intake_operations:
+                        raise SourceError("source_intake_capacity_exhausted")
                     database.execute(
                         "INSERT INTO source_intake VALUES "
                         "(?, ?, ?, ?, 'prepared', NULL)",
@@ -3378,6 +3811,11 @@ class SourceRegistry:
                     if bytes(row["result_json"]) != raw:
                         raise SourceError("source_intake_result_conflict")
                 else:
+                    retained_size = database.execute(
+                        "SELECT COALESCE(SUM(length(result_json)),0) FROM source_intake"
+                    ).fetchone()[0]
+                    if retained_size + len(raw) > self.cas.max_intake_result_bytes:
+                        raise SourceError("source_intake_result_capacity_exhausted")
                     database.execute(
                         "UPDATE source_intake SET state='committed', result_json=? "
                         "WHERE operation_id=?",
@@ -3617,17 +4055,30 @@ class SourceRegistry:
             blobs = self._bundle_blob_map(landing_bundle)
             events = self._bundle_event_map(landing_bundle)
             if current_stage < stages["blobs"]:
-                for reference, raw in blobs.values():
-                    stored = self.cas.put(raw, reference["media_type"])
-                    if stored != reference:
-                        raise SourceError("source_pull_blob_mismatch")
+                if normalized_bundle["schema"] == "dm.source-diff-bundle/v1":
+                    # All selected evidence lands in one bounded transaction:
+                    # capacity failure cannot strand an expanding blob prefix.
+                    self.cas.retain_source_events(
+                        list(events.values()), blobs=list(blobs.values())
+                    )
+                else:
+                    for reference, raw in blobs.values():
+                        stored = self.cas.put(raw, reference["media_type"])
+                        if stored != reference:
+                            raise SourceError("source_pull_blob_mismatch")
                 self._advance_intake(operation, "blobs")
                 current_stage = stages["blobs"]
                 if _fault_after_stage == "blobs":
                     raise SourceError("source_pull_fault_injected", retryable=True)
             if current_stage < stages["events"]:
+                if normalized_bundle["schema"] == "dm.source-diff-bundle/v1":
+                    self.cas.retain_source_events(list(events.values()))
                 by_being: dict[str, list[dict[str, Any]]] = {}
-                for event in events.values():
+                for event in (
+                    []
+                    if normalized_bundle["schema"] == "dm.source-diff-bundle/v1"
+                    else events.values()
+                ):
                     by_being.setdefault(event["being_ref"], []).append(event)
                 for being_ref in sorted(by_being):
                     ledger = self.known_ledgers[being_ref]
@@ -3704,7 +4155,9 @@ class SourceRegistry:
                 "page_index": normalized_bundle["page_index"],
                 "previous_page_hash": normalized_bundle["previous_page_hash"],
                 "request_event_id": normalized_bundle["request_event_id"],
-                "schema": "dm.source-pull-result/v0",
+                "schema": normalized_bundle["schema"].replace(
+                    "diff-bundle", "pull-result"
+                ),
                 "starting_cursor_hash": normalized_preview["local_cursor_hash"],
             }
             return self._commit_intake(operation, result)

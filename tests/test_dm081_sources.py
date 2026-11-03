@@ -61,7 +61,7 @@ from daimon_matrix.sources import (
     validate_source_selector,
 )
 from daimon_matrix.sources import _canonical as source_canonical
-from daimon_matrix.synthetic_sources import run_synthetic_sources
+from daimon_matrix.synthetic_sources import _Journey, run_synthetic_sources
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
 from tools.generate_dm081_vectors import generate as generate_dm081_vectors
@@ -557,6 +557,74 @@ class SourceRegistryTests(RootLedgerFixture):
         self.registry_b = SourceRegistry(self.ledger_b, self.cas_b, clock=lambda: NOW)
         self.core = source_core()
         self.selector = source_selector(self.core)
+
+    def test_selected_source_keeps_private_origin_out_of_bundle_and_weave(self) -> None:
+        private = self.ledger_a.append_local(
+            kind="experience.observed",
+            subject="private:example",
+            payload={"text": "UNRELATED-PRIVATE-AUTOBIOGRAPHY"},
+            signer=self.signers["legion"],
+            sensitivity="private",
+            occurred_at_ms=NOW,
+        )
+        claim, _, _ = self._claim(self.registry_a, label="legion")
+        publication, _ = self._publish(claim, suffix="selected")
+        self.registry_a.create_cursor(self.selector, signer=self.signers["legion"])
+        self.registry_b.initialize()
+        receiver_cursor = self.registry_b.create_cursor(
+            self.selector, signer=self.signers["daimonmatrix"]
+        )["event"]
+        bundle = self.registry_a.diff(
+            selector=self.selector,
+            request_event_id=str(uuid.uuid4()),
+            requester_me_id=self.registry_b.local_me_id,
+            requester_cursor=self.registry_b.cursor_envelope(receiver_cursor),
+            max_items=8,
+            max_bytes=1_048_576,
+            closure_mode="selected-source-v1",
+        )
+        self.assertEqual(bundle["schema"], "dm.source-diff-bundle/v1")
+        self.assertNotIn(b"UNRELATED-PRIVATE-AUTOBIOGRAPHY", canonical_bytes(bundle))
+        offered = {
+            event["event_id"] for item in bundle["items"] for event in item["events"]
+        }
+        self.assertEqual(offered, {claim["event_id"], publication["event_id"]})
+        self.assertEqual(claim["previous_event_id"], private["event_id"])
+        before = self.cas_b.path.read_bytes()
+        preview = self.registry_b.incoming(bundle)
+        self.assertEqual(before, self.cas_b.path.read_bytes())
+        self.assertEqual(
+            {row["outcome"] for row in preview["results"]},
+            {"admissible-claim-candidate", "admissible-publication-candidate"},
+        )
+        operation = str(uuid.uuid4())
+        result = self.registry_b.pull(
+            operation_id=operation,
+            bundle=bundle,
+            preview=preview,
+            signer=self.signers["daimonmatrix"],
+        )
+        self.assertEqual(set(result["accepted_event_ids"]), offered)
+        self.assertIsNone(self.ledger_b.event(claim["event_id"]))
+        self.assertIsNone(self.ledger_b.event(private["event_id"]))
+        self.assertEqual(
+            {row["event_id"] for row in self.cas_b.source_events()}, offered
+        )
+        self.assertEqual(
+            result,
+            self.registry_b.pull(
+                operation_id=operation,
+                bundle=bundle,
+                preview=preview,
+                signer=self.signers["daimonmatrix"],
+            ),
+        )
+        reopened = SourceRegistry(
+            self.ledger_b, SourceCAS(self.cas_b.path), clock=lambda: NOW
+        )
+        status = reopened.status(self.selector)
+        self.assertEqual(len(status["publications"]), 1)
+        self.assertEqual(status["publications"][0]["state"], "published")
 
     def test_diff_holds_injected_authority_scope_through_content_closure(self) -> None:
         active = []
@@ -1869,6 +1937,454 @@ class SourceRegistryTests(RootLedgerFixture):
         self.assertEqual(self.ledger_b.event(tombstone["event_id"]), tombstone)
         for reference in withdrawn_references:
             self.assertFalse(self.cas_b.has(reference))
+
+
+class SelectedSourceLearningTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="dm440-selected-")
+        self.addCleanup(self.temporary.cleanup)
+        self.journey = _Journey(Path(self.temporary.name))
+        journey = self.journey
+        self.private = journey.publisher_ledger.append_local(
+            kind="experience.observed",
+            subject="private:unrelated",
+            payload={"text": "PRIVATE-DO-NOT-DISCLOSE"},
+            sensitivity="private",
+            signer=journey.publisher.signer,
+            occurred_at_ms=NOW,
+        )
+        self.claim, _, _ = journey.claim(
+            sequence=0, predecessor=None, action="assert", issued_at_ms=NOW
+        )
+        self.publication, _ = journey.publish(self.claim)
+        journey.publisher_registry.disclosure_authorizer = (
+            lambda requester, source, classification: (
+                requester == journey.receiver.state.being_ref
+                and source == journey.selector["source_id"]
+                and classification in {"claim", "public"}
+            )
+        )
+        journey.publisher_registry.create_cursor(
+            journey.selector, signer=journey.publisher.signer
+        )
+        cursor = journey.receiver_registry.create_cursor(
+            journey.selector, signer=journey.receiver.signer
+        )["event"]
+        self.request = dict(
+            selector=journey.selector,
+            request_event_id=str(uuid.uuid4()),
+            requester_me_id=journey.receiver.state.being_ref,
+            requester_cursor=journey.receiver_registry.cursor_envelope(cursor),
+            max_items=8,
+            max_bytes=1_048_576,
+            closure_mode="selected-source-v1",
+        )
+
+    def bundle(self, **changes: Any) -> dict[str, Any]:
+        return self.journey.publisher_registry.diff(**{**self.request, **changes})
+
+    @staticmethod
+    def rehash(bundle: dict[str, Any]) -> None:
+        for item in bundle["items"]:
+            item["item_hash"] = b64url(
+                digest(
+                    "daimon/source-diff-item/v0",
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"schema", "item_hash"}
+                    },
+                )
+            )
+        version = bundle["schema"].rsplit("/", 1)[1]
+        bundle["page_hash"] = b64url(
+            digest(
+                f"daimon/source-diff-page/{version}",
+                {"items": bundle["items"], "page_index": bundle["page_index"]},
+            )
+        )
+        bundle["bundle_hash"] = b64url(
+            digest(
+                f"daimon/source-diff-bundle/{version}",
+                {
+                    key: value
+                    for key, value in bundle.items()
+                    if key not in {"schema", "bundle_hash"}
+                },
+            )
+        )
+
+    def test_distinct_beings_exchange_without_origin_grant_or_history(self) -> None:
+        journey = self.journey
+        self.assertNotEqual(
+            journey.publisher.state.being_ref, journey.receiver.state.being_ref
+        )
+        self.assertEqual(self.bundle(closure_mode="full-origin-v0")["items"], [])
+        bundle = self.bundle()
+        self.assertNotIn(b"PRIVATE-DO-NOT-DISCLOSE", canonical_bytes(bundle))
+        receiver = journey.receiver_registry
+        preview = receiver.incoming(bundle)
+        result = receiver.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=bundle,
+            preview=preview,
+            signer=journey.receiver.signer,
+        )
+        self.assertEqual(len(result["accepted_event_ids"]), 2)
+        self.assertEqual(journey.receiver_publisher_replica.events(), [])
+        self.assertEqual(
+            journey.receiver_registry.status(journey.selector)["publications"][0][
+                "state"
+            ],
+            "published",
+        )
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in journey.receiver_ledger.events()
+                    if event["kind"] == "matrix/source-import-decision"
+                ]
+            ),
+            1,
+        )
+
+    def test_all_stages_resume_exactly_without_foreign_weave_insertion(self) -> None:
+        journey = self.journey
+        bundle = self.bundle()
+        preview = journey.receiver_registry.incoming(bundle)
+        operation = str(uuid.uuid4())
+        for stage in ("prepared", "blobs", "events", "decisions", "cursor"):
+            with self.subTest(stage=stage):
+                with self.assertRaisesRegex(SourceError, "source_pull_fault_injected"):
+                    journey.receiver_registry.pull(
+                        operation_id=operation,
+                        bundle=bundle,
+                        preview=preview,
+                        signer=journey.receiver.signer,
+                        _fault_after_stage=stage,
+                    )
+                journey.receiver_registry = SourceRegistry(
+                    journey.receiver_ledger,
+                    SourceCAS(journey.receiver_cas.path),
+                    clock=lambda: NOW,
+                    known_ledgers={
+                        journey.publisher.state.being_ref: (
+                            journey.receiver_publisher_replica
+                        )
+                    },
+                )
+        result = journey.receiver_registry.pull(
+            operation_id=operation,
+            bundle=bundle,
+            preview=preview,
+            signer=journey.receiver.signer,
+        )
+        self.assertEqual(
+            result,
+            journey.receiver_registry.pull(
+                operation_id=operation,
+                bundle=bundle,
+                preview=preview,
+                signer=journey.receiver.signer,
+            ),
+        )
+        self.assertEqual(journey.receiver_publisher_replica.events(), [])
+
+    def test_semantic_gap_and_invalid_signature_are_rejected_without_writes(
+        self,
+    ) -> None:
+        receiver = self.journey.receiver_registry
+        for corruption in ("missing-claim", "signature", "private-event"):
+            with self.subTest(corruption=corruption):
+                bundle = self.bundle()
+                item = next(
+                    item for item in bundle["items"] if item["kind"] == "publication"
+                )
+                bundle["items"] = [item]
+                if corruption == "missing-claim":
+                    item["events"] = [self.publication]
+                elif corruption == "signature":
+                    item["events"][0]["payload"]["issued_at_ms"] += 1
+                else:
+                    item["events"].insert(0, self.private)
+                self.rehash(bundle)
+                before = self.journey.receiver_cas.path.read_bytes()
+                preview = receiver.incoming(bundle)
+                self.assertEqual(preview["results"][0]["outcome"], "rejected")
+                self.assertEqual(before, self.journey.receiver_cas.path.read_bytes())
+
+    def test_mode_is_bound_to_page_continuation(self) -> None:
+        page = self.bundle(max_items=1)
+        self.assertIsNotNone(page["continuation"])
+        with self.assertRaisesRegex(SourceError, "source_continuation_scope_mismatch"):
+            self.bundle(
+                max_items=1,
+                closure_mode="full-origin-v0",
+                continuation=page["continuation"],
+            )
+        preview = self.journey.receiver_registry.incoming(page)
+        self.journey.receiver_registry.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=page,
+            preview=preview,
+            signer=self.journey.receiver.signer,
+        )
+        second = self.bundle(max_items=1, continuation=page["continuation"])
+        preview = self.journey.receiver_registry.incoming(second)
+        self.journey.receiver_registry.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=second,
+            preview=preview,
+            signer=self.journey.receiver.signer,
+        )
+        self.assertEqual(len(self.journey.receiver_cas.source_events()), 2)
+
+    def test_atomic_capacity_failure_keeps_blobs_and_events_unwritten(self) -> None:
+        journey = self.journey
+        receiver = journey.receiver_registry
+        bundle = self.bundle()
+        preview = receiver.incoming(bundle)
+        receiver.cas.max_content_bytes = 1
+        with self.assertRaisesRegex(SourceError, "source_content_capacity_exhausted"):
+            receiver.pull(
+                operation_id=str(uuid.uuid4()),
+                bundle=bundle,
+                preview=preview,
+                signer=journey.receiver.signer,
+            )
+        self.assertEqual(receiver.cas.source_events(), [])
+        self.assertFalse(receiver.cas.has(self.publication["payload"]["content_ref"]))
+        receiver.cas.max_content_bytes = 256 * 1024 * 1024
+        receiver.cas.max_source_events = 1
+        with self.assertRaisesRegex(SourceError, "source_evidence_capacity_exhausted"):
+            receiver.pull(
+                operation_id=str(uuid.uuid4()),
+                bundle=bundle,
+                preview=preview,
+                signer=journey.receiver.signer,
+            )
+        self.assertEqual(receiver.cas.source_events(), [])
+        self.assertFalse(receiver.cas.has(self.publication["payload"]["content_ref"]))
+
+    def test_signed_skipped_semantic_position_is_not_admissible(self) -> None:
+        from daimon_matrix.weave import create_event
+
+        journey = self.journey
+        payload = {
+            **self.claim["payload"],
+            "action": "retract",
+            "claim_sequence": 2,
+            "previous_claim_event_id": self.claim["event_id"],
+            "previous_claim_event_hash": self.claim["content_hash"],
+            "evidence_manifest_ref": None,
+            "expires_at_ms": None,
+        }
+        malformed = create_event(
+            journey.publisher.authority,
+            journey.publisher.origin,
+            journey.publisher.signer,
+            event_id=str(uuid.uuid4()),
+            sequence=self.publication["sequence"] + 1,
+            previous_event_id=self.publication["event_id"],
+            occurred_at_ms=NOW + 2,
+            causal_parents=[self.claim["event_id"]],
+            kind=CLAIM_EVENT_KIND,
+            subject=journey.selector["source_id"],
+            payload=payload,
+            sensitivity="shareable",
+        )
+        bundle = self.bundle()
+        item = next(row for row in bundle["items"] if row["kind"] == "claim")
+        item["events"].append(malformed)
+        bundle["items"] = [item]
+        self.rehash(bundle)
+        preview = journey.receiver_registry.incoming(bundle)
+        self.assertEqual(
+            preview["results"][0]["reason_codes"],
+            ["rejected:source_diff_semantic_series_invalid"],
+        )
+        self.assertEqual(journey.receiver_cas.source_events(), [])
+
+    def test_durable_page_prefix_rejects_cross_version_splicing(self) -> None:
+        journey = self.journey
+        journey.publisher_registry.disclosure_authorizer = lambda *_: True
+        first = self.bundle(max_items=1, closure_mode="full-origin-v0")
+        preview = journey.receiver_registry.incoming(first)
+        result = journey.receiver_registry.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=first,
+            preview=preview,
+            signer=journey.receiver.signer,
+        )
+        self.assertEqual(result["schema"], "dm.source-pull-result/v0")
+        second = self.bundle()
+        second.update(page_index=1, previous_page_hash=result["page_hash"])
+        self.rehash(second)
+        with self.assertRaisesRegex(SourceError, "source_incoming_page_mode_mismatch"):
+            journey.receiver_registry._committed_page_prefix(
+                second, preview["local_cursor_hash"]
+            )
+
+    def test_retained_and_later_full_origin_forks_are_visible(self) -> None:
+        from daimon_matrix.weave import create_event
+
+        journey = self.journey
+        bundle = self.bundle()
+        fork = create_event(
+            journey.publisher.authority,
+            journey.publisher.origin,
+            journey.publisher.signer,
+            event_id=str(uuid.uuid4()),
+            sequence=self.claim["sequence"],
+            previous_event_id=self.claim["previous_event_id"],
+            occurred_at_ms=NOW,
+            causal_parents=self.claim["causal_parents"],
+            kind=self.claim["kind"],
+            subject=self.claim["subject"],
+            payload=self.claim["payload"],
+            sensitivity=self.claim["sensitivity"],
+        )
+        # Already verified sparse evidence and incomplete full-sync evidence
+        # must both be considered even before either has a body-chain prefix.
+        journey.receiver_cas.retain_source_events([fork])
+        with self.assertRaisesRegex(SourceError, "source_diff_origin_equivocation"):
+            journey.receiver_registry._bundle_event_map(bundle)
+        journey.receiver_publisher_replica.ingest(
+            [self.private, self.claim], source="full-sync"
+        )
+        with self.assertRaisesRegex(SourceError, "source_known_origin_equivocation"):
+            journey.receiver_registry.status(journey.selector)
+
+    def test_retained_tombstone_prevents_older_bundle_resurrection(self) -> None:
+        journey = self.journey
+        original = self.bundle()
+        payload = {
+            **self.publication["payload"],
+            "action": "tombstone",
+            "classification": None,
+            "consent": None,
+            "content_ref": None,
+            "issued_at_ms": NOW + 2,
+            "license": None,
+            "previous_publication_event_hash": self.publication["content_hash"],
+            "previous_publication_event_id": self.publication["event_id"],
+            "provenance_manifest_ref": None,
+            "publication_sequence": 1,
+            "reason": "publisher withdrawal",
+        }
+        tombstone = journey.publisher_registry.append_publication(
+            payload, signer=journey.publisher.signer
+        )
+        journey.publisher_registry.create_cursor(
+            journey.selector, signer=journey.publisher.signer
+        )
+        withdrawn = self.bundle()
+        preview = journey.receiver_registry.incoming(withdrawn)
+        journey.receiver_registry.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=withdrawn,
+            preview=preview,
+            signer=journey.receiver.signer,
+        )
+        self.assertIn(
+            tombstone["event_id"],
+            {row["event_id"] for row in journey.receiver_cas.source_events()},
+        )
+        self.assertEqual(
+            journey.receiver_registry.status(journey.selector)["publications"][0][
+                "state"
+            ],
+            "tombstoned",
+        )
+        self.assertFalse(
+            journey.receiver_cas.has(self.publication["payload"]["content_ref"])
+        )
+        with self.assertRaisesRegex(SourceError, "source_incoming_cursor_stale"):
+            journey.receiver_registry.incoming(original)
+
+    def test_wire_schema_and_existing_mcp_select_explicit_mode(self) -> None:
+        from daimon_matrix.mcp_server import _tool_params
+
+        schemas = [
+            json.loads(path.read_text())
+            for path in (
+                ROOT / "schemas/source/v0/contracts.schema.json",
+                ROOT / "schemas/source/v0/runtime.schema.json",
+                ROOT / "schemas/weave/v1/event.schema.json",
+                ROOT / "schemas/source/v1/runtime.schema.json",
+            )
+        ]
+        registry = Registry().with_resources(
+            (schema["$id"], Resource.from_contents(schema)) for schema in schemas
+        )
+        validator = Draft202012Validator(
+            schemas[-1], registry=registry, format_checker=FormatChecker()
+        )
+        bundle = self.bundle(max_items=1)
+        validator.validate(bundle)
+        validator.validate(bundle["continuation"])
+        params = {
+            key: value for key, value in self.request.items() if key != "closure_mode"
+        }
+        method, normalized, _ = _tool_params("source_diff", params)
+        self.assertEqual(method, "source.diff")
+        self.assertEqual(normalized["closure_mode"], "full-origin-v0")
+        self.assertEqual(
+            _tool_params(
+                "source_diff", {**params, "closure_mode": "selected-source-v1"}
+            )[1]["closure_mode"],
+            "selected-source-v1",
+        )
+
+    def test_content_and_intake_bounds_preserve_exact_retry(self) -> None:
+        receiver = self.journey.receiver_registry
+        # Isolate the exact-byte capacity contract from cursor content.
+        cas = SourceCAS(
+            Path(self.temporary.name) / "bounded.sqlite3",
+            max_content_items=1,
+            max_content_bytes=3,
+            max_intake_operations=1,
+        )
+        ref = cas.put(b"abc", "text/plain")
+        self.assertEqual(cas.put(b"abc", "text/plain"), ref)
+        with self.assertRaisesRegex(SourceError, "source_content_capacity_exhausted"):
+            cas.put(b"d", "text/plain")
+        self.assertEqual(cas.get(ref), b"abc")
+        receiver.cas.max_intake_operations = 1
+        first = str(uuid.uuid4())
+        receiver._begin_intake(first, "bundle-a", "preview-a", NOW)
+        self.assertEqual(
+            receiver._begin_intake(first, "bundle-a", "preview-a", NOW)["operation_id"],
+            first,
+        )
+        with self.assertRaisesRegex(SourceError, "source_intake_capacity_exhausted"):
+            receiver._begin_intake(str(uuid.uuid4()), "bundle-b", "preview-b", NOW)
+        receiver.cas.max_intake_result_bytes = 1
+        with self.assertRaisesRegex(
+            SourceError, "source_intake_result_capacity_exhausted"
+        ):
+            receiver._commit_intake(first, {"result": "too large"})
+        self.assertEqual(receiver._intake_row(first)["state"], "prepared")
+
+    def test_later_full_sync_deduplicates_exact_sparse_evidence(self) -> None:
+        journey = self.journey
+        bundle = self.bundle()
+        preview = journey.receiver_registry.incoming(bundle)
+        journey.receiver_registry.pull(
+            operation_id=str(uuid.uuid4()),
+            bundle=bundle,
+            preview=preview,
+            signer=journey.receiver.signer,
+        )
+        journey.receiver_publisher_replica.ingest(
+            journey.publisher_ledger.events(), source="full-sync"
+        )
+        events = journey.receiver_registry._events()
+        self.assertEqual(
+            len([row for row in events if row["event_id"] == self.claim["event_id"]]), 1
+        )
+        self.assertNotIn(self.private["event_id"], {row["event_id"] for row in events})
 
 
 class SyntheticSourceJourneyTests(unittest.TestCase):
