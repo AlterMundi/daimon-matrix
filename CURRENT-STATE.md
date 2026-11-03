@@ -8,32 +8,37 @@ The old physical Source HOST stays ON: no shutdown/drill/timer, cleanup/deletion
 provider cancellation or revival of its stopped identities/containers.
 
 - Current foundation coverage is tracked by #437/#302. Completed migration is
-  preserved evidence, not the remaining objective. Source439 disclosure and
-  selected-thread435 are loaded in all three living Matrix daemons through
-  qualified source1bc4cab / SDK5730f73b. Additive source440 V1 supplies semantic-only signed learning closure
-  without exporting unrelated origin history, bounded retained evidence and
-  quarantine-only intake. Exact-head source/package CI passed. Real V1 previews
-  verified the selected public publication on Eko and Oliva; an attempted pull
-  without a signed starting cursor retained partial quarantined intake and a
-  refusal, not a completed learning adoption. Preserve those original outcomes;
-  reciprocal live receiving assessment/application and the remaining foundation
-  domains are unfinished. See [the V1 contract](specs/source-selective-learning.md).
+  preserved evidence, not the remaining objective. Source439 disclosure,
+  selected-thread435 and semantic-only source440 V1 are qualified/merged.
+  Source447/751a414 additionally exposes the complete signed cursor envelope and
+  refuses new unsigned-cursor intake before durable effects, preserving earlier
+  staged failures. Actual selected assessment/application, reciprocal learning
+  and the remaining foundation domains are unfinished.
+  See [the V1 contract](specs/source-selective-learning.md) and
+  [the maintained live checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
 - Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
   signed receiving receipts and both native readers; no whole-history sync.
   Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
-- The current three load Matrix1bc4cab / SDK5730f73b, with original runtime
-  identity/state and native/bot/web processes preserved. Native tool selections
-  still need their supported successor adoption. The retained reader-selection
-  operation is incomplete: ITACA/Oliva revoked successfully; Eko reserves the
-  same operation with `reader_recovery_persistence_uncertain`. No communication
-  readiness claim follows from daemon startup. Issue444 optimizes canonical
-  validation of byte-identical authenticated historical reader records within
-  the unchanged control deadline; that correction is not yet deployed.
-  The earlier useful original message9125f9dc appears in
-  Eko/Oliva native readers with independent signed receiving receipts. Its
-  earlier never-attempted send was recovered under its original identity and
-  single confirmed echo; other excluded/stopped body legs stay undelivered.
-  Cached optional native tool catalogs remain distinct from configuration.
+- CompAII ITACA and Oliva KVM now load Matrix1da774b / SDKd000731c, qualified
+  by all applicable CI and process-connected receiving observations. Original
+  identity/state and native/bot/web processes are preserved. Eko MEDUSA selected
+  the same SDK but native structured diagnostics show its shared startup budget
+  expiring during cold reader-chain verification. Its Matrix retry loop is
+  stopped for bounded read-only recovery; native Codex, Telegram and both web
+  service PIDs remain unchanged. Native configured-tool adoption is still pending.
+- The original cohort reader operation remains incomplete: prior ITACA/Oliva
+  revokes were accepted and Eko retained a persistence-uncertain refusal. Keep
+  those exact outcomes; software changes require fresh process/roster observation
+  through the owning successor route. Daemon selection alone proves no current
+  Tribe communication readiness. Earlier accepted message9125f9dc and its
+  independent signed receipts remain valid history; no message/carrier replay.
+- PR449/ff2482d addresses measured canonical serialization cost with a native
+  ASCII predicate, retaining exact signed bytes and non-ASCII checks. The real
+  MEDUSA 327-record read-only comparison passed all signatures/chain checks with
+  the same head: 4.92386s existing versus 2.87332s diagnostic candidate. 14 identity
+  plus 109 ledger/recovery/source/CLI tests and final static/frozen checks pass;
+  source CI41631779500 is still running. No current MEDUSA startup acceptance,
+  timeout increase, installed-code patch or history rewrite is claimed.
 - The real warm onboarding worker selects that qualified SDK for default/named
   runtime paths, with its PID, completed Eko/Oliva job hashes and nonruntime
   settings unchanged. Group-only policy authorizes no new member without its
@@ -50,8 +55,8 @@ provider cancellation or revival of its stopped identities/containers.
   pause/resume through the existing journal/frontend (PR424/427/429/431/433).
   Installed-wheel qualification and actual pinned Codex selected-original
   pause→retained queue→resume without dispatch→explicit one-call loopback pass.
-  Matrix433 operator wheel is a qualified next candidate; current body SDKd2 is
-  unchanged. No paid provider or production executor is qualified by that test.
+  Matrix433 code is included in the selected SDK successor; its production
+  operator factory/accounts/grants remain unselected. No paid provider or production executor is qualified by that test.
 - Telecodex530 is web-adopted on ITACA at sourcef8d3c482 / UI0713531a6390. The
   complete74-file Realtime528 base was preserved; current source/runtime files,
   relevant local/public assets, shell, health and protected native/Core/bot/Matrix
