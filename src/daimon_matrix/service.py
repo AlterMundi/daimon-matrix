@@ -2046,6 +2046,11 @@ class HostedWeave:
                         "requester_cursor",
                         "requester_me_id",
                         "selector",
+                        *(
+                            {"closure_mode"}
+                            if isinstance(params, Mapping) and "closure_mode" in params
+                            else set()
+                        ),
                     },
                 )
                 for field in ("selector", "requester_cursor"):
@@ -2057,6 +2062,9 @@ class HostedWeave:
                 requester = _optional_text(value["requester_me_id"], 240)
                 if requester is None:
                     raise ServiceError("invalid_params")
+                closure_mode = value.get("closure_mode", "full-origin-v0")
+                if not isinstance(closure_mode, str):
+                    raise ServiceError("invalid_params")
                 return registry.diff(
                     selector=value["selector"],
                     request_event_id=_uuid(value["request_event_id"]),
@@ -2065,6 +2073,7 @@ class HostedWeave:
                     max_items=_uint(value["max_items"], minimum=1, maximum=4096),
                     max_bytes=_uint(value["max_bytes"], minimum=1, maximum=268_435_456),
                     continuation=continuation,
+                    closure_mode=closure_mode,
                 )
             if method == "source.incoming":
                 value = _closed(params, {"bundle"})

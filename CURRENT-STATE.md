@@ -7,6 +7,14 @@ living identity, complete histories, private memory and native goals/accounting.
 The old physical Source HOST stays ON: no shutdown/drill/timer, cleanup/deletion,
 provider cancellation or revival of its stopped identities/containers.
 
+- Current foundation coverage is tracked by #437/#302. Completed migration is
+  preserved evidence, not the remaining objective. Source439 disclosure and
+  selected-thread435 are merged source; they are not yet selected in the living
+  cohort. Additive source440 V1 supplies semantic-only signed learning closure
+  without exporting unrelated origin history, bounded retained evidence and
+  quarantine-only intake. Its source qualification/deployment remain separate;
+  reciprocal live receiving assessment/application and the remaining foundation
+  domains are unfinished. See [the V1 contract](specs/source-selective-learning.md).
 - Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
   signed receiving receipts and both native readers; no whole-history sync.
   Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).

@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://daimon.network/schemas/source/v1/runtime.schema.json",
+  "title": "Selected source semantic closure exchange V1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/diffBundle"
+    },
+    {
+      "$ref": "#/$defs/continuation"
+    },
+    {
+      "$ref": "#/$defs/pullResult"
+    }
+  ],
+  "$defs": {
+    "diffBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bundle_hash",
+        "continuation",
+        "expires_at_ms",
+        "items",
+        "page_hash",
+        "page_index",
+        "previous_page_hash",
+        "request_event_id",
+        "requester_cursor_hash",
+        "requester_me_id",
+        "responder_cursor",
+        "responder_me_id",
+        "schema",
+        "selector"
+      ],
+      "properties": {
+        "bundle_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        },
+        "continuation": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/continuation"
+            }
+          ]
+        },
+        "expires_at_ms": {
+          "$ref": "../v0/runtime.schema.json#/$defs/safeInteger"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "../v0/runtime.schema.json#/$defs/diffItem"
+          }
+        },
+        "page_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "previous_page_hash": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+            }
+          ]
+        },
+        "request_event_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+        },
+        "requester_cursor_hash": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "../v0/runtime.schema.json#/$defs/eventHash"
+            }
+          ]
+        },
+        "requester_me_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/meId"
+        },
+        "responder_cursor": {
+          "$ref": "../v0/runtime.schema.json#/$defs/cursorEnvelope"
+        },
+        "responder_me_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/meId"
+        },
+        "schema": {
+          "const": "dm.source-diff-bundle/v1"
+        },
+        "selector": {
+          "$ref": "../v0/runtime.schema.json#/$defs/selector"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "page_index": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "previous_page_hash": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_page_hash": {
+                "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "continuation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expires_at_ms",
+        "next_offset",
+        "next_page_index",
+        "page_hash",
+        "request_event_id",
+        "requester_me_id",
+        "responder_cursor_hash",
+        "responder_me_id",
+        "schema",
+        "token_hash"
+      ],
+      "properties": {
+        "expires_at_ms": {
+          "$ref": "../v0/runtime.schema.json#/$defs/safeInteger"
+        },
+        "next_offset": {
+          "$ref": "../v0/runtime.schema.json#/$defs/safeInteger"
+        },
+        "next_page_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 63
+        },
+        "page_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        },
+        "request_event_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+        },
+        "requester_me_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/meId"
+        },
+        "responder_cursor_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/eventHash"
+        },
+        "responder_me_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/meId"
+        },
+        "schema": {
+          "const": "dm.source-continuation/v1"
+        },
+        "token_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        }
+      }
+    },
+    "pullResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted_event_ids",
+        "achieved_cursor_hash",
+        "bundle_hash",
+        "decision_event_ids",
+        "offered_cursor_hash",
+        "operation_id",
+        "outcomes",
+        "page_hash",
+        "page_index",
+        "previous_page_hash",
+        "request_event_id",
+        "schema",
+        "starting_cursor_hash"
+      ],
+      "properties": {
+        "accepted_event_ids": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+          }
+        },
+        "achieved_cursor_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/eventHash"
+        },
+        "bundle_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        },
+        "decision_event_ids": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+          }
+        },
+        "offered_cursor_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/eventHash"
+        },
+        "operation_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+        },
+        "outcomes": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "../v0/runtime.schema.json#/$defs/pullOutcome"
+          }
+        },
+        "page_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "previous_page_hash": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "../v0/runtime.schema.json#/$defs/hash43"
+            }
+          ]
+        },
+        "request_event_id": {
+          "$ref": "../v0/runtime.schema.json#/$defs/uuid"
+        },
+        "schema": {
+          "const": "dm.source-pull-result/v1"
+        },
+        "starting_cursor_hash": {
+          "$ref": "../v0/runtime.schema.json#/$defs/eventHash"
+        }
+      }
+    }
+  }
+}

@@ -416,6 +416,7 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         "source.diff",
         _object_schema(
             {
+                "closure_mode": {"enum": ["full-origin-v0", "selected-source-v1"]},
                 "continuation": {"anyOf": [{"type": "object"}, {"type": "null"}]},
                 "max_bytes": {
                     "type": "integer",
@@ -966,6 +967,7 @@ _DEFAULTS: Final[dict[str, Any]] = {
     "after": None,
     "causal_parents": [],
     "continuation": None,
+    "closure_mode": "full-origin-v0",
     "event_id": None,
     "expected_occupied_positions_hash": None,
     "kind": None,
@@ -1053,6 +1055,7 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         "source.status": {"selector"},
         "source.cursor.create": {"selector"},
         "source.diff": {
+            "closure_mode",
             "continuation",
             "max_bytes",
             "max_items",
