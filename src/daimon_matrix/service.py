@@ -818,6 +818,8 @@ class HostedWeave:
                 return self._receiving_response(verified, request, capability)
             if method == "messaging.inbox":
                 return self._messaging_response(verified, request, capability)
+            if method == "source.diff" and verified["ok"]:
+                return self._source_diff_response(verified, request, capability)
             if method in {"messaging.send", "messaging.delivery", "messaging.reply"}:
                 # A previous RPC result never grants continuing send authority.
                 # The application journal resumes only the exact admitted pair.
@@ -1205,6 +1207,8 @@ class HostedWeave:
         if method == "messaging.inbox":
             # finish_rpc can select a concurrent finisher's earlier response.
             return self._messaging_response(verified, request, capability)
+        if method == "source.diff" and verified["ok"]:
+            return self._source_diff_response(verified, request, capability)
         if method == "runtime.reader-selection" or (
             method == "runtime.status"
             and (
@@ -1218,6 +1222,54 @@ class HostedWeave:
             )
         ):
             return self._receiving_response(verified, request, capability)
+        return verified
+
+    def _source_diff_response(
+        self,
+        verified: dict[str, Any],
+        request: Mapping[str, Any],
+        capability: LocalCapability,
+    ) -> dict[str, Any]:
+        # A retained page is historical evidence, not a continuing read grant.
+        # Revalidate content/authority without replacing bytes or extending TTL.
+        def stable_page(value: Mapping[str, Any]) -> dict[str, Any]:
+            page = dict(value)
+            page.pop("bundle_hash", None)
+            page.pop("expires_at_ms", None)
+            continuation = page.get("continuation")
+            if isinstance(continuation, Mapping):
+                continuation = dict(continuation)
+                continuation.pop("expires_at_ms", None)
+                continuation.pop("token_hash", None)
+                page["continuation"] = continuation
+            return page
+
+        try:
+            previous = verified["result"]
+            if (
+                not isinstance(previous, Mapping)
+                or type(previous.get("expires_at_ms")) is not int
+                or previous["expires_at_ms"] < self.clock()
+            ):
+                raise ServiceError("source_diff_stale", retryable=True)
+            current = self._dispatch(
+                "source.diff",
+                request["params"],
+                client_id=capability.client_id,
+                request_id=request["request_id"],
+                request_hash=verified["request_hash"],
+            )
+            if stable_page(current) != stable_page(previous):
+                raise ServiceError("source_diff_stale", retryable=True)
+        except (SourceError, ServiceError) as exception:
+            return self._response(
+                capability,
+                request_id=request["request_id"],
+                request_digest=verified["request_hash"],
+                server=self.origin,
+                completed_at_ms=self.clock(),
+                error={"code": exception.code, "retryable": exception.retryable},
+            )
         return verified
 
     def _receiving_response(

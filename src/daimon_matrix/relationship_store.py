@@ -17,6 +17,7 @@ import stat
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
@@ -64,6 +65,100 @@ class RelationshipServiceContext:
     card_verifier: CardVerifier
     # Current authority only; store resolver separately retains historical epochs.
     authority_resolver: Callable[[str], RootAuthority] | None = None
+
+
+class RelationshipSourceDisclosure:
+    """Bind source reads to current signed knowledge resources and grants."""
+
+    def __init__(
+        self,
+        context: RelationshipServiceContext,
+        controller_being_ref: str,
+        clock: Callable[[], int],
+    ) -> None:
+        self.context = context
+        self.controller_being_ref = controller_being_ref
+        self.clock = clock
+        self._view: ContextVar[RelationshipView | None] = ContextVar(
+            "source_relationship_disclosure", default=None
+        )
+        self._disclosed: ContextVar[set[tuple[str, str, str]] | None] = ContextVar(
+            "source_relationship_disclosed", default=None
+        )
+
+    @contextmanager
+    def scope(self) -> Iterator[None]:
+        # Keep the same authority snapshot locked until the page is constructed.
+        # A terminal revocation dominates clock rollback; never use history view.
+        from .sources import SourceError
+
+        try:
+            with self.context.store.authorization_view(
+                at_ms=self.clock(), card_verifier=self.context.card_verifier
+            ) as view:
+                token = self._view.set(view)
+                disclosed: set[tuple[str, str, str]] = set()
+                disclosed_token = self._disclosed.set(disclosed)
+                try:
+                    yield
+                    # The lock fences writers, not the passage of time. Recheck
+                    # the actual successful authorizations before releasing data.
+                    current = RelationshipView(
+                        view.all_events,
+                        at_ms=self.clock(),
+                        card_verifier=self.context.card_verifier,
+                        current=True,
+                    )
+                    if any(not self._allowed(current, *row) for row in disclosed):
+                        raise SourceError("source_disclosure_denied")
+                finally:
+                    self._disclosed.reset(disclosed_token)
+                    self._view.reset(token)
+        except (RelationshipStoreError, RelationshipError) as exception:
+            raise SourceError("source_disclosure_denied") from exception
+
+    def __call__(
+        self, requester_me_id: str, source_identifier: str, classification: str
+    ) -> bool:
+        view = self._view.get()
+        if view is None:
+            return False
+        allowed = self._allowed(
+            view, requester_me_id, source_identifier, classification
+        )
+        disclosed = self._disclosed.get()
+        if allowed and disclosed is not None:
+            disclosed.add((requester_me_id, source_identifier, classification))
+        return allowed
+
+    def _allowed(
+        self,
+        view: RelationshipView,
+        requester_me_id: str,
+        source_identifier: str,
+        classification: str,
+    ) -> bool:
+        card = view.cards.get(self.controller_being_ref, {}).get("current")
+        if card is None:
+            return False
+        for resource in card["payload"]["resources"]:
+            descriptor = resource["descriptor"]
+            if (
+                descriptor["controller_being_ref"] == self.controller_being_ref
+                and descriptor["kind"] == "knowledge"
+                and descriptor["descriptor_ref"] == source_identifier
+                and descriptor["classification"] == classification
+                and "read" in descriptor["operations"]
+                and view.disclosure(
+                    requester_being_ref=requester_me_id,
+                    resource_ref=resource["resource_ref"],
+                    operation="read",
+                    classification=classification,
+                )["authorized"]
+                is True
+            ):
+                return True
+        return False
 
 
 def _assert_owner_directory(path: Path) -> None:

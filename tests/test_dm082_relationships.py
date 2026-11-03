@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, cast
 
@@ -22,6 +24,7 @@ from daimon_matrix.local_api import create_capability, create_request
 from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.relationship_store import (
     RelationshipServiceContext,
+    RelationshipSourceDisclosure,
     RelationshipStore,
     RelationshipStoreError,
     RelationshipView,
@@ -57,6 +60,7 @@ from daimon_matrix.relationships import (
 )
 from daimon_matrix.runtime import load_runtime
 from daimon_matrix.service import RELATIONSHIP_METHODS, HostedWeave
+from daimon_matrix.sources import SourceError
 from daimon_matrix.synthetic_relationships import NOW, _identity, _Journey, _seed, _uuid
 from daimon_matrix.weave import WeaveProtocolError, create_event
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
@@ -1301,6 +1305,61 @@ class RelationshipServiceTests(unittest.TestCase):
             )
 
 
+class SourceRelationshipDisclosureTests(unittest.TestCase):
+    def test_current_signed_mapping_and_grants_hold_through_export_then_revoke(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="source-disclosure-") as temporary:
+            journey = _Journey(Path(temporary))
+            journey.run()
+            store = RelationshipStore(
+                Path(temporary) / "source-authority.sqlite3",
+                authority_resolver=lambda being: journey.authorities[being],
+            )
+            store.initialize()
+            for event in journey.store.events():
+                if event["occurred_at_ms"] <= NOW + 8:
+                    store.ingest(event)
+            founder = journey.identities["founder"].state.being_ref
+            member = journey.identities["member"].state.being_ref
+            context = RelationshipServiceContext(store, journey.card_verifier)
+            clock = [NOW + 8]
+            authorization = RelationshipSourceDisclosure(
+                context, founder, lambda: clock[0]
+            )
+            source = "dm:content:v1:synthetic-knowledge"
+            # A callback outside its owning export scope cannot reuse a view.
+            self.assertFalse(authorization(member, source, "shareable"))
+            with (
+                self.assertRaisesRegex(SourceError, "source_disclosure_denied"),
+                authorization.scope(),
+            ):
+                self.assertTrue(authorization(member, source, "shareable"))
+                clock[0] = NOW + 40_001
+            self.assertFalse(authorization(member, source, "shareable"))
+            clock[0] = NOW + 8
+            revocation = _event(journey, kind="matrix/relationship-grant-revocation")
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                with authorization.scope():
+                    self.assertTrue(authorization(member, source, "shareable"))
+                    self.assertFalse(
+                        authorization(member, "unknown-source", "shareable")
+                    )
+                    self.assertFalse(authorization(member, source, "public"))
+                    self.assertFalse(
+                        authorization("unknown-being", source, "shareable")
+                    )
+                    pending = executor.submit(store.ingest, revocation)
+                    with self.assertRaises(FutureTimeoutError):
+                        pending.result(timeout=0.05)
+                    self.assertTrue(authorization(member, source, "shareable"))
+                pending.result(timeout=5)
+            # The clock still precedes revocation: current terminal evidence wins.
+            with authorization.scope():
+                self.assertFalse(authorization(member, source, "shareable"))
+            self.assertFalse(authorization(member, source, "shareable"))
+
+
 class RelationshipRuntimeTests(RuntimeFixture):
     def test_v7_bundle_loads_relationship_store_and_dynamic_scope_provider(
         self,
@@ -1341,6 +1400,18 @@ class RelationshipRuntimeTests(RuntimeFixture):
         context = runtime.service.relationships
         self.assertIsNotNone(context)
         assert context is not None
+        sources = runtime.service.sources
+        assert sources is not None
+        self.assertIsInstance(
+            sources.registry.disclosure_authorizer, RelationshipSourceDisclosure
+        )
+        assert sources.registry.disclosure_authorizer is not None
+        with sources.registry.disclosure_scope():
+            self.assertFalse(
+                sources.registry.disclosure_authorizer(
+                    "unknown-being", "unknown-source", "public"
+                )
+            )
         member = runtime.service.ledger.authority.manifest.member(
             self.origins["legion"]["embodiment_id"],
             self.origins["legion"]["incarnation_id"],

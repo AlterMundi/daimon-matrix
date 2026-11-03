@@ -61,6 +61,7 @@ from .peer_transport import (
 )
 from .relationship_store import (
     RelationshipServiceContext,
+    RelationshipSourceDisclosure,
     RelationshipStore,
     RelationshipStoreError,
 )
@@ -1501,6 +1502,13 @@ def load_runtime(
             raise RuntimeError(
                 "runtime_relationship_configuration_rejected"
             ) from exception
+    if source_context is not None and relationship_context is not None:
+        disclosure = RelationshipSourceDisclosure(
+            relationship_context, manifest.being_ref, clock
+        )
+        source_context.registry.disclosure_authorizer = disclosure
+        source_context.registry.disclosure_scope = disclosure.scope
+
     if species_context is not None:
         try:
             species_context.registry.recover_pending_applications(
