@@ -32,8 +32,17 @@ can include independent beings and do not imply Tribe membership, a process
 response, route availability, disclosure or sending authority. The response is
 `dm.scope.discovery/v1` with explicit partial/authority-clock evidence; it cannot
 be consumed as a DM-052 target plan. Missing support is unavailable, never an
-alias to `/we`, `/tribe` or a host-local registry. `/here` and `/near` remain
-unsupported by this discovery view until their surface/distance evidence exists.
+alias to `/we`, `/tribe` or a host-local registry.
+
+The optional native `/here` discovery compares the actual own-body OS surface
+with current admitted-launch surface reports, using the existing parent channel
+and signed admission session. Known different OS instances are excluded;
+participants lacking a current report remain explicitly unavailable and make the
+result partial. Reports are bounded volatile declarations tied to the exact
+current launch, not independent physical attestation, private-host disclosure or
+new routing/actuation authority. No peer/model request or background report is
+started. A foreign or contradictory own surface refuses the read. `/near` still
+requires an explicit supported distance domain; OS colocation is not geography.
 
 Fan-out request and response bytes use purpose-separated Ed25519 signatures
 bound to exact Matrix origins, being root, manifest hash, request ID and

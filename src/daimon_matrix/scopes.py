@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from collections import Counter
@@ -351,9 +352,12 @@ class ScopeResolver:
     def discovery(self, *, scope: str, request_id: str) -> dict[str, Any]:
         """Discover admitted Cluster bodies without creating a messaging plan."""
         request_id = _uuid_text(request_id, "invalid_scope_request_id")
-        if scope != "/all":
+        if scope not in {"/all", "/here"}:
             raise ScopeError("unsupported_discovery_scope")
-        reader = getattr(self.body_reader, "inventory", None)
+        here = scope == "/here"
+        reader = getattr(
+            self.body_reader, "surface_inventory" if here else "inventory", None
+        )
         if not callable(reader):
             raise ScopeError("cluster_inventory_unavailable", retryable=True)
         now = _uint(self.clock(), "invalid_scope_time")
@@ -370,8 +374,16 @@ class ScopeResolver:
                 "cluster_inventory_unavailable", retryable=True
             ) from exception
         code = "cluster_inventory_rejected"
-        wrapper = _closed(value, {"schema", "body", "inventory"}, code)
-        if wrapper["schema"] != "dm.cluster-inventory-snapshot/v1":
+        wrapper = _closed(
+            value,
+            {"schema", "body", "inventory"} | ({"surface"} if here else set()),
+            code,
+        )
+        if wrapper["schema"] != (
+            "dm.cluster-surface-inventory-snapshot/v1"
+            if here
+            else "dm.cluster-inventory-snapshot/v1"
+        ):
             raise ScopeError(code)
         try:
             body = validate_body_snapshot(
@@ -385,6 +397,18 @@ class ScopeResolver:
             raise ScopeError(code) from exception
         if body["state"] != "running" or body["observed_at_ms"] != now:
             raise ScopeError(code)
+        surface = None
+        if here:
+            try:
+                surface = validate_surface_snapshot(
+                    wrapper["surface"],
+                    body_ref=origin["body_ref"],
+                    embodiment_id=origin["embodiment_id"],
+                    incarnation_id=origin["incarnation_id"],
+                    evaluated_at_ms=now,
+                )
+            except ClusterEvidenceError as exception:
+                raise ScopeError(code) from exception
         inventory = _closed(
             wrapper["inventory"],
             {
@@ -397,7 +421,11 @@ class ScopeResolver:
             },
             code,
         )
-        if inventory["schema"] != "dm.cluster.admission-inventory/v1":
+        if inventory["schema"] != (
+            "dm.cluster.admission-surfaces/v1"
+            if here
+            else "dm.cluster.admission-inventory/v1"
+        ):
             raise ScopeError(code)
         authority = _text(inventory["authority_key_id"], code)
         at = _uint(inventory["observed_at_ms"], code)
@@ -421,11 +449,16 @@ class ScopeResolver:
             "proof_ref",
         }
         members = []
+        unavailable = []
         resources = []
         local = False
         for item in items:
             row = _closed(
-                item, text_fields | {"fencing_token", "lease_expires_at_ms"}, code
+                item,
+                text_fields
+                | {"fencing_token", "lease_expires_at_ms"}
+                | ({"surface"} if here else set()),
+                code,
             )
             member: dict[str, Any] = {
                 field: _text(row[field], code, 1024) for field in text_fields
@@ -445,16 +478,58 @@ class ScopeResolver:
             if row["resource_ref"] != resource or member["lease_expires_at_ms"] <= at:
                 raise ScopeError(code)
             resources.append(resource)
-            local |= row["being_ref"] == self.authority.manifest.being_ref and all(
+            is_local = row["being_ref"] == self.authority.manifest.being_ref and all(
                 row[key] == origin[key]
                 for key in ("body_ref", "embodiment_id", "incarnation_id")
             )
+            local |= is_local
+            if here:
+                observed = row["surface"]
+                if observed is None:
+                    if is_local:
+                        raise ScopeError(code)
+                    unavailable.append(
+                        {
+                            **{
+                                key: member[key]
+                                for key in (
+                                    "being_ref",
+                                    "body_ref",
+                                    "embodiment_id",
+                                    "incarnation_id",
+                                )
+                            },
+                            "reason": "surface-not-reported",
+                        }
+                    )
+                    continue
+                reported = _closed(
+                    observed,
+                    {"domain", "surface_ref", "reported_at_ms", "evidence"},
+                    code,
+                )
+                when = _uint(reported["reported_at_ms"], code)
+                ref = reported["surface_ref"]
+                if (
+                    reported["domain"] != "native-linux-os"
+                    or reported["evidence"] != "admitted-launch-report"
+                    or when > at
+                    or not isinstance(ref, str)
+                    or re.fullmatch(r"dm:surface:v1:[0-9a-f]{64}", ref) is None
+                ):
+                    raise ScopeError(code)
+                assert surface is not None
+                if ref != surface["surface_ref"]:
+                    if is_local:
+                        raise ScopeError(code)
+                    continue
+                member["surface"] = dict(reported)
             members.append({**member, "process_response": "not-observed"})
         if resources != sorted(set(resources)) or (
             not local and not inventory["truncated"]
         ):
             raise ScopeError(code)
-        return {
+        result = {
             "schema": "dm.scope.discovery/v1",
             "request_id": request_id,
             "scope": scope,
@@ -467,6 +542,13 @@ class ScopeResolver:
             "partial": inventory["truncated"],
             "scanned": scanned,
         }
+        if here:
+            result.update(
+                surface=surface,
+                unavailable=unavailable,
+                partial=inventory["truncated"] or bool(unavailable),
+            )
+        return result
 
     def _identity_at(self, now: int) -> dict[str, Any]:
         origin = self.local_origin

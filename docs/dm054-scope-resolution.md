@@ -80,7 +80,8 @@ permission, model turn or automatic attention. Its result has no `targets` or
 resolution hash and cannot be used as a messaging plan.
 
 This is the discovery portion of `/all`, not a completed group exchange.
-`/here` still needs current per-member surface observations, and `/near` needs
+The optional native `/here` view below compares current launch-bound reports;
+`/near` needs
 an explicit distance domain. Neither is silently mapped to this inventory.
 Published source, receiving selection and actual domain use remain separate
 in the current #437 checkpoint.
@@ -223,3 +224,27 @@ Rollback removes the six safe capability methods and nullable scope bundle
 configuration. It does not delete ledger events, DM-023 requests/cursors,
 DM-052 resolution events, route attempts, relationship snapshots or frozen
 scope exchanges.
+
+### Native `/here` discovery
+
+The same explicit discovery view accepts `/here` when the admitted parent
+supports `surface_inventory`. It reports the parent's actual native OS reference
+through the existing launch session, then compares all currently reported native
+OS surfaces with that local observation. The CLI and existing `scope_resolve`
+tool use the same `scope.resolve` read grant. This request publishes only the
+opaque OS reference within the admitted Cluster; it creates no background work.
+
+The result retains its actual local `surface` and only matching `members`.
+Admitted participants with no current launch-bound report appear in `unavailable`
+with `surface-not-reported`; they make the result `partial`, as does a truncated
+admission scan. A different known native OS surface is a nonmatch, including a
+full KVM on the same physical server. Foreign, malformed, future-dated or
+contradictory local reports refuse the read. No host label, Tribe membership,
+geographical distance, external address or private history supplies a match.
+
+Remote evidence remains `admitted-launch-report`: it is authenticated cooperative
+parent software evidence, not independent physical attestation. Authority restart
+or bounded-cache eviction can make a report unknown until that body explicitly
+requests another census. No automatic peer/model request occurs. Discovery still
+produces no DM052 target plan and observes no process response or message delivery.
+Source availability alone is not a completed receiving `/here` rollout.

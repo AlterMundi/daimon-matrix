@@ -469,7 +469,7 @@ def parser() -> argparse.ArgumentParser:
     )
     resolve.add_argument("--scope-request-id", required=True)
     resolve.add_argument(
-        "--scope", choices=("/me", "/we", "/tribe", "/all"), required=True
+        "--scope", choices=("/me", "/we", "/tribe", "/all", "/here"), required=True
     )
     resolve.add_argument("--view", choices=("discovery",))
     resolve.add_argument("--tribe-ref")

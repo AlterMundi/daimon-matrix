@@ -291,7 +291,7 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         _object_schema(
             {
                 "request_id": _UUID,
-                "scope": {"enum": ["/me", "/we", "/tribe", "/all"]},
+                "scope": {"enum": ["/me", "/we", "/tribe", "/all", "/here"]},
                 "view": {"enum": ["discovery"]},
                 "tribe_ref": _NULLABLE_TEXT,
             },
