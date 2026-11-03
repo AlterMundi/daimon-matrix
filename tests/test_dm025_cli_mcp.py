@@ -140,6 +140,76 @@ class InstalledSurfaceTests(RuntimeFixture):
             )
             self.assertNotIn("integrity", response["result"])
 
+    def test_mcp_surface_view_reaches_authenticated_daemon_without_full_projection(
+        self,
+    ) -> None:
+        class Reader:
+            def __call__(self, *args: Any) -> Mapping[str, Any]:
+                raise AssertionError("surface view invoked full body/projection path")
+
+            def surface(
+                self, body: str, embodiment: str, incarnation: str, at: int
+            ) -> Mapping[str, Any]:
+                return {
+                    "schema": "dm.cluster-surface-snapshot/v1",
+                    "body_ref": body,
+                    "embodiment_id": embodiment,
+                    "incarnation_id": incarnation,
+                    "observed_at_ms": at,
+                    "state": "running",
+                    "domain": "native-linux-os",
+                    "surface_ref": "dm:surface:v1:" + "c" * 64,
+                }
+
+        self.stop.set()
+        self.thread.join(3)
+        self.assertFalse(self.thread.is_alive())
+        bundle_path = self.state_root / "runtime.json"
+        bundle = json.loads(bundle_path.read_bytes())
+        bundle["scopes"] = {"body_capabilities": [], "relationships_filename": None}
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        self.runtime = load_runtime(
+            self.state_root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=lambda: time.time_ns() // 1_000_000,
+            projection_observer=self.observe_projection,
+            body_reader=Reader(),
+        )
+        self.stop = threading.Event()
+        self.thread = threading.Thread(
+            target=serve_forever,
+            kwargs={"runtime": self.runtime, "stop": self.stop},
+            daemon=True,
+        )
+        self.thread.start()
+        for _ in range(100):
+            if self.runtime.socket_path.exists():
+                break
+            time.sleep(0.01)
+        response = self.mcp_exchange(
+            {
+                "jsonrpc": "2.0",
+                "id": 44,
+                "method": "tools/call",
+                "params": {
+                    "_meta": META,
+                    "name": "scope_me",
+                    "arguments": {"view": "surface"},
+                },
+            }
+        )
+        public = response["result"]["structuredContent"]
+        self.assertTrue(public["ok"], public)
+        self.assertEqual(public["result"]["schema"], "dm.scope.me-surface/v1")
+        self.assertEqual(public["result"]["surface"]["domain"], "native-linux-os")
+        self.assertNotIn("auth", public)
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        self.assertTrue(client.scope_me(view="surface")[1]["ok"])
+
     def tearDown(self) -> None:
         self.stop.set()
         self.thread.join(timeout=3)

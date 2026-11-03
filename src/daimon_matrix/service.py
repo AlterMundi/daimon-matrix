@@ -1830,6 +1830,8 @@ class HostedWeave:
         if scopes is None:  # established in __post_init__
             raise ServiceError("scope_resolver_absent")
         if method == "scope.me":
+            if params == {"view": "surface"}:
+                return scopes.surface()
             _closed(params, set())
             return scopes.me()
         if method == "scope.we":

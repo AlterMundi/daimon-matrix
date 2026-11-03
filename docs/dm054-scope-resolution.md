@@ -27,6 +27,29 @@ clock crossed a millisecond between Matrix evaluation and the callback. A
 returned timestamp greater than the supplied coordinate still fails closed;
 there is no skew tolerance or three-argument compatibility path.
 
+### Native surface view
+
+`scope.me` with `{"view":"surface"}` returns `dm.scope.me-surface/v1`:
+the exact local being/manifest/origin and an admitted Cluster surface observation.
+The ordinary empty-parameter response remains unchanged. The same optional view
+is available as `client.scope_me(view="surface")` and through MCP `scope_me`.
+It uses the existing own-body read capability and discloses no foreign body.
+
+The qualified native parent's existing body callback must expose its read-only
+`surface` method. Matrix owns the evaluation time and requires an exact timestamp,
+origin, running state, `native-linux-os` domain and purpose-separated surface
+reference. Old callbacks refuse the optional view as unavailable; malformed,
+stale or substituted observations are rejected without inferring a surface from
+a host label, network or Tribe. No history projection is required for this view.
+
+Cluster's native reference represents a current Linux OS instance, including its
+boot identity. A full KVM has its own surface even when sharing a physical host;
+a reboot requires a fresh observation. The reference is not a geography,
+membership, persistent being identity or an actuation grant. This supplies
+`/me.body` evidence, not a completed `/here` roster or `/near` resolver. Keep
+source availability, selected receiving code and actual all-three observations
+separate in the current #437 checkpoint.
+
 `scope.we` enumerates every manifest incarnation in deterministic
 `(embodiment_id, incarnation_id)` order. Active, retired, local, available,
 unavailable and unconfigured are distinct facts. There may be many active
