@@ -1309,12 +1309,24 @@ class DaimonMcp:
     """MCP handlers with no authority beyond one typed local client."""
 
     def __init__(
-        self, client: LocalClient, request_dir: Path, *, messaging_only: bool = False
+        self,
+        client: LocalClient,
+        request_dir: Path,
+        *,
+        messaging_only: bool = False,
+        granted_only: bool = False,
     ) -> None:
         self.messaging_only = messaging_only
+        self.granted_only = granted_only
         self.tool_contracts = (
             MESSAGING_TOOL_CONTRACTS if messaging_only else TOOL_CONTRACTS
         )
+        if granted_only:
+            self.tool_contracts = {
+                name: contract
+                for name, contract in self.tool_contracts.items()
+                if contract[0] in client.config.capability.methods
+            }
         self.client = client
         self.request_dir = Path(os.path.abspath(request_dir))
         info = self.request_dir.lstat()
@@ -1445,7 +1457,7 @@ class DaimonMcp:
                     None,
                 ),
             }
-        return {
+        resources: dict[str, tuple[str, str | None]] = {
             "daimon:contract/server": ("Daimon server descriptor", None),
             "daimon:contract/tools": ("Closed MCP tool contract", None),
             "daimon:contract/local-api": ("DM-024 local protocol descriptor", None),
@@ -1458,6 +1470,13 @@ class DaimonMcp:
                 "we_projection_get",
             ),
         }
+        if self.granted_only:
+            return {
+                uri: value
+                for uri, value in resources.items()
+                if value[1] is None or value[1] in self.tool_contracts
+            }
+        return resources
 
     async def list_resources(
         self,
@@ -1660,6 +1679,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--request-dir", type=Path, required=True)
     result.add_argument("--timeout", type=float, default=5.0)
     result.add_argument(
+        "--granted-only",
+        action="store_true",
+        help=(
+            "Expose only existing tool/resource contracts named by this client's "
+            "capability; runtime authorization still applies"
+        ),
+    )
+    result.add_argument(
         "--messaging-only",
         action="store_true",
         help="Expose only the dedicated native messaging contract",
@@ -1676,6 +1703,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             LocalClient(args.socket, config, args.timeout),
             args.request_dir,
             messaging_only=args.messaging_only,
+            granted_only=args.granted_only,
         )
         asyncio.run(_run_stdio(bridge.server()))
         return 0
