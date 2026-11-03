@@ -93,6 +93,24 @@ class IdentityFixture(unittest.TestCase):
 
 
 class CanonicalizationTests(unittest.TestCase):
+    def test_all_ascii_scalars_and_keys_keep_exact_json_bytes(self) -> None:
+        value = {chr(number): "".join(map(chr, range(128))) for number in range(128)}
+        expected = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        self.assertEqual(canonical_bytes(value), expected)
+        self.assertEqual(canonical_bytes(""), b'""')
+
+    def test_string_subclass_cannot_hide_invalid_unicode_as_ascii(self) -> None:
+        class FalseAscii(str):
+            def isascii(self) -> bool:
+                return True
+
+        for value in ("e\u0301", "\ud800", "\udfff", "\ud800\udc00"):
+            for candidate in (FalseAscii(value), {FalseAscii(value): "value"}):
+                with self.subTest(value=repr(value)), self.assertRaises(CanonicalError):
+                    canonical_bytes(candidate)
+
     def test_object_keys_use_jcs_utf16_order(self) -> None:
         value = {"\ue000": 1, "😀": 2}
         self.assertEqual(canonical_bytes(value), '{"😀":2,"\ue000":1}'.encode())
