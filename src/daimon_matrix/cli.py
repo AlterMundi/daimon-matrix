@@ -75,6 +75,7 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "channel_id": args.channel_id,
             "after": args.after,
             "limit": args.limit,
+            **({"thread_id": args.thread_id} if args.thread_id is not None else {}),
         }
     if command == ("messaging", "send"):
         return "messaging.send", {
@@ -421,6 +422,7 @@ def parser() -> argparse.ArgumentParser:
         "inbox", help="read a current-authorized page; not a consumer acknowledgment"
     )
     inbox.add_argument("--channel-id", required=True)
+    inbox.add_argument("--thread-id", help="Read only this exact retained conversation")
     inbox.add_argument("--after", type=int, default=0)
     inbox.add_argument("--limit", type=int, default=50)
 

@@ -329,6 +329,35 @@ class DirectLaneTests(unittest.TestCase):
 
 
 class GroupRuntimeTests(unittest.TestCase):
+    def test_selected_thread_page_filters_before_limit_and_keeps_global_cursor(self):
+        sender, receiver = self.groups
+        selected, unrelated = str(uuid.uuid4()), str(uuid.uuid4())
+        expected = []
+        for thread in (unrelated, selected, unrelated, selected):
+            result = self.send_and_settle(
+                sender,
+                client_id="test",
+                send_id=str(uuid.uuid4()),
+                thread_id=thread,
+                text="retained signed speech",
+            )
+            if thread == selected:
+                expected.append(result["message_id"])
+        first = receiver.page(after=0, limit=1, thread_id=selected)
+        self.assertEqual([r["message"]["event_id"] for r in first], expected[:1])
+        second = receiver.page(
+            after=first[0]["inbox_sequence"], limit=1, thread_id=selected
+        )
+        self.assertEqual([r["message"]["event_id"] for r in second], expected[1:])
+        self.assertGreater(second[0]["inbox_sequence"], first[0]["inbox_sequence"])
+        self.assertEqual(
+            receiver.page(
+                after=second[0]["inbox_sequence"], limit=1, thread_id=selected
+            ),
+            [],
+        )
+        self.assertEqual(len(receiver.page(after=0, limit=100)), 4)
+
     def test_public_typed_coordination_reaches_signed_group_and_passive_queue(self):
         from types import SimpleNamespace
 

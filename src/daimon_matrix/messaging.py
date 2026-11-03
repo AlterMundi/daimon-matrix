@@ -1655,7 +1655,9 @@ class MessagingChannel:
         self._validate_rows([row], now, authority_view=_authority_view)
         return dict(row["message"])
 
-    def page(self, *, after: int, limit: int) -> list[dict[str, Any]]:
+    def page(
+        self, *, after: int, limit: int, thread_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Manual current-policy read, not a delivered/consumed semantic receipt."""
         now = self.clock()
         # Lock order: relationship writer exclusion -> inbox read. Never hold this
@@ -1664,7 +1666,10 @@ class MessagingChannel:
             at_ms=now, card_verifier=self._card
         ) as view:
             rows = self.inbox._page(
-                after=after, limit=limit, policy_hash=self._policy_hash(now, view)
+                after=after,
+                limit=limit,
+                policy_hash=self._policy_hash(now, view),
+                thread_id=thread_id,
             )
             self._validate_rows(rows, now, authority_view=view)
             return [
@@ -1930,8 +1935,10 @@ class GroupMessaging:
             message, self.lane._epoch(message["being_ref"], message["manifest_hash"])
         )
 
-    def page(self, *, after: int, limit: int) -> list[dict[str, Any]]:
-        result = self.records.page(after=after, limit=limit)
+    def page(
+        self, *, after: int, limit: int, thread_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        result = self.records.page(after=after, limit=limit, thread_id=thread_id)
         for item in result["items"]:
             self.message(item["message"]["event_id"])
         return cast(list[dict[str, Any]], result["items"])
