@@ -1,3 +1,47 @@
+<!-- BEGIN FOUNDATION437 CURRENT RECEIVING -->
+## Current foundation receiving — 2026-11-03
+
+This observation supersedes older SDK/reader selections below. CompAII remains
+native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM; the
+old Source HOST remains ON and untouched. The full foundation goal is ACTIVE.
+
+All three now select Matrixae9189e / SDK21d40258 / wheel2debbe33. ITACA code is
+c12a8cc9 and both peers usef0a631ea; canonical admission uses public Cluster28ecaca,
+qualified by CI41714948972 on production-identical test correctionc710813
+(Cluster394 mergede32d26c8). Authenticated `/all` discovery returned exactly
+three members/three distinct beings from each receiver, preserving signed
+identities, state roots and native/bot/web processes. This reports admissions,
+not process replies, messaging targets or a complete foundation-domain demo.
+
+Current reader operation90c1a249-040f-4fd1-8da3-79c222f230cf accepted all three;
+predecessorc590 and older uncertain effects remain retained without replay.
+All three current server catalogs and consumed AGENTS discovery guidance are
+installed. Server-catalog-only acceptance starts no model and does not prove
+independent Eko/Oliva model uptake.
+
+Actual selected-project Source learning includes contributions2.0.17 on both
+peers, Eko Pulso1.1.0 uptake/use by CompAII, and subsequent exact Source
+intake/assessment/promotion plus1.1.0 skill installation in Oliva. A fresh bounded
+publisher-local three-body comparison used8native reads and no model calls.
+Existing recurring reviews are still finite/local-only; the reviewed cohort
+successor in PR463 is not selected. Source publication, installation and model
+consumption remain distinct.
+
+Native `/here` sources are merged (Matrix459/5b5c4604 and Cluster396/0fd16bd6)
+but unselected. Known Source navigation461 mergedae30788a and is also unselected.
+Eko had an observed admission `roundtrip-deadline`1502ms; later successful reads
+and reader selection do not close its availability incident. Initial canonical
+authority startup failures were recovered with unchanged signer/config/database;
+their lower cause remains unestablished and closed cause/errno diagnostics are
+now present. No native/core/bot/web/provider restart or global Stop was performed.
+
+The single current coverage map and deployment checkpoint remain in
+[foundation437](https://github.com/AlterMundi/daimon-matrix/issues/437) and its
+[current checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
+Remaining scopes, real independent peer learning, messaging uncertainty and
+bounded fresh periodic review remain unfinished; no whole-goal completion claim.
+<!-- END FOUNDATION437 CURRENT RECEIVING -->
+
 ## Current operational roadmap and receiving selection — 2026-11-03
 
 This section supersedes software/readiness/proposal status in the dated records
