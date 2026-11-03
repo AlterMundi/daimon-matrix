@@ -348,6 +348,126 @@ class ScopeResolver:
             "surface": surface,
         }
 
+    def discovery(self, *, scope: str, request_id: str) -> dict[str, Any]:
+        """Discover admitted Cluster bodies without creating a messaging plan."""
+        request_id = _uuid_text(request_id, "invalid_scope_request_id")
+        if scope != "/all":
+            raise ScopeError("unsupported_discovery_scope")
+        reader = getattr(self.body_reader, "inventory", None)
+        if not callable(reader):
+            raise ScopeError("cluster_inventory_unavailable", retryable=True)
+        now = _uint(self.clock(), "invalid_scope_time")
+        origin = self.local_origin
+        try:
+            value = reader(
+                origin["body_ref"],
+                origin["embodiment_id"],
+                origin["incarnation_id"],
+                now,
+            )
+        except (OSError, ValueError, RuntimeError) as exception:
+            raise ScopeError(
+                "cluster_inventory_unavailable", retryable=True
+            ) from exception
+        code = "cluster_inventory_rejected"
+        wrapper = _closed(value, {"schema", "body", "inventory"}, code)
+        if wrapper["schema"] != "dm.cluster-inventory-snapshot/v1":
+            raise ScopeError(code)
+        try:
+            body = validate_body_snapshot(
+                wrapper["body"],
+                body_ref=origin["body_ref"],
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                evaluated_at_ms=now,
+            )
+        except ClusterEvidenceError as exception:
+            raise ScopeError(code) from exception
+        if body["state"] != "running" or body["observed_at_ms"] != now:
+            raise ScopeError(code)
+        inventory = _closed(
+            wrapper["inventory"],
+            {
+                "schema",
+                "authority_key_id",
+                "observed_at_ms",
+                "items",
+                "scanned",
+                "truncated",
+            },
+            code,
+        )
+        if inventory["schema"] != "dm.cluster.admission-inventory/v1":
+            raise ScopeError(code)
+        authority = _text(inventory["authority_key_id"], code)
+        at = _uint(inventory["observed_at_ms"], code)
+        scanned = _uint(inventory["scanned"], code)
+        items = inventory["items"]
+        if (
+            scanned > 256
+            or type(inventory["truncated"]) is not bool
+            or not isinstance(items, list)
+            or len(items) > scanned
+        ):
+            raise ScopeError(code)
+        text_fields = {
+            "being_ref",
+            "body_ref",
+            "embodiment_id",
+            "incarnation_id",
+            "credential_id",
+            "manifest_hash",
+            "resource_ref",
+            "proof_ref",
+        }
+        members = []
+        resources = []
+        local = False
+        for item in items:
+            row = _closed(
+                item, text_fields | {"fencing_token", "lease_expires_at_ms"}, code
+            )
+            member: dict[str, Any] = {
+                field: _text(row[field], code, 1024) for field in text_fields
+            }
+            member["fencing_token"] = _uint(row["fencing_token"], code)
+            member["lease_expires_at_ms"] = _uint(row["lease_expires_at_ms"], code)
+            resource = (
+                "embodiment-admission:sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        [row["being_ref"], row["embodiment_id"]],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+            )
+            if row["resource_ref"] != resource or member["lease_expires_at_ms"] <= at:
+                raise ScopeError(code)
+            resources.append(resource)
+            local |= row["being_ref"] == self.authority.manifest.being_ref and all(
+                row[key] == origin[key]
+                for key in ("body_ref", "embodiment_id", "incarnation_id")
+            )
+            members.append({**member, "process_response": "not-observed"})
+        if resources != sorted(set(resources)) or (
+            not local and not inventory["truncated"]
+        ):
+            raise ScopeError(code)
+        return {
+            "schema": "dm.scope.discovery/v1",
+            "request_id": request_id,
+            "scope": scope,
+            "being_ref": self.authority.manifest.being_ref,
+            "origin": origin,
+            "evaluated_at_ms": now,
+            "authority_key_id": authority,
+            "authority_observed_at_ms": at,
+            "members": members,
+            "partial": inventory["truncated"],
+            "scanned": scanned,
+        }
+
     def _identity_at(self, now: int) -> dict[str, Any]:
         origin = self.local_origin
         body: Mapping[str, Any] | None = None
