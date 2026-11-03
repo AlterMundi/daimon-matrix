@@ -2,48 +2,53 @@
 ## Current foundation receiving — 2026-11-03
 
 This observation supersedes older SDK/reader selections below. CompAII remains
-native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM; the
-old Source HOST remains ON and untouched. The full foundation goal is ACTIVE.
+native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM. The
+old Source HOST remains ON and untouched; the full foundation goal is ACTIVE.
 
-All three now select Matrixae9189e / SDK21d40258 / wheel2debbe33. ITACA code is
-c12a8cc9 and both peers usef0a631ea; canonical admission uses public Cluster28ecaca,
-qualified by CI41714948972 on production-identical test correctionc710813
-(Cluster394 mergede32d26c8). Authenticated `/all` discovery returned exactly
-three members/three distinct beings from each receiver, preserving signed
-identities, state roots and native/bot/web processes. This reports admissions,
-not process replies, messaging targets or a complete foundation-domain demo.
+All three select Matrixae30788a / SDK470b7463 / wheel31c6addb. ITACA code is
+c8a2b5f4; peers c077e626. Canonical admission and the native parent use qualified
+Cluster0f1effd (Matrix459/461, Cluster396). Authenticated `/all` returned three
+current distinct beings from each receiver. Explicit `/here` reports followed
+by cohort reads returned one own-OS match each, all three reports scanned and
+no unavailable/partial entries: ITACA host, Oliva KVM and MEDUSA are distinct
+native OS surfaces. Cooperative signed launch reports are not independent
+physical attestation. Discovery supplies neither messaging targets nor observed
+process answers. Known-Source navigation returned one retained Source per body,
+with local-only freshness, zero remote reads and ancestry explicitly not implied.
 
-Current reader operation90c1a249-040f-4fd1-8da3-79c222f230cf accepted all three;
-predecessorc590 and older uncertain effects remain retained without replay.
-All three current server catalogs and consumed AGENTS discovery guidance are
-installed. Server-catalog-only acceptance starts no model and does not prove
-independent Eko/Oliva model uptake.
+Reader operation09c3ea9e accepted all three selections with39.389seconds left at
+commit. Its initial SSH observation timed out before any revoke/select; fresh
+observation continued the SAME operation. Earlier90c1/c590 and original213f
+uncertainties remain history. Current native tool configurations/server catalogs
+and replaced discovery/known-Source guidance are accepted on all three. Eko's
+retained tooling503084e6 completed after native preparation of its same private
+candidate; failed attempts and diagnostics remain retained. No model input or
+message was sent.
+Server-catalog acceptance is distinct from independent receiving-model use.
 
-Actual selected-project Source learning includes contributions2.0.17 on both
-peers, Eko Pulso1.1.0 uptake/use by CompAII, and subsequent exact Source
-intake/assessment/promotion plus1.1.0 skill installation in Oliva. A fresh bounded
-publisher-local three-body comparison used8native reads and no model calls.
-The same ITACA review service/timer now compares all3 publisher-local metadata
-sources: first selected run passed9native reads/0unavailable/0models. Original
-peer-local contracts stay unchanged. The successor conserves1predecessor run,
-1foreground comparison and maximum26new runs, original dates/expiry;128MiB,
-25%CPU,135seconds and256KiB state/latest report. Pause/resume and timer stop/start
-preserved its counter/calendar. Source publication, installation and model
-consumption remain distinct.
+Scoped authority restart exposed OSError98 and an exact loopback bind refusal
+with TIME_WAIT and no loopback listener. Managed restart recovered after expiry;
+the distinct VPN forwarder, signer/config/database and native/bot/web processes
+were preserved. Eko again reported admission roundtrip-deadline1503ms and stopped
+its Matrix child. Current successful observations do not close that availability
+incident. Retained source follow-through: Cluster352#issuecomment-6616920508.
+No global Stop, retired Source action, credential change or model wakeup occurred.
 
-Native `/here` sources are merged (Matrix459/5b5c4604 and Cluster396/0fd16bd6)
-but unselected. Known Source navigation461 mergedae30788a and is also unselected.
-Eko had an observed admission `roundtrip-deadline`1502ms; later successful reads
-and reader selection do not close its availability incident. Initial canonical
-authority startup failures were recovered with unchanged signer/config/database;
-their lower cause remains unestablished and closed cause/errno diagnostics are
-now present. No native/core/bot/web/provider restart or global Stop was performed.
+The existing Root finite Source review now probes all three exact publishers
+through existing host routes and each receiver's native owner. First selected
+run used9native calls, zero unavailable and zero models; pause/resume and timer
+stop/start preserved counters/calendar. One predecessor plus one foreground run
+and at most26successor runs conserve the total28/original six-hour finite dates
+and expiry before2026-11-10T17:06:31Z. The same unit enforces128MiB/25%CPU/135s;
+state/latest report are bounded256KiB each. Peer-local contracts are unchanged.
+This metadata review performs no content transfer or automatic adoption.
 
-The single current coverage map and deployment checkpoint remain in
-[foundation437](https://github.com/AlterMundi/daimon-matrix/issues/437) and its
-[current checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
-Remaining scopes, real independent peer learning, messaging uncertainty and
-bounded fresh periodic review remain unfinished; no whole-goal completion claim.
+Actual earlier Source-mediated contributions2.0.17 and Eko Pulso1.1.0 selective
+uptake remain valid evidence. Full ancestry-selected Source/species workflows,
+other foundation domains, meaningful domain exchange/integrator return and
+independent reciprocal receiving use remain unfinished. The single coverage map
+and current checkpoint are linked from [#437](https://github.com/AlterMundi/daimon-matrix/issues/437)
+and #302. Retained delivery/echo uncertainty is never replayed or relabeled.
 <!-- END FOUNDATION437 CURRENT RECEIVING -->
 
 ## Current operational roadmap and receiving selection — 2026-11-03
