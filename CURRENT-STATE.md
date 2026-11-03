@@ -23,8 +23,12 @@ Actual selected-project Source learning includes contributions2.0.17 on both
 peers, Eko Pulso1.1.0 uptake/use by CompAII, and subsequent exact Source
 intake/assessment/promotion plus1.1.0 skill installation in Oliva. A fresh bounded
 publisher-local three-body comparison used8native reads and no model calls.
-Existing recurring reviews are still finite/local-only; the reviewed cohort
-successor in PR463 is not selected. Source publication, installation and model
+The same ITACA review service/timer now compares all3 publisher-local metadata
+sources: first selected run passed9native reads/0unavailable/0models. Original
+peer-local contracts stay unchanged. The successor conserves1predecessor run,
+1foreground comparison and maximum26new runs, original dates/expiry;128MiB,
+25%CPU,135seconds and256KiB state/latest report. Pause/resume and timer stop/start
+preserved its counter/calendar. Source publication, installation and model
 consumption remain distinct.
 
 Native `/here` sources are merged (Matrix459/5b5c4604 and Cluster396/0fd16bd6)
