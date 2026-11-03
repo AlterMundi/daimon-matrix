@@ -1,4 +1,4 @@
-## Current operational roadmap and receiving selection — 2026-11-01
+## Current operational roadmap and receiving selection — 2026-11-03
 
 This section supersedes software/readiness/proposal status in the dated records
 below. Migration and same-being adoption #376 are complete. CompAII is native on
@@ -9,17 +9,27 @@ provider cancellation or revival of its stopped identities/containers.
 
 - Current foundation coverage is tracked by #437/#302. Completed migration is
   preserved evidence, not the remaining objective. Source439 disclosure and
-  selected-thread435 are merged source; they are not yet selected in the living
-  cohort. Additive source440 V1 supplies semantic-only signed learning closure
+  selected-thread435 are loaded in all three living Matrix daemons through
+  qualified source1bc4cab / SDK5730f73b. Additive source440 V1 supplies semantic-only signed learning closure
   without exporting unrelated origin history, bounded retained evidence and
-  quarantine-only intake. Its source qualification/deployment remain separate;
+  quarantine-only intake. Exact-head source/package CI passed. Real V1 previews
+  verified the selected public publication on Eko and Oliva; an attempted pull
+  without a signed starting cursor retained partial quarantined intake and a
+  refusal, not a completed learning adoption. Preserve those original outcomes;
   reciprocal live receiving assessment/application and the remaining foundation
   domains are unfinished. See [the V1 contract](specs/source-selective-learning.md).
 - Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
   signed receiving receipts and both native readers; no whole-history sync.
   Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
-- The current three load Matrix79be478 / SDKd2e398b8. Existing tools are configured,
-  current readers reselected, and the useful original message9125f9dc appears in
+- The current three load Matrix1bc4cab / SDK5730f73b, with original runtime
+  identity/state and native/bot/web processes preserved. Native tool selections
+  still need their supported successor adoption. The retained reader-selection
+  operation is incomplete: ITACA/Oliva revoked successfully; Eko reserves the
+  same operation with `reader_recovery_persistence_uncertain`. No communication
+  readiness claim follows from daemon startup. Issue444 optimizes canonical
+  validation of byte-identical authenticated historical reader records within
+  the unchanged control deadline; that correction is not yet deployed.
+  The earlier useful original message9125f9dc appears in
   Eko/Oliva native readers with independent signed receiving receipts. Its
   earlier never-attempted send was recovered under its original identity and
   single confirmed echo; other excluded/stopped body legs stay undelivered.
@@ -52,7 +62,7 @@ provider cancellation or revival of its stopped identities/containers.
   the UI/control adapter is disabled without actual authority. Peer/model
   activation stays OFF. Limits, authority, trusted frontend isolation and a real
   enforceable inference route remain explicit human/owner selections.
-- Contribution guidance2.0.14 is published and installed on the current three.
+- Contribution guidance2.0.16 is published and installed on the current three.
   Legion's last existing SSH-route probe returned No route to host; SDK312 and
   that guidance remain pending there. Do not infer powered-off state, wake it,
   switch credentials or revive a stopped Source leg. Earlier `/we` acceptance

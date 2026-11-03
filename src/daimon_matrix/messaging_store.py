@@ -99,11 +99,10 @@ class TribeRecordStore:
     ) -> dict[str, Any]:
         raw = bytes(row["document"])
         value = json.loads(raw)
-        if (
-            canonical_bytes(value) != raw
-            or hashlib.sha256(raw).hexdigest() != row["document_hash"]
-        ):
+        if hashlib.sha256(raw).hexdigest() != row["document_hash"]:
             raise ValueError("tribe_record_corrupt")
+        fingerprint = None
+        previously_verified = False
         if self.verify is not None:
             signed = {
                 "kind": row["kind"],
@@ -112,9 +111,7 @@ class TribeRecordStore:
                 "recorded_at_ms": row["recorded_at_ms"],
                 "document": value,
             }
-            if reader_bindings is None:
-                self.verify(signed, json.loads(bytes(row["binding"])))
-            else:
+            if reader_bindings is not None:
                 fingerprint = hashlib.sha256(
                     canonical_bytes(
                         {key: item for key, item in signed.items() if key != "document"}
@@ -127,13 +124,22 @@ class TribeRecordStore:
                 # The maintained verifier checks this live clock predicate too.
                 # A clock rollback must invalidate a previously warm attestation.
                 instant = signed["recorded_at_ms"]
-                if (
-                    fingerprint not in reader_bindings[0]
-                    or type(instant) is not int
-                    or not 0 <= instant <= self.clock()
-                ):
-                    self.verify(signed, json.loads(bytes(row["binding"])))
-                reader_bindings[1].add(fingerprint)
+                previously_verified = (
+                    fingerprint in reader_bindings[0]
+                    and type(instant) is int
+                    and 0 <= instant <= self.clock()
+                )
+        # Reuse canonical validation only for the exact bytes and signed fields
+        # already authenticated by the maintained historical-reader verifier.
+        # Hash every current raw row and still validate the complete chain.
+        # Re-encoding every large boot on each control exhausts its fixed budget.
+        if not previously_verified:
+            if canonical_bytes(value) != raw:
+                raise ValueError("tribe_record_corrupt")
+            if self.verify is not None:
+                self.verify(signed, json.loads(bytes(row["binding"])))
+        if reader_bindings is not None and fingerprint is not None:
+            reader_bindings[1].add(fingerprint)
         return dict(value)
 
     def reserve(
@@ -245,8 +251,9 @@ class TribeRecordStore:
         # SQL sequence is not signed. Authenticate the revision/predecessor
         # chain, including tombstones; never search for an older matching select.
         # Only immutable, historical reader attestations may reuse signature
-        # checks. Every signed field and exact binding byte participates; raw
-        # canonical hashes and the complete revision chain are always checked.
+        # checks. Every signed field and exact binding byte participates;
+        # raw hashes and the complete revision chain are always checked. Exact
+        # authenticated bytes also retain their original canonical validation.
         # This cache never authorizes a current reader or bypasses its live fence.
         # Arbitrary injected verifiers may have additional mutable predicates;
         # only the maintained application verifier opts into historical reuse.
