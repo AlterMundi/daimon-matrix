@@ -10,8 +10,10 @@ import tempfile
 import threading
 import unittest
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -555,6 +557,109 @@ class SourceRegistryTests(RootLedgerFixture):
         self.registry_b = SourceRegistry(self.ledger_b, self.cas_b, clock=lambda: NOW)
         self.core = source_core()
         self.selector = source_selector(self.core)
+
+    def test_diff_holds_injected_authority_scope_through_content_closure(self) -> None:
+        active = []
+
+        @contextmanager
+        def scope() -> Iterator[None]:
+            active.append(True)
+            try:
+                yield
+            finally:
+                active.pop()
+
+        registry = self.registry_a
+        registry.disclosure_scope = scope
+        self._claim(registry, label="legion")
+        registry.create_cursor(self.selector, signer=self.signers["legion"])
+        original = registry._event_closure
+
+        def closure(*args: Any, **kwargs: Any) -> Any:
+            self.assertEqual(active, [True])
+            return original(*args, **kwargs)
+
+        with mock.patch.object(
+            registry, "_event_closure", side_effect=closure
+        ) as observed:
+            result = registry.diff(
+                selector=self.selector,
+                request_event_id=str(uuid.uuid4()),
+                requester_me_id=registry.local_me_id,
+                requester_cursor={
+                    "schema": "dm.source-empty-cursor/v0",
+                    "observer_me_id": registry.local_me_id,
+                    "source_id": self.selector["source_id"],
+                },
+                max_items=8,
+                max_bytes=1_048_576,
+            )
+        self.assertTrue(result["items"])
+        self.assertTrue(observed.called)
+        self.assertEqual(active, [])
+
+    def test_authenticated_diff_replay_rechecks_disclosure_without_extending_page(
+        self,
+    ) -> None:
+        registry = self.registry_a
+        clock = [NOW]
+        allowed = [True]
+        registry.clock = lambda: clock[0]
+        registry.disclosure_authorizer = lambda *_: allowed[0]
+        self._claim(registry, label="legion")
+        registry.create_cursor(self.selector, signer=self.signers["legion"])
+        capability = create_capability(
+            hashlib.sha256(b"dm438-source-replay").digest(),
+            client_id="client:dm438-source-replay",
+            methods=["source.diff"],
+            not_before_ms=NOW - 1,
+            not_after_ms=NOW + 600_000,
+        )
+        service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {capability.capability_id: capability},
+            lambda: clock[0],
+            "dm:runtime:v1:" + "c" * 43,
+            "source-disclosure-replay",
+            sources=SourceServiceContext(registry),
+        )
+        requester = "dm:being:v1:" + "x" * 43
+        request = create_request(
+            capability,
+            request_id=str(uuid.uuid4()),
+            issued_at_ms=NOW,
+            method="source.diff",
+            params={
+                "selector": self.selector,
+                "request_event_id": str(uuid.uuid4()),
+                "requester_me_id": requester,
+                "requester_cursor": {
+                    "schema": "dm.source-empty-cursor/v0",
+                    "observer_me_id": requester,
+                    "source_id": self.selector["source_id"],
+                },
+                "max_items": 8,
+                "max_bytes": 1_048_576,
+                "continuation": None,
+            },
+            nonce=b"r" * 16,
+        )
+        first = service.handle(request)
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(first["result"]["items"])
+        clock[0] += 1
+        self.assertEqual(service.handle(request), first)
+        allowed[0] = False
+        refused = service.handle(request)
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["error"]["code"], "source_disclosure_denied")
+        self.assertIsNone(refused["result"])
+        allowed[0] = True
+        clock[0] = first["result"]["expires_at_ms"] + 1
+        expired = service.handle(request)
+        self.assertFalse(expired["ok"], expired)
+        self.assertEqual(expired["error"]["code"], "source_diff_stale")
 
     @staticmethod
     def _rehash_bundle(bundle: dict[str, Any]) -> None:

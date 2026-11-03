@@ -18,7 +18,7 @@ import stat
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
@@ -1473,6 +1473,19 @@ def _serialized_source_operation(
     return serialized  # type: ignore[return-value]
 
 
+def _authorized_source_disclosure(
+    method: Callable[Concatenate[SourceRegistry, _P], _R],
+) -> Callable[Concatenate[SourceRegistry, _P], _R]:
+    """Hold the owner's current disclosure authority through page construction."""
+
+    @wraps(method)
+    def authorized(self: SourceRegistry, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with self.disclosure_scope():
+            return method(self, *args, **kwargs)
+
+    return authorized  # type: ignore[return-value]
+
+
 @dataclass(frozen=True)
 class SourceServiceContext:
     registry: SourceRegistry
@@ -1504,12 +1517,14 @@ class SourceRegistry:
         artifact_verifier: ArtifactEvidenceVerifier | None = None,
         known_ledgers: Mapping[str, Any] | None = None,
         disclosure_authorizer: SourceDisclosureAuthorizer | None = None,
+        disclosure_scope: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         self.ledger = ledger
         self.cas = cas
         self.clock = clock
         self.artifact_verifier = artifact_verifier
         self.disclosure_authorizer = disclosure_authorizer
+        self.disclosure_scope = disclosure_scope or nullcontext
         self._source_mutex = threading.RLock()
         self._source_lock_state = threading.local()
         configured = {} if known_ledgers is None else dict(known_ledgers)
@@ -2507,6 +2522,7 @@ class SourceRegistry:
         return copy.deepcopy(dict(row))
 
     @_serialized_source_operation
+    @_authorized_source_disclosure
     def diff(
         self,
         *,

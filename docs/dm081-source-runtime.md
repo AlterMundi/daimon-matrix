@@ -38,6 +38,40 @@ is denied unless an injected authorizer accepts the exact requester, source ID
 and classification. DM-082 supplies relationship grants; their absence is
 not inferred from membership or transport success.
 
+### Hosted source disclosure through existing resources
+
+When both source and relationship contexts are configured, the hosted loader
+connects source export to the existing signed knowledge-resource cards and
+accepted grants. No extra bundle field or parallel catalog is needed. The
+publisher's current card must advertise a `knowledge` resource controlled by
+that publisher, with `descriptor_ref` equal to the exact source ID, the exact
+requested classification and the `read` operation. Its ordinary resource hash
+is the existing relationship permission's `resource_ref`; a source ID itself
+is not a relationship resource ID. The requester must have a current accepted
+grant for that resource, classification and operation.
+
+The source contract separately checks `claim`, each publication's classification
+(`public` or `tribe-shared`), and any `origin-closure` disclosure required for
+causal evidence. Advertise and authorize the exact applicable resources rather
+than treating one classification as permission for another. Membership, public
+labels, knowledge of a root, and successful transport remain insufficient.
+
+One current relationship authorization view is held through the entire bounded
+diff-page construction. Concurrent revocation waits for that already-authorized
+read; the next page/read observes the revocation, including after clock rollback.
+The callback cannot reuse that view outside its owning export scope. Missing or
+invalid current authority, resource mappings or grants produces the same closed
+source denial. Without a relationship context the existing default denial for
+foreign requesters is unchanged. Source import, local assessment, promotion and
+selective skill/configuration application remain separate effects.
+
+The successful disclosure tuples are checked again at scope exit against the
+same locked evidence and current time: a lock cannot extend a card or grant's
+validity. Authenticated RPC replay also revalidates current source authorization
+and page content. An unchanged authorized page keeps its exact original bytes
+and expiry. An expired, changed or no-longer-authorized page is refused; the
+retained historical success is neither erased nor continuing disclosure authority.
+
 ## Intake transaction
 
 The portable flow is:
