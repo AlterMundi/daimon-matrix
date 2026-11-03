@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import threading
 import time
 import unittest
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -392,6 +394,74 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(list(self.request_dir.iterdir()), [])
         response = exchange("tools/call", name="daimon_status", arguments={})
         self.assertTrue(response["result"]["structuredContent"]["ok"])
+
+    def test_granted_store_bounds_concurrent_writers_and_keeps_exact_retry(
+        self,
+    ) -> None:
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import DaimonMcp
+
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        bridge = DaimonMcp(client, self.request_dir, granted_only=True)
+        original_id = "33000000-0000-4000-8000-000000000090"
+        original = bridge._prepare_operation("runtime.status", {}, original_id)
+        self.assertTrue(client.send(original)["ok"])
+        for index in range(254):
+            (self.request_dir / f"retained-{index}.json").write_bytes(b"{}")
+
+        def write(index: int) -> bool:
+            other = DaimonMcp(client, self.request_dir, granted_only=True)
+            try:
+                other._prepare_operation(
+                    "runtime.status", {}, f"33000000-0000-4000-8000-{index:012d}"
+                )
+                return True
+            except MCPError as error:
+                self.assertIn("capacity", str(error))
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accepted = list(pool.map(write, [91, 92]))
+        self.assertEqual(sorted(accepted), [False, True])
+        self.assertEqual(len(list(self.request_dir.iterdir())), 256)
+        self.assertEqual(
+            bridge._prepare_operation("runtime.status", {}, original_id), original
+        )
+        self.assertTrue(client.send(original)["ok"])
+
+    def test_granted_store_byte_bound_preserves_reads_and_uncertain_tokens(
+        self,
+    ) -> None:
+        import mcp_types as types
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import DaimonMcp
+
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        bridge = DaimonMcp(client, self.request_dir, granted_only=True)
+        retained = self.request_dir / "uncertain.json"
+        with retained.open("wb") as stream:
+            stream.truncate(16 * 1024 * 1024)
+        with self.assertRaisesRegex(MCPError, "capacity"):
+            bridge._prepare_operation(
+                "runtime.status", {}, "33000000-0000-4000-8000-000000000093"
+            )
+        self.assertEqual(list(self.request_dir.iterdir()), [retained])
+        self.assertEqual(retained.stat().st_size, 16 * 1024 * 1024)
+        response = asyncio.run(
+            bridge.call_tool(
+                cast(Any, None),
+                types.CallToolRequestParams(name="daimon_status", arguments={}),
+            )
+        )
+        self.assertTrue(response.structured_content["ok"])
 
     def test_mcp_granted_only_excludes_ungranted_data_resources(self) -> None:
         self.capability = self.operator_capabilities["sources"]

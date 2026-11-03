@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import uuid
 from collections.abc import Mapping, Sequence
@@ -1347,6 +1348,24 @@ class DaimonMcp:
     def _prepare_operation(
         self, method: str, params: Mapping[str, Any], operation_id: str | None
     ) -> dict[str, Any]:
+        if not self.granted_only or operation_id is None:
+            return self._prepare_stored_operation(method, params, operation_id)
+        # Cooperating native children share this directory and serialize only
+        # durable-token creation. No new lock file or cleanup worker is needed.
+        import fcntl
+
+        descriptor = os.open(
+            self.request_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            return self._prepare_stored_operation(method, params, operation_id)
+        finally:
+            os.close(descriptor)
+
+    def _prepare_stored_operation(
+        self, method: str, params: Mapping[str, Any], operation_id: str | None
+    ) -> dict[str, Any]:
         if operation_id is None:
             return self.client.prepare(method, params)
         request_id, request_path = self._request_id(operation_id)
@@ -1358,6 +1377,22 @@ class DaimonMcp:
                 params=params,
             )
         request = self.client.prepare(method, params, request_id=request_id)
+        if self.granted_only:
+            count, total = 0, len(canonical_bytes(request))
+            with os.scandir(self.request_dir) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise MCPError(
+                            types.INVALID_REQUEST,
+                            "Request store requires operator review",
+                        )
+                    count += 1
+                    total += info.st_size
+                    if count >= 256 or total > 16 * 1024 * 1024:
+                        break
+            if count >= 256 or total > 16 * 1024 * 1024:
+                raise MCPError(types.INVALID_REQUEST, "Request store capacity reached")
         try:
             store_prepared_request(request_path, request)
             return request

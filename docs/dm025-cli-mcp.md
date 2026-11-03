@@ -103,6 +103,13 @@ validation and exact-operation persistence. The daemon independently evaluates
 current authorization, expiry, revocation and resource policy on every call.
 An advertised method is not proof of current server-side acceptance.
 
+In this mode, the selected private request directory retains at most 256 durable
+tokens and 16 MiB. Cooperating processes serialize new-token writes. At capacity,
+new durable operations refuse before dispatch; existing tokens remain retryable
+and ordinary reads remain available. No automatic deletion occurs. Keep uncertain
+outcomes until reconciled; the operator may retire confirmed terminal tokens in
+the owning work record. Stop the selected MCP profile to stop this workflow.
+
 Native profiles select the receiver's own existing client through their maintained
 owner installer. The current chat-only bridge is not evidence that foundation
 scope/Source tools are loaded in a model. Exposing those tools requires explicit
