@@ -101,7 +101,11 @@ provider request or background review loop is installed by this change.
 
 The portable flow is:
 
-1. The receiver authors an observer-relative signed cursor.
+1. The receiver calls `source.cursor.create` with the selector. Its existing
+   event/status result also includes `envelope`: the signed observer-relative
+   cursor and all exact bounded claim/publication pages. Pass that envelope as
+   `requester_cursor`; no owner-local database read is needed, including when
+   the source already has rows. Retained RPC responses keep their original bytes.
 2. The publisher freezes a current cursor and returns disclosure-authorized,
    content-bound diff pages with complete event/content closure. Every current
    publication carried transitively in a selected-source closure is separately
@@ -110,6 +114,9 @@ The portable flow is:
 3. `source.incoming` verifies one page and returns per-item results without any
    durable write, fetch, render, execution, indexing, receipt or cursor change.
 4. `source.pull` journals `prepared → blobs → events → decisions → committed`.
+   An unsigned empty cursor is valid for preview only: a new pull refuses it
+   before creating a journal or landing data. Existing staged operations retain
+   their exact recovery path and historical outcomes.
    Malformed items are rejected independently; complete valid prefixes land.
    Incomplete items remain unpersisted and absent from the achieved cursor so
    a later complete diff can offer them again.

@@ -1980,6 +1980,173 @@ class SelectedSourceLearningTests(unittest.TestCase):
             closure_mode="selected-source-v1",
         )
 
+    def unsigned_journey(self, label: str) -> tuple[_Journey, dict[str, Any]]:
+        journey = _Journey(Path(self.temporary.name) / label)
+        claim, _, _ = journey.claim(
+            sequence=0, predecessor=None, action="assert", issued_at_ms=NOW
+        )
+        journey.publish(claim)
+        journey.publisher_registry.disclosure_authorizer = lambda *_: True
+        journey.publisher_registry.create_cursor(
+            journey.selector, signer=journey.publisher.signer
+        )
+        journey.receiver_registry.initialize()
+        request = {
+            **self.request,
+            "selector": journey.selector,
+            "request_event_id": str(uuid.uuid4()),
+            "requester_me_id": journey.receiver.state.being_ref,
+            "requester_cursor": {
+                "schema": "dm.source-empty-cursor/v0",
+                "observer_me_id": journey.receiver.state.being_ref,
+                "source_id": journey.selector["source_id"],
+            },
+        }
+        return journey, request
+
+    def test_unsigned_starting_cursor_is_refused_before_any_intake_effect(self) -> None:
+        for mode in ("full-origin-v0", "selected-source-v1"):
+            with self.subTest(mode=mode):
+                journey, request = self.unsigned_journey(mode)
+                bundle = journey.publisher_registry.diff(
+                    **{**request, "closure_mode": mode}
+                )
+                receiver = journey.receiver_registry
+                preview = receiver.incoming(bundle)
+                self.assertIsNone(preview["local_cursor_hash"])
+                before_cas = receiver.cas.path.read_bytes()
+                before_events = journey.receiver_ledger.events()
+                operation = str(uuid.uuid4())
+                with self.assertRaisesRegex(
+                    SourceError, "source_pull_requires_signed_cursor"
+                ):
+                    receiver.pull(
+                        operation_id=operation,
+                        bundle=bundle,
+                        preview=preview,
+                        signer=journey.receiver.signer,
+                    )
+                self.assertEqual(receiver.cas.path.read_bytes(), before_cas)
+                self.assertEqual(journey.receiver_ledger.events(), before_events)
+                self.assertIsNone(receiver._intake_row(operation))
+
+    def test_legacy_unsigned_staged_intake_retains_its_original_failure(self) -> None:
+        journey, request = self.unsigned_journey("retained-unsigned")
+        bundle = journey.publisher_registry.diff(**request)
+        receiver = journey.receiver_registry
+        preview = receiver.incoming(bundle)
+        operation = str(uuid.uuid4())
+        receiver._begin_intake(
+            operation, bundle["bundle_hash"], preview["preview_hash"], NOW
+        )
+        receiver.cas.retain_source_events(
+            list(receiver._bundle_event_map(bundle).values()),
+            blobs=list(receiver._bundle_blob_map(bundle).values()),
+        )
+        receiver._advance_intake(operation, "events")
+        retained = receiver._intake_row(operation)
+        before = receiver.cas.path.read_bytes()
+        with self.assertRaisesRegex(SourceError, "source_pull_requires_signed_cursor"):
+            receiver.pull(
+                operation_id=operation,
+                bundle=bundle,
+                preview=preview,
+                signer=journey.receiver.signer,
+            )
+        self.assertEqual(receiver._intake_row(operation), retained)
+        self.assertEqual(receiver.cas.path.read_bytes(), before)
+
+    def test_authenticated_cursor_envelope_completes_public_learning_roundtrip(
+        self,
+    ) -> None:
+        journey = self.journey
+        services = {}
+        capabilities = {}
+        for label, identity, ledger, registry in (
+            (
+                "publisher",
+                journey.publisher,
+                journey.publisher_ledger,
+                journey.publisher_registry,
+            ),
+            (
+                "receiver",
+                journey.receiver,
+                journey.receiver_ledger,
+                journey.receiver_registry,
+            ),
+        ):
+            capability = create_capability(
+                hashlib.sha256(label.encode()).digest(),
+                client_id="client:cursor-api:" + label,
+                methods=sorted(SOURCE_METHODS),
+                not_before_ms=NOW - 1,
+                not_after_ms=NOW + 1,
+            )
+            capabilities[label] = capability
+            services[label] = HostedWeave(
+                ledger,
+                identity.signer,
+                {capability.capability_id: capability},
+                lambda: NOW,
+                "dm:runtime:v1:" + "x" * 43,
+                "cursor-api-" + label,
+                sources=SourceServiceContext(registry),
+            )
+
+        def rpc(label: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
+            request = create_request(
+                capabilities[label],
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=NOW,
+                method=method,
+                params=params,
+                nonce=os.urandom(16),
+            )
+            response = services[label].handle(request)
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(services[label].handle(request), response)
+            result = response["result"]
+            assert isinstance(result, dict)
+            return result
+
+        initial = rpc(
+            "receiver", "source.cursor.create", {"selector": journey.selector}
+        )
+        self.assertEqual(initial["envelope"]["event"], initial["event"])
+        params = {
+            **self.request,
+            "requester_cursor": initial["envelope"],
+            "continuation": None,
+        }
+        bundle = rpc("publisher", "source.diff", params)
+        preview = rpc("receiver", "source.incoming", {"bundle": bundle})
+        result = rpc(
+            "receiver",
+            "source.pull",
+            {
+                "bundle": bundle,
+                "preview": preview,
+                "operation_id": str(uuid.uuid4()),
+            },
+        )
+        self.assertEqual(len(result["accepted_event_ids"]), 2)
+        populated = rpc(
+            "receiver", "source.cursor.create", {"selector": journey.selector}
+        )
+        self.assertEqual(len(populated["envelope"]["claim_pages"]), 1)
+        self.assertEqual(len(populated["envelope"]["publication_pages"]), 1)
+        unchanged = rpc(
+            "publisher",
+            "source.diff",
+            {
+                **params,
+                "request_event_id": str(uuid.uuid4()),
+                "requester_cursor": populated["envelope"],
+            },
+        )
+        self.assertEqual(unchanged["items"], [])
+
     def bundle(self, **changes: Any) -> dict[str, Any]:
         return self.journey.publisher_registry.diff(**{**self.request, **changes})
 

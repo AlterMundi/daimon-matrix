@@ -4021,6 +4021,11 @@ class SourceRegistry:
                 fresh = self.incoming(normalized_bundle)
                 if fresh != normalized_preview:
                     raise SourceError("source_pull_preview_stale", retryable=True)
+                # Empty unsigned cursors support preview only. Refuse before
+                # starting an intake or landing any blobs/foreign envelopes.
+                # Existing staged operations retain their original recovery path.
+                if normalized_preview["local_cursor_hash"] is None:
+                    raise SourceError("source_pull_requires_signed_cursor")
                 journal = self._begin_intake(
                     operation,
                     normalized_bundle["bundle_hash"],
