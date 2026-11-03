@@ -58,7 +58,9 @@ META = {
 
 class InstalledSurfaceTests(RuntimeFixture):
     def test_known_source_navigation_uses_existing_status_tool(self) -> None:
-        from daimon_matrix.mcp_server import MCPError, _tool_params
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import _tool_params
 
         args = cli_parser().parse_args(
             [
