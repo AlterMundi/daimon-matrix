@@ -34,6 +34,7 @@ from daimon_matrix.local_api import (
     verify_response,
 )
 from daimon_matrix.native_egress import synthetic_visibility
+from daimon_matrix.projections import ProjectionEngine
 from daimon_matrix.relationships import (
     RelationshipError,
     VerifiedTribeSnapshot,
@@ -972,3 +973,213 @@ class ScopeSchemaTests(ScopeFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClusterDiscoveryTests(ScopeFixture):
+    def inventory_reader(self) -> Any:
+        import hashlib
+
+        fixture = self
+
+        class Reader:
+            def inventory(
+                self, body: str, embodiment: str, incarnation: str, at: int
+            ) -> dict[str, Any]:
+                members = []
+                for being, origin in (
+                    (
+                        fixture.ledger_a.authority.manifest.being_ref,
+                        fixture.origins["legion"],
+                    ),
+                    (
+                        "dm:being:independent-eko",
+                        dict(
+                            body_ref="codex:medusa:eko",
+                            embodiment_id="embodiment:eko",
+                            incarnation_id="incarnation:eko",
+                        ),
+                    ),
+                ):
+                    resource = (
+                        "embodiment-admission:sha256:"
+                        + hashlib.sha256(
+                            json.dumps(
+                                [being, origin["embodiment_id"]],
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ).encode()
+                        ).hexdigest()
+                    )
+                    members.append(
+                        dict(
+                            being_ref=being,
+                            **{
+                                k: origin[k]
+                                for k in ("body_ref", "embodiment_id", "incarnation_id")
+                            },
+                            credential_id="credential:current",
+                            manifest_hash="a" * 64,
+                            resource_ref=resource,
+                            proof_ref="proof:current",
+                            fencing_token=4,
+                            lease_expires_at_ms=at + 10_000,
+                        )
+                    )
+                return dict(
+                    schema="dm.cluster-inventory-snapshot/v1",
+                    body=fixture.body_snapshot(body, embodiment, incarnation, at),
+                    inventory=dict(
+                        schema="dm.cluster.admission-inventory/v1",
+                        authority_key_id="authority:cluster",
+                        observed_at_ms=at + 125,
+                        items=sorted(members, key=lambda row: row["resource_ref"]),
+                        scanned=2,
+                        truncated=False,
+                    ),
+                )
+
+        return Reader()
+
+    def discovery_resolver(self, value: Any = None) -> ScopeResolver:
+        reader = self.inventory_reader()
+        if value is not None:
+            reader.inventory = lambda *_args: value
+        return ScopeResolver(self.ledger_a, clock=lambda: self.now, body_reader=reader)
+
+    def test_all_uses_current_admission_and_keeps_independent_beings(self) -> None:
+        with patch.object(
+            ProjectionEngine, "snapshot", side_effect=AssertionError("no history")
+        ):
+            result = self.discovery_resolver().discovery(
+                scope="/all", request_id=request_id(800)
+            )
+        self.assertEqual(result["scope"], "/all")
+        self.assertFalse(result["partial"])
+        self.assertEqual(len(result["members"]), 2)
+        self.assertEqual(result["authority_observed_at_ms"], self.now + 125)
+        self.assertTrue(
+            all(row["process_response"] == "not-observed" for row in result["members"])
+        )
+        self.assertNotIn("targets", result)
+        self.assertNotIn("tribe_ref", result)
+
+    def test_discovery_rejects_substitution_staleness_and_private_fields(self) -> None:
+        origin = self.origins["legion"]
+        valid = self.inventory_reader().inventory(
+            origin["body_ref"],
+            origin["embodiment_id"],
+            origin["incarnation_id"],
+            self.now,
+        )
+        variants = []
+        for field, value in [
+            ("body_ref", "foreign"),
+            ("observed_at_ms", self.now - 1),
+            ("state", "stopped"),
+        ]:
+            altered = copy.deepcopy(valid)
+            altered["body"][field] = value
+            variants.append(altered)
+        altered = copy.deepcopy(valid)
+        altered["inventory"]["items"][0]["lease_expires_at_ms"] = self.now
+        variants.append(altered)
+        altered = copy.deepcopy(valid)
+        altered["inventory"]["items"][0]["session_id"] = "private"
+        variants.append(altered)
+        altered = copy.deepcopy(valid)
+        altered["inventory"]["items"][0]["being_ref"] = "substituted"
+        variants.append(altered)
+        altered = copy.deepcopy(valid)
+        altered["inventory"]["items"] = []
+        variants.append(altered)
+        for value in variants:
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ScopeError, "cluster_inventory_rejected"),
+            ):
+                self.discovery_resolver(value).discovery(
+                    scope="/all", request_id=request_id(801)
+                )
+        altered["inventory"]["truncated"] = True
+        self.assertTrue(
+            self.discovery_resolver(altered).discovery(
+                scope="/all", request_id=request_id(802)
+            )["partial"]
+        )
+
+    def test_missing_parent_does_not_fall_back_to_we_or_tribe(self) -> None:
+        with self.assertRaisesRegex(
+            ScopeError, "cluster_inventory_unavailable"
+        ) as raised:
+            self.resolver_a.discovery(scope="/all", request_id=request_id(803))
+        self.assertTrue(raised.exception.retryable)
+        with self.assertRaisesRegex(ScopeError, "unsupported_discovery_scope"):
+            self.discovery_resolver().discovery(
+                scope="/here", request_id=request_id(804)
+            )
+
+    def test_mcp_discovery_uses_existing_authenticated_resolution_read_grant(
+        self,
+    ) -> None:
+        from daimon_matrix.mcp_server import _tool_params
+
+        method, params, _ = _tool_params(
+            "scope_resolve",
+            dict(request_id=request_id(805), scope="/all", view="discovery"),
+        )
+        self.assertEqual(params["tribe_ref"], None)
+        key = b"d" * 32
+        capability = create_capability(
+            key,
+            client_id="client:discovery",
+            methods=["scope.resolve"],
+            not_before_ms=NOW - 1,
+            not_after_ms=NOW + 10_000,
+        )
+        service = HostedWeave(
+            self.ledger_a,
+            self.signers["legion"],
+            {capability.capability_id: capability},
+            lambda: self.now,
+            "dm:runtime:v1:" + "a" * 43,
+            "discovery",
+            scopes=self.discovery_resolver(),
+        )
+        info = self.root_path.lstat()
+        runtime = HostedRuntime(
+            service,
+            self.root_path,
+            (info.st_dev, info.st_ino),
+            self.root_path / "discovery.sock",
+            synthetic_visibility(clock=lambda: self.now),
+        )
+        request = create_request(
+            capability,
+            request_id=request_id(806),
+            issued_at_ms=NOW,
+            method=method,
+            params=params,
+            nonce=b"d" * 16,
+        )
+        client, server = socket.socketpair()
+        client.settimeout(5)
+        worker = threading.Thread(target=serve_connection, args=(runtime, server))
+        worker.start()
+        try:
+            client.sendall(encode_frame(request))
+            response = decode_frame(client.recv(64 * 1024))
+        finally:
+            worker.join(5)
+            client.close()
+            server.close()
+        self.assertFalse(worker.is_alive())
+        verify_response(
+            response,
+            capability,
+            expected_request_id=request["request_id"],
+            expected_request_hash=request_hash(request),
+            expected_server=self.origins["legion"],
+            expected_runtime=service.runtime_identity,
+        )
+        self.assertTrue(response["ok"], response.get("error"))
+        self.assertEqual(response["result"]["schema"], "dm.scope.discovery/v1")

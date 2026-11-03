@@ -50,6 +50,41 @@ membership, persistent being identity or an actuation grant. This supplies
 source availability, selected receiving code and actual all-three observations
 separate in the current #437 checkpoint.
 
+### Cluster discovery view
+
+The existing read-only `scope.resolve` capability accepts an explicit
+`view:"discovery"` with `scope:"/all"`, a request UUID and `tribe_ref:null`.
+CLI: `daimon scope resolve --scope /all --view discovery --scope-request-id UUID`.
+MCP uses `scope_resolve` with the same fields; it fills an omitted `tribe_ref`
+with null. Existing target-plan calls and the number of tools/grant families
+remain unchanged.
+
+This returns `dm.scope.discovery/v1`, not a DM-052 target plan. It discovers
+current bodies admitted by the local native parent's existing Cluster authority,
+including distinct beings outside `/we` and independent of `/tribe`. Exact local
+origin/time/running admission, closed inventory fields, admission-resource
+coordinates, ordering, uniqueness, bounds and lease expiry are validated. A
+complete inventory must include this body. Missing/old parent support is
+retryable unavailable; substituted or inconsistent data is rejected. No host
+registry, display label or Tribe roster is used as a fallback.
+
+`authority_observed_at_ms` retains the admission authority's evaluation clock;
+`evaluated_at_ms` binds this body's native observation. They are not required to
+be equal across hosts. The injected native parent verifies the authority's
+current session-bound signed response; a stored document is not an inventory
+provider. At most256 members are admitted and `partial` preserves the authority's
+truncation. Each member explicitly says `process_response:"not-observed"`:
+admission does not prove a model/process answered or that a route is available.
+The view projects no private history and creates no message, disclosure,
+permission, model turn or automatic attention. Its result has no `targets` or
+resolution hash and cannot be used as a messaging plan.
+
+This is the discovery portion of `/all`, not a completed group exchange.
+`/here` still needs current per-member surface observations, and `/near` needs
+an explicit distance domain. Neither is silently mapped to this inventory.
+Published source, receiving selection and actual domain use remain separate
+in the current #437 checkpoint.
+
 `scope.we` enumerates every manifest incarnation in deterministic
 `(embodiment_id, incarnation_id)` order. Active, retired, local, available,
 unavailable and unconfigured are distinct facts. There may be many active

@@ -1853,6 +1853,15 @@ class HostedWeave:
                 raise ServiceError("invalid_params")
             return scopes.tribe(tribe_ref=tribe_ref)
         if method == "scope.resolve":
+            if params.get("view") == "discovery":
+                value = _closed(params, {"request_id", "scope", "tribe_ref", "view"})
+                if value["tribe_ref"] is not None or not isinstance(
+                    value["scope"], str
+                ):
+                    raise ServiceError("invalid_params")
+                return scopes.discovery(
+                    scope=value["scope"], request_id=_uuid(value["request_id"])
+                )
             value = _closed(params, {"request_id", "scope", "tribe_ref"})
             scope = _optional_text(value["scope"], 32)
             tribe_ref = _optional_text(value["tribe_ref"], 256)

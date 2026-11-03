@@ -25,6 +25,16 @@ present in the exact root-bound manifest are fan-out targets. Route evidence
 may select a carrier for those targets and cannot widen or shrink the roster.
 Two active incarnations for one embodiment are ambiguous and fail closed.
 
+The optional `scope.resolve` discovery view is separate from its messaging
+target-plan contract. For `/all`, the existing admitted native parent supplies
+the current signed Cluster admission inventory. Its bounded public coordinates
+can include independent beings and do not imply Tribe membership, a process
+response, route availability, disclosure or sending authority. The response is
+`dm.scope.discovery/v1` with explicit partial/authority-clock evidence; it cannot
+be consumed as a DM-052 target plan. Missing support is unavailable, never an
+alias to `/we`, `/tribe` or a host-local registry. `/here` and `/near` remain
+unsupported by this discovery view until their surface/distance evidence exists.
+
 Fan-out request and response bytes use purpose-separated Ed25519 signatures
 bound to exact Matrix origins, being root, manifest hash, request ID and
 deadline. Requests are bounded to 60 seconds and responses to 1 MiB. Exact

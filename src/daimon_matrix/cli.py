@@ -115,6 +115,7 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "request_id": args.scope_request_id,
             "scope": args.scope,
             "tribe_ref": args.tribe_ref,
+            **({"view": args.view} if getattr(args, "view", None) is not None else {}),
         }
     if command == ("scope", "tribe"):
         return "scope.tribe", {"tribe_ref": args.tribe_ref}
@@ -467,7 +468,10 @@ def parser() -> argparse.ArgumentParser:
         "resolve", help="authoritative target plan for /me, /we, or /tribe"
     )
     resolve.add_argument("--scope-request-id", required=True)
-    resolve.add_argument("--scope", choices=("/me", "/we", "/tribe"), required=True)
+    resolve.add_argument(
+        "--scope", choices=("/me", "/we", "/tribe", "/all"), required=True
+    )
+    resolve.add_argument("--view", choices=("discovery",))
     resolve.add_argument("--tribe-ref")
     tribe = scope_commands.add_parser("tribe", help="one verified tribe snapshot")
     tribe.add_argument("--tribe-ref", required=True)
