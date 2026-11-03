@@ -405,7 +405,16 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
     ),
     "source_status": (
         "source.status",
-        _object_schema({"selector": {"type": "object"}}, ("selector",)),
+        _object_schema(
+            {
+                "selector": {"type": "object"},
+                "view": {"enum": ["known"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 64},
+                "after": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "expected_snapshot": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            },
+            (),
+        ),
         True,
     ),
     "source_cursor_create": (
@@ -1010,6 +1019,26 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
         if key != "operation_id"
     }
     method = TOOL_CONTRACTS[name][0]
+    if method == "source.status":
+        if params.get("view") == "known":
+            if "selector" in params:
+                raise MCPError(
+                    types.INVALID_PARAMS, "Known sources do not select one source"
+                )
+            return (
+                method,
+                {
+                    "view": "known",
+                    "limit": params.get("limit", 32),
+                    "after": params.get("after"),
+                    "expected_snapshot": params.get("expected_snapshot"),
+                },
+                None,
+            )
+        if set(params) != {"selector"}:
+            raise MCPError(
+                types.INVALID_PARAMS, "Exact source status requires a selector"
+            )
     expected = {
         "runtime.status": set(),
         "memory.evaluate": {"candidate", "policy"},

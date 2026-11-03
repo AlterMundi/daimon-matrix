@@ -2088,6 +2088,87 @@ class SourceRegistry:
         return not missing, sorted(set(missing))
 
     @_serialized_source_operation
+    def known_sources(
+        self,
+        *,
+        limit: int = 32,
+        after: str | None = None,
+        expected_snapshot: str | None = None,
+    ) -> dict[str, Any]:
+        """Navigate retained claim selectors; no new index or remote freshness."""
+        if type(limit) is not int or not 1 <= limit <= 64:
+            raise SourceError("invalid_source_known_limit")
+        if after is not None:
+            _typed_id(after, _SOURCE_ID, "invalid_source_known_cursor")
+            if expected_snapshot is None:
+                raise SourceError("source_known_snapshot_required")
+        events = self._events()
+        snapshot = _derived(
+            "dm:source-known:v1:",
+            "daimon/source-known/v1",
+            {
+                "observer_me_id": self.local_me_id,
+                "events": sorted(
+                    (event["event_id"], event["content_hash"]) for event in events
+                ),
+            },
+        )
+        if expected_snapshot is not None and expected_snapshot != snapshot:
+            raise SourceError("source_known_view_changed", retryable=True)
+        rows: dict[str, dict[str, Any]] = {}
+
+        def known(identifier: str) -> dict[str, Any]:
+            _typed_id(identifier, _SOURCE_ID, "invalid_source_id")
+            return rows.setdefault(
+                identifier,
+                {
+                    "selector": {
+                        "source_id": identifier,
+                        "source_core_hash": identifier.rsplit(":", 1)[1],
+                    },
+                    "source_core": None,
+                    "claim_series_count": 0,
+                    "publication_series_count": 0,
+                },
+            )
+
+        for lane in self._claim_lanes(events, check_content=False).values():
+            event = lane.current or (lane.events[-1] if lane.events else None)
+            if event is None:
+                continue
+            payload = event["payload"]
+            core = validate_source_core(payload["source_core"])
+            if source_id(core) != payload["source_id"]:
+                raise SourceError("source_id_mismatch")
+            row = known(payload["source_id"])
+            if row["source_core"] is not None and row["source_core"] != core:
+                raise SourceError("source_known_core_conflict")
+            row["source_core"] = core
+            row["claim_series_count"] += 1
+        for lane in self._publication_lanes(events).values():
+            event = lane.current or (lane.events[-1] if lane.events else None)
+            if event is not None:
+                known(event["payload"]["source_id"])["publication_series_count"] += 1
+        identifiers = sorted(rows)
+        if after is not None and after not in rows:
+            raise SourceError("invalid_source_known_cursor")
+        remaining = [key for key in identifiers if after is None or key > after]
+        selected = remaining[:limit]
+        result = {
+            "schema": "dm.source-known/v1",
+            "observer_me_id": self.local_me_id,
+            "snapshot_id": snapshot,
+            "items": [rows[key] for key in selected],
+            "next_after": selected[-1] if len(remaining) > limit else None,
+            "known_sources": len(rows),
+            "freshness": "local-retained-evidence-only",
+            "ancestry_assessment": "not-implied",
+            "remote_reads": 0,
+        }
+        if len(_canonical(result, "invalid_source_known_view")) > 131072:
+            raise SourceError("source_known_view_too_large")
+        return result
+
     def status(self, selector: Mapping[str, Any]) -> dict[str, Any]:
         """Resolve one exact source without route, search, or alias authority."""
 

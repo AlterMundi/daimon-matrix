@@ -359,6 +359,13 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "import-decide": "source.import.decide",
         }
         return methods[args.command], {"payload": _bounded_file(args.payload)}
+    if command == ("source", "known"):
+        return "source.status", {
+            "view": "known",
+            "limit": args.limit,
+            "after": args.after,
+            "expected_snapshot": args.expected_snapshot,
+        }
     if command == ("source", "status"):
         return "source.status", {"selector": _bounded_file(args.selector)}
     if command == ("source", "cursor-create"):
@@ -588,6 +595,12 @@ def parser() -> argparse.ArgumentParser:
     ):
         command_parser = source_commands.add_parser(name, help=help_text)
         command_parser.add_argument("--selector", required=True)
+    source_known = source_commands.add_parser(
+        "known", help="navigate locally retained signed source selectors"
+    )
+    source_known.add_argument("--limit", type=int, default=32)
+    source_known.add_argument("--after")
+    source_known.add_argument("--expected-snapshot")
     source_diff = source_commands.add_parser(
         "diff", help="serve one disclosure-authorized portable diff page"
     )
