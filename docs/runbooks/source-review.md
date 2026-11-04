@@ -177,3 +177,48 @@ and latest report; do not create per-run archives. This operator transition
 changes metadata observation only. Content transfer still needs the existing
 resource disclosure grant, exact receiving assessment/promotion and selective
 application; the review never supplies them implicitly.
+
+## Private metadata projection for the selected integrator
+
+A host operator may project the retained report to its explicitly selected local
+integrator reader without granting access to the producer's private directory:
+
+```text
+python3 OPERATOR_CODE/source_review.py --report PRIVATE/report.json --export-current READER_PRIVATE/sources.json --reader-uid READER_UID
+```
+
+This mode only reads the existing report. It never calls `review`/`probe`, changes
+the configuration/state/cursor/run count or installs attention. It exports known
+report metadata (`offers`, `local_candidates`, `unavailable`, optional `ancestry`
+and `scope`), the source cursor and observation time. Unknown fields, producer
+configuration, commands and capability bindings are omitted. Source custody and
+ancestry meanings remain unchanged; the projection is derived evidence, not a
+signed Source publication, read grant, trust decision or content adoption.
+
+When producer and reader UIDs differ, run under the existing authorized producer
+operator. The reader must already own its0700 output directory; verify actual
+reader traversal/read afterward. The target is0600 and belongs to that reader.
+No source permission or ownership changes. Keep one latest projection (at most
+256KiB), one bounded staging file and one fixed empty export lock. Concurrent
+exports refuse rather than race the atomic writer. Invalid/corrupt/oversized
+source reports or an invalid reader remain failures, preserving prior output.
+A successful export followed by lost output is inspected at that target; never
+rerun the native review to repair a projection. On retirement remove only this
+selected derivative/staging/lock after it has no consumer; native Sources history
+and producer contracts retain their existing retention.
+
+For an explicitly authorized receiving integration, the existing finite review
+service can call this export after a successful report update, under its current
+CPU/memory/time bounds. Preserve the original calendar, expiry and remaining
+runs, and keep export failure distinct from already committed native review.
+Do not add another timer or reset a stopped predecessor. Selection of this
+service hook and actual reader acceptance must be recorded separately; source
+support alone does not install it.
+
+DaimonApp's finite producer can select `/metadata/offers`,
+`/metadata/local_candidates`, `/metadata/unavailable` and `/source_cursor` from
+this projection. Exclude `observed_at_ms` when time alone should not admit a
+model. Its exact-revision `heartbeat_source` reader supplies selected evidence;
+review/adopt/defer/reject still belongs to the original integrator and native
+Sources/DMK/Skills operators. A heartbeat pause does not claim to pause an existing
+independently selected SourceReview contract or authorize publishing a reply.

@@ -31,13 +31,14 @@ def encode(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
-def private_read(path):
+def private_read(path, owner_uid=None):
+    owner_uid = os.geteuid() if owner_uid is None else owner_uid
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if (
             not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.geteuid()
+            or info.st_uid != owner_uid
             or info.st_mode & 0o077
             or info.st_nlink != 1
         ):
@@ -48,7 +49,12 @@ def private_read(path):
     return json.loads(raw)
 
 
-def write(path, value):
+def write(path, value, owner_uid=None):
+    owner_uid = os.geteuid() if owner_uid is None else owner_uid
+    if type(owner_uid) is not int or not 0 <= owner_uid < 2**31:
+        raise ValueError("invalid_report_reader")
+    if owner_uid != os.geteuid() and os.geteuid() != 0:
+        raise ValueError("report_reader_requires_owner_operator")
     raw = encode(value)
     if len(raw) > MAX_BYTES:
         raise ValueError("review_capacity")
@@ -56,13 +62,13 @@ def write(path, value):
     if path.is_symlink():
         raise ValueError("private_owner_file_required")
     if path.exists():
-        private_read(path)
+        private_read(path, owner_uid)
     tmp = path.with_name("." + path.name + ".new")
     if tmp.exists():
         info = tmp.lstat()
         if (
             not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.geteuid()
+            or info.st_uid not in {os.geteuid(), owner_uid}
             or info.st_mode & 0o077
             or info.st_nlink != 1
         ):
@@ -72,6 +78,8 @@ def write(path, value):
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(raw)
+            if owner_uid != os.geteuid():
+                os.fchown(stream.fileno(), owner_uid, -1)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, path)
@@ -82,6 +90,73 @@ def write(path, value):
             os.close(directory)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def export_report(source, destination, reader_uid=None):
+    """Project retained metadata only, without a review/probe or state mutation."""
+    reader_uid = os.geteuid() if reader_uid is None else reader_uid
+    if type(reader_uid) is not int or not 0 <= reader_uid < 2**31:
+        raise ValueError("invalid_report_reader")
+    if reader_uid != os.geteuid():
+        if os.geteuid() != 0:
+            raise ValueError("report_reader_requires_owner_operator")
+        parent = destination.parent.stat()
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != reader_uid
+            or stat.S_IMODE(parent.st_mode) != 0o700
+        ):
+            raise ValueError("private_reader_directory_required")
+    if source.resolve() == destination.resolve():
+        raise ValueError("distinct_report_projection_required")
+    report = private_read(source)
+    if (
+        report.get("schema") not in {"dm.source-review/v1", "dm.source-review/v2"}
+        or not isinstance(report.get("cursor"), str)
+        or report.get("model_calls") != 0
+        or report.get("automatic_adoption") is not False
+    ):
+        raise ValueError("source_review_report_required")
+    metadata = {
+        key: report[key]
+        for key in ("offers", "local_candidates", "unavailable", "ancestry", "scope")
+        if key in report
+    }
+    projection = {
+        "schema": "dm.source-review-projection/v1",
+        "source_schema": report["schema"],
+        "source_cursor": report["cursor"],
+        "observed_at_ms": report.get("observed_at_ms"),
+        "metadata": metadata,
+        "model_calls": 0,
+        "automatic_adoption": False,
+    }
+    # The existing writer has one deterministic staging file. Serialize this
+    # export separately from the producer; never rerun a probe to repair export.
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock = destination.with_name(destination.name + ".lock")
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+        ):
+            raise ValueError("private_owner_file_required")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        write(destination, projection, reader_uid)
+    finally:
+        os.close(fd)
+    return {
+        "state": "exported",
+        "source_cursor": report["cursor"],
+        "metadata_sha256": hashlib.sha256(encode(metadata)).hexdigest(),
+        "model_calls": 0,
+        "native_calls": 0,
+        "source_mutated": False,
+    }
 
 
 def source_selector(value):
@@ -660,8 +735,29 @@ def main():
     parser.add_argument("--report", type=Path)
     parser.add_argument("--control", choices=["pause", "resume", "stop"])
     parser.add_argument("--scheduled", action="store_true")
+    parser.add_argument("--export-current", type=Path)
+    parser.add_argument("--reader-uid", type=int)
     args = parser.parse_args()
     try:
+        if args.export_current:
+            if not args.report or any(
+                (
+                    args.probe_runtime,
+                    args.config,
+                    args.state,
+                    args.control,
+                    args.scheduled,
+                )
+            ):
+                raise ValueError("invalid_report_export")
+            print(
+                json.dumps(
+                    export_report(args.report, args.export_current, args.reader_uid)
+                )
+            )
+            return 0
+        if args.reader_uid is not None:
+            raise ValueError("report_export_required")
         if args.probe_runtime:
             raw = sys.stdin.buffer.read(16385)
             if len(raw) > 16384 or any(
