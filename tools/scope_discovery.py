@@ -1,4 +1,4 @@
-"""Bounded foreground /near in an explicit authenticated control-route domain."""
+"""Bounded foreground /near and known-route /everyone discovery."""
 
 from __future__ import annotations
 
@@ -277,6 +277,94 @@ def discover(
     return report
 
 
+def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
+    """Observe configured reachable bodies, without requiring Cluster membership.
+
+    This is a partial foundation projection: configured owner routes bound the
+    search, and human contact discovery is not supplied by the native body API.
+    Neither route possession nor a successful read grants messaging/actuation.
+    """
+    settings = configuration(settings)
+    now = time.time_ns() // 1_000_000 if now_ms is None else now_ms
+    if settings["expires_at_ms"] <= now:
+        raise ValueError("scope_probe_expired")
+    deadline = clock() + min(90_000, settings["expires_at_ms"] - now) * 1_000_000
+    if call is None:
+
+        def call(command, request):
+            remaining = (deadline - clock()) / 1_000_000_000
+            if remaining <= 0:
+                raise TimeoutError("scope_probe_deadline")
+            return bounded_call(command, request, timeout=min(40, remaining))
+
+    request_id = str(uuid.uuid4())
+    observer = next(
+        t for t in settings["targets"] if t["id"] == settings["observer_id"]
+    )
+    report = {
+        "schema": "dm.scope.everyone/v1",
+        "scope": "/everyone",
+        "request_id": request_id,
+        "observed_at_ms": now,
+        "observer": observer["server"],
+        "members": [],
+        "unavailable": [],
+        "partial": True,
+        "coverage": {
+            "daimons": "configured-authorized-native-routes-only",
+            "humans": "not-configured",
+            "unconfigured_routes": "not-enumerated",
+        },
+        "authority": "per-target-authenticated-native-read",
+        "membership": "not-inferred",
+        "confirmed_native_calls": 0,
+        "native_call_ceiling": len(settings["targets"]),
+        "unconfirmed_probes": 0,
+        "model_calls": 0,
+        "process_response": "not-observed",
+    }
+
+    def reachable(target):
+        try:
+            if clock() >= deadline:
+                raise TimeoutError("scope_probe_deadline")
+            result = binding(
+                call(target["command"], {"view": "body", "request_id": request_id}),
+                target,
+            )
+            validate_surface_snapshot(
+                result.get("surface"),
+                body_ref=target["server"]["body_ref"],
+                embodiment_id=target["server"]["embodiment_id"],
+                incarnation_id=target["server"]["incarnation_id"],
+                evaluated_at_ms=result.get("evaluated_at_ms"),
+            )
+            if result.get("schema") != "dm.scope.me-surface/v1" or clock() >= deadline:
+                raise ValueError("scope_body_rejected")
+            return {
+                "kind": "daimon",
+                "id": target["id"],
+                "being_ref": target["being_ref"],
+                "server": target["server"],
+                "reachability": "authenticated-native-read-observed",
+                "process_response": "not-observed",
+            }
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            return {"id": target["id"], "reason": "body-probe-unavailable-or-rejected"}
+
+    with ThreadPoolExecutor(max_workers=len(settings["targets"])) as pool:
+        for row in pool.map(reachable, settings["targets"]):
+            if "reason" in row:
+                report["unavailable"].append(row)
+                report["unconfirmed_probes"] += 1
+            else:
+                report["members"].append(row)
+                report["confirmed_native_calls"] += 1
+    if len(encode(report)) > MAX_BYTES:
+        raise ValueError("scope_report_capacity")
+    return report
+
+
 def probe(root, request):
     """Use existing owner client; never open the active runtime/ledger offline."""
     from daimon_matrix.client import ClientConfig, LocalClient, read_capability_key
@@ -329,6 +417,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe-runtime", type=Path)
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--scope", choices=("/near", "/everyone"), default="/near")
     parser.add_argument("--domain")
     parser.add_argument("--within-ms", type=int)
     parser.add_argument("--report", type=Path)
@@ -339,17 +428,24 @@ def main():
             raise ValueError("scope_probe_input_capacity")
         print(json.dumps(probe(args.probe_runtime, json.loads(raw))))
     else:
-        if not all((args.config, args.domain, args.report)) or args.within_ms is None:
-            parser.error("config, explicit domain, within-ms and report are required")
-        report = discover(
-            private_read(args.config), domain=args.domain, within_ms=args.within_ms
-        )
+        if not args.config or not args.report:
+            parser.error("config and report are required")
+        if args.scope == "/everyone":
+            if args.domain is not None or args.within_ms is not None:
+                parser.error("/everyone does not take a distance domain or threshold")
+            report = everyone(private_read(args.config))
+        else:
+            if not args.domain or args.within_ms is None:
+                parser.error("/near requires explicit domain and within-ms")
+            report = discover(
+                private_read(args.config), domain=args.domain, within_ms=args.within_ms
+            )
         write(args.report, report)
         print(
             json.dumps(
                 {
-                    "scope": "/near",
-                    "domain": args.domain,
+                    "scope": args.scope,
+                    **({"domain": args.domain} if args.scope == "/near" else {}),
                     "members": len(report["members"]),
                     "partial": report["partial"],
                     "confirmed_native_calls": report["confirmed_native_calls"],

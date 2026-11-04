@@ -88,3 +88,30 @@ I/O/atomic latest-report replacement. Real cohort output, exact installed code,
 actual resource limits and remaining native/core/model/device gaps belong in
 #437's single receiving checkpoint. Synthetic tests or a successful empty result
 are not full foundation completion.
+
+## Partial `/everyone` through existing authorized routes
+
+The same operator also accepts `--scope /everyone --config PRIVATE/config.json
+--report PRIVATE/latest.json`. It reuses the exact protected target configuration
+and fixed authenticated body probe. Supply neither a distance domain nor a
+threshold. The default `/near` command and its admission semantics are unchanged.
+
+Unlike `/all` and admission-selected `/near`, this foreground search probes each
+configured route under that target's existing read authority, including a body
+outside the observer's Cluster. It does not consult Cluster or Tribe membership
+to decide who is reachable. A successful current native surface read establishes
+only that this exact being/body/incarnation answered the authenticated native
+read. No inbox, model, message target, grant or device is activated.
+
+The report always remains partial: this initial native projection has no human
+contact adapter and cannot enumerate unconfigured routes. It states both gaps
+instead of presenting the Cluster inventory as `/everyone`, inventing humans
+from provider IDs, or claiming global discovery. Failures, wrong identities and
+late results stay unavailable. A successful probe does not prove an available
+model or permission to send a message. Completing human reachability and a
+first-class native scope remains separate foundation work.
+
+Bounds and retention are the same as above, narrowed to at most8native body
+reads, no inventory read and no model call. Keep one protected atomic latest
+report. Configuration expiry and task-owned process cancellation remain its
+stop controls; no recurring job or extra participant catalog is installed.
