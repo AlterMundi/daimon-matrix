@@ -27,6 +27,20 @@ clock crossed a millisecond between Matrix evaluation and the callback. A
 returned timestamp greater than the supplied coordinate still fails closed;
 there is no skew tolerance or three-argument compatibility path.
 
+### Compact current identity inspection
+
+For current identity/body-admission inspection without historical projection, use
+existing `runtime.status` with `{"view":"receiving"}`. It returns
+`dm.runtime.receiving-status/v1`, including the authenticated current `identity`
+and selected runtime. The same view is available as
+`client.runtime_status(view="receiving")`, CLI
+`daimon daemon status --view receiving`, and MCP `daimon_status(view="receiving")`.
+It uses the existing runtime-status read grant and checks the current body reader;
+it is not a cached identity or a complete integrity audit. The ordinary status
+and `/me` views retain their existing behavior. Avoid the full `/me` history
+projection when only current identity is needed. No new tool, grant or catalog
+is introduced.
+
 ### Native surface view
 
 `scope.me` with `{"view":"surface"}` returns `dm.scope.me-surface/v1`:
