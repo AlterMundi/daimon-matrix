@@ -16,7 +16,12 @@ class CIScopeTests(unittest.TestCase):
         from tools.ci_scope import SOURCE_REVIEW_FILES
 
         self.assertEqual(profile(list(SOURCE_REVIEW_FILES)), "source-review")
-        for anchor in ("tools/source_review.py", "tests/test_source_review.py"):
+        for anchor in (
+            "tools/source_review.py",
+            "tests/test_source_review.py",
+            "tools/scope_discovery.py",
+            "tests/test_scope_discovery.py",
+        ):
             self.assertEqual(profile([anchor]), "source-review")
         workflow = (
             Path(__file__).parents[1] / ".github/workflows/tests.yml"
@@ -44,6 +49,42 @@ class CIScopeTests(unittest.TestCase):
                     "tests/test_ci_scope.py",
                 ):
                     self.assertIn(path, line)
+
+    def test_near_operator_keeps_installed_checks_and_mixed_core_fallback(self):
+        self.assertEqual(
+            profile(
+                [
+                    "tools/scope_discovery.py",
+                    "tests/test_scope_discovery.py",
+                    "docs/runbooks/native-near.md",
+                    "tools/ci_scope.py",
+                    "tests/test_ci_scope.py",
+                    ".github/workflows/tests.yml",
+                ]
+            ),
+            "source-review",
+        )
+        self.assertEqual(profile(["docs/runbooks/native-near.md"]), "full")
+        for other in (
+            "src/daimon_matrix/scopes.py",
+            "src/daimon_matrix/client.py",
+            "requirements-dev.txt",
+            "specs/scope-resolution.md",
+            "schemas/unknown.json",
+            "tools/unknown.py",
+        ):
+            self.assertEqual(profile(["tools/scope_discovery.py", other]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  source-review:", 1)[1].split(
+            "\n  behavior-inventory:", 1
+        )[0]
+        self.assertIn("tests.test_scope_discovery", job)
+        for line in job.splitlines():
+            if "python -m ruff" in line:
+                self.assertIn("tools/scope_discovery.py", line)
+                self.assertIn("tests/test_scope_discovery.py", line)
 
     def test_source_review_mixed_or_unknown_change_keeps_full_qualification(self):
         for path in (

@@ -21,6 +21,9 @@ SOURCE_REVIEW_FILES = frozenset(
     {
         "tools/source_review.py",
         "tests/test_source_review.py",
+        "tools/scope_discovery.py",
+        "tests/test_scope_discovery.py",
+        "docs/runbooks/native-near.md",
         "docs/runbooks/source-review.md",
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
@@ -378,6 +381,8 @@ def profile(paths: list[str]) -> str:
     if changed <= SOURCE_REVIEW_FILES and changed & {
         "tools/source_review.py",
         "tests/test_source_review.py",
+        "tools/scope_discovery.py",
+        "tests/test_scope_discovery.py",
     }:
         return "source-review"
     if changed <= EXECUTION_OPERATOR_FILES and changed & {
