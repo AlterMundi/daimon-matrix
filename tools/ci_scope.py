@@ -256,6 +256,7 @@ CONTEXT_DOC_FILES = frozenset(
         "README.md",
         "RESUME.md",
         "docs/current-architecture.md",
+        "docs/runbooks/tribu-human-mentions.md",
         "docs/runbooks/receiver-compatible-authority-updates.md",
         "docs/mandatory-telegram-visibility.md",
         "docs/packaging.md",
@@ -449,8 +450,11 @@ def profile(paths: list[str]) -> str:
     # This maintained navigation/design entrypoint is prose. It needs the
     # existing documentation/invariant checks even without a checkpoint edit.
     # Keep source and normative contract mixtures on their broader profiles.
-    if "docs/current-architecture.md" in changed and changed <= {
+    prose_entrypoints = {
         "docs/current-architecture.md",
+        "docs/runbooks/tribu-human-mentions.md",
+    }
+    if changed & prose_entrypoints and changed <= prose_entrypoints | {
         "tools/ci_scope.py",
         "tests/test_ci_scope.py",
     }:
