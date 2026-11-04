@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import threading
 import time
 import unittest
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -284,7 +286,11 @@ class InstalledSurfaceTests(RuntimeFixture):
             os.close(read_descriptor)
 
     def mcp_raw_exchange(
-        self, raw: bytes, *, require_response: bool = True
+        self,
+        raw: bytes,
+        *,
+        require_response: bool = True,
+        arguments: tuple[str, ...] = (),
     ) -> tuple[bytes, bytes]:
         read_descriptor, write_descriptor = os.pipe()
         os.write(write_descriptor, self.capability.key)
@@ -304,6 +310,7 @@ class InstalledSurfaceTests(RuntimeFixture):
                 str(read_descriptor),
                 "--request-dir",
                 str(self.request_dir),
+                *arguments,
             ],
             cwd=ROOT,
             env=environment,
@@ -331,9 +338,171 @@ class InstalledSurfaceTests(RuntimeFixture):
             self.assertTrue(response, errors)
         return response, errors
 
-    def mcp_exchange(self, frame: dict[str, Any]) -> dict[str, Any]:
-        response, _ = self.mcp_raw_exchange(canonical_bytes(frame) + b"\n")
+    def mcp_exchange(
+        self,
+        frame: dict[str, Any],
+        *,
+        granted_only: bool = False,
+    ) -> dict[str, Any]:
+        response, _ = self.mcp_raw_exchange(
+            canonical_bytes(frame) + b"\n",
+            arguments=("--granted-only",) if granted_only else (),
+        )
         return cast(dict[str, Any], json.loads(response))
+
+    def test_mcp_granted_only_catalog_matches_capability_and_calls_real_daemon(
+        self,
+    ) -> None:
+        def exchange(method: str, **params: Any) -> dict[str, Any]:
+            return self.mcp_exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": {"_meta": META, **params},
+                },
+                granted_only=True,
+            )
+
+        with patch.object(
+            type(self.runtime.service),
+            "handle",
+            side_effect=AssertionError(
+                "catalog enumeration dispatched a runtime request"
+            ),
+        ):
+            tools = exchange("tools/list")["result"]["tools"]
+            descriptor = exchange("resources/read", uri="daimon:contract/tools")
+            protocol = exchange("resources/read", uri="daimon:contract/local-api")
+            hidden = exchange("tools/call", name="source_pull", arguments={})
+        expected = {
+            name
+            for name, contract in TOOL_CONTRACTS.items()
+            if contract[0] in self.capability.methods
+        }
+        self.assertEqual({tool["name"] for tool in tools}, expected)
+        self.assertIn("scope_me", expected)
+        self.assertIn("source_status", expected)
+        self.assertNotIn("source_pull", expected)
+        indexed = json.loads(descriptor["result"]["contents"][0]["text"])["document"]
+        self.assertEqual({tool["name"] for tool in indexed["tools"]}, expected)
+        methods = json.loads(protocol["result"]["contents"][0]["text"])["document"]
+        self.assertEqual(
+            set(methods["methods"]), {TOOL_CONTRACTS[x][0] for x in expected}
+        )
+        self.assertEqual(hidden["error"]["code"], -32601)
+        self.assertEqual(list(self.request_dir.iterdir()), [])
+        response = exchange("tools/call", name="daimon_status", arguments={})
+        self.assertTrue(response["result"]["structuredContent"]["ok"])
+
+    def test_granted_store_bounds_concurrent_writers_and_keeps_exact_retry(
+        self,
+    ) -> None:
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import DaimonMcp
+
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        bridge = DaimonMcp(client, self.request_dir, granted_only=True)
+        original_id = "33000000-0000-4000-8000-000000000090"
+        original = bridge._prepare_operation("runtime.status", {}, original_id)
+        self.assertTrue(client.send(original)["ok"])
+        for index in range(254):
+            (self.request_dir / f"retained-{index}.json").write_bytes(b"{}")
+
+        def write(index: int) -> bool:
+            other = DaimonMcp(client, self.request_dir, granted_only=True)
+            try:
+                other._prepare_operation(
+                    "runtime.status", {}, f"33000000-0000-4000-8000-{index:012d}"
+                )
+                return True
+            except MCPError as error:
+                self.assertIn("capacity", str(error))
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accepted = list(pool.map(write, [91, 92]))
+        self.assertEqual(sorted(accepted), [False, True])
+        self.assertEqual(len(list(self.request_dir.iterdir())), 256)
+        self.assertEqual(
+            bridge._prepare_operation("runtime.status", {}, original_id), original
+        )
+        self.assertTrue(client.send(original)["ok"])
+
+    def test_granted_store_byte_bound_preserves_reads_and_uncertain_tokens(
+        self,
+    ) -> None:
+        import mcp_types as types
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import DaimonMcp
+
+        client = LocalClient(
+            self.runtime.socket_path,
+            ClientConfig.load(self.config_path, bytearray(self.capability.key)),
+        )
+        bridge = DaimonMcp(client, self.request_dir, granted_only=True)
+        retained = self.request_dir / "uncertain.json"
+        with retained.open("wb") as stream:
+            stream.truncate(16 * 1024 * 1024)
+        with self.assertRaisesRegex(MCPError, "capacity"):
+            bridge._prepare_operation(
+                "runtime.status", {}, "33000000-0000-4000-8000-000000000093"
+            )
+        self.assertEqual(list(self.request_dir.iterdir()), [retained])
+        self.assertEqual(retained.stat().st_size, 16 * 1024 * 1024)
+        response = asyncio.run(
+            bridge.call_tool(
+                cast(Any, None),
+                types.CallToolRequestParams(name="daimon_status", arguments={}),
+            )
+        )
+        self.assertTrue(response.structured_content["ok"])
+
+    def test_mcp_granted_only_excludes_ungranted_data_resources(self) -> None:
+        self.capability = self.operator_capabilities["sources"]
+        config = json.loads(self.config_path.read_bytes())
+        config["capability"] = self.capability.descriptor
+        self.config_path.write_bytes(canonical_bytes(config))
+        with patch.object(
+            type(self.runtime.service),
+            "handle",
+            side_effect=AssertionError(
+                "ungranted resource dispatched a runtime request"
+            ),
+        ):
+            response = self.mcp_exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "resources/list",
+                    "params": {"_meta": META},
+                },
+                granted_only=True,
+            )
+            refused = self.mcp_exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "resources/read",
+                    "params": {"_meta": META, "uri": "daimon:runtime/status"},
+                },
+                granted_only=True,
+            )
+        self.assertEqual(
+            {item["uri"] for item in response["result"]["resources"]},
+            {
+                "daimon:contract/server",
+                "daimon:contract/tools",
+                "daimon:contract/local-api",
+            },
+        )
+        self.assertEqual(refused["error"]["code"], -32602)
+        self.assertEqual(list(self.request_dir.iterdir()), [])
 
     def test_cli_real_daemon_json_and_exact_retry(self) -> None:
         status = self.run_surface("daimon_matrix.cli", ["--json", "daemon", "status"])

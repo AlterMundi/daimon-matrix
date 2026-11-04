@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import uuid
 from collections.abc import Mapping, Sequence
@@ -1309,12 +1310,24 @@ class DaimonMcp:
     """MCP handlers with no authority beyond one typed local client."""
 
     def __init__(
-        self, client: LocalClient, request_dir: Path, *, messaging_only: bool = False
+        self,
+        client: LocalClient,
+        request_dir: Path,
+        *,
+        messaging_only: bool = False,
+        granted_only: bool = False,
     ) -> None:
         self.messaging_only = messaging_only
+        self.granted_only = granted_only
         self.tool_contracts = (
             MESSAGING_TOOL_CONTRACTS if messaging_only else TOOL_CONTRACTS
         )
+        if granted_only:
+            self.tool_contracts = {
+                name: contract
+                for name, contract in self.tool_contracts.items()
+                if contract[0] in client.config.capability.methods
+            }
         self.client = client
         self.request_dir = Path(os.path.abspath(request_dir))
         info = self.request_dir.lstat()
@@ -1335,6 +1348,24 @@ class DaimonMcp:
     def _prepare_operation(
         self, method: str, params: Mapping[str, Any], operation_id: str | None
     ) -> dict[str, Any]:
+        if not self.granted_only or operation_id is None:
+            return self._prepare_stored_operation(method, params, operation_id)
+        # Cooperating native children share this directory and serialize only
+        # durable-token creation. No new lock file or cleanup worker is needed.
+        import fcntl
+
+        descriptor = os.open(
+            self.request_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            return self._prepare_stored_operation(method, params, operation_id)
+        finally:
+            os.close(descriptor)
+
+    def _prepare_stored_operation(
+        self, method: str, params: Mapping[str, Any], operation_id: str | None
+    ) -> dict[str, Any]:
         if operation_id is None:
             return self.client.prepare(method, params)
         request_id, request_path = self._request_id(operation_id)
@@ -1346,6 +1377,22 @@ class DaimonMcp:
                 params=params,
             )
         request = self.client.prepare(method, params, request_id=request_id)
+        if self.granted_only:
+            count, total = 0, len(canonical_bytes(request))
+            with os.scandir(self.request_dir) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise MCPError(
+                            types.INVALID_REQUEST,
+                            "Request store requires operator review",
+                        )
+                    count += 1
+                    total += info.st_size
+                    if count >= 256 or total > 16 * 1024 * 1024:
+                        break
+            if count >= 256 or total > 16 * 1024 * 1024:
+                raise MCPError(types.INVALID_REQUEST, "Request store capacity reached")
         try:
             store_prepared_request(request_path, request)
             return request
@@ -1445,7 +1492,7 @@ class DaimonMcp:
                     None,
                 ),
             }
-        return {
+        resources: dict[str, tuple[str, str | None]] = {
             "daimon:contract/server": ("Daimon server descriptor", None),
             "daimon:contract/tools": ("Closed MCP tool contract", None),
             "daimon:contract/local-api": ("DM-024 local protocol descriptor", None),
@@ -1458,6 +1505,13 @@ class DaimonMcp:
                 "we_projection_get",
             ),
         }
+        if self.granted_only:
+            return {
+                uri: value
+                for uri, value in resources.items()
+                if value[1] is None or value[1] in self.tool_contracts
+            }
+        return resources
 
     async def list_resources(
         self,
@@ -1660,6 +1714,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--request-dir", type=Path, required=True)
     result.add_argument("--timeout", type=float, default=5.0)
     result.add_argument(
+        "--granted-only",
+        action="store_true",
+        help=(
+            "Expose only existing tool/resource contracts named by this client's "
+            "capability; runtime authorization still applies"
+        ),
+    )
+    result.add_argument(
         "--messaging-only",
         action="store_true",
         help="Expose only the dedicated native messaging contract",
@@ -1676,6 +1738,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             LocalClient(args.socket, config, args.timeout),
             args.request_dir,
             messaging_only=args.messaging_only,
+            granted_only=args.granted_only,
         )
         asyncio.run(_run_stdio(bridge.server()))
         return 0

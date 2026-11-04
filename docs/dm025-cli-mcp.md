@@ -82,7 +82,7 @@ switch eras and missing/wrong modern envelopes fail before daemon dispatch.
 Input is strict UTF-8 with duplicate-key and 2 MiB line rejection. Stdout is
 reserved for MCP frames.
 
-The 67 advertised tools are frozen by `TOOL_CONTRACTS` and their schema/vector
+The default tools are frozen by `TOOL_CONTRACTS` and their schema/vector
 tests. Every
 input schema is closed; no method name, path, SQL, shell command, URI fetch,
 identity selector, capability or key is model-controlled. The eight fixed
@@ -91,6 +91,32 @@ redacted status, scope, heads and projection results. Resource envelopes bind me
 type, SHA-256, expected-origin provenance and canonical content; no `file:` URI
 or local path is returned. Prompts, sampling, roots, elicitation,
 subscriptions, templates and server-initiated requests are absent.
+
+`--granted-only` selects an intersection of that same catalog and the existing
+client capability's method list. Tool and protocol descriptors agree with the
+selected surface; data resources whose tools are excluded are also unavailable.
+Calling an excluded tool or resource fails before a daemon request. Enumeration
+itself reads no runtime state and creates no operation, provider input, message
+or background attention. This option can accompany `--messaging-only`; neither
+option adds a capability, grants an operation or weakens the normal request
+validation and exact-operation persistence. The daemon independently evaluates
+current authorization, expiry, revocation and resource policy on every call.
+An advertised method is not proof of current server-side acceptance.
+
+In this mode, the selected private request directory retains at most 256 durable
+tokens and 16 MiB. Cooperating processes serialize new-token writes. At capacity,
+new durable operations refuse before dispatch; existing tokens remain retryable
+and ordinary reads remain available. No automatic deletion occurs. Keep uncertain
+outcomes until reconciled; the operator may retire confirmed terminal tokens in
+the owning work record. Stop the selected MCP profile to stop this workflow.
+
+Native profiles select the receiver's own existing client through their maintained
+owner installer. The current chat-only bridge is not evidence that foundation
+scope/Source tools are loaded in a model. Exposing those tools requires explicit
+profile adoption and catalog observation, preserving the separate chat audience
+and echo contract. Never substitute another being's client or put a key value
+in a model argument, command, configuration or publication; keep the existing
+protected key-descriptor route.
 
 The client protocol family remains in `schemas/clients/v1/`, while
 `client.schema.json` accepts only config V3. Executable evidence is in
