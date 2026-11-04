@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import importlib.util
+import json
+import os
 import sys
 import tempfile
 import time
@@ -61,6 +64,92 @@ def publication():
 
 
 class SourceReviewTests(unittest.TestCase):
+    def report_fixture(self, path):
+        value = {
+            "schema": "dm.source-review/v2",
+            "cursor": "current-cursor",
+            "observed_at_ms": 123,
+            "offers": [{"publication_id": "selected"}],
+            "local_candidates": [],
+            "unavailable": [],
+            "ancestry": {"claims": ["admitted-descendant"]},
+            "model_calls": 0,
+            "automatic_adoption": False,
+            "configuration": {"command": ["not-exported"]},
+        }
+        review.write(path, value)
+        return path.read_bytes()
+
+    def test_export_preserves_producer_and_selects_only_report_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, target = root / "report.json", root / "reader.json"
+            before = self.report_fixture(source)
+            result = review.export_report(source, target)
+            projected = review.private_read(target)
+            self.assertEqual(projected["schema"], "dm.source-review-projection/v1")
+            self.assertEqual(
+                projected["metadata"]["offers"], [{"publication_id": "selected"}]
+            )
+            self.assertEqual(projected["source_cursor"], "current-cursor")
+            self.assertNotIn("configuration", projected["metadata"])
+            self.assertEqual(source.read_bytes(), before)
+            self.assertEqual(target.stat().st_uid, os.geteuid())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(result["native_calls"], 0)
+            self.assertFalse(result["source_mutated"])
+            review.export_report(source, target)
+            self.assertEqual(
+                len(list(root.glob("reader*"))), 2
+            )  # latest plus fixed empty lock
+            self.assertFalse((root / ".reader.json.new").exists())
+
+    def test_export_invalid_source_and_lock_contention_retain_prior_projection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, target = root / "report.json", root / "reader.json"
+            original = self.report_fixture(source)
+            review.export_report(source, target)
+            before = target.read_bytes()
+            with self.assertRaisesRegex(ValueError, "distinct"):
+                review.export_report(source, source)
+            source.write_bytes(b"invalid JSON")
+            with self.assertRaises(json.JSONDecodeError):
+                review.export_report(source, target)
+            source.write_bytes(original)
+            source.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "private_owner"):
+                review.export_report(source, target)
+            source.chmod(0o600)
+            lock = os.open(root / "reader.json.lock", os.O_RDWR)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    review.export_report(source, target)
+            finally:
+                os.close(lock)
+            self.assertEqual(target.read_bytes(), before)
+            self.assertEqual(source.read_bytes(), original)
+
+    def test_export_rejects_config_capacity_and_invalid_reader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, target = root / "report.json", root / "reader.json"
+            review.write(source, self.settings())
+            with self.assertRaisesRegex(ValueError, "source_review_report"):
+                review.export_report(source, target)
+            source.write_bytes(b" " * (review.MAX_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "capacity"):
+                review.export_report(source, target)
+            source.unlink()  # Retire only this test's deliberately oversized fixture.
+            self.report_fixture(source)
+            with self.assertRaisesRegex(ValueError, "invalid_report_reader"):
+                review.export_report(source, target, -1)
+            if os.geteuid() != 0:
+                with self.assertRaisesRegex(ValueError, "owner_operator"):
+                    review.export_report(source, target, os.geteuid() + 1)
+            self.assertFalse(target.exists())
+
     def test_calendar_is_finite_before_expiry_and_local_index_is_not_live_discovery(
         self,
     ):
