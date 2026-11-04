@@ -100,7 +100,7 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     if command == ("daemon", "status"):
         return "runtime.status", {}
     if command == ("scope", "me"):
-        return "scope.me", {}
+        return "scope.me", {} if args.view is None else {"view": args.view}
     if command == ("scope", "we"):
         return "scope.we", {}
     if command == ("scope", "diff"):
@@ -463,7 +463,8 @@ def parser() -> argparse.ArgumentParser:
 
     scope = families.add_parser("scope", help="root-authorized viewpoint and audience")
     scope_commands = scope.add_subparsers(dest="command", required=True)
-    scope_commands.add_parser("me", help="exact local embodiment viewpoint")
+    me = scope_commands.add_parser("me", help="exact local embodiment viewpoint")
+    me.add_argument("--view", choices=("surface", "realm"))
     scope_commands.add_parser("we", help="same-being manifest topology")
     scope_commands.add_parser("diff", help="payload-free local projection summary")
     sync_plan = scope_commands.add_parser(

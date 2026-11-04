@@ -462,7 +462,7 @@ class LocalClient:
     def scope_me(
         self, *, request_id: str | None = None, view: str | None = None
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        if view not in (None, "surface"):
+        if view not in (None, "surface", "realm"):
             raise ClientError("invalid_scope_me_view")
         return self.invoke(
             "scope.me", {} if view is None else {"view": view}, request_id=request_id

@@ -273,7 +273,11 @@ TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
         _object_schema({"decision": {"type": "object"}}, ("decision",)),
         False,
     ),
-    "scope_me": ("scope.me", _object_schema({"view": {"enum": ["surface"]}}), True),
+    "scope_me": (
+        "scope.me",
+        _object_schema({"view": {"enum": ["surface", "realm"]}}),
+        True,
+    ),
     "scope_we": ("scope.we", _object_schema({}), True),
     "scope_we_diff": ("scope.we.diff", _object_schema({}), True),
     "scope_we_sync_plan": (

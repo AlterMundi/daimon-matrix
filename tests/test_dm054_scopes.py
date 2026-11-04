@@ -779,6 +779,18 @@ class NativeSurfaceTests(ScopeFixture):
                     **(changes or {}),
                 }
 
+            def realm(self, *args: Any) -> Mapping[str, Any]:
+                return {
+                    "schema": "dm.cluster-realm-snapshot/v1",
+                    "surface": self.surface(*args),
+                    "resources": {
+                        "uptime_ms": 42370,
+                        "memory_total_bytes": 1024000,
+                        "memory_available_bytes": 409600,
+                    },
+                    "resource_state": "observed",
+                }
+
         return Reader()
 
     def resolver(self, reader: Any) -> ScopeResolver:
@@ -796,6 +808,101 @@ class NativeSurfaceTests(ScopeFixture):
             self.resolver_a.surface()
         # A legacy body callback still supplies the unchanged default view.
         self.assertEqual(self.resolver_a.me()["body"]["state"], "running")
+
+    def test_realm_is_own_os_observation_not_resource_allowance_or_controls(
+        self,
+    ) -> None:
+        reader = self.reader()
+        result = self.resolver(reader).realm()
+        self.assertEqual(result["schema"], "dm.scope.realm-status/v1")
+        self.assertEqual(
+            result["realm"]["surface"], self.resolver(reader).surface()["surface"]
+        )
+        self.assertEqual(result["realm"]["resources"]["uptime_ms"], 42370)
+        self.assertEqual(result["controls"], "not-established")
+        self.assertFalse({"targets", "heads", "members"} & set(result))
+        with self.assertRaisesRegex(ScopeError, "realm_snapshot_unavailable"):
+            self.resolver_a.realm()
+        origin = self.origins["legion"]
+        value = dict(
+            reader.realm(
+                origin["body_ref"],
+                origin["embodiment_id"],
+                origin["incarnation_id"],
+                self.now,
+            )
+        )
+        value["resources"] = {
+            "uptime_ms": None,
+            "memory_total_bytes": None,
+            "memory_available_bytes": None,
+        }
+        value["resource_state"] = "partial"
+        with patch.object(reader, "realm", return_value=value):
+            self.assertEqual(
+                self.resolver(reader).realm()["realm"]["resource_state"], "partial"
+            )
+
+    def test_realm_cli_uses_existing_own_body_method(self) -> None:
+        from daimon_matrix.cli import _method_params, parser
+
+        prefix = [
+            "--socket",
+            "/tmp/realm.sock",
+            "--client-config",
+            "/tmp/realm.json",
+            "--capability-key-fd",
+            "0",
+            "scope",
+            "me",
+        ]
+        self.assertEqual(_method_params(parser().parse_args(prefix)), ("scope.me", {}))
+        for view in ("surface", "realm"):
+            self.assertEqual(
+                _method_params(parser().parse_args([*prefix, "--view", view])),
+                ("scope.me", {"view": view}),
+            )
+
+    def test_realm_rejects_foreign_stale_and_fabricated_measurements(self) -> None:
+        reader = self.reader()
+        origin = self.origins["legion"]
+        valid = reader.realm(
+            origin["body_ref"],
+            origin["embodiment_id"],
+            origin["incarnation_id"],
+            self.now,
+        )
+        cases = []
+        bad: Any
+        for field, bad in (
+            ("body_ref", "foreign"),
+            ("observed_at_ms", self.now - 1),
+            ("domain", "physical-hypervisor"),
+        ):
+            value = copy.deepcopy(valid)
+            value["surface"][field] = bad
+            cases.append(value)
+        for field, bad in (
+            ("uptime_ms", True),
+            ("uptime_ms", -1),
+            ("uptime_ms", 2**53),
+            ("uptime_ms", float("nan")),
+            ("memory_total_bytes", 0),
+            ("memory_total_bytes", None),
+            ("memory_available_bytes", 2048000),
+        ):
+            value = copy.deepcopy(valid)
+            value["resources"][field] = bad
+            cases.append(value)
+        for change in ({"resource_state": "partial"}, {"private": "/private/path"}):
+            cases.append({**valid, **change})
+        for value in cases:
+            with (
+                self.subTest(value=value),
+                patch.object(reader, "realm", return_value=value),
+                self.assertRaises(ScopeError),
+            ):
+                self.resolver(reader).realm()
 
     def test_surface_refuses_stale_foreign_or_non_native_evidence(self) -> None:
         cases: list[dict[str, Any]] = [
@@ -861,6 +968,7 @@ class NativeSurfaceTests(ScopeFixture):
         param_sets: tuple[dict[str, Any], ...] = (
             {},
             {"view": "surface"},
+            {"view": "realm"},
             {"view": "surface", "foreign": True},
         )
         for index, params in enumerate(param_sets):
@@ -892,13 +1000,17 @@ class NativeSurfaceTests(ScopeFixture):
                 expected_server=self.origins["legion"],
                 expected_runtime=service.runtime_identity,
             )
-            if index == 2:
+            if index == 3:
                 self.assertFalse(response["ok"])
             else:
                 self.assertTrue(response["ok"])
                 self.assertEqual(
                     response["result"]["schema"],
-                    "dm.scope.me/v1" if index == 0 else "dm.scope.me-surface/v1",
+                    (
+                        "dm.scope.me/v1",
+                        "dm.scope.me-surface/v1",
+                        "dm.scope.realm-status/v1",
+                    )[index],
                 )
 
 
