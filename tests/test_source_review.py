@@ -285,7 +285,9 @@ class SourceReviewTests(unittest.TestCase):
                 if learn_ancestry:
                     settings["selectors"].append(ANCESTRY)
 
-                def call(command, params, *, learn_ancestry=learn_ancestry):
+                def call(
+                    command, params, *, learn_ancestry=learn_ancestry, settings=settings
+                ):
                     if command == ["root"]:
                         value = self.ancestry_observation()
                         value["sources"][1]["status"]["publications"] = [
