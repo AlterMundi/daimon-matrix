@@ -446,6 +446,36 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  source-review:
+    name: bounded SourceReview operator (3.13.5)
+    needs: scope
+    if: needs.scope.outputs.profile == 'source-review'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.5"
+          cache: pip
+          cache-dependency-path: |
+            requirements-build.txt
+            requirements-dev.txt
+            requirements-vectors.txt
+      - run: python -m pip install -r requirements-build.txt -r requirements-dev.txt -r requirements-vectors.txt
+      - run: python tools/check_frozen_invariants.py --skip-generated
+      - run: python -m ruff format --check tools/source_review.py tests/test_source_review.py tools/ci_scope.py tests/test_ci_scope.py
+      - run: python -m ruff check tools/source_review.py tests/test_source_review.py tools/ci_scope.py tests/test_ci_scope.py
+      - name: Build, verify and install exact package
+        run: |
+          python tools/reproducible_build.py --output dist
+          python tools/scan_secrets.py dist
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+      - name: Qualify operator against installed SDK and closed CI selection
+        run: |
+          python -c 'import daimon_matrix; from pathlib import Path; assert Path.cwd() not in Path(daimon_matrix.__file__).resolve().parents'
+          python -W error::ResourceWarning -m unittest tests.test_source_review tests.test_ci_scope -v
+
   behavior-inventory:
     name: receiving behavior inventory (3.13.5)
     needs: scope

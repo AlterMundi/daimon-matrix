@@ -17,6 +17,17 @@ INSTALLER_FILES = frozenset(
     }
 )
 
+SOURCE_REVIEW_FILES = frozenset(
+    {
+        "tools/source_review.py",
+        "tests/test_source_review.py",
+        "docs/runbooks/source-review.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+    }
+)
+
 BEHAVIOR_INVENTORY_FILES = frozenset(
     {
         "tools/behavior_inventory.py",
@@ -363,6 +374,11 @@ EXECUTION_OPERATOR_FILES = frozenset(
 
 def profile(paths: list[str]) -> str:
     changed = set(paths)
+    if changed <= SOURCE_REVIEW_FILES and changed & {
+        "tools/source_review.py",
+        "tests/test_source_review.py",
+    }:
+        return "source-review"
     if changed <= EXECUTION_OPERATOR_FILES and changed & {
         "src/daimon_matrix/execution_store.py",
         "src/daimon_matrix/operator_execution.py",
