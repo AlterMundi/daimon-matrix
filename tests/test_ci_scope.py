@@ -522,21 +522,30 @@ class CIScopeTests(unittest.TestCase):
             "needs.scope.outputs.profile != 'release-compatibility'", portability
         )
 
-    def test_current_architecture_prose_alone_uses_existing_document_checks(self):
-        changed = ["docs/current-architecture.md"]
-        self.assertEqual(profile(changed), "context-docs")
-        self.assertEqual(
-            profile([*changed, "tools/ci_scope.py", "tests/test_ci_scope.py"]),
-            "context-docs",
-        )
-        for other in (
-            "src/daimon_matrix/service.py",
-            "specs/tribe-conversation.md",
-            "pyproject.toml",
-            ".github/workflows/tests.yml",
-            "docs/unknown.md",
+    def test_maintained_prose_alone_uses_existing_document_checks(self):
+        for entry in (
+            "docs/current-architecture.md",
+            "docs/runbooks/tribu-human-mentions.md",
         ):
-            self.assertEqual(profile([*changed, other]), "full")
+            with self.subTest(entry=entry):
+                changed = [entry]
+                self.assertEqual(profile(changed), "context-docs")
+                self.assertEqual(
+                    profile([*changed, "tools/ci_scope.py", "tests/test_ci_scope.py"]),
+                    "context-docs",
+                )
+                for other in (
+                    "src/daimon_matrix/service.py",
+                    "src/daimon_matrix/human_tribu.py",
+                    "src/daimon_matrix/human_tribu_process.py",
+                    "specs/tribe-conversation.md",
+                    "pyproject.toml",
+                    "requirements-dev.txt",
+                    "schemas/unknown.json",
+                    ".github/workflows/tests.yml",
+                    "docs/unknown.md",
+                ):
+                    self.assertEqual(profile([*changed, other]), "full")
 
     def test_current_context_docs_do_not_repeat_runtime_qualification(self):
         from tools.ci_scope import CONTEXT_DOC_FILES
