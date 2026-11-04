@@ -10,11 +10,19 @@ Historical RC, Bridge and provisional records do not select a runtime.
 A signed body can move without re-enrollment or identity recreation. Current
 hosting belongs to Cluster and the maintained resource record, rather than the
 historical host component of body_ref or a display label. Fleet operations must
-select each receiver's native/container maintenance route. Eko now runs natively
-on MEDUSA; its Source Incus copy remains disabled recovery history. See
-CURRENT-STATE.md and Shared Resources docs/services/medusa.md for current hosting,
-retirement conditions and adoption gaps. Never substitute the stopped origin when
-its native receiving path is unavailable.
+select each receiver's current maintenance route: CompAII runs natively on ITACA,
+Eko natively on MEDUSA, and Oliva in the active ITACA KVM `vm-dm-oliva` (local
+Incus name `dm-oliva`). Nicolas explicitly requested deletion of all seven old
+Source Incus containers, their old home volumes and local historical copies on
+2026-10-31. They are not recovery or update targets; do not recreate them.
+Continuity lives in the active bodies' history, memory, identity, working files
+and dependencies. See CURRENT-STATE.md and Shared Resources' maintained host and
+VM records for actual placement and remaining dependency closure.
+
+Keep the old physical daimonmatrix host powered on until Nicolas explicitly
+orders shutdown. Do not arm a shutdown timer, run a host-off drill or clean up
+that host. Only stop selected services whose operation is confirmed on ITACA;
+provider cancellation is not authorized.
 
 ## Identity and resource authority
 
