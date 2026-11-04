@@ -31,9 +31,11 @@ shared definition with that being's own SOUL and actual body instructions.
 The inspected implementation already has immutable species releases, attributed
 source references, birth and existing-being continuity. Its species origin has
 one parent branch release and its birth offer has one parent being. A signed
-multi-parent recombination ceremony is not currently implemented. The species
-contract also retains an obsolete `/we -> distinct /me -> one active body`
-sentence; reconcile it with the maintained ontology before using that contract.
+multi-parent recombination ceremony is not currently implemented. `/we` means
+the embodiments of the same being; shared species or Source ancestry never
+merges distinct beings. The species contract now uses this maintained ontology.
+For subject-local species preparation on existing beings, see
+[DM-061 existing-being receiving preparation](../dm061-species-updates.md#existing-beings-and-receiving-preparation).
 
 Birth activation proves a zero **Matrix autobiographical ledger/projection**
 cutoff. That is not permission to erase a legacy HMK corpus and is not evidence
