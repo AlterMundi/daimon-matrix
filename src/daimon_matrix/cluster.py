@@ -210,6 +210,50 @@ def validate_surface_snapshot(
     return copy.deepcopy(dict(row))
 
 
+def validate_realm_snapshot(
+    value: Any,
+    *,
+    body_ref: str,
+    embodiment_id: str,
+    incarnation_id: str,
+    evaluated_at_ms: int,
+) -> dict[str, Any]:
+    """Accept current own-OS evidence; metrics never grant resources or controls."""
+    code = "realm_snapshot_rejected"
+    row = _closed(value, {"schema", "surface", "resources", "resource_state"}, code)
+    if row["schema"] != "dm.cluster-realm-snapshot/v1":
+        raise ClusterEvidenceError(code)
+    surface = validate_surface_snapshot(
+        row["surface"],
+        body_ref=body_ref,
+        embodiment_id=embodiment_id,
+        incarnation_id=incarnation_id,
+        evaluated_at_ms=evaluated_at_ms,
+    )
+    metrics = _closed(
+        row["resources"],
+        {"uptime_ms", "memory_total_bytes", "memory_available_bytes"},
+        code,
+    )
+    for value in metrics.values():
+        if value is not None:
+            _uint(value, code)
+    total, available = metrics["memory_total_bytes"], metrics["memory_available_bytes"]
+    if (total is None) != (available is None):
+        raise ClusterEvidenceError(code)
+    if total is not None and (total == 0 or available > total):
+        raise ClusterEvidenceError(code)
+    state = "partial" if any(v is None for v in metrics.values()) else "observed"
+    if row["resource_state"] != state:
+        raise ClusterEvidenceError(code)
+    return {
+        "schema": row["schema"],
+        "surface": surface,
+        "resources": copy.deepcopy(dict(metrics)),
+        "resource_state": state,
+    }
+
+
 def validate_body_snapshot(
     value: Any,
     *,

@@ -26,6 +26,7 @@ from .cluster import (
     BODY_SNAPSHOT_SCHEMA,
     ClusterEvidenceError,
     validate_body_snapshot,
+    validate_realm_snapshot,
     validate_surface_snapshot,
 )
 from .identity import VerificationError, verify_embodiment_credential
@@ -347,6 +348,46 @@ class ScopeResolver:
             "origin": origin,
             "evaluated_at_ms": now,
             "surface": surface,
+        }
+
+    def realm(self) -> dict[str, Any]:
+        """Observe this body's current native OS realm through its admitted parent."""
+        reader = getattr(self.body_reader, "realm", None)
+        if not callable(reader):
+            raise ScopeError("realm_snapshot_unavailable", retryable=True)
+        now = _uint(self.clock(), "invalid_scope_time")
+        origin = self.local_origin
+        try:
+            value = reader(
+                origin["body_ref"],
+                origin["embodiment_id"],
+                origin["incarnation_id"],
+                now,
+            )
+        except (OSError, ValueError) as exception:
+            raise ScopeError(
+                "realm_snapshot_unavailable", retryable=True
+            ) from exception
+        try:
+            realm = validate_realm_snapshot(
+                value,
+                body_ref=origin["body_ref"],
+                embodiment_id=origin["embodiment_id"],
+                incarnation_id=origin["incarnation_id"],
+                evaluated_at_ms=now,
+            )
+        except ClusterEvidenceError as exception:
+            raise ScopeError("realm_snapshot_rejected") from exception
+        self.authority.validate_origin(origin, require_active=True)
+        return {
+            "schema": "dm.scope.realm-status/v1",
+            "being_ref": self.authority.manifest.being_ref,
+            "manifest_hash": self.authority.manifest.digest,
+            "origin": origin,
+            "evaluated_at_ms": now,
+            "realm": realm,
+            "resource_meaning": "kernel-os-observation-not-process-allowance-or-grant",
+            "controls": "not-established",
         }
 
     def discovery(self, *, scope: str, request_id: str) -> dict[str, Any]:

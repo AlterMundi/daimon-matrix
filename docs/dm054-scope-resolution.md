@@ -50,6 +50,33 @@ membership, persistent being identity or an actuation grant. This supplies
 source availability, selected receiving code and actual all-three observations
 separate in the current #437 checkpoint.
 
+### Native realm status view
+
+`scope.me` with `{"view":"realm"}` returns `dm.scope.realm-status/v1` through
+`client.scope_me(view="realm")`, CLI `daimon scope me --view realm` and the
+existing MCP `scope_me` tool. It is an
+initial own-body `/realm.status` projection in the explicit `native-linux-os`
+domain. The admitted parent's existing bounded observation channel must expose
+`realm`; missing/old support returns retryable unavailable, never a host-label
+or cached-surface substitute. The default view and existing grants are unchanged.
+
+Matrix validates the exact current own-body surface, origin and evaluation
+coordinate, plus the closed `dm.cluster-realm-snapshot/v1`. Kernel observations
+are integer `uptime_ms`, `memory_total_bytes` and `memory_available_bytes`;
+unavailable groups remain null and `resource_state` becomes `partial`. Unknown
+fields, booleans, negative/oversized values, inconsistent memory pairs and a
+false complete claim are rejected. No private history, process arguments or raw
+machine/boot identity is exposed. The native parent reads at most128bytes of
+uptime and64KiB of memory metadata without child processes or model/network work.
+
+These are kernel OS observations, **not** a process/cgroup allowance, a future
+capacity reservation, a physical hypervisor census or an operation grant. Oliva's
+KVM observes its own guest OS, separately from native ITACA. The current surface
+changes on reboot and requires a fresh read. This does not create `/here` or
+Tribe membership. `controls: not-established` explicitly retains the unfinished
+realm-modification-control domain; status alone is not full foundation acceptance.
+No service, provider, goal, credential, timer or autonomous attention is added.
+
 ### Cluster discovery view
 
 The existing read-only `scope.resolve` capability accepts an explicit

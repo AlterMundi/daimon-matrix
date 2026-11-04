@@ -1832,6 +1832,8 @@ class HostedWeave:
         if method == "scope.me":
             if params == {"view": "surface"}:
                 return scopes.surface()
+            if params == {"view": "realm"}:
+                return scopes.realm()
             _closed(params, set())
             return scopes.me()
         if method == "scope.we":
