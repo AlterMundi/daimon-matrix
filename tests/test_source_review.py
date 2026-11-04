@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import sys
 import tempfile
@@ -15,6 +16,7 @@ SPEC = importlib.util.spec_from_file_location(
 review = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(review)
 SELECTOR = {"source_id": "dm:source:v0:" + "a" * 43, "source_core_hash": "a" * 43}
+ANCESTRY = {"source_id": "dm:source:v0:" + "b" * 43, "source_core_hash": "b" * 43}
 
 
 def server(name):
@@ -134,6 +136,192 @@ class SourceReviewTests(unittest.TestCase):
             "sequence": 0,
         }
         self.assertIn("conflicted", [x["state"] for x in review.compare(values)])
+
+    def ancestry_settings(self):
+        value = self.settings()
+        value.update(
+            schema="dm.source-review-config/v2",
+            ancestry={"observer_id": "root", "selector": ANCESTRY},
+        )
+        value["targets"] = [
+            {"id": name, "being_ref": name, "server": server(name), "command": [name]}
+            for name in ("child", "root", "outsider")
+        ]
+        return value
+
+    def ancestry_observation(self, members=("child",), affiliation=("outsider",)):
+        value = observed("root")
+        claims = [
+            {
+                "claim_event_id": "claim-" + name,
+                "claimant_me_id": name,
+                "relations": ["descended-from"],
+                "intrinsic_state": "valid-asserted",
+                "disposition": "admitted",
+            }
+            for name in members
+        ] + [
+            {
+                "claim_event_id": "claim-" + name,
+                "claimant_me_id": name,
+                "relations": ["participates-in"],
+                "intrinsic_state": "valid-asserted",
+                "disposition": "admitted",
+            }
+            for name in affiliation
+        ]
+        value["sources"].append(
+            {
+                "status": {
+                    "schema": "dm.source-status/v0",
+                    "selector": ANCESTRY,
+                    "observer_me_id": "root",
+                    "claims": claims,
+                    "eligible_claimants": [
+                        {
+                            k: x[k]
+                            for k in ("claim_event_id", "claimant_me_id", "relations")
+                        }
+                        for x in claims
+                    ],
+                    "publications": [],
+                },
+                "projections": {},
+            }
+        )
+        value["native_calls"] = 2
+        return value
+
+    def test_ancestry_selects_admitted_descendants_before_probing_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = []
+
+            def call(command, params):
+                calls.append((command[0], params["selectors"]))
+                if command == ["root"]:
+                    return self.ancestry_observation(members=("child", "unconfigured"))
+                self.assertEqual(command, ["child"])
+                return observed(
+                    "child", [{**publication(), "publisher_me_id": "child"}]
+                )
+
+            result = review.review(
+                self.ancestry_settings(), root / "s", root / "r", call=call, now_ms=1
+            )
+            self.assertEqual(
+                calls, [("root", [SELECTOR, ANCESTRY]), ("child", [SELECTOR])]
+            )
+            self.assertEqual(result["schema"], "dm.source-review/v2")
+            self.assertEqual(
+                result["ancestry"]["unconfigured_claimants"],
+                [{"being_ref": "unconfigured", "claim_event_id": "claim-unconfigured"}],
+            )
+            self.assertEqual(
+                result["ancestry"]["excluded_targets"],
+                [{"target": "outsider", "reason": "not-locally-admitted-descendant"}],
+            )
+            self.assertEqual(
+                [(x["publisher"], x["receiver"], x["state"]) for x in result["offers"]],
+                [("child", "root", "offered")],
+            )
+            self.assertEqual(result["unavailable"], [])
+            self.assertEqual(result["model_calls"], 0)
+            self.assertFalse(result["automatic_adoption"])
+
+    def test_ancestry_evidence_failure_never_falls_back_to_all_targets(self):
+        for failure in ("offline", "wrong-selector", "wrong-observer", "not-admitted"):
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                calls = []
+
+                def call(command, _params, *, calls=calls, failure=failure):
+                    calls.append(command[0])
+                    if failure == "offline":
+                        raise TimeoutError
+                    value = self.ancestry_observation()
+                    if failure == "wrong-selector":
+                        value["sources"][1]["status"]["selector"] = SELECTOR
+                    elif failure == "wrong-observer":
+                        value["sources"][1]["status"]["observer_me_id"] = "other"
+                    else:
+                        value["sources"][1]["status"]["claims"][0]["disposition"] = (
+                            "quarantined"
+                        )
+                    return value
+
+                result = review.review(
+                    self.ancestry_settings(),
+                    root / "s",
+                    root / "r",
+                    call=call,
+                    now_ms=1,
+                )
+                self.assertEqual(calls, ["root"])
+                self.assertEqual(result["ancestry"]["state"], "unavailable")
+                self.assertTrue(
+                    all(
+                        x["reason"] == "ancestry-unavailable"
+                        for x in result["ancestry"]["excluded_targets"]
+                    )
+                )
+                self.assertEqual(result["unavailable"], ["root"])
+                self.assertEqual(
+                    result["native_calls"], 2 if failure == "not-admitted" else 0
+                )
+                self.assertEqual(review.private_read(root / "s")["runs"], 1)
+
+    def test_ancestry_changes_cursor_without_offers_and_controls_keep_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = self.ancestry_settings()
+            members = ["child"]
+            calls = []
+
+            def call(command, _params):
+                calls.append(command[0])
+                return (
+                    self.ancestry_observation(members=members)
+                    if command == ["root"]
+                    else observed("child")
+                )
+
+            def run(now, **kw):
+                return review.review(
+                    settings, root / "s", root / "r", call=call, now_ms=now, **kw
+                )
+
+            first = run(1)
+            self.assertEqual(first["offers"], [])
+            self.assertEqual(run(60001, control="pause")["native_calls"], 0)
+            self.assertEqual(run(60001)["state"], "paused")
+            self.assertEqual(run(60001, control="resume")["runs"], 1)
+            members.clear()
+            second = run(60001)
+            self.assertTrue(second["changed"])
+            self.assertNotEqual(first["cursor"], second["cursor"])
+            self.assertEqual(calls, ["root", "child", "root"])
+            self.assertEqual(run(120001)["state"], "finished")
+            settings["ancestry"]["selector"] = SELECTOR
+            with self.assertRaisesRegex(ValueError, "config_changed"):
+                run(120001)
+
+    def test_ancestry_configuration_keeps_existing_selector_and_target_limits(self):
+        settings = self.ancestry_settings()
+        review.config(settings)
+        for mutate in (
+            lambda x: x["ancestry"].update(observer_id="absent"),
+            lambda x: x.update(schema="dm.source-review-config/v1"),
+            lambda x: x.update(selectors=[SELECTOR] * 8),
+            lambda x: x["ancestry"]["selector"].update(source_id="invalid"),
+        ):
+            value = copy.deepcopy(settings)
+            mutate(value)
+            with self.assertRaises(ValueError):
+                review.config(value)
 
     def test_restart_pause_stop_and_limit_never_replenish_attempts(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -84,7 +84,20 @@ def write(path, value):
         tmp.unlink(missing_ok=True)
 
 
+def source_selector(value):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"source_core_hash", "source_id"}
+        or not isinstance(value["source_core_hash"], str)
+        or value["source_id"] != "dm:source:v0:" + value["source_core_hash"]
+        or len(value["source_core_hash"]) != 43
+    ):
+        raise ValueError("invalid_source_selector")
+    return value
+
+
 def config(value):
+    ancestry = value.get("schema") == "dm.source-review-config/v2"
     if set(value) != {
         "schema",
         "human_task",
@@ -93,9 +106,14 @@ def config(value):
         "interval_seconds",
         "selectors",
         "targets",
+        *({"ancestry"} if ancestry else set()),
     }:
         raise ValueError("invalid_review_config")
-    if value["schema"] != "dm.source-review-config/v1" or not value["human_task"]:
+    if (
+        value["schema"]
+        not in {"dm.source-review-config/v1", "dm.source-review-config/v2"}
+        or not value["human_task"]
+    ):
         raise ValueError("invalid_review_config")
     for key, low, high in [
         ("max_runs", 1, 128),
@@ -107,13 +125,7 @@ def config(value):
     if not 1 <= len(value["selectors"]) <= 8 or not 1 <= len(value["targets"]) <= 8:
         raise ValueError("invalid_review_limit")
     for selected in value["selectors"]:
-        if (
-            set(selected) != {"source_core_hash", "source_id"}
-            or not isinstance(selected["source_id"], str)
-            or selected["source_id"] != "dm:source:v0:" + selected["source_core_hash"]
-            or len(selected["source_core_hash"]) != 43
-        ):
-            raise ValueError("invalid_source_selector")
+        source_selector(selected)
     labels = []
     for target in value["targets"]:
         if set(target) != {"id", "being_ref", "server", "command"}:
@@ -135,6 +147,20 @@ def config(value):
             raise ValueError("invalid_review_target")
     if len(labels) != len(set(labels)):
         raise ValueError("duplicate_review_target")
+    if ancestry:
+        selected = value["ancestry"]
+        if (
+            not isinstance(selected, dict)
+            or set(selected) != {"observer_id", "selector"}
+            or selected["observer_id"] not in labels
+        ):
+            raise ValueError("invalid_review_ancestry")
+        source_selector(selected["selector"])
+        if (
+            selected["selector"] not in value["selectors"]
+            and len(value["selectors"]) == 8
+        ):
+            raise ValueError("invalid_review_limit")
     return value
 
 
@@ -355,6 +381,82 @@ def local_candidates(observations):
     )
 
 
+def read_target(target, selected, call):
+    result = call(target["command"], {"selectors": selected})
+    if (
+        set(result) != {"server", "sources", "native_calls"}
+        or result["server"] != target["server"]
+        or len(result["sources"]) != len(selected)
+        or type(result["native_calls"]) is not int
+        or not 1 <= result["native_calls"] <= 32
+        or any(
+            x["status"]["observer_me_id"] != target["being_ref"]
+            for x in result["sources"]
+        )
+        or sorted(encode(x["status"]["selector"]) for x in result["sources"])
+        != sorted(encode(x) for x in selected)
+    ):
+        raise ValueError("review_binding_changed")
+    return result
+
+
+def ancestry_selection(settings, result):
+    """Select configured routes from one observer's admitted ancestry claims."""
+    anchor = settings["ancestry"]
+    sources = [
+        x["status"]
+        for x in result["sources"]
+        if x["status"]["selector"] == anchor["selector"]
+    ]
+    if len(sources) != 1 or sources[0].get("schema") != "dm.source-status/v0":
+        raise ValueError("review_ancestry_unavailable")
+    status = sources[0]
+    rows, claims = status["eligible_claimants"], status["claims"]
+    if (
+        not isinstance(rows, list)
+        or not isinstance(claims, list)
+        or max(len(rows), len(claims)) > MAX_ROWS
+    ):
+        raise ValueError("review_capacity")
+    by_event = {x["claim_event_id"]: x for x in claims}
+    if len(by_event) != len(claims):
+        raise ValueError("review_ancestry_evidence_mismatch")
+    members = []
+    for row in rows:
+        claim = by_event.get(row["claim_event_id"])
+        if (
+            claim is None
+            or claim["intrinsic_state"] != "valid-asserted"
+            or claim["disposition"] != "admitted"
+            or any(claim[key] != row[key] for key in ("claimant_me_id", "relations"))
+        ):
+            raise ValueError("review_ancestry_evidence_mismatch")
+        if "descended-from" in row["relations"]:
+            members.append(
+                {
+                    "being_ref": row["claimant_me_id"],
+                    "claim_event_id": row["claim_event_id"],
+                }
+            )
+    members.sort(key=lambda x: (x["being_ref"], x["claim_event_id"]))
+    configured = {x["being_ref"] for x in settings["targets"]}
+    eligible = {x["being_ref"] for x in members}
+    return {
+        "state": "available",
+        "observer_id": anchor["observer_id"],
+        "selector": anchor["selector"],
+        "members": members,
+        "unconfigured_claimants": [
+            x for x in members if x["being_ref"] not in configured
+        ],
+        "excluded_targets": [
+            {"target": x["id"], "reason": "not-locally-admitted-descendant"}
+            for x in settings["targets"]
+            if x["id"] != anchor["observer_id"] and x["being_ref"] not in eligible
+        ],
+    }
+
+
 def calendar_slots(settings, now_ms):
     """Finite absolute dates, no recurring timer or permission to install one."""
     settings = config(settings)
@@ -444,22 +546,47 @@ def review(
         )
         write(state_path, state)
         observed = {}
-        for target in settings["targets"]:
+        ancestry = None
+        targets = settings["targets"]
+        if "ancestry" in settings:
+            anchor = settings["ancestry"]
+            observer = next(x for x in targets if x["id"] == anchor["observer_id"])
+            selected = list(settings["selectors"])
+            if anchor["selector"] not in selected:
+                selected.append(anchor["selector"])
+            result = None
             try:
-                result = call(target["command"], {"selectors": settings["selectors"]})
-                if (
-                    set(result) != {"server", "sources", "native_calls"}
-                    or result["server"] != target["server"]
-                    or len(result["sources"]) != len(settings["selectors"])
-                    or type(result["native_calls"]) is not int
-                    or not 1 <= result["native_calls"] <= 32
-                    or any(
-                        x["status"]["observer_me_id"] != target["being_ref"]
-                        for x in result["sources"]
-                    )
-                ):
-                    raise ValueError("review_binding_changed")
-                observed[target["id"]] = result
+                result = read_target(observer, selected, call)
+                ancestry = ancestry_selection(settings, result)
+                observed[observer["id"]] = result
+                excluded = {x["target"] for x in ancestry["excluded_targets"]}
+                targets = [
+                    x for x in targets if x != observer and x["id"] not in excluded
+                ]
+            except Exception as error:
+                observed[observer["id"]] = {
+                    "state": "unavailable",
+                    "error_class": type(error).__name__,
+                    "native_calls": 0 if result is None else result["native_calls"],
+                }
+                ancestry = {
+                    "state": "unavailable",
+                    "observer_id": observer["id"],
+                    "selector": anchor["selector"],
+                    "members": [],
+                    "unconfigured_claimants": [],
+                    "excluded_targets": [
+                        {"target": x["id"], "reason": "ancestry-unavailable"}
+                        for x in targets
+                        if x != observer
+                    ],
+                }
+                targets = []
+        for target in targets:
+            try:
+                observed[target["id"]] = read_target(
+                    target, settings["selectors"], call
+                )
             except Exception as error:
                 observed[target["id"]] = {
                     "state": "unavailable",
@@ -468,15 +595,14 @@ def review(
         offers = compare(observed)
         candidates = local_candidates(observed)
         unavailable = sorted(k for k, x in observed.items() if "sources" not in x)
-        cursor = hashlib.sha256(
-            encode(
-                {
-                    "offers": offers,
-                    "local_candidates": candidates,
-                    "unavailable": unavailable,
-                }
-            )
-        ).hexdigest()
+        cursor_core = {
+            "offers": offers,
+            "local_candidates": candidates,
+            "unavailable": unavailable,
+        }
+        if ancestry is not None:
+            cursor_core["ancestry"] = ancestry
+        cursor = hashlib.sha256(encode(cursor_core)).hexdigest()
         report = {
             "schema": "dm.source-review/v1",
             "observed_at_ms": now,
@@ -497,6 +623,16 @@ def review(
                 "Selected Sources only; project participation is not shared ancestry."
             ),
         }
+        if ancestry is not None:
+            report.update(
+                schema="dm.source-review/v2",
+                ancestry=ancestry,
+                scope=(
+                    "Locally admitted descendant claims select configured routes; "
+                    "the observer is reviewed locally. Ancestry claims grant no "
+                    "content access or automatic adoption."
+                ),
+            )
         write(report_path, report)
         state["cursor"] = cursor
         write(state_path, state)
