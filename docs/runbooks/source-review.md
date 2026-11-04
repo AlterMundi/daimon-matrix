@@ -15,6 +15,46 @@ stores remain authoritative. In particular, a shared **project** Source is not
 the foundation's shared ancestry `/source.pull` or `/species.pull.name`.
 Those selections must retain their actual lineage meaning.
 
+## Review offers from admitted descendants
+
+The optional `dm.source-review-config/v2` configuration reuses the same operator,
+probes, Sources stores and offer comparison. It adds one required field:
+
+```json
+"ancestry": {
+  "observer_id": "CURRENT_CONFIGURED_OBSERVER_ID",
+  "selector": {"source_id": "EXACT_SOURCE_ID", "source_core_hash": "EXACT_HASH"}
+}
+```
+
+Use the actual founder/parent Source selector, never a shared project selector
+as an ancestry assertion. That observer must already be one of the configured
+targets. Its existing native probe runs first, reading the ancestry selector
+alongside the selected learning Sources, within the same eight-selector and
+32-native-call bounds. Other configured routes are probed only when that exact
+being appears in its locally admitted, valid `descended-from` claims. The
+observer also retains its explicit local review. No routes are discovered or
+created from names, Source IDs, labels or claims.
+Only `selectors` participate in learning-offer comparisons. Publications under
+the ancestry selector are ignored unless it is also explicitly selected there.
+
+The V2 report retains exact claimant/event references, excluded configured
+targets and eligible claimants without configured routes. An ancestry failure
+prevents all peer probes; it never falls back to the static cohort. A target
+excluded by ancestry is not reported as an observed remote outage. Ancestry
+selection participates in the retained change cursor, even without publication
+changes. Admission is that observer's local assessment, not global ancestry
+truth, a content-read grant, species release, peer model use or adoption.
+
+V1 remains unchanged. Both versions preserve the same expiry, run accounting,
+pause/stop, process/output limits and full-configuration digest. Changing an
+active contract's schema or ancestry selection is refused as configuration
+drift. For an authorized successor, conserve the original consumed/remaining
+runs and finite calendar/expiry using the existing operator transition; never
+reset counters or extend a stopped/expired contract. A foreground qualification
+does not install or select a scheduler. Do not replace live state to make a new
+configuration appear accepted.
+
 ## Receiving binding
 
 The operator creates one owner-only configuration outside the repository, using
