@@ -18,7 +18,7 @@ pure network RTT, physical colocation or a universal metric. Always supply the
 domain and threshold explicitly; never substitute `/all` or `/here` for `/near`.
 
 ```text
-python3 OPERATOR/scope_discovery.py --config PRIVATE/config.json \
+SDK_PYTHON OPERATOR/scope_discovery.py --config PRIVATE/config.json \
   --domain authenticated-control-route-ms --within-ms 750 \
   --report PRIVATE/latest.json
 ```
@@ -49,12 +49,18 @@ client config/key and daemon socket; it never opens the live ledger/custody.
 
 Stdin accepts only a view (`inventory` or `body`) and a UUID. The fixed inventory
 read is `scope.resolve(view=discovery, scope=/all)`; the body read is
-`scope.me(view=surface)`. Both require the receiver's actual existing grants.
+`scope.me(view=surface)`. Both require the receiver's actual existing grants. Use the already selected
+qualified SDK Python for the driver and probe; its existing surface validator
+checks the exact body observation, including isolated `-I` launches.
 No generic method, socket, file, executable, provider or model input is accepted.
 
 The observer's authenticated current admission inventory selects exact being,
 body, embodiment and incarnation before peer probes. A configured nonmember is
-excluded without probing it. Admitted bodies lacking configured routes remain
+excluded without probing it only for a complete inventory; omission from a
+partial/truncated inventory remains unknown without probing. Authority-issued
+lease lifetimes are computed against the authority snapshot clock and spent
+using conservative local monotonic elapsed time, never cross-host wall-clock
+comparison. Admitted bodies lacking configured routes remain
 explicitly unconfigured/partial. Wrong source/observer/server or missing inventory
 prevents peer probing; it never falls back to all configured targets. Reported
 native parent admissions are cooperative evidence, not physical attestation.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -14,10 +15,16 @@ from pathlib import Path
 
 from daimon_matrix.cluster import validate_surface_snapshot
 
-if __package__:
-    from .source_review import MAX_BYTES, bounded_call, encode, private_read, write
-else:
-    from source_review import MAX_BYTES, bounded_call, encode, private_read, write
+# Operators can run with isolated Python: load only the adjacent selected helper.
+_spec = importlib.util.spec_from_file_location(
+    "scope_operator_limits", Path(__file__).with_name("source_review.py")
+)
+assert _spec is not None and _spec.loader is not None
+_limits = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_limits)
+MAX_BYTES = _limits.MAX_BYTES
+bounded_call, encode = _limits.bounded_call, _limits.encode
+private_read, write = _limits.private_read, _limits.write
 
 DOMAIN = "authenticated-control-route-ms"
 SERVER = {"body_ref", "embodiment_id", "incarnation_id", "principal_id"}
@@ -161,6 +168,8 @@ def discover(
             or type(inventory.get("partial")) is not bool
             or not isinstance(inventory.get("members"), list)
             or len(inventory["members"]) > 256
+            or type(inventory.get("authority_observed_at_ms")) is not int
+            or inventory["authority_observed_at_ms"] < 0
         ):
             raise ValueError("scope_inventory_rejected")
         admitted = {}
@@ -169,7 +178,7 @@ def discover(
                 not isinstance(row, dict)
                 or not all(text(row.get(field)) for field in ORIGIN | {"being_ref"})
                 or type(row.get("lease_expires_at_ms")) is not int
-                or row["lease_expires_at_ms"] <= now
+                or row["lease_expires_at_ms"] <= inventory["authority_observed_at_ms"]
             ):
                 raise ValueError("scope_inventory_rejected")
             marker = key(row["being_ref"], row)
@@ -180,6 +189,7 @@ def discover(
             raise ValueError("scope_inventory_rejected")
         report["confirmed_native_calls"] = 1
         report["partial"] = inventory["partial"]
+        report["authority_observed_at_ms"] = inventory["authority_observed_at_ms"]
     except (OSError, RuntimeError, ValueError, TimeoutError):
         report["partial"] = True
         report["unconfirmed_probes"] = 1
@@ -197,9 +207,17 @@ def discover(
     for target in settings["targets"]:
         marker = key(target["being_ref"], target["server"])
         if marker not in admitted:
-            report["excluded"].append(
-                {"id": target["id"], "reason": "not-in-current-admission"}
-            )
+            if inventory["partial"]:
+                report["unavailable"].append(
+                    {
+                        "id": target["id"],
+                        "reason": "membership-unknown-partial-inventory",
+                    }
+                )
+            else:
+                report["excluded"].append(
+                    {"id": target["id"], "reason": "not-in-current-admission"}
+                )
         else:
             selected.append(target)
 
@@ -221,7 +239,10 @@ def discover(
             expires = admitted[key(target["being_ref"], target["server"])][
                 "lease_expires_at_ms"
             ]
-            if now + math.ceil((clock() - started) / 1_000_000) >= expires:
+            # Lease timestamps belong to the authority's clock. Subtract that
+            # snapshot time, then conservatively spend our monotonic elapsed.
+            lifetime_ms = expires - inventory["authority_observed_at_ms"]
+            if math.ceil((clock() - started) / 1_000_000) >= lifetime_ms:
                 raise ValueError("scope_admission_expired_during_probe")
             if (
                 result.get("schema") != "dm.scope.me-surface/v1"

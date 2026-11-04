@@ -44,6 +44,7 @@ def response(name, view, request_id):
             scope="/all",
             request_id=request_id,
             partial=False,
+            authority_observed_at_ms=1,
             members=[member("root"), member("child")],
         )
     else:
@@ -172,6 +173,37 @@ class NearDiscoveryTests(unittest.TestCase):
             result["excluded"],
         )
         self.assertFalse(any(name == "not-admitted" for name, _ in calls))
+
+    def test_partial_omission_is_unknown_and_never_probed(self):
+        def truncated(name, view, value):
+            if view == "inventory":
+                value["value"]["partial"] = True
+                value["value"]["members"] = [member("root")]
+            return value
+
+        result, calls = self.run_discovery(truncated)
+        self.assertTrue(result["partial"])
+        self.assertEqual(
+            result["unavailable"],
+            [{"id": "child", "reason": "membership-unknown-partial-inventory"}],
+        )
+        self.assertFalse(any(name == "child" for name, _ in calls))
+        self.assertEqual(result["excluded"], [])
+
+    def test_authority_clock_offsets_do_not_change_proximity(self):
+        for offset in (-1, 1000000000000):
+
+            def shifted(name, view, value, offset=offset):
+                if view == "inventory":
+                    value["value"]["authority_observed_at_ms"] += offset
+                    for row in value["value"]["members"]:
+                        row["lease_expires_at_ms"] += offset
+                return value
+
+            result, _ = self.run_discovery(shifted)
+            self.assertFalse(result["partial"])
+            self.assertEqual([row["id"] for row in result["members"]], ["root"])
+            self.assertEqual(result["excluded"][0]["elapsed_ms"], 900)
 
     def test_body_mismatch_never_becomes_zero_distance(self):
         def changed(name, view, value):
