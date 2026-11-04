@@ -536,8 +536,6 @@ class CIScopeTests(unittest.TestCase):
                 )
                 for other in (
                     "src/daimon_matrix/service.py",
-                    "src/daimon_matrix/human_tribu.py",
-                    "src/daimon_matrix/human_tribu_process.py",
                     "specs/tribe-conversation.md",
                     "pyproject.toml",
                     "requirements-dev.txt",
@@ -546,6 +544,16 @@ class CIScopeTests(unittest.TestCase):
                     "docs/unknown.md",
                 ):
                     self.assertEqual(profile([*changed, other]), "full")
+                for other in (
+                    "src/daimon_matrix/human_tribu.py",
+                    "src/daimon_matrix/human_tribu_process.py",
+                ):
+                    expected = (
+                        "human-tribu"
+                        if entry.endswith("tribu-human-mentions.md")
+                        else "full"
+                    )
+                    self.assertEqual(profile([*changed, other]), expected)
 
     def test_current_context_docs_do_not_repeat_runtime_qualification(self):
         from tools.ci_scope import CONTEXT_DOC_FILES
@@ -621,7 +629,9 @@ class CIScopeTests(unittest.TestCase):
             "unknown.py",
         ):
             self.assertEqual(profile([*changes, other]), "full")
-        self.assertEqual(profile(["docs/runbooks/tribu-human-mentions.md"]), "full")
+        self.assertEqual(
+            profile(["docs/runbooks/tribu-human-mentions.md"]), "context-docs"
+        )
 
     def test_mirror_scope_keeps_portability_skip_and_native_default(
         self,
