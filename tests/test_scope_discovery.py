@@ -77,6 +77,147 @@ class Clock:
 
 
 class EveryoneDiscoveryTests(unittest.TestCase):
+    def contact(self, name):
+        return {
+            "schema": "dm.human-endpoint/v1",
+            "scope": "/human",
+            "source": "shared-resource-access-pairing",
+            "home_ref": "home:" + name,
+            "owner_being_ref": name,
+            "human": {
+                "ref": "provider-human:shared",
+                "kind": "human",
+                "name": "Pair",
+                "revision": "r1",
+            },
+            "applications": [
+                {
+                    "capability": "interaction",
+                    "url": f"https://{name}.example/interaction/",
+                    "state": "configured",
+                }
+            ],
+            "route_state": "configured",
+            "human_presence": "not-observed",
+            "delivery": "not-requested",
+            "native_membership": "not-implied",
+        }
+
+    def contact_discovery(self, transform=lambda name, value: value):
+        calls = []
+
+        def call(command, request):
+            name = command[0]
+            calls.append((name, request["view"]))
+            self.assertEqual(request["view"], "contacts")
+            value = response(name, "body", request["request_id"])
+            value.update(
+                schema="dm.scope-contact-probe/v1",
+                human_endpoint=self.contact(name),
+                home_read_attempted=True,
+            )
+            return transform(name, value)
+
+        return near.everyone(
+            settings(), include_humans=True, call=call, now_ms=1, clock=lambda: 0
+        ), calls
+
+    def test_explicit_contacts_preserve_provider_kind_and_each_pair_association(self):
+        result, calls = self.contact_discovery()
+        self.assertEqual(result["schema"], "dm.scope.everyone/v2")
+        self.assertEqual(len(result["members"]), 2)
+        self.assertEqual(len(result["human_contacts"]), 2)
+        self.assertEqual(result["confirmed_home_reads"], 2)
+        self.assertEqual(result["confirmed_native_calls"], 2)
+        self.assertEqual(result["unconfirmed_home_reads"], 0)
+        self.assertEqual(len(calls), 2)
+        # The same human may have distinct pairs/routes; never merge their beings.
+        self.assertEqual(
+            {r["endpoint"]["human"]["ref"] for r in result["human_contacts"]},
+            {"provider-human:shared"},
+        )
+        self.assertEqual(
+            {r["via_being_ref"] for r in result["human_contacts"]}, {"root", "child"}
+        )
+        self.assertTrue(
+            all(
+                r["reachability"] == "configured-route-not-probed"
+                for r in result["human_contacts"]
+            )
+        )
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["model_calls"], 0)
+
+    def test_bad_or_unavailable_home_does_not_erase_native_body_or_disclose_contact(
+        self,
+    ):
+        for failure in (
+            "foreign-owner",
+            "native-identity",
+            "credential-url",
+            "claimed-delivery",
+            "missing",
+            "capacity",
+        ):
+
+            def changed(name, value, failure=failure):
+                if name == "child":
+                    contact = value["human_endpoint"]
+                    if failure == "foreign-owner":
+                        contact["owner_being_ref"] = "foreign"
+                    elif failure == "native-identity":
+                        contact["human"]["kind"] = "being"
+                    elif failure == "credential-url":
+                        contact["applications"][0]["url"] = (
+                            "https://user:secret@child.example/interaction/"
+                        )
+                    elif failure == "claimed-delivery":
+                        contact["delivery"] = "delivered"
+                    elif failure == "missing":
+                        value["human_endpoint"] = None
+                    else:
+                        contact["applications"] *= 33
+                return value
+
+            with self.subTest(failure=failure):
+                result, _ = self.contact_discovery(changed)
+                self.assertEqual(len(result["members"]), 2)
+                self.assertEqual(len(result["human_contacts"]), 1)
+                self.assertEqual(result["confirmed_home_reads"], 1)
+                self.assertEqual(result["unconfirmed_home_reads"], 1)
+                self.assertEqual(result["human_unavailable"][0]["id"], "child")
+                self.assertNotIn("secret", json.dumps(result))
+
+    def test_missing_client_and_unconfigured_routes_remain_distinct(self):
+        def missing(name, value):
+            if name == "child":
+                value.update(human_endpoint=None, home_read_attempted=False)
+            else:
+                value["human_endpoint"].update(
+                    applications=[], route_state="unconfigured"
+                )
+            return value
+
+        result, _ = self.contact_discovery(missing)
+        self.assertEqual(len(result["members"]), 2)
+        self.assertEqual(
+            result["human_contacts"][0]["reachability"], "route-unconfigured"
+        )
+        self.assertEqual(result["unconfirmed_home_reads"], 0)
+        self.assertEqual(len(result["human_unavailable"]), 1)
+
+    def test_implicit_truthy_selection_is_rejected_before_any_read(self):
+        for selection in (None, 1, "yes"):
+            with self.assertRaisesRegex(
+                ValueError, "explicit_human_selection_required"
+            ):
+                near.everyone(
+                    settings(),
+                    include_humans=selection,
+                    call=lambda *_: self.fail("Unexpected read"),
+                    now_ms=1,
+                )
+
     def test_reachable_nonmember_is_observed_without_inventory_or_model(self):
         calls = []
         config = settings()
