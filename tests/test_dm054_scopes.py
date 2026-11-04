@@ -873,6 +873,7 @@ class NativeSurfaceTests(ScopeFixture):
             self.now,
         )
         cases = []
+        bad: Any
         for field, bad in (
             ("body_ref", "foreign"),
             ("observed_at_ms", self.now - 1),
