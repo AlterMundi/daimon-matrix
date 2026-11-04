@@ -73,7 +73,11 @@ def _object_schema(
 
 
 TOOL_CONTRACTS: Final[dict[str, tuple[str, dict[str, Any], bool]]] = {
-    "daimon_status": ("runtime.status", _object_schema({}), True),
+    "daimon_status": (
+        "runtime.status",
+        _object_schema({"view": {"enum": ["receiving"]}}),
+        True,
+    ),
     "curator_enqueue": (
         "curator.enqueue",
         _object_schema({"item": {"type": "object"}}, ("item",)),
@@ -1044,6 +1048,10 @@ def _tool_params(name: str, arguments: Any) -> tuple[str, dict[str, Any], str | 
             raise MCPError(
                 types.INVALID_PARAMS, "Exact source status requires a selector"
             )
+    if method == "runtime.status" and params:
+        if params != {"view": "receiving"}:
+            raise MCPError(types.INVALID_PARAMS, "Unknown runtime status view")
+        return method, params, None
     expected = {
         "runtime.status": set(),
         "memory.evaluate": {"candidate", "policy"},

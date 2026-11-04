@@ -98,7 +98,7 @@ def _method_params(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
             "send_id": args.send_id,
         }
     if command == ("daemon", "status"):
-        return "runtime.status", {}
+        return "runtime.status", {} if args.view is None else {"view": args.view}
     if command == ("scope", "me"):
         return "scope.me", {} if args.view is None else {"view": args.view}
     if command == ("scope", "we"):
@@ -459,7 +459,12 @@ def parser() -> argparse.ArgumentParser:
 
     daemon = families.add_parser("daemon", help="hosted daemon operations")
     daemon_commands = daemon.add_subparsers(dest="command", required=True)
-    daemon_commands.add_parser("status", help="redacted integrity and counts")
+    status = daemon_commands.add_parser("status", help="redacted integrity and counts")
+    status.add_argument(
+        "--view",
+        choices=("receiving",),
+        help="current identity without historical audit",
+    )
 
     scope = families.add_parser("scope", help="root-authorized viewpoint and audience")
     scope_commands = scope.add_subparsers(dest="command", required=True)

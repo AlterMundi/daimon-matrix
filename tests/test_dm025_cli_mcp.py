@@ -166,7 +166,19 @@ class InstalledSurfaceTests(RuntimeFixture):
         ):
             request, first = client.runtime_status(view="receiving")
             repeated = client.send(request)
-        for response in (first, repeated):
+            mcp = self.mcp_exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 43,
+                    "method": "tools/call",
+                    "params": {
+                        "_meta": META,
+                        "name": "daimon_status",
+                        "arguments": {"view": "receiving"},
+                    },
+                }
+            )["result"]["structuredContent"]
+        for response in (first, repeated, mcp):
             self.assertTrue(response["ok"], response["error"])
             self.assertEqual(
                 response["result"]["schema"], "dm.runtime.receiving-status/v1"
@@ -175,6 +187,38 @@ class InstalledSurfaceTests(RuntimeFixture):
                 response["result"]["identity"]["origin"], response["server"]
             )
             self.assertNotIn("integrity", response["result"])
+
+    def test_receiving_status_cli_and_mcp_keep_default_and_reject_unknown_views(
+        self,
+    ) -> None:
+        from mcp.shared.exceptions import MCPError
+
+        from daimon_matrix.mcp_server import _tool_params
+
+        prefix = [
+            "--socket",
+            "/tmp/status.sock",
+            "--client-config",
+            "/tmp/status.json",
+            "--capability-key-fd",
+            "0",
+            "daemon",
+            "status",
+        ]
+        for suffix, params in (
+            ([], {}),
+            (["--view", "receiving"], {"view": "receiving"}),
+        ):
+            self.assertEqual(
+                _method_params(cli_parser().parse_args([*prefix, *suffix])),
+                ("runtime.status", params),
+            )
+            self.assertEqual(
+                _tool_params("daimon_status", params)[:2], ("runtime.status", params)
+            )
+        for invalid in ({"view": "all"}, {"view": None}, {"view": ["receiving"]}):
+            with self.subTest(invalid=invalid), self.assertRaises(MCPError):
+                _tool_params("daimon_status", invalid)
 
     def test_mcp_surface_view_reaches_authenticated_daemon_without_full_projection(
         self,
