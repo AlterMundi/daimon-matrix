@@ -7,11 +7,13 @@ import importlib.util
 import json
 import math
 import os
+import re
 import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from daimon_matrix.cluster import validate_surface_snapshot
 
@@ -277,7 +279,79 @@ def discover(
     return report
 
 
-def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
+def human_endpoint(value, being_ref):
+    """Validate access-projection data without turning it into Matrix identity."""
+    fields = {
+        "schema",
+        "scope",
+        "source",
+        "home_ref",
+        "owner_being_ref",
+        "human",
+        "applications",
+        "route_state",
+        "human_presence",
+        "delivery",
+        "native_membership",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("human_endpoint_rejected")
+    human = value["human"]
+    if (
+        value["schema"] != "dm.human-endpoint/v1"
+        or value["scope"] != "/human"
+        or value["source"] != "shared-resource-access-pairing"
+        or value["owner_being_ref"] != being_ref
+        or not text(value["home_ref"], 256)
+        or value["human_presence"] != "not-observed"
+        or value["delivery"] != "not-requested"
+        or value["native_membership"] != "not-implied"
+        or not isinstance(human, dict)
+        or set(human) != {"ref", "kind", "name", "revision"}
+        or human["kind"] != "human"
+        or not all(text(human[k], 1024) for k in ("ref", "name", "revision"))
+        or not isinstance(value["applications"], list)
+        or len(value["applications"]) > 32
+    ):
+        raise ValueError("human_endpoint_rejected")
+    capabilities, origins = [], set()
+    for row in value["applications"]:
+        if not isinstance(row, dict) or set(row) != {"capability", "url", "state"}:
+            raise ValueError("human_endpoint_rejected")
+        if (
+            not text(row["capability"], 64)
+            or re.fullmatch(r"[a-z][a-z0-9-]{0,63}", row["capability"]) is None
+            or not text(row["url"], 2048)
+            or row["state"] != "configured"
+            or any(ord(c) < 33 or c == "\\" for c in row["url"])
+        ):
+            raise ValueError("human_endpoint_rejected")
+        url = urlsplit(row["url"])
+        _ = url.port  # Reject malformed ports without fetching a returned URL.
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or re.fullmatch(r"/[A-Za-z0-9_-]+/", url.path) is None
+        ):
+            raise ValueError("human_endpoint_rejected")
+        capabilities.append(row["capability"])
+        origins.add(url.netloc.lower())
+    if (
+        len(set(capabilities)) != len(capabilities)
+        or len(origins) > 1
+        or value["route_state"] != ("configured" if capabilities else "unconfigured")
+    ):
+        raise ValueError("human_endpoint_rejected")
+    return value
+
+
+def everyone(
+    settings, *, include_humans=False, call=None, now_ms=None, clock=time.monotonic_ns
+):
     """Observe configured reachable bodies, without requiring Cluster membership.
 
     This is a partial foundation projection: configured owner routes bound the
@@ -285,6 +359,8 @@ def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
     Neither route possession nor a successful read grants messaging/actuation.
     """
     settings = configuration(settings)
+    if type(include_humans) is not bool:
+        raise ValueError("explicit_human_selection_required")
     now = time.time_ns() // 1_000_000 if now_ms is None else now_ms
     if settings["expires_at_ms"] <= now:
         raise ValueError("scope_probe_expired")
@@ -323,15 +399,49 @@ def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
         "model_calls": 0,
         "process_response": "not-observed",
     }
+    if include_humans:
+        report.update(
+            schema="dm.scope.everyone/v2",
+            human_contacts=[],
+            human_unavailable=[],
+            confirmed_home_reads=0,
+            unconfirmed_home_reads=0,
+            home_read_ceiling=len(settings["targets"]),
+            human_authority="per-target-current-resource-access-pairing",
+        )
+        report["coverage"]["humans"] = "paired-owner-access-projections-only"
 
     def reachable(target):
         try:
             if clock() >= deadline:
                 raise TimeoutError("scope_probe_deadline")
-            result = binding(
-                call(target["command"], {"view": "body", "request_id": request_id}),
-                target,
+            wrapped = call(
+                target["command"],
+                {
+                    "view": "contacts" if include_humans else "body",
+                    "request_id": request_id,
+                },
             )
+            if include_humans:
+                if (
+                    not isinstance(wrapped, dict)
+                    or set(wrapped)
+                    != {
+                        "schema",
+                        "server",
+                        "native_calls",
+                        "value",
+                        "human_endpoint",
+                        "home_read_attempted",
+                    }
+                    or wrapped["schema"] != "dm.scope-contact-probe/v1"
+                    or type(wrapped["home_read_attempted"]) is not bool
+                ):
+                    raise ValueError("scope_contact_binding_rejected")
+                native = {k: wrapped[k] for k in ("server", "native_calls", "value")}
+                result = binding({"schema": "dm.scope-probe/v1", **native}, target)
+            else:
+                result = binding(wrapped, target)
             validate_surface_snapshot(
                 result.get("surface"),
                 body_ref=target["server"]["body_ref"],
@@ -341,7 +451,7 @@ def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
             )
             if result.get("schema") != "dm.scope.me-surface/v1" or clock() >= deadline:
                 raise ValueError("scope_body_rejected")
-            return {
+            row = {
                 "kind": "daimon",
                 "id": target["id"],
                 "being_ref": target["being_ref"],
@@ -349,6 +459,17 @@ def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
                 "reachability": "authenticated-native-read-observed",
                 "process_response": "not-observed",
             }
+            if include_humans:
+                row["_home_attempted"] = wrapped["home_read_attempted"]
+                try:
+                    if not wrapped["home_read_attempted"]:
+                        raise ValueError("home_read_not_attempted")
+                    row["_human"] = human_endpoint(
+                        wrapped["human_endpoint"], target["being_ref"]
+                    )
+                except ValueError:
+                    row["_human"] = None
+            return row
         except (OSError, RuntimeError, ValueError, TimeoutError):
             return {"id": target["id"], "reason": "body-probe-unavailable-or-rejected"}
 
@@ -357,7 +478,34 @@ def everyone(settings, *, call=None, now_ms=None, clock=time.monotonic_ns):
             if "reason" in row:
                 report["unavailable"].append(row)
                 report["unconfirmed_probes"] += 1
+                if include_humans:
+                    report["human_unavailable"].append(
+                        {"id": row["id"], "reason": "native-binding-unavailable"}
+                    )
             else:
+                if include_humans:
+                    contact, attempted = row.pop("_human"), row.pop("_home_attempted")
+                    if contact is None:
+                        report["unconfirmed_home_reads"] += int(attempted)
+                        report["human_unavailable"].append(
+                            {
+                                "id": row["id"],
+                                "reason": "home-read-unavailable-or-rejected",
+                            }
+                        )
+                    else:
+                        report["confirmed_home_reads"] += 1
+                        report["human_contacts"].append(
+                            {
+                                "kind": "human",
+                                "via_being_ref": row["being_ref"],
+                                "via_server": row["server"],
+                                "endpoint": contact,
+                                "reachability": "configured-route-not-probed"
+                                if contact["route_state"] == "configured"
+                                else "route-unconfigured",
+                            }
+                        )
                 report["members"].append(row)
                 report["confirmed_native_calls"] += 1
     if len(encode(report)) > MAX_BYTES:
@@ -372,7 +520,7 @@ def probe(root, request):
     if (
         not isinstance(request, dict)
         or set(request) != {"view", "request_id"}
-        or request["view"] not in {"body", "inventory"}
+        or request["view"] not in {"body", "inventory", "contacts"}
     ):
         raise ValueError("invalid_scope_probe")
     uuid.UUID(request["request_id"])
@@ -383,15 +531,16 @@ def probe(root, request):
     key_data = read_capability_key(
         os.open(root / "client.key", os.O_RDONLY | os.O_NOFOLLOW)
     )
+    deadline = time.monotonic_ns() + 30_000_000_000
     client = LocalClient(
         endpoint,
         ClientConfig.load(root / "client.json", key_data),
         8,
-        deadline_ns=time.monotonic_ns() + 30_000_000_000,
+        deadline_ns=deadline,
     )
     method, params = (
         ("scope.me", {"view": "surface"})
-        if request["view"] == "body"
+        if request["view"] in {"body", "contacts"}
         else (
             "scope.resolve",
             {
@@ -405,12 +554,49 @@ def probe(root, request):
     response = client.invoke(method, params)[1]
     if not response["ok"]:
         raise ValueError("scope_native_read_refused")
-    return {
+    result = {
         "schema": "dm.scope-probe/v1",
         "server": response["server"],
         "native_calls": 1,
         "value": response["result"],
     }
+    if request["view"] == "contacts":
+        value = response["result"]
+        if (
+            value.get("schema") != "dm.scope.me-surface/v1"
+            or value.get("origin") != response["server"]
+            or not text(value.get("being_ref"))
+        ):
+            raise ValueError("scope_native_body_rejected")
+        validate_surface_snapshot(
+            value.get("surface"),
+            body_ref=response["server"]["body_ref"],
+            embodiment_id=response["server"]["embodiment_id"],
+            incarnation_id=response["server"]["incarnation_id"],
+            evaluated_at_ms=value.get("evaluated_at_ms"),
+        )
+        result.update(
+            schema="dm.scope-contact-probe/v1",
+            human_endpoint=None,
+            home_read_attempted=False,
+        )
+        script = Path.home() / ".agents/skills/daimon-home/scripts/home.py"
+        remaining = (deadline - time.monotonic_ns()) / 1_000_000_000
+        if script.is_file() and remaining > 0:
+            result["home_read_attempted"] = True
+            try:
+                value = bounded_call(
+                    [sys.executable, "-B", str(script), "human"],
+                    {},
+                    timeout=min(15, remaining),
+                )
+                result["human_endpoint"] = human_endpoint(
+                    value, response["result"]["being_ref"]
+                )
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                # Preserve the independent body observation, never invent a contact.
+                pass
+    return result
 
 
 def main():
@@ -418,10 +604,13 @@ def main():
     parser.add_argument("--probe-runtime", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--scope", choices=("/near", "/everyone"), default="/near")
+    parser.add_argument("--include-humans", action="store_true")
     parser.add_argument("--domain")
     parser.add_argument("--within-ms", type=int)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
+    if args.include_humans and (args.probe_runtime or args.scope != "/everyone"):
+        parser.error("include-humans requires the /everyone coordinator")
     if args.probe_runtime:
         raw = sys.stdin.buffer.read(4097)
         if len(raw) > 4096:
@@ -433,7 +622,9 @@ def main():
         if args.scope == "/everyone":
             if args.domain is not None or args.within_ms is not None:
                 parser.error("/everyone does not take a distance domain or threshold")
-            report = everyone(private_read(args.config))
+            report = everyone(
+                private_read(args.config), include_humans=args.include_humans
+            )
         else:
             if not args.domain or args.within_ms is None:
                 parser.error("/near requires explicit domain and within-ms")
@@ -449,6 +640,14 @@ def main():
                     "members": len(report["members"]),
                     "partial": report["partial"],
                     "confirmed_native_calls": report["confirmed_native_calls"],
+                    **(
+                        {
+                            "human_contacts": len(report["human_contacts"]),
+                            "confirmed_home_reads": report["confirmed_home_reads"],
+                        }
+                        if args.include_humans
+                        else {}
+                    ),
                     "model_calls": 0,
                 }
             )

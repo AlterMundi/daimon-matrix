@@ -103,15 +103,36 @@ to decide who is reachable. A successful current native surface read establishes
 only that this exact being/body/incarnation answered the authenticated native
 read. No inbox, model, message target, grant or device is activated.
 
-The report always remains partial: this initial native projection has no human
-contact adapter and cannot enumerate unconfigured routes. It states both gaps
-instead of presenting the Cluster inventory as `/everyone`, inventing humans
-from provider IDs, or claiming global discovery. Failures, wrong identities and
-late results stay unavailable. A successful probe does not prove an available
-model or permission to send a message. Completing human reachability and a
-first-class native scope remains separate foundation work.
+The default native-only report remains `dm.scope.everyone/v1`. Add
+`--include-humans` explicitly for `dm.scope.everyone/v2`: each fixed probe first
+reads its authenticated native surface, then invokes its existing installed
+`daimon-home human` client as that same actual owner. It uses the current shared
+resource-access pairing/registered applications, not another contact registry,
+new login or a Matrix human identity. The home response's owning being must match
+the authenticated native body. Deploy this compatible probe successor on all
+selected routes before selecting the opt-in; older probes refuse that view.
+
+Native `members` and `human_contacts` remain separate. Contacts preserve their
+provider-human kind, source and association through the exact being/body; two
+beings sharing a human retain both associations/routes. Registered applications
+are `configured-route-not-probed`, not evidence of presence or message delivery.
+An empty application set stays `route-unconfigured`. A missing/refused home read
+or wrong owner/schema/unsafe URL never erases an independently observed native
+body; it yields `human_unavailable`. Invalid native binding prevents contact
+discovery. Native and home read counts are distinct; unknown outcomes are retained.
+
+The report always remains partial: unconfigured routes cannot be enumerated and
+human reachability/delivery are not established by registry lookup. Do not present
+the Cluster inventory as `/everyone`, invent humans from provider IDs, claim
+global discovery or create native membership from an access projection. A native
+read proves neither an available model nor message/device authority. Human
+communication and first-class native scope completion remain separate work.
 
 Bounds and retention are the same as above, narrowed to at most8native body
-reads, no inventory read and no model call. Keep one protected atomic latest
-report. Configuration expiry and task-owned process cancellation remain its
-stop controls; no recurring job or extra participant catalog is installed.
+reads, no inventory read and no model call. The opt-in permits at most8additional
+owner-home reads, each with at most15seconds within its probe's shared30second
+absolute deadline; the existing40second process and90second aggregate limits
+still apply. Keep one protected atomic256KiB latest report. Configuration expiry
+and task-owned process cancellation remain stop controls; no recurring job or
+extra participant catalog is installed. Returned application URLs are never
+fetched, and no message, publication, grant or model turn is requested.
