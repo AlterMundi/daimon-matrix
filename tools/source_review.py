@@ -558,7 +558,14 @@ def review(
             try:
                 result = read_target(observer, selected, call)
                 ancestry = ancestry_selection(settings, result)
-                observed[observer["id"]] = result
+                observed[observer["id"]] = {
+                    **result,
+                    "sources": [
+                        x
+                        for x in result["sources"]
+                        if x["status"]["selector"] in settings["selectors"]
+                    ],
+                }
                 excluded = {x["target"] for x in ancestry["excluded_targets"]}
                 targets = [
                     x for x in targets if x != observer and x["id"] not in excluded

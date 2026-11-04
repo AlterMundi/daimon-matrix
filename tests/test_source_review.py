@@ -274,6 +274,53 @@ class SourceReviewTests(unittest.TestCase):
                 )
                 self.assertEqual(review.private_read(root / "s")["runs"], 1)
 
+    def test_ancestry_publications_only_participate_when_selected_for_learning(self):
+        for learn_ancestry in (False, True):
+            with (
+                self.subTest(learn_ancestry=learn_ancestry),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                settings = self.ancestry_settings()
+                if learn_ancestry:
+                    settings["selectors"].append(ANCESTRY)
+
+                def call(command, params, *, learn_ancestry=learn_ancestry):
+                    if command == ["root"]:
+                        value = self.ancestry_observation()
+                        value["sources"][1]["status"]["publications"] = [
+                            {**publication(), "publisher_me_id": "root"}
+                        ]
+                        return value
+                    self.assertEqual(command, ["child"])
+                    value = observed("child")
+                    if learn_ancestry:
+                        value["sources"].append(
+                            {
+                                "status": {
+                                    "observer_me_id": "child",
+                                    "selector": ANCESTRY,
+                                    "claims": [],
+                                    "publications": [],
+                                },
+                                "projections": {},
+                            }
+                        )
+                        value["native_calls"] = 2
+                    self.assertEqual(params["selectors"], settings["selectors"])
+                    return value
+
+                result = review.review(
+                    settings, root / "s", root / "r", call=call, now_ms=1
+                )
+                self.assertEqual(result["unavailable"], [])
+                self.assertEqual(result["local_candidates"], [])
+                self.assertEqual(len(result["offers"]), int(learn_ancestry))
+                if learn_ancestry:
+                    self.assertEqual(
+                        result["offers"][0]["source_id"], ANCESTRY["source_id"]
+                    )
+
     def test_ancestry_changes_cursor_without_offers_and_controls_keep_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

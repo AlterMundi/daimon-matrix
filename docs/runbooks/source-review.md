@@ -35,6 +35,8 @@ alongside the selected learning Sources, within the same eight-selector and
 being appears in its locally admitted, valid `descended-from` claims. The
 observer also retains its explicit local review. No routes are discovered or
 created from names, Source IDs, labels or claims.
+Only `selectors` participate in learning-offer comparisons. Publications under
+the ancestry selector are ignored unless it is also explicitly selected there.
 
 The V2 report retains exact claimant/event references, excluded configured
 targets and eligible claimants without configured routes. An ancestry failure
