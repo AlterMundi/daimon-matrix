@@ -130,9 +130,11 @@ bytes. Object arrays sort by their named ID; content-reference arrays by
 numeric epoch/sequence then ASCII artifact ID; and otherwise by canonical JCS
 bytes. Every array rejects duplicates and aliases.
 
-The root definition MUST commit to the maintained ontology, including the
-corrected `/we -> distinct /me -> one active body per me_id` interpretation; a
-raw superseded foundation paragraph alone is insufficient.
+The root definition MUST commit to the maintained being → embodiment →
+incarnation ontology. `/we` comprises embodiments of the same being; distinct
+beings remain distinct even when they share a species or ancestry. Species
+membership MUST NOT merge their identities, private histories or authority.
+A raw superseded ontology paragraph alone is insufficient.
 
 Every required contract ID MUST name a declared contract. Required suites and
 invariants MUST be present in the corresponding conformance/implementation

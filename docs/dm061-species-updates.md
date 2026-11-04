@@ -104,6 +104,59 @@ target. Exact retry never repeats the effect. A late release fork creates a new
 `release-fork` rollback event and restores the most recent previously applied
 unforked ancestor without changing `/me`, enrollment, memory or history.
 
+## Existing beings and receiving preparation
+
+The runtime does not require recreating a being to configure species updates.
+The V7 `species` section selects a subject-local registry context; incoming and
+application use the existing signed manifest's `being_ref`. Its
+`enrollment_release_id` fixes the baseline of that species context. It does not
+rewrite the being's birth/control genesis, credentials, embodiment or history.
+An existing parent carrier still cannot adopt an incompatible child in V0.
+
+Use the existing CAS, registry and runtime configuration route:
+
+1. Select the attributed shared `/me` definition and real implementation,
+   contracts, suites and boundary invariants. Exclude personal `/me.identity`,
+   private memory, body bindings and credentials. `/we` remains the same being's
+   plural embodiments, never all beings of the same species.
+2. Reuse dedicated species-maintainer custody and its published threshold policy.
+   Maintainer keys must be distinct from identity, recovery and operational roles.
+   The deterministic keys and no-op bundles in `synthetic_species` are test
+   fixtures, not a production foundation or maintainer policy.
+3. Prepare the exact content closure and accepted genesis/release in the receiver's
+   bounded local CAS/registry using `SpeciesCAS` and `SpeciesRegistry`. Store its
+   explicit local policy with `store_local_policy`; `auto_apply: false` vetoes
+   application. Resolve existing authorized custody and ingress before modifying
+   a live runtime. Do not open its active writer's stores offline.
+4. Through the owning compatible runtime-maintenance route, configure the existing
+   `species` section with the selected species ID, fixed baseline release ID,
+   policy reference and distinct owner-local CAS/registry/pointer filenames.
+   Preserve all identity, custody, ledger and unrelated runtime fields. Required
+   dependencies include the qualified deterministic runner; inspect the installed
+   generation before rebuilding or installing anything.
+5. Use authenticated `species.incoming` and follow its exact paged snapshot to
+   completion, then `species.apply` with a retained operation UUID under the
+   existing species operator capability. Observation grants alone do not authorize
+   application. Retain the request/result and use exact retry/recovery, never a new
+   operation to hide an uncertain outcome. Verify the application event's subject,
+   selected release and unchanged original history/identity.
+
+Bound prepared content to the declared closure/resource limits and the selected
+host's available storage. Retain only the active selection, required rollback,
+unfinished operations and necessary evidence under the owning retention policy;
+do not accumulate a full runtime copy per preview or application.
+
+The pointer is **non-serving**: a committed species application does not install
+skills, change a harness prompt or prove model use. Use the existing selected
+artifact installer for authorized behavioral/skill delivery and observe actual
+receiving consumption separately. Source ancestry assertions, locally admitted
+claims and species-release validity also remain separate; a Skills project
+publication or shared species never supplies a disclosure grant.
+
+`HostedSpeciesRuntimeTests.test_existing_being_bootstrap_and_successor_preserve_identity`
+qualifies the authenticated runtime/ledger path on a synthetic existing being.
+It is not a live cohort adoption receipt or a production species-authoring tool.
+
 ## Deliberate incompatible branching
 
 A new species requires two independent authorities:

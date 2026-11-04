@@ -1751,6 +1751,145 @@ class DM061SpeciesTests(unittest.TestCase):
 
 
 class HostedSpeciesRuntimeTests(RuntimeFixture):
+    def test_existing_being_bootstrap_and_successor_preserve_identity(self) -> None:
+        state_root, bundle, capability = self.make_bundle(
+            state_name="existing-species", capability_profile="species"
+        )
+        bundle_path = state_root / "runtime.json"
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        before = load_runtime(
+            state_root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        identity_fields = (
+            "control_artifacts",
+            "control_head",
+            "manifest",
+            "credentials",
+            "incarnations",
+            "local_origin",
+            "keystore",
+            "capabilities",
+            "operator_capability_binding",
+        )
+        identity = {field: copy.deepcopy(bundle[field]) for field in identity_fields}
+        subject = before.service.ledger.authority.manifest.being_ref
+        history = before.service.ledger.append_local(
+            kind="experience.observed",
+            subject=subject,
+            payload={"summary": "history before species configuration"},
+            signer=before.service.signer,
+            occurred_at_ms=NOW,
+        )
+        custody = (state_root / "custody.json").read_bytes()
+        fixture = SpeciesFixture(state_root)
+        genesis = fixture.genesis()
+        baseline = fixture.release_zero(genesis)
+        policy_ref = fixture.registry.store_local_policy(
+            {
+                "allowed_species": [fixture.species_id],
+                "auto_apply": True,
+                "policy_version": "existing-being-test",
+                "resource_profile_ref": fixture.resource_ref,
+                "schema": "daimon-species-local-application-policy/v0",
+            }
+        )
+        bundle["species"] = {
+            "cas_filename": "cas.sqlite3",
+            "registry_filename": "registry.sqlite3",
+            "pointer_filename": "species.pointer",
+            "species_id": fixture.species_id,
+            "enrollment_release_id": baseline["artifact_id"],
+            "local_policy_ref": policy_ref,
+        }
+        bundle_path.write_bytes(canonical_bytes(bundle))
+        runtime = load_runtime(
+            state_root, "runtime.json", lambda: bytearray(PASSWORD), clock=lambda: NOW
+        )
+        counter = 0
+        last_request: dict[str, Any] = {}
+
+        def request(
+            method: str, params: dict[str, Any], *, observe: bool = False
+        ) -> Any:
+            nonlocal counter, last_request
+            counter += 1
+            grant = self.operator_capabilities["observe"] if observe else capability
+            envelope = create_request(
+                grant,
+                request_id=str(uuid.UUID(int=counter)),
+                issued_at_ms=NOW,
+                method=method,
+                params=params,
+                nonce=counter.to_bytes(16, "big"),
+            )
+            last_request = envelope
+            response = runtime.service.handle(envelope)
+            self.assertTrue(response["ok"], response)
+            return response["result"]
+
+        request("species.genesis.ingest", {"artifact": genesis})
+        request("species.release.ingest", {"artifact": baseline})
+        releases = [baseline, fixture.successor(genesis, baseline, label="existing-1")]
+        event_ids = []
+        for index, release in enumerate(releases):
+            if index:
+                request("species.release.ingest", {"artifact": release})
+            incoming = request(
+                "species.incoming",
+                {
+                    "expected_occupied_positions_hash": None,
+                    "page_index": 0,
+                    "selected_candidate_id": release["artifact_id"],
+                },
+                observe=True,
+            )
+            self.assertEqual(incoming["snapshot_core"]["subject_me_id"], subject)
+            self.assertTrue(incoming["snapshot_core"]["application_eligible"])
+            operation_id = str(uuid.UUID(int=100 + index))
+            params = {"operation_id": operation_id, "snapshot": incoming}
+            result = request("species.apply", params)
+            self.assertEqual(result["result"], "applied")
+            event_ids.append(result["event_id"])
+            retry = runtime.service.handle(last_request)
+            self.assertTrue(retry["ok"], retry)
+            self.assertEqual(retry["result"], result)
+            event = runtime.service.ledger.event(result["event_id"])
+            self.assertIsNotNone(event)
+            assert event is not None
+            self.assertEqual(event["subject"], subject)
+            self.assertEqual(event["payload"]["subject_me_id"], subject)
+            self.assertEqual(
+                event["payload"]["to_release"]["artifact_id"], release["artifact_id"]
+            )
+            self.assertEqual(
+                event["payload"]["enrollment_release_id"], baseline["artifact_id"]
+            )
+        self.assertEqual(runtime.service.ledger.event(history["event_id"]), history)
+        self.assertEqual(
+            [
+                e["event_id"]
+                for e in runtime.service.ledger.events()
+                if e["kind"] == APPLICATION_EVENT_KIND
+            ],
+            event_ids,
+        )
+        self.assertEqual((state_root / "custody.json").read_bytes(), custody)
+        persisted = json.loads(bundle_path.read_bytes())
+        self.assertEqual(
+            {field: persisted[field] for field in identity_fields}, identity
+        )
+        self.assertEqual(runtime.service.ledger.authority.manifest.being_ref, subject)
+        final = request(
+            "species.incoming",
+            {
+                "expected_occupied_positions_hash": None,
+                "page_index": 0,
+                "selected_candidate_id": releases[-1]["artifact_id"],
+            },
+            observe=True,
+        )
+        self.assertEqual(final["snapshot_core"]["state"], "current")
+
     def test_v7_bundle_schema_loads_species_and_serves_authenticated_preview(
         self,
     ) -> None:
