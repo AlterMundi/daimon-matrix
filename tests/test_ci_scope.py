@@ -12,6 +12,67 @@ from tools.ci_scope import main, profile, select
 
 
 class CIScopeTests(unittest.TestCase):
+    def test_source_review_isolated_operator_has_installed_bounded_checks(self):
+        from tools.ci_scope import SOURCE_REVIEW_FILES
+
+        self.assertEqual(profile(list(SOURCE_REVIEW_FILES)), "source-review")
+        for anchor in ("tools/source_review.py", "tests/test_source_review.py"):
+            self.assertEqual(profile([anchor]), "source-review")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  source-review:", 1)[1].split(
+            "\n  behavior-inventory:", 1
+        )[0]
+        for command in (
+            "if: needs.scope.outputs.profile == 'source-review'",
+            "timeout-minutes: 5",
+            "python tools/check_frozen_invariants.py --skip-generated",
+            "python tools/reproducible_build.py --output dist",
+            "python tools/scan_secrets.py dist",
+            "python -m pip install --force-reinstall --no-deps dist/*.whl",
+            "unittest tests.test_source_review tests.test_ci_scope",
+        ):
+            self.assertIn(command, job)
+        self.assertIn("Path.cwd() not in", job)
+        for line in job.splitlines():
+            if "python -m ruff" in line:
+                for path in (
+                    "tools/source_review.py",
+                    "tests/test_source_review.py",
+                    "tools/ci_scope.py",
+                    "tests/test_ci_scope.py",
+                ):
+                    self.assertIn(path, line)
+
+    def test_source_review_mixed_or_unknown_change_keeps_full_qualification(self):
+        for path in (
+            "src/daimon_matrix/client.py",
+            "src/daimon_matrix/sources.py",
+            "src/daimon_matrix/relationship_store.py",
+            "src/daimon_matrix/runtime.py",
+            "src/daimon_matrix/local_api.py",
+            "src/daimon_matrix/mcp_server.py",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "requirements-build.txt",
+            "specs/source-runtime.md",
+            "schemas/source/v0/contracts.schema.json",
+            "tools/install_agent_chat.py",
+            "tools/unknown.py",
+            "tests/test_dm081_sources.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(profile(["tools/source_review.py", path]), "full")
+        for changed in (
+            ["tools/ci_scope.py"],
+            [".github/workflows/tests.yml"],
+            ["tests/test_ci_scope.py"],
+            ["docs/runbooks/source-review.md"],
+            [],
+        ):
+            self.assertNotEqual(profile(changed), "source-review")
+
     def test_isolated_execution_store_keeps_real_consumers_and_installed_package(self):
         from tools.ci_scope import EXECUTION_OPERATOR_FILES
 
