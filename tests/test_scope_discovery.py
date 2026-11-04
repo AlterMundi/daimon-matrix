@@ -76,6 +76,62 @@ class Clock:
         return getattr(self.local, "value", 0)
 
 
+class EveryoneDiscoveryTests(unittest.TestCase):
+    def test_reachable_nonmember_is_observed_without_inventory_or_model(self):
+        calls = []
+        config = settings()
+        config["targets"].append(target("not-admitted"))
+
+        def call(command, request):
+            self.assertEqual(request["view"], "body")
+            calls.append(command[0])
+            return response(command[0], request["view"], request["request_id"])
+
+        result = near.everyone(config, call=call, now_ms=1, clock=lambda: 0)
+        self.assertEqual(set(calls), {"root", "child", "not-admitted"})
+        self.assertEqual(result["scope"], "/everyone")
+        self.assertEqual(len(result["members"]), 3)
+        self.assertEqual(result["confirmed_native_calls"], 3)
+        self.assertEqual(result["native_call_ceiling"], 3)
+        self.assertEqual(result["model_calls"], 0)
+        self.assertEqual(result["membership"], "not-inferred")
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["coverage"]["humans"], "not-configured")
+        self.assertEqual(result["process_response"], "not-observed")
+        self.assertNotIn("command", json.dumps(result))
+
+    def test_wrong_identity_refusal_and_deadline_never_become_reachable(self):
+        for failure in ("identity", "refusal", "surface", "deadline"):
+            clock = Clock()
+
+            def call(command, request, failure=failure, clock=clock):
+                name = command[0]
+                result = response(name, request["view"], request["request_id"])
+                if name == "child":
+                    if failure == "refusal":
+                        raise RuntimeError("native refused")
+                    if failure == "identity":
+                        result["server"] = server("foreign")
+                    if failure == "surface":
+                        result["value"]["surface"]["body_ref"] = "foreign"
+                    if failure == "deadline":
+                        clock.local.value = 100_000_000_000
+                return result
+
+            with self.subTest(failure=failure):
+                result = near.everyone(settings(), call=call, now_ms=1, clock=clock)
+                self.assertEqual([r["id"] for r in result["members"]], ["root"])
+                self.assertEqual(result["unavailable"][0]["id"], "child")
+                self.assertEqual(result["unconfirmed_probes"], 1)
+
+    def test_expired_configuration_probes_nothing(self):
+        def forbidden(*args):
+            self.fail("expired configuration must not probe")
+
+        with self.assertRaisesRegex(ValueError, "scope_probe_expired"):
+            near.everyone(settings(), call=forbidden, now_ms=100000)
+
+
 class NearDiscoveryTests(unittest.TestCase):
     def run_discovery(
         self, transform=lambda name, view, value: value, config=None, threshold=100
