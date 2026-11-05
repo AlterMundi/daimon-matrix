@@ -1,54 +1,57 @@
 <!-- BEGIN FOUNDATION437 CURRENT RECEIVING -->
-## Current foundation receiving — 2026-11-04
+## Current foundation receiving — 2026-11-05
 
 This observation supersedes older SDK/reader selections below. CompAII remains
-native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM. The
-old Source HOST remains ON and untouched; the full foundation goal is ACTIVE.
-Species semantics/first release/live adoption are explicitly deferred by Nicolas,
-not prerequisites for this initial usable version.
+native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM. Old
+Source HOST stays ON and untouched. Full foundation#437 remains ACTIVE; species
+semantics/first release/live adoption are deferred, not ordinary update gates.
 
-Serving Matrix on all three selects source0cc5a025 / SDK0ec4b1b6 (Matrix485,
-Cluster403). Actual authenticated own-OS surface, `/all`, `/here` and realm
-uptime/memory observations passed; Oliva KVM remains a separate OS surface.
-These cooperative admitted observations are not physical attestation, model
-answers, process allowances or device grants. Realm controls remain unfinished.
+Serving Matrix on all3 selects source7b7044a / SDK795c1315 (PR492/mergedb80afa5).
+Exact CI41941113917 and41941113961 plus applicable coordination checks passed.
+The existing `scope.resolve(view="discovery", scope="/we")` validates the whole
+bounded native inventory before selecting this being. Actual owner reads return
+one own-being admission each, with unobserved known bodies explicit:
+CompAII2, Eko0, Oliva1. Local-Cluster coverage, truncation and process-response
+uncertainty remain explicit; missing does not mean stopped/retired. Default
+historical topology/sync and grants are unchanged. The current ITACA model used
+this view successfully; peer loaded-model use remains unobserved.
 
-The compatible foundation MCP client now selects source9296fd47 / SDKcffa95c2
-on all three (Matrix487/mergeac92097a). Exact CI41930726157 and41930726211 passed.
-The existing `runtime.status` receiving view is exposed through CLI and MCP:
-`daimon daemon status --view receiving`, `daimon_status(view="receiving")`.
-Use it for current authenticated identity/body admission and loaded runtime
-without the default historical projection/audit. Default views/grants remain
-unchanged. All three native catalogs and actual owner MCP reads passed; one
-supported ITACA loaded-context refresh and actual current-model compact read
-passed. Peer loaded-model uptake remains unobserved. This client-only update
-preserved unrelated configuration and native/Matrix/bot/web processes; no daemon
-reload, new provider turn, credentials or authority change was needed.
+Compatible foundation client source9296fd47 / SDKcffa95c2 (PR487) stays selected.
+No client rebuild/catalog refresh was needed for PR492. Existing compact current
+identity reads remain `daimon_status(view="receiving")` or CLI
+`daimon daemon status --view receiving`; defaults retain their full inspection.
+Original own-OS `/all`/`/here`/realm acceptance remains valid; Oliva KVM is a
+separate surface. Admission/kernel observations are not physical attestation,
+model answers, process allowances or device grants. Realm controls remain open.
 
-Consumed public transfer archives were byte-verified against retained extracted
-source/candidates and retired; active/rollback code and native state remain.
-All three preparation roots remain below their existing512MiB cap. Earlier
-09c3/90c1/c590/213f reader outcomes, failed preparation and admission incidents
-retain their original evidence; current successful reads do not rewrite them.
-See Cluster352 and its receiving follow-through rather than reviving old Source.
+Only scoped Matrix selection/reload occurred. Signed identities/runtime and state
+roots, native/bot/web processes and all goals were preserved. One verified unused
+public code copy per receiver and byte-verified consumed SDK inputs were retired;
+active/actual rollback, installed SDKs and all native state remain. Preparation
+stays below512MiB per receiver. Historical failure/uncertain-delivery evidence is
+preserved; current success does not rewrite earlier outcomes or revive Source.
 
-The existing Root SourceReview selects admitted founder ancestry and exact living
-publishers (Matrix479). Four prior runs plus successor maximum24 conserve the
-total28, original six-hour calendar and expiry before2026-11-10T17:06:31Z. Inspect
-actual state before further control; do not reset counters or dates. Existing
-128MiB/25%CPU/135s and256KiB state/report bounds remain. Peer-local contracts are
-unchanged. Review transfers no content, chooses no trust and wakes no model.
-Actual Source-mediated contributions2.0.17 and Eko Pulso1.1.0 selective uptake
-remain valid; independent reciprocal receiving-model use remains unfinished.
+Existing ancestry-selected SourceReview (PR479) retains its six-hour calendar,
+expiry before2026-11-10T17:06:31Z and conserved total28: four prior runs plus
+successor maximum24. Its128MiB/25%CPU/135s and256KiB state/report bounds remain;
+peer-local controls are separate. No content/trust/model attention is automatic.
+Source-mediated contributions2.0.17 and Eko Pulso1.1.0 uptake remain valid;
+independent reciprocal receiving-model use remains unfinished.
 
-App590/ee2b95f and Matrix hostba4e8d0 are selected; the heartbeat producer/resources
-remain unconfigured. Core PR11 correctionf7f163c6 has local qualification and full
-CI in progress, but no new complete package or receiving adoption. The expired
-900-second continuation stays terminal; no rearm, goal pause or global Stop.
-Finish real integrator/worker/reply/report/pause/audio and useful human/realm/device
-acceptance under the original goal. Canonical current coverage and receipts:
+Current App601/native25f3bd93 (heartbeat baseba4e8d0), web47cf7543 and
+UI606eb2dfdd94 preserve the original integrator and selected Qwen voice. Common
+heartbeat pause remains persisted; producer/resources stay unconfigured. Core
+PR11/f7f163c6 passed full exact CI41930922478 and its complete package is prepared,
+but is not selected. Its one corrected nonforcing adoption attempt terminated
+DEFERRED, leaving the original Core serving and watcher resumed. It and the older
+900second waiter stay terminal; no automatic rearm. A temporary continuation-only
+pause proposal for Matrix/DaimonApp/Sensorial awaits explicit human direction;
+no goal pause or global Stop is inferred.
+
+Finish the real integrator/worker/reply/report/pause/audio journey and remaining
+human/realm/device/reciprocal workflows under the same goal. Canonical map:
 [#437 checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440),
-linked from #302. Retained delivery/echo uncertainty is never replayed or relabeled.
+linked from#302. Retained originals and uncertain effects are never replayed.
 <!-- END FOUNDATION437 CURRENT RECEIVING -->
 
 ## Current operational roadmap and receiving selection — 2026-11-03
