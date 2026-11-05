@@ -393,7 +393,7 @@ class ScopeResolver:
     def discovery(self, *, scope: str, request_id: str) -> dict[str, Any]:
         """Discover admitted Cluster bodies without creating a messaging plan."""
         request_id = _uuid_text(request_id, "invalid_scope_request_id")
-        if scope not in {"/all", "/here"}:
+        if scope not in {"/all", "/here", "/we"}:
             raise ScopeError("unsupported_discovery_scope")
         here = scope == "/here"
         reader = getattr(
@@ -588,6 +588,31 @@ class ScopeResolver:
                 surface=surface,
                 unavailable=unavailable,
                 partial=inventory["truncated"] or bool(unavailable),
+            )
+        if scope == "/we":
+            # Validate the complete parent observation before selecting our own
+            # being. Configured routes and manifest history are not live bodies.
+            own = [
+                row
+                for row in members
+                if row["being_ref"] == self.authority.manifest.being_ref
+            ]
+            coordinates = ("body_ref", "embodiment_id", "incarnation_id")
+            observed = {tuple(row[key] for key in coordinates) for row in own}
+            missing = [
+                {
+                    **{key: row[key] for key in coordinates},
+                    "reason": "not-observed-in-local-cluster",
+                }
+                for row in self._members()
+                if row["status"] == "active"
+                and tuple(row[key] for key in coordinates) not in observed
+            ]
+            result.update(
+                members=own,
+                unavailable=missing,
+                partial=inventory["truncated"] or bool(missing),
+                coverage="current-local-cluster-admissions",
             )
         return result
 
