@@ -1219,6 +1219,52 @@ class ClusterDiscoveryTests(ScopeFixture):
             )["partial"]
         )
 
+    def test_we_discovery_selects_own_being_without_claiming_missing_bodies_stopped(
+        self,
+    ) -> None:
+        resolver = self.discovery_resolver()
+        with patch.object(
+            ProjectionEngine, "snapshot", side_effect=AssertionError("no history")
+        ):
+            result = resolver.discovery(scope="/we", request_id=request_id(810))
+        self.assertEqual(result["scope"], "/we")
+        self.assertEqual(result["coverage"], "current-local-cluster-admissions")
+        self.assertEqual(len(result["members"]), 1)
+        self.assertEqual(
+            result["members"][0]["being_ref"],
+            self.ledger_a.authority.manifest.being_ref,
+        )
+        self.assertEqual(result["members"][0]["process_response"], "not-observed")
+        self.assertTrue(result["unavailable"])
+        self.assertTrue(result["partial"])
+        self.assertTrue(
+            all(
+                row["reason"] == "not-observed-in-local-cluster"
+                for row in result["unavailable"]
+            )
+        )
+        self.assertNotIn("targets", result)
+        self.assertEqual(resolver.we(), self.discovery_resolver().we())
+
+    def test_we_validates_foreign_admissions_before_filtering(self) -> None:
+        origin = self.origins["legion"]
+        value = self.inventory_reader().inventory(
+            origin["body_ref"],
+            origin["embodiment_id"],
+            origin["incarnation_id"],
+            self.now,
+        )
+        foreign = next(
+            row
+            for row in value["inventory"]["items"]
+            if row["being_ref"] != self.ledger_a.authority.manifest.being_ref
+        )
+        foreign["lease_expires_at_ms"] = self.now
+        with self.assertRaisesRegex(ScopeError, "cluster_inventory_rejected"):
+            self.discovery_resolver(value).discovery(
+                scope="/we", request_id=request_id(811)
+            )
+
     def test_missing_parent_does_not_fall_back_to_we_or_tribe(self) -> None:
         with self.assertRaisesRegex(
             ScopeError, "cluster_inventory_unavailable"
@@ -1342,6 +1388,9 @@ class ClusterDiscoveryTests(ScopeFixture):
 
     def test_here_uses_existing_authenticated_resolution_read_grant(self) -> None:
         self._authenticated_discovery_read("/here")
+
+    def test_we_uses_existing_authenticated_resolution_read_grant(self) -> None:
+        self._authenticated_discovery_read("/we")
 
     def _authenticated_discovery_read(self, scope: str) -> None:
         from daimon_matrix.mcp_server import _tool_params

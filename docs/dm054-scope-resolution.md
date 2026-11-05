@@ -121,6 +121,19 @@ permission, model turn or automatic attention. Its result has no `targets` or
 resolution hash and cannot be used as a messaging plan.
 
 This is the discovery portion of `/all`, not a completed group exchange.
+The same explicit view accepts `/we`, filtering the validated inventory by the
+current being reference. It returns only that being's current local-Cluster
+admissions, never Eko or Oliva merely because they share ancestry or a Tribe.
+Active entries in the being manifest absent from this observation are listed as
+`unavailable` with `reason:"not-observed-in-local-cluster"`; this means unknown,
+not stopped or retired. The result is partial when any such entry is missing or
+the authority inventory is truncated. `coverage:"current-local-cluster-admissions"`
+keeps this observation distinct from a complete multi-Cluster `/we` roster.
+Configured carriers still do not establish process/model presence. Default
+`scope.we`, historical topology, sync and target-plan behavior are unchanged.
+This reuses the existing inventory read and grants, with no additional calls,
+model attention, route probing or identity changes.
+
 The optional native `/here` view below compares current launch-bound reports;
 `/near` needs
 an explicit distance domain. Neither is silently mapped to this inventory.
