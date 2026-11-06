@@ -5,6 +5,12 @@ owns the authenticated same-being exchange. This runbook connects them without
 making transport delivery a claim of installation. It is the bounded increment
 tracked by #228; the broader roles/curator design in #170 remains separate.
 
+The foundation's `/tribe` includes paired humans/daimons and shared resources;
+it is broader than its conversation channel. This same-being pilot is not the
+whole tribe update mechanism. For cross-being Source learning and owning software
+deployment, see [Tribe scope and delivery](tribe-updates.md). Keep channel IDs
+`tribe` unchanged and each receiver's actual installation authority explicit.
+
 ## Source preparation
 
 1. Publish and review portable content in the owning Skills repository. Keep
