@@ -40,9 +40,16 @@ Use [identity continuity](../specs/identity-continuity.md),
 Historical events verify under their original epochs. Accepted authority changes
 recover forward; retained software is a rollback only if it accepts current state.
 
-## One membership group
+## Tribe scope and its conversation application
 
-`/we` connects bodies of the same being. `/tribe` is a signed membership group:
+`/we` connects bodies of the same being. The foundation defines `/tribe` as the
+endpoint for the daimons and humans with whom the identity pairs or shares
+resources. It is a social/resource scope, not the name of a messaging transport,
+Telegram chat, software updater or the retired Tribe Bridge. Its implemented
+membership/resource projection is described by `scope.tribe`; this is a partial
+implementation of the foundation, not a narrower replacement definition.
+
+The membership-group conversation is one application within that scope:
 one authored message, a send-time frozen audience and one visible speech.
 The configured group uses incoming/outgoing `tribe`; resolve its binding from
 that receiving body's owner context. Joining means invitation and signed
@@ -122,6 +129,12 @@ remain different. A fixture in one profile is not another profile's live adoptio
 Resource effects require observed postconditions and current Cluster fences.
 
 ## Updates and retained history
+
+Use [scope-aware software and learning delivery](runbooks/tribe-updates.md) to
+select existing Source, Weave, skill installation and owning deployment paths.
+Tribe membership does not itself circulate or install software. Keep same-being
+integration distinct from sharing across independent beings.
+
 
 Use [receiver-compatible updates](runbooks/receiver-compatible-authority-updates.md):
 preflight receivers, qualify/select successors, adopt verified known-peer

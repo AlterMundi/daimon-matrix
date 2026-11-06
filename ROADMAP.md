@@ -105,3 +105,13 @@ cycle; historical RC tools do not establish stable qualification.
   native continuity and stable publication. Archive is not runtime deletion.
 
 These authorizations are separate; none grants another by implication.
+
+## Scope clarification — 6 November 2026
+
+`/tribe` retains the foundation's daimon/human pairing and resource-sharing
+scope; its membership conversation is one application. Existing Source, Weave,
+selective Skills installation and owning deployment routes have distinct effects.
+See [the current delivery map](docs/runbooks/tribe-updates.md). Complete the
+remaining integration/receiving-use work under #302/#437 and owning component
+issues; do not replace it with a chat-only interpretation or duplicate DaimonApp
+fleet implementation. Species remains deferred.
