@@ -24,6 +24,14 @@ Unavailable registrations leave explicit pending legs; they cannot shrink the
 audience. Admission and receiving deployment must distribute the updated trusted
 Root inventory and group roster through the maintained cohort procedure.
 
+An additive application admission preserves existing routes and requires routes
+for every active body of each newly admitted member. Existing members can retain
+signed bodies without available carriers; their missing routes remain explicit
+unavailable legs. Such bodies do not prevent adding new members and must not be
+revived or silently removed from the signed audience to satisfy a routing check.
+Every configured route must still belong to that verified audience. Application
+publication does not select readers, release outbound speech or prove delivery.
+
 `messaging.reply` and `messaging.delivery` keep their existing argument shapes.
 `messaging.inbox` accepts an optional canonical UUID `thread_id` to read only
 that existing conversation. Omission preserves the original request shape.
