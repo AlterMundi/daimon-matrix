@@ -41,6 +41,21 @@ and `/me` views retain their existing behavior. Avoid the full `/me` history
 projection when only current identity is needed. No new tool, grant or catalog
 is introduced.
 
+### Loaded relationship verification context
+
+`loaded_runtime.relationship_authorities` reports the public being references and
+active/accepted manifest hashes actually selected for the native relationship
+verifier at process load. It includes explicit trusted-host public context as
+well as configured known peers, independently of messaging application enrollment.
+The map is empty without a configured relationship context. It is frozen to the
+loaded process; changing caller maps or files cannot change that observation.
+
+Receiving observers may combine these epochs with the existing local and
+application authority observations when checking the current signed roster.
+Absent metadata retains the previous conservative check. This adds no authority,
+membership, route, grant, human publication or model attention. Existing signed
+bindings, store checks, process/selection pins and reader controls still apply.
+
 ### Native surface view
 
 `scope.me` with `{"view":"surface"}` returns `dm.scope.me-surface/v1`:

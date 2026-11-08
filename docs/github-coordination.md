@@ -5,6 +5,23 @@ coordination plane. This protocol is orthogonal to `/tribe`, `/me`, `/we`, and
 runtime presence. A coordination label such as `codex@localhost` is not a
 transport principal or Daimon identity.
 
+## Direct human-authorized maintenance
+
+For work directly authorized by the paired human, a repository maintainer may
+record `Human-Authorization: <recorded task/source>` in an in-repository PR.
+The audit verifies the author's current GitHub `maintain`/`admin` role and both
+repository origins; arbitrary PR text, a fork or write-only access cannot claim
+this profile. Include the ordinary `Deployment:` declaration and nonempty
+`## Tests` evidence. Reference the existing parent issue without closing the full
+objective merely to deliver one increment.
+
+This path needs no new issue, development lease, agent reply or review receipt.
+It records an already trusted maintainer's human-task attestation, not independent
+cryptographic proof of human speech, runtime authority or receiving delivery.
+Normal code/CI checks, explicit human holds and runtime identity/resource fences
+remain. Unselected or unverifiable authorization is refused; ordinary signed
+coordination below remains available for other contributions.
+
 ## Operational checkpoint exception
 
 PRs that only modify existing `CURRENT-STATE.md` and/or `RESUME.md` report the

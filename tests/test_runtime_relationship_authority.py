@@ -51,6 +51,47 @@ def shared_fixture(test, *, ingest=True):
 
 
 class RuntimeRelationshipAuthorityTests(unittest.TestCase):
+    def test_loaded_observation_freezes_the_native_relationship_context(self):
+        import json
+
+        from daimon_matrix.synthetic_relationships import _identity
+
+        runtime, spec, _, _ = application_fixture(self)
+        public = {
+            authority.manifest.being_ref: authority
+            for authority in map(authority_from_document, spec["authorities"])
+        }
+        native_only = _identity("native-only-peer").authority
+        public[native_only.manifest.being_ref] = native_only
+        runtime = ordinary(self, runtime, spec, authorities=public)
+        snapshot = json.loads(runtime.service.loaded_runtime)
+        observed = snapshot["relationship_authorities"]
+        self.assertEqual(set(observed), set(public))
+        self.assertEqual(
+            observed[native_only.manifest.being_ref],
+            {
+                "active_manifest_hash": native_only.manifest.digest,
+                "accepted_manifest_hashes": [native_only.manifest.digest],
+            },
+        )
+        # This extra native verifier is not an application enrollment or route.
+        self.assertNotIn(
+            native_only.manifest.being_ref,
+            {row["manifest"]["being_ref"] for row in spec["authorities"]},
+        )
+        self.assertEqual(
+            runtime.service.relationships.store.authority_resolver(
+                native_only.manifest.being_ref
+            ),
+            native_only,
+        )
+        public.clear()
+        observed.clear()
+        self.assertIn(
+            native_only.manifest.being_ref,
+            json.loads(runtime.service.loaded_runtime)["relationship_authorities"],
+        )
+
     def test_channel_rollback_uses_current_authority_after_signed_revocation(self):
         from daimon_matrix.messaging_config import load_application
         from daimon_matrix.operator_messaging import prepare
@@ -663,6 +704,14 @@ class RuntimeRelationshipAuthorityTests(unittest.TestCase):
         context.store.ingest(card)
         self.assertEqual(context.store.events(), [card])
         self.assertEqual(context.authority_resolver(member.state.being_ref), active)
+        import json
+
+        loaded = json.loads(runtime.service.loaded_runtime)
+        observed = loaded["relationship_authorities"][member.state.being_ref]
+        self.assertEqual(observed["active_manifest_hash"], active.manifest.digest)
+        self.assertEqual(
+            observed["accepted_manifest_hashes"], list(history.accepted_manifest_hashes)
+        )
         with self.assertRaises(RelationshipError):
             context.card_verifier(card["payload"], self.pair.now)
 
