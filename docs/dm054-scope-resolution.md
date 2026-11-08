@@ -41,6 +41,12 @@ and `/me` views retain their existing behavior. Avoid the full `/me` history
 projection when only current identity is needed. No new tool, grant or catalog
 is introduced.
 
+Receiving status retains a shared two-second wait budget for its physical reader
+fences. That wait starts after group validation and signed-roster reconstruction;
+CPU time spent validating a larger roster must not turn an uncontended reader
+into `egress_attempt_deadline`. A genuinely contended fence still returns that
+retryable error. The caller's operation deadline remains separate.
+
 ### Loaded relationship verification context
 
 `loaded_runtime.relationship_authorities` reports the public being references and
