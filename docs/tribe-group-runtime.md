@@ -300,7 +300,11 @@ carrier of the SAME signed message; it is not a new speech/send ID. No text,
 thread, destination or caller-controlled expiry is accepted. The original must
 be expired, confirmed in Tribu and proven never attempted across its entire
 frozen audience. Unknown/prepared attempts are refused even with zero completed
-releases. This first profile permits one recovery ID per original.
+releases. Owner-only repair may complete an expired human-publication
+obligation under a new exact duplicate-post decision, but that does not extend
+its native deadline or establish that a prepared carrier was never attempted.
+Unknown originals remain retained until a separately qualified recovery path
+and its actual authority exist. This profile permits one recovery ID per original.
 
 `messaging_delivery` with the ORIGINAL send ID retains both carrier histories.
 The original stays expired; `recovery.native_visibility` is suppressed, and
