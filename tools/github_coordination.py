@@ -44,6 +44,7 @@ _CLOSES = re.compile(
     r"(?im)^\s*(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+"
     r"(?:https://github\.com/([^/\s]+/[^/\s]+)/issues/)?#?(\d+)\b"
 )
+_HUMAN_AUTHORIZATION = re.compile(r"(?im)^\s*Human-Authorization:\s*(\S[^\r\n]*)$")
 _CLAIM_ID = re.compile(
     r"(?im)^\s*Claim-ID:\s*([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*$"
@@ -473,8 +474,59 @@ def _operational_checkpoint_only(repo: str, pr_number: int, pull: dict) -> bool:
     )
 
 
+def _human_authorized_audit(
+    repo: str, pr_number: int, pull: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """A repository maintainer records the human task; no second agent lease."""
+    body = pull.get("body") or ""
+    marker = _HUMAN_AUTHORIZATION.search(body)
+    if marker is None:
+        return None
+    findings = []
+    author = (pull.get("user") or {}).get("login")
+    same_repository = (
+        ((pull.get("head") or {}).get("repo") or {}).get("full_name") == repo
+        and ((pull.get("base") or {}).get("repo") or {}).get("full_name") == repo
+    )
+    role = None
+    if not same_repository or not isinstance(author, str) or not author:
+        findings.append({"code": "human_authorization_origin_untrusted"})
+    else:
+        try:
+            permission = _run_gh(
+                ["api", f"repos/{repo}/collaborators/{author}/permission"]
+            )
+            role = permission.get("role_name") or permission.get("permission")
+            if role not in {"admin", "maintain"}:
+                findings.append({"code": "human_authorization_maintainer_required"})
+        except CoordinationError:
+            findings.append({"code": "human_authorization_lookup_failed"})
+    if _DEPLOYMENT.search(body) is None:
+        findings.append({"code": "missing_deployment"})
+    tests = _TESTS.search(body)
+    if tests is None or not tests.group(1).strip():
+        findings.append({"code": "missing_tests"})
+    return {
+        "ok": not findings,
+        "repository": repo,
+        "pull_request": pr_number,
+        "linked_issue": _linked_issue(body, repo),
+        "current": None,
+        "findings": findings,
+        "profile": "human-authorized-maintenance",
+        "authorization": {
+            "recorded_by": author,
+            "repository_role": role,
+            "source": marker.group(1).strip(),
+        },
+    }
+
+
 def audit_pr(repo: str, pr_number: int, *, now: dt.datetime) -> dict[str, Any]:
     pull = _run_gh(["api", f"repos/{repo}/pulls/{pr_number}"])
+    human = _human_authorized_audit(repo, pr_number, pull)
+    if human is not None:
+        return human
     if _operational_checkpoint_only(repo, pr_number, pull):
         return {
             "ok": True,

@@ -849,3 +849,65 @@ class OperationalCheckpointAuditTests(unittest.TestCase):
                     result = cli.audit_pr("example/repo", 1, now=NOW)
                 self.assertFalse(result["ok"])
                 self.assertEqual(gh.call_count, 1)
+
+
+class HumanAuthorizedMaintenanceAuditTests(unittest.TestCase):
+    def pull(self):
+        return {
+            "body": (
+                "Human-Authorization: paired-human recorded task\n"
+                "Refs #437\nDeployment: scoped receiving update\n"
+                "## Tests\nNative verifier and regression checks passed.\n"
+            ),
+            "user": {"login": "maintainer"},
+            "head": {"repo": {"full_name": "example/repo"}},
+            "base": {"repo": {"full_name": "example/repo"}},
+        }
+
+    def test_human_task_uses_maintainer_role_without_issue_closure(self):
+        pull = self.pull()
+        with (
+            mock.patch.object(cli, "_run_gh", side_effect=[
+                pull, {"permission": "write", "role_name": "maintain"}
+            ]) as gh,
+            mock.patch.object(cli, "_state", side_effect=AssertionError("no lease")),
+        ):
+            result = cli.audit_pr("example/repo", 1, now=NOW)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["profile"], "human-authorized-maintenance")
+        self.assertIsNone(result["linked_issue"])
+        self.assertEqual(result["authorization"]["recorded_by"], "maintainer")
+        self.assertEqual(gh.call_count, 2)
+
+    def test_pr_text_alone_cannot_authorize_fork_or_unprivileged_author(self):
+        for fork in (False, True):
+            with self.subTest(fork=fork):
+                pull = self.pull()
+                if fork:
+                    pull["head"]["repo"]["full_name"] = "outside/repo"
+                responses = [pull] if fork else [pull, {"permission": "write"}]
+                with mock.patch.object(cli, "_run_gh", side_effect=responses):
+                    result = cli.audit_pr("example/repo", 1, now=NOW)
+                self.assertFalse(result["ok"])
+
+    def test_maintainer_path_keeps_deployment_and_test_evidence_requirements(self):
+        pull = self.pull()
+        pull["body"] = "Human-Authorization: recorded task\n"
+        with mock.patch.object(cli, "_run_gh", side_effect=[
+            pull, {"permission": "admin"}
+        ]):
+            result = cli.audit_pr("example/repo", 1, now=NOW)
+        self.assertEqual(
+            {row["code"] for row in result["findings"]},
+            {"missing_deployment", "missing_tests"},
+        )
+
+    def test_unavailable_role_is_not_inferred_from_the_authorization_text(self):
+        with mock.patch.object(cli, "_run_gh", side_effect=[
+            self.pull(), cli.CoordinationError("unavailable")
+        ]):
+            result = cli.audit_pr("example/repo", 1, now=NOW)
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["findings"][0]["code"], "human_authorization_lookup_failed"
+        )
