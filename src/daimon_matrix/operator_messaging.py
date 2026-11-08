@@ -2134,9 +2134,7 @@ def admit_group_application(
         # prefix and complete new-member inventory were checked above.
         if not {
             (row["being_ref"], row["embodiment_id"]) for row in application["roster"]
-        } <= {
-            (row["being_ref"], row["embodiment_id"]) for row in roster["audience"]
-        }:
+        } <= {(row["being_ref"], row["embodiment_id"]) for row in roster["audience"]}:
             raise MessagingConfigError("messaging_group_admission_conflict")
         if not already_selected:
             temporary = "select-" + generation + ".json"
