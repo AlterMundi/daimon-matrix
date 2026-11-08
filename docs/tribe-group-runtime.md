@@ -306,6 +306,14 @@ its native deadline or establish that a prepared carrier was never attempted.
 Unknown originals remain retained until a separately qualified recovery path
 and its actual authority exist. This profile permits one recovery ID per original.
 
+New group and directed sends stop before preparing native transports while their
+publication is queued or ambiguous. This preserves a genuinely unattempted
+original when publication alone fails. After the original expires, an exact
+owner-authorized late publication repair can therefore be followed by the
+existing recovery request above, retaining the same signed message and audience.
+This does not reclassify historical prepared records or authorize a retry: their
+uncertainty and the original owner's duplicate-post decision remain separate.
+
 `messaging_delivery` with the ORIGINAL send ID retains both carrier histories.
 The original stays expired; `recovery.native_visibility` is suppressed, and
 `recovery.original_publication=confirmed-by-reference` describes reuse rather

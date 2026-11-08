@@ -526,7 +526,7 @@ class GroupRuntimeTests(unittest.TestCase):
         with self.assertRaises(LedgerAuthoringExpired):
             sender.send(**{**args, "send_id": str(uuid.uuid4())})
 
-    def _expired_unattempted(self, *, group=False):
+    def _readable_echo(self):
         from daimon_matrix.telegram_mirror import READABLE_REPRESENTATION
 
         sender, receiver = self.groups
@@ -543,6 +543,10 @@ class GroupRuntimeTests(unittest.TestCase):
             return json.dumps(response).encode()
 
         sender.egress._transport.send = formatted_echo
+
+    def _expired_unattempted(self, *, group=False):
+        sender, receiver = self.groups
+        self._readable_echo()
         args = dict(
             client_id="test",
             send_id=str(uuid.uuid4()),
@@ -564,6 +568,79 @@ class GroupRuntimeTests(unittest.TestCase):
         self.fixture.now += sender.policy.max_ttl_ms + 1
         sender.direct_reader_ready = lambda row: True
         return args, original
+
+    def test_publication_only_failure_can_recover_the_same_expired_original(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from tests.test_mandatory_echo_integration import (
+            MandatoryEchoIntegrationTests,
+            SignedVisibilityInstallationTests,
+        )
+
+        sender, receiver = self.groups
+        self._readable_echo()
+        sender.direct_reader_ready = lambda _row: True
+        owner = MandatoryEchoIntegrationTests()
+        owner.controller = sender.egress
+        owner.owner_key = Ed25519PrivateKey.generate()
+        owner.owner_identity = SignedVisibilityInstallationTests._identity(
+            "dm:being:owner", "owner-runtime"
+        )
+        # Same explicit owner composition as the retry integration fixture;
+        # verification and the actual signed retry implementation stay real.
+        sender.egress._installation_digest = "1" * 64
+        sender.egress._owner_actor = "dm:being:owner"
+        sender.egress._verify_owner_binding = owner._verify_owner
+        for directed in (False, True):
+            with self.subTest(directed=directed):
+                args = dict(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="repair publication, then carry this original exactly once",
+                )
+                if directed:
+                    args["destination"] = {
+                        "kind": "being",
+                        "being_ref": receiver.lane.being_ref,
+                    }
+                with patch.object(
+                    sender.egress._transport, "send", side_effect=TimeoutError
+                ):
+                    original = sender.send(**args)
+                self.assertEqual(original["visibility"]["echo_state"], "ambiguous")
+                self.fixture.now += sender.policy.max_ttl_ms + 1
+                owner.now = self.fixture.now
+                binding = sender.egress.binding("tribe-carriers", args["send_id"])
+                authorization = owner._signed_retry(
+                    binding, authorization_id=str(uuid.uuid4())
+                )
+                sender.egress.retry_ambiguous(binding, authorization)
+                posted = len(sender.egress._transport.requests)
+                recovery_id = str(uuid.uuid4())
+                sender.recover(
+                    client_id="test",
+                    original_send_id=args["send_id"],
+                    recovery_id=recovery_id,
+                )
+                for server in [*self.servers, self.servers[0]]:
+                    server._threads.join()
+                recovered = sender.inspect(client_id="test", send_id=args["send_id"])
+                self.assertEqual(recovered["message_id"], original["message_id"])
+                self.assertEqual(recovered["thread_id"], original["thread_id"])
+                self.assertEqual(recovered["audience"], original["audience"])
+                self.assertTrue(recovered["semantic"]["terminal"])
+                self.assertEqual(len(sender.egress._transport.requests), posted)
+                sender.recover(
+                    client_id="test",
+                    original_send_id=args["send_id"],
+                    recovery_id=recovery_id,
+                )
+                rows = receiver.page(after=0, limit=10, thread_id=args["thread_id"])
+                self.assertEqual(
+                    [row["message"]["event_id"] for row in rows],
+                    [original["message_id"]],
+                )
 
     def test_explicit_recovery_delivers_original_once_with_new_bounded_authorization(
         self,
@@ -1671,6 +1748,66 @@ class GroupRuntimeTests(unittest.TestCase):
                 text="large synthetic full echo " * 500,
             )
         self.assertTrue(seen)
+
+    def test_unconfirmed_publication_does_not_prepare_a_native_attempt(self):
+        sender, receiver = self.groups
+        sender.direct_reader_ready = lambda _row: True
+        provider = sender.providers[
+            (receiver.lane.being_ref, receiver.lane.local_embodiment_id)
+        ]["message"]
+        for directed, state in (
+            (False, "ambiguous"),
+            (True, "ambiguous"),
+            (False, "queued"),
+            (True, "queued"),
+        ):
+            with self.subTest(directed=directed, state=state):
+
+                def publication(_request, state=state):
+                    if state == "ambiguous":
+                        raise TimeoutError
+                    return (
+                        b'{"ok":false,"error_code":429,"description":"synthetic busy",'
+                        b'"parameters":{"retry_after":1}}'
+                    )
+
+                request = dict(
+                    client_id="test",
+                    send_id=str(uuid.uuid4()),
+                    thread_id=str(uuid.uuid4()),
+                    text="publication must finish before native preparation",
+                )
+                if directed:
+                    request["destination"] = {
+                        "kind": "being",
+                        "being_ref": receiver.lane.being_ref,
+                    }
+                with (
+                    patch.object(
+                        sender.egress._transport, "send", side_effect=publication
+                    ),
+                    patch.object(
+                        provider,
+                        "prepare_submission",
+                        wraps=provider.prepare_submission,
+                    ) as prepare,
+                    patch.object(
+                        provider, "send_prepared", wraps=provider.send_prepared
+                    ) as send,
+                ):
+                    result = sender.send(**request)
+                self.assertEqual(result["visibility"]["echo_state"], state)
+                self.assertEqual(prepare.call_count, 0)
+                self.assertEqual(send.call_count, 0)
+                for row in sender.records.get("send", request["send_id"])["rows"]:
+                    transport_id = str(
+                        uuid.uuid5(
+                            uuid.UUID(request["send_id"]),
+                            f"tribe-transport/v1:{row['being_ref']}:{row['embodiment_id']}",
+                        )
+                    )
+                    self.assertIsNone(sender.records.get("transport", transport_id))
+                self.assertEqual(receiver.page(after=0, limit=10), [])
 
     def _bounded_write_operation(self):
         group = self.groups[0]

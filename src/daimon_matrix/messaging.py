@@ -2565,7 +2565,13 @@ class GroupMessaging:
         )
         # Even an unreachable first route must not let later copies bypass the
         # one logical message's mandatory confirmed visibility.
-        self.egress.prepare_visibility(operation)
+        visibility = self.egress.prepare_visibility(operation)
+        if visibility["state"] not in {"confirmed", "suppressed"}:
+            # No native writer has been selected yet. Keep it that way: a
+            # prepared transport record would turn a publication-only failure
+            # into native-attempt uncertainty for expired-carrier recovery.
+            # Existing prepared/uncertain records remain untouched.
+            return self._result(message, send_id)
         completed = {
             (leg["recipient_id"], leg["receipt_origin_embodiment_id"])
             for leg in self.communication.result(message["event_id"])["legs"]
