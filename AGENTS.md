@@ -2,7 +2,8 @@
 
 For fleet maintenance, resolve each body's current physical placement from its
 maintained Shared Resources record and receiving binding. Eko is native on
-MEDUSA; its stopped Source dm-eko is rollback only, never a routine update target.
+MEDUSA. The old Source containers and their local copies were deleted on the
+human's explicit request; never revive them or select them as rollback targets.
 See CURRENT-STATE.md for placement and source-retirement conditions. Historical
 signed origin labels do not select a physical host.
 
@@ -22,6 +23,18 @@ paraphrase the vision from memory and do not invent scope names. Use the
 foundation taxonomy (`/me`, `/we`, `/here`, `/near`, `/all`, `/everyone`,
 `/tribe`, `/human`, `/realm`) and treat an unimplemented scope as unsupported
 rather than resolving it to something else.
+
+## Finish the authorized component work directly
+
+Within the human's authorized task, use the existing administrative and owning
+APIs to complete the needed component changes. Another conversation's reply,
+review or approval is not an extra permission requirement. Reuse its actual
+completed effects and retained current state; continue the next missing effect
+directly where authorized instead of waiting for another model. Preserve active
+writers, identities, pauses and uncertain inputs. Signature/key verification and
+actual resource grants are technical facts to satisfy through supported controls,
+not substitute approval ceremonies. Do not invent a successful receipt or weaken
+an integrity check to disguise an incomplete implementation.
 
 Non-negotiable operating rules:
 

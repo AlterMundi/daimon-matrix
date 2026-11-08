@@ -1437,6 +1437,7 @@ def load_runtime(
         except SourceError as exception:
             raise RuntimeError("runtime_source_configuration_rejected") from exception
     relationship_context: RelationshipServiceContext | None = None
+    selected_relationship_authorities: dict[str, Any] = {}
     if relationship_store_path is not None:
         known_authorities = {
             configuration[0]: configuration[2]
@@ -1456,7 +1457,7 @@ def load_runtime(
             known_authorities[ref] = supplied
         if not set(relationship_known_refs).issubset(known_authorities):
             raise RuntimeError("runtime_relationship_authority_inventory_mismatch")
-        selected_relationship_authorities: dict[str, Any] = {
+        selected_relationship_authorities = {
             manifest.being_ref: authority,
             **{
                 being_ref: known_authorities[being_ref]
@@ -1729,6 +1730,22 @@ def load_runtime(
                         authority, "accepted_manifest_hashes", (active.manifest.digest,)
                     )
                 ),
+            },
+            # Report the verified native context, including approved peers not
+            # enrolled in this body's older messaging application. This is
+            # observation only: it grants no membership, route or capability.
+            "relationship_authorities": {
+                ref: {
+                    "active_manifest_hash": selected.manifest.digest,
+                    "accepted_manifest_hashes": list(
+                        getattr(
+                            selected,
+                            "accepted_manifest_hashes",
+                            (selected.manifest.digest,),
+                        )
+                    ),
+                }
+                for ref, selected in sorted(selected_relationship_authorities.items())
             },
             "state_root_identity": {
                 "device": root_info.st_dev,

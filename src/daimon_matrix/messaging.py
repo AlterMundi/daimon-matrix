@@ -1832,7 +1832,8 @@ class GroupMessaging:
         }
         if (
             not isinstance(base, dict)
-            or set(base) != base_fields
+            or set(base)
+            not in (base_fields, base_fields | {"relationship_authorities"})
             or not isinstance(app, dict)
             or set(app) != app_fields
             or base["schema"] != "dm.runtime.loaded-base/v1"
