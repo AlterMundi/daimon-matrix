@@ -1063,6 +1063,22 @@ class MandatoryEcho:
             )
         return state
 
+    def observed_at_or_after(
+        self, operation_id: str, expected_binding_digest: str, deadline_ms: int
+    ) -> bool:
+        """Retained clock evidence may close authority, never prove non-delivery."""
+        _millis(deadline_ms)
+        record = self._journal._load(operation_id, expected_binding_digest)
+        return any(
+            attempt["at_ms"] >= deadline_ms
+            or (
+                attempt["response_at_ms"] is not None
+                and attempt["response_at_ms"] >= deadline_ms
+            )
+            for part in record["parts"]
+            for attempt in part["attempts"]
+        )
+
     def ambiguity(
         self, operation_id: str, expected_binding_digest: str
     ) -> dict[str, str]:

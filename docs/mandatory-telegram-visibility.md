@@ -545,6 +545,25 @@ no `mark_confirmed` or reconciliation shortcut that bypasses a newly validated
 Telegram response. Success after retry may have duplicated a remote post and
 never claims exactly-once delivery.
 
+Owner recovery may complete a retained human-publication obligation after the
+original native carrier expires. It still requires the existing fresh exact
+signed duplicate-post decision and current immutable content/authority checks.
+This does not extend the old native deadline or issue a native permit. Normal
+advance/release paths retain their original expiry checks. The read-only owner
+challenge follows these same retained-authority checks; it is not a model tool.
+
+Late confirmation and zero completed native releases do not prove that no
+native write occurred: a wall-clock rollback followed by a lost native result
+is compatible with both observations. To avoid reviving an old native window,
+permit issuance also denies a binding whose authenticated publication journal
+already observed an attempt or response at/after its native deadline. This is
+a persistent negative fence and remains effective across restart and clock
+rollback; it is never positive evidence of historical non-delivery. Keep a
+qualified reader with this fence after using late owner publication repair;
+older code is not a compatible rollback for those obligations.
+The strict prepared/uncertain transport refusal in `tribe-group-runtime.md` remains unchanged. Completing visibility is
+not itself a complete delivery recovery plan for an old uncertain carrier.
+
 Fixed limits: 4,096 retained operations; 4 MiB encoded record; 64 MiB total encoded
 records; 32 parts; four attempts per part; 65,536 response bytes per attempt;
 8,192 bytes per owner authorization. Limits never evict history. Filesystem

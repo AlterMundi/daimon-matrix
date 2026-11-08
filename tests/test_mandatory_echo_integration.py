@@ -733,6 +733,102 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(len(self.transport.calls), sent)
 
+    def test_expired_owner_retry_completes_only_visibility_not_native_authority(
+        self,
+    ) -> None:
+        binding = self._admit("expired-owner-publication")
+        original = self.transport.send
+
+        def lost(request: dict[str, object]) -> bytes:
+            original(request)
+            raise TimeoutError("synthetic lost acknowledgment")
+
+        self.transport.send = lost
+        self.assertEqual(self.controller.advance_one(binding)["state"], "ambiguous")
+        self.now = binding.deadline_ms + 1
+        authorization = self._signed_retry(binding)
+        self.transport.send = original
+        self.assertEqual(
+            self.controller.retry_ambiguous(binding, authorization)["state"],
+            "confirmed",
+        )
+        self.assertEqual(len(self.transport.calls), 2)
+        native_calls: list[bytes] = []
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(binding, b"native-request", native_calls.append)
+        self.assertEqual(native_calls, [])
+        posted = len(self.transport.calls)
+        self.controller.retry_ambiguous(binding, authorization)
+        self.assertEqual(len(self.transport.calls), posted)
+
+    def test_late_publication_closes_native_window_after_clock_rollback_and_restart(
+        self,
+    ) -> None:
+        import time
+
+        self.controller.register_path("tribe-message-request", "integration-native")
+        binding = self._admit("clock-rollback-native", path_id="tribe-message-request")
+        original = self.transport.send
+
+        def lost(request: dict[str, object]) -> bytes:
+            original(request)
+            raise TimeoutError("synthetic echo result lost")
+
+        self.transport.send = lost
+        self.controller.advance_one(binding)
+        self.now = binding.deadline_ms + 1
+        authorization = self._signed_retry(binding)
+        self.transport.send = original
+        self.controller.retry_ambiguous(binding, authorization)
+        self.now = binding.deadline_ms - 1
+        native_calls: list[bytes] = []
+
+        def native_lost(value: bytes) -> None:
+            native_calls.append(value)
+            raise TimeoutError("synthetic native result lost")
+
+        restarted = MandatoryEgressController(
+            policy=POLICY,
+            proof_key=b"k" * 32,
+            transport=self.transport,
+            clock=lambda: self.now,
+            catalog_mode="synthetic",
+            installation_digest="1" * 64,
+            owner_actor="dm:being:owner",
+            verify_owner_binding=self._verify_owner,
+        )
+        restarted.register_catalog(
+            catalog_id="integration-native",
+            path=self.path,
+            resolve=self._resolve,
+            authorize=lambda _binding: self.current,
+        )
+        restarted.register_path("tribe-message-request", "integration-native")
+        for controller in (self.controller, restarted):
+            with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+                controller.release_bounded(
+                    binding,
+                    b"native-request",
+                    native_lost,
+                    deadline_ns=time.monotonic_ns() + 1_000_000_000,
+                )
+        self.assertEqual(native_calls, [])
+        self.assertEqual(
+            self.controller.inspect_retained(binding)["completed_releases"], 0
+        )
+        # This negative fence is not positive proof of historical non-delivery;
+        # group recovery still refuses any prepared/uncertain transport record.
+
+    def test_expired_owner_retry_still_requires_current_catalog_authority(self) -> None:
+        binding = self._admit("expired-revoked-publication")
+        self.transport.send = lambda request: (_ for _ in ()).throw(TimeoutError())
+        self.controller.advance_one(binding)
+        self.now = binding.deadline_ms + 1
+        authorization = self._signed_retry(binding)
+        self.current = False
+        with self.assertRaisesRegex(NativeEgressError, "echo_authorization_blocked"):
+            self.controller.retry_ambiguous(binding, authorization)
+
     def test_signed_owner_retry_rejects_wrong_exact_fields_expiry_and_signature(
         self,
     ) -> None:

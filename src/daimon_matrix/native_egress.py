@@ -2625,7 +2625,9 @@ class MandatoryEgressController:
             journal,
             transport=self._transport,
             resolve=lambda _operation: self._load_projection(binding),
-            authorize=lambda _record: self._authorize(binding, catalog),
+            # Only the separately authenticated owner retry may finish an
+            # old human-publication obligation. It never issues a native permit.
+            authorize=lambda _record: self._authorize_retained(binding, catalog),
             clock=self._clock,
             verify_retry=verify_retry,
             execution_guard=self._retry_execution_guard,
@@ -2633,6 +2635,13 @@ class MandatoryEgressController:
         )
 
     def _authorize(self, binding: OperationBinding, catalog: _Catalog) -> bool:
+        return (
+            self._authorize_retained(binding, catalog)
+            and self._clock() < binding.deadline_ms
+        )
+
+    def _authorize_retained(self, binding: OperationBinding, catalog: _Catalog) -> bool:
+        """Current immutable content/authority, without native send lifetime."""
         current = self.binding(binding.catalog_id, binding.operation_id)
         if current != binding:
             return False
@@ -2641,7 +2650,6 @@ class MandatoryEgressController:
             return (
                 isinstance(native, bytes)
                 and _digest(native) == binding.native_sha256
-                and self._clock() < binding.deadline_ms
                 and catalog.authorize(binding) is True
             )
         except Exception:
@@ -2669,7 +2677,7 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_catalog_invalid")
         with self._database(catalog) as database:
             try:
-                echo = self._mandatory(binding, database).ambiguity(
+                echo = self._retry_mandatory(binding, database).ambiguity(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
             except EchoError as exception:
@@ -2824,6 +2832,15 @@ class MandatoryEgressController:
                 echo.require_discharged(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
+                # A late publication observation durably closes the old native
+                # window, even if the wall clock later moves backwards. This
+                # denial is never evidence that a prior native write did not occur.
+                if echo.observed_at_or_after(
+                    binding.echo_operation_id,
+                    binding.echo_binding_digest,
+                    binding.deadline_ms,
+                ):
+                    raise NativeEgressError("egress_authority_blocked")
             except EchoError as exception:
                 if str(exception) in {"echo_not_confirmed", "echo_not_discharged"}:
                     raise NativeEgressError("egress_echo_not_confirmed") from None
