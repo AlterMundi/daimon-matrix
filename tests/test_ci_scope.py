@@ -476,7 +476,7 @@ class CIScopeTests(unittest.TestCase):
             "tests.test_dm079_capability_profiles",
             "tests.test_operator_runtime_upgrade.CurrentCapabilityUpgradeTests",
             "tests.test_dm024_runtime.RuntimeBundleTests",
-            "tests.test_dm024_service.HostedServiceTests",
+            "tests.test_dm024_service\n",
         ):
             self.assertIn(contract, group)
         self.assertIn("needs.scope.outputs.group_receiving_checks == 'true'", group)
@@ -562,6 +562,31 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn(
             "needs.scope.outputs.profile != 'release-compatibility'", portability
         )
+
+    def test_isolated_service_uses_complete_installed_receiving_checks(self):
+        from tools.ci_scope import RECEIVING_SERVICE_FILES
+
+        self.assertEqual(profile(list(RECEIVING_SERVICE_FILES)), "receiving-control")
+        self.assertEqual(profile(["src/daimon_matrix/service.py"]), "receiving-control")
+        for other in (
+            "src/daimon_matrix/runtime.py",
+            "src/daimon_matrix/client.py",
+            "src/daimon_matrix/scopes.py",
+            "specs/scope-resolution.md",
+            "schemas/unknown.json",
+            "pyproject.toml",
+            "requirements-dev.txt",
+            "docs/unknown.md",
+        ):
+            self.assertEqual(profile(["src/daimon_matrix/service.py", other]), "full")
+        workflow = (
+            Path(__file__).parents[1] / ".github/workflows/tests.yml"
+        ).read_text()
+        job = workflow.split("  tribe-group:", 1)[1].split("\n  human-tribu:", 1)[0]
+        self.assertIn("tests.test_dm024_service\n", job)
+        self.assertIn("tests.test_dm025_cli_mcp\n", job)
+        self.assertIn("python tools/reproducible_build.py --output dist", job)
+        self.assertIn("Install the qualified SDK once", job)
 
     def test_maintained_prose_alone_uses_existing_document_checks(self):
         for entry in (
