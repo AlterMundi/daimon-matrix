@@ -915,6 +915,72 @@ class BoundedReceivingObservationTests(RootLedgerFixture):
             self.assertTrue(restored["ok"])
             self.assertEqual(restored["result"]["identity"]["body"]["state"], "running")
 
+    def test_receiving_methods_belong_only_to_the_authenticated_client(self) -> None:
+        wider = create_capability(
+            key("wider-status"),
+            client_id="client:wider-status",
+            methods=["runtime.status", "scope.me", "source.status"],
+            not_before_ms=NOW - 10000,
+            not_after_ms=NOW + 10000,
+        )
+        service = replace(
+            self.service,
+            capabilities={
+                self.capability.capability_id: self.capability,
+                wider.capability_id: wider,
+            },
+        )
+        narrow_request = self.request(8010, {"view": "receiving"})
+        narrow = service.handle(narrow_request)
+        broad = service.handle(self.request(8011, {"view": "receiving"}, wider))
+        self.assertTrue(narrow["ok"], narrow["error"])
+        self.assertTrue(broad["ok"], broad["error"])
+        self.assertEqual(
+            narrow["result"]["client_authority"]["methods"],
+            ["runtime.status", "scope.me"],
+        )
+        self.assertEqual(
+            broad["result"]["client_authority"]["methods"], list(wider.methods)
+        )
+        self.assertEqual(
+            set(narrow["result"]["client_authority"]),
+            {"schema", "coverage", "methods", "meaning"},
+        )
+        retried = service.handle(narrow_request)
+        self.assertEqual(retried["result"], narrow["result"])
+        verify_response(
+            retried,
+            self.capability,
+            expected_request_id=narrow_request["request_id"],
+            expected_request_hash=request_hash(narrow_request),
+            expected_server=narrow["server"],
+            expected_runtime=narrow["runtime"],
+        )
+        self.assertNotIn(
+            "client_authority", service.handle(self.request(8012, {}))["result"]
+        )
+        # A permitted name does not create the missing feature or its resources.
+        unavailable = service.handle(
+            create_request(
+                wider,
+                request_id=rpc_id(8013),
+                issued_at_ms=NOW,
+                method="source.status",
+                params={},
+            )
+        )
+        self.assertFalse(unavailable["ok"])
+        self.assertEqual(unavailable["error"]["code"], "source_runtime_unavailable")
+
+    def test_receiving_method_inventory_does_not_survive_expired_authority(
+        self,
+    ) -> None:
+        request = self.request(8014, {"view": "receiving"})
+        self.assertTrue(self.service.handle(request)["ok"])
+        expired = replace(self.service, clock=lambda: NOW + 10000)
+        with self.assertRaisesRegex(LocalApiError, "authentication_failed"):
+            expired.handle(request)
+
     def test_receiving_identity_does_not_expand_a_status_only_grant(self) -> None:
         capability = create_capability(
             key("status-only"),

@@ -187,6 +187,14 @@ class InstalledSurfaceTests(RuntimeFixture):
                 response["result"]["identity"]["origin"], response["server"]
             )
             self.assertNotIn("integrity", response["result"])
+            self.assertEqual(
+                response["result"]["client_authority"]["methods"],
+                sorted(client.config.capability.methods),
+            )
+            self.assertEqual(
+                response["result"]["client_authority"]["coverage"],
+                "authenticated-client-granted-methods",
+            )
 
     def test_receiving_status_cli_and_mcp_keep_default_and_reject_unknown_views(
         self,

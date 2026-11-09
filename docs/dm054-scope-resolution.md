@@ -47,6 +47,24 @@ CPU time spent validating a larger roster must not turn an uncontended reader
 into `egress_attempt_deadline`. A genuinely contended fence still returns that
 retryable error. The caller's operation deadline remains separate.
 
+### Current client's Matrix method permissions
+
+The compact receiving response also reports `client_authority` with schema
+`dm.runtime.client-authority/v1`, coverage
+`authenticated-client-granted-methods`, and the sorted method names from the
+capability that authenticated this exact call. It discloses no keys, capability
+descriptors or other clients' grants. Exact status retries authenticate again
+and report that same current calling authority through the normal live read.
+Ordinary status and scope views are unchanged; no new tool or grant is needed.
+
+This is the Matrix permission slice of an own-body inventory. A permitted method
+can still refuse because its feature, resource grant or receiving state is
+unavailable. It is not a complete harness tool list, sensor/actuator inventory,
+resource allowance, shared capability advertisement or another being's authority.
+The configured `/me` `body_capabilities` labels remain a separate description;
+an empty list does not establish that this client has no granted Matrix methods.
+Use the existing typed tools and their real results for selected work.
+
 ### Loaded relationship verification context
 
 `loaded_runtime.relationship_authorities` reports the public being references and

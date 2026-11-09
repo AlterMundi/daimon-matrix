@@ -1294,6 +1294,20 @@ class HostedWeave:
                     request["params"], request_hash=verified["request_hash"]
                 )
             )
+            if request["method"] == "runtime.status" and request["params"] == {
+                "view": "receiving"
+            }:
+                # Report only this call's authenticated grant, never the union
+                # of other clients or configured body capability labels.
+                current["client_authority"] = {
+                    "schema": "dm.runtime.client-authority/v1",
+                    "coverage": "authenticated-client-granted-methods",
+                    "methods": sorted(capability.methods),
+                    "meaning": (
+                        "Method permission only; not feature readiness, resource "
+                        "access, model tools or device authority"
+                    ),
+                }
             if verified["ok"] and current == verified["result"]:
                 return verified
             outcome = {"result": current}
