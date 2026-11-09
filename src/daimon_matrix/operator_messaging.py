@@ -2128,9 +2128,13 @@ def admit_group_application(
         if not isinstance(group, GroupMessaging):
             raise MessagingConfigError("messaging_group_admission_conflict")
         roster = group.receiving_roster()
-        if {(row["being_ref"], row["embodiment_id"]) for row in roster["audience"]} != {
+        # Signed audience includes active bodies without a configured carrier.
+        # Preserve that explicit unavailability for existing members; adding a
+        # member must not require reviving unrelated historical bodies. The
+        # prefix and complete new-member inventory were checked above.
+        if not {
             (row["being_ref"], row["embodiment_id"]) for row in application["roster"]
-        }:
+        } <= {(row["being_ref"], row["embodiment_id"]) for row in roster["audience"]}:
             raise MessagingConfigError("messaging_group_admission_conflict")
         if not already_selected:
             temporary = "select-" + generation + ".json"

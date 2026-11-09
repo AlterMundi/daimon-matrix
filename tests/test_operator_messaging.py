@@ -2700,14 +2700,18 @@ class GroupRouteMaintenanceTests(unittest.TestCase):
 
 class GroupApplicationAdmissionTests(unittest.TestCase):
     def setUp(self):
-        from daimon_matrix.native_egress import closed_visibility
         from tests.test_dm051_sealed import TribeConversationLaneTests
-        from tests.test_group_messaging_runtime import GroupRuntimeTests
-        from tests.test_messaging_runtime import public_document
 
         self.fixture = TribeConversationLaneTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
+        self._prepare_application()
+
+    def _prepare_application(self):
+        from daimon_matrix.native_egress import closed_visibility
+        from tests.test_group_messaging_runtime import GroupRuntimeTests
+        from tests.test_messaging_runtime import public_document
+
         self.runtime, self.app, self.view = GroupRuntimeTests._signed_group_application(
             self, record_key_check=False, founder_only=True
         )
@@ -2807,6 +2811,61 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual(sorted(self.app.iterdir()), files)
         self.assertEqual((self.app / "publication.json").read_bytes(), publication)
         self.assertEqual(metadata.name, first["generation"])
+
+    def test_admission_preserves_an_existing_members_unrouted_signed_body(self):
+        from tests.test_group_messaging_runtime import DirectLaneTests
+        from tests.test_messaging_runtime import load_runtime
+
+        authority, origin = DirectLaneTests.enroll_second_member_body(
+            self, label="founder"
+        )
+        self.fixture.founder = replace(self.fixture.founder, authority=authority)
+
+        def load_with_own_body_target(root, filename, *args, **kwargs):
+            # The existing runtime fixture requires its separate /we carrier
+            # for every own body. This does not add a Tribe application route.
+            path = root / filename
+            bundle = json.loads(path.read_bytes())
+            bundle["peer_transport"]["targets"] = [
+                {
+                    "embodiment_id": origin["embodiment_id"],
+                    "endpoint": "http://127.0.0.1:45194/dm-peer/v1",
+                    "timeout_ms": 1000,
+                }
+            ]
+            path.write_bytes(canonical_bytes(bundle))
+            return load_runtime(root, filename, *args, **kwargs)
+
+        with patch(
+            "tests.test_messaging_runtime.load_runtime", load_with_own_body_target
+        ):
+            self._prepare_application()
+        self.accept()
+        result = self.publish()
+        self.assertEqual(result["status"], "group-application-published")
+        selected, _ = read_publication(self.runtime, self.app)
+        self.assertEqual(selected["roster"], self.candidate["roster"])
+        group = load_application(self.runtime, self.app).service.messaging.channels[
+            "tribe"
+        ]
+        audience = group.receiving_roster()["audience"]
+        self.assertIn(
+            origin["embodiment_id"], {row["embodiment_id"] for row in audience}
+        )
+        self.assertEqual(len(audience), 3)
+        self.assertEqual(len(selected["roster"]), 2)
+
+    def test_admission_still_requires_routes_for_every_new_members_active_body(self):
+        from tests.test_group_messaging_runtime import DirectLaneTests
+        from tests.test_messaging_runtime import public_document
+
+        authority, _origin = DirectLaneTests.enroll_second_member_body(self)
+        member = replace(self.fixture.member, authority=authority)
+        self.candidate["authorities"][-1] = public_document(member, "member")
+        self.accept()
+        with self.assertRaisesRegex(ValueError, "messaging_group_admission_conflict"):
+            self.publish()
+        self.assertEqual(read_publication(self.runtime, self.app)[0], self.previous)
 
     def test_lost_reply_recovers_without_reminting_client_or_generation(self):
         self.accept()
