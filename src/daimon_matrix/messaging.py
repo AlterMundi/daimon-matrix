@@ -1702,6 +1702,87 @@ class MessagingChannel:
                 raise MessagingInboxError("messaging_stored_evidence_invalid") from None
 
 
+def _reader_boot_binding(
+    base: dict[str, Any], app: dict[str, Any], controller: Any, credential_id: str
+) -> dict[str, Any]:
+    stable_base = {
+        key: value
+        for key, value in base.items()
+        if key not in {"process_id", "process_instance_id"}
+    }
+    stable_base["qualified_startup"] = {
+        key: value
+        for key, value in base["qualified_startup"].items()
+        if key not in {"process_id", "startup_instance_id"}
+    }
+    return {
+        "base": stable_base,
+        "application": {
+            key: value
+            for key, value in app.items()
+            if key not in {"loaded_base_sha256", "loaded_view_sha256", "reader_gates"}
+        },
+        "controller": controller,
+        "credential_id": credential_id,
+    }
+
+
+def _compatible_reader_boot(
+    latest: dict[str, Any], boot: dict[str, Any], binding: dict[str, Any]
+) -> bool:
+    """Requalify software observations against authenticated local standing intent.
+
+    Current startup is independently qualified before this callback. Reconstruct
+    the old binding with CURRENT controller/credential to prove neither changed.
+    Only public package/import fingerprints may then differ: actual interpreter,
+    reader contract, authority, policy, stores and isolation stay identical.
+    """
+    prior = latest.get("boot")
+    if not isinstance(prior, dict) or set(prior) != {"base", "application"}:
+        return False
+    for name in ("base", "application"):
+        if not isinstance(prior[name], dict) or set(prior[name]) != set(boot[name]):
+            return False
+    startup = prior["base"].get("qualified_startup")
+    if not isinstance(startup, dict) or set(startup) != set(
+        boot["base"]["qualified_startup"]
+    ):
+        return False
+    previous = _reader_boot_binding(
+        prior["base"],
+        prior["application"],
+        binding["controller"],
+        binding["credential_id"],
+    )
+    if hashlib.sha256(canonical_bytes(previous)).hexdigest() != latest.get(
+        "binding_sha256"
+    ):
+        return False
+    software = {
+        "code_digest",
+        "sdk_digest",
+        "matrix_commit",
+        "matrix_wheel_sha256",
+        "import_context_sha256",
+        "import_files_sha256",
+    }
+
+    def effective(value: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **value,
+            "base": {
+                **value["base"],
+                "qualified_startup": {
+                    key: item
+                    for key, item in value["base"]["qualified_startup"].items()
+                    if key not in software
+                },
+            },
+        }
+
+    return effective(previous) == effective(binding)
+
+
 class GroupMessaging:
     """One membership channel over existing authenticated opaque route providers.
 
@@ -1844,32 +1925,18 @@ class GroupMessaging:
             # Bare fixtures and historical loaders cannot advertise this feature.
             return
         self.validate(service)
-        stable_base = {
-            key: value
-            for key, value in base.items()
-            if key not in {"process_id", "process_instance_id"}
-        }
-        stable_base["qualified_startup"] = {
-            key: value
-            for key, value in base["qualified_startup"].items()
-            if key not in {"process_id", "startup_instance_id"}
-        }
         capability = service.capabilities[service.receiving.capability_id]
-        binding = {
-            "base": stable_base,
-            "application": {
-                key: value
-                for key, value in app.items()
-                if key
-                not in {"loaded_base_sha256", "loaded_view_sha256", "reader_gates"}
-            },
-            "controller": capability.descriptor,
-            "credential_id": self.lane.local_credential_id,
-        }
+        binding = _reader_boot_binding(
+            base, app, capability.descriptor, self.lane.local_credential_id
+        )
+        boot = {"base": base, "application": app}
         self.egress.initialize_reader_recovery(
             "tribe",
             binding=binding,
-            boot={"base": base, "application": app},
+            boot=boot,
+            compatible_binding=lambda latest: _compatible_reader_boot(
+                latest, boot, binding
+            ),
             load=self.records.reader_control_head,
             append=self.records.append_reader_control,
             authorization=self.selection_authorization,

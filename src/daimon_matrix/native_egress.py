@@ -1361,12 +1361,14 @@ class MandatoryEgressController:
         load: Callable[..., dict[str, Any] | None],
         append: Callable[..., dict[str, Any]],
         authorization: Callable[..., AbstractContextManager[None]],
+        compatible_binding: Callable[[dict[str, Any]], bool] | None = None,
         deadline_ns: int | None = None,
     ) -> None:
         """One bounded startup restoration, before workers/listeners exist.
 
         This is not request replay or renewed qualification. Only the latest
-        signed local intent, same static boot, roster and original expiry qualify.
+        signed local intent, qualified compatible boot, roster and original
+        expiry qualify.
         Every live control subsequently persists through the same physical fence.
         """
         with self._fence:
@@ -1420,8 +1422,11 @@ class MandatoryEgressController:
                     state["status"] = "disabled"
                     state["startup_complete"] = True
                     return
+                same_binding = latest["binding_sha256"] == state["binding_sha256"]
+                if not same_binding and compatible_binding is not None:
+                    same_binding = compatible_binding(latest)
                 if (
-                    latest["binding_sha256"] != state["binding_sha256"]
+                    not same_binding
                     or not isinstance(latest["roster_sha256"], str)
                     or any(
                         not validity_contains(_reader_validity(row), self._clock())
@@ -1453,6 +1458,7 @@ class MandatoryEgressController:
                                 )
                             },
                             "action": "rebound",
+                            "binding_sha256": state["binding_sha256"],
                             "boot": state["boot"],
                         },
                         deadline_ns=deadline_ns,

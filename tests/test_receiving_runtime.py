@@ -1357,7 +1357,11 @@ class ReceivingCompositionTests(unittest.TestCase):
         self,
     ):
         from daimon_matrix.daemon import serve_forever
-        from daimon_matrix.messaging import GroupMessaging
+        from daimon_matrix.messaging import (
+            GroupMessaging,
+            _compatible_reader_boot,
+            _reader_boot_binding,
+        )
 
         _base, _app, initial = (
             group_fixtures.GroupRuntimeTests._signed_group_application(
@@ -1365,7 +1369,7 @@ class ReceivingCompositionTests(unittest.TestCase):
             )
         )
 
-        def boot(view, *, publication=None):
+        def boot(view, *, publication=None, software=None):
             base = json.loads(view.service.loaded_runtime)
             base["process_instance_id"] = str(uuid.uuid4())
             base["qualified_startup"] = {
@@ -1384,6 +1388,16 @@ class ReceivingCompositionTests(unittest.TestCase):
                 "process_id": os.getpid(),
                 "startup_instance_id": str(uuid.uuid4()),
             }
+            if software is not None:
+                for key in (
+                    "code_digest",
+                    "sdk_digest",
+                    "matrix_wheel_sha256",
+                    "import_context_sha256",
+                    "import_files_sha256",
+                ):
+                    base["qualified_startup"][key] = software * 64
+                base["qualified_startup"]["matrix_commit"] = software * 40
             app = json.loads(view.service.loaded_application)
             app["loaded_base_sha256"] = hashlib.sha256(
                 canonical_bytes(base)
@@ -1437,7 +1451,7 @@ class ReceivingCompositionTests(unittest.TestCase):
             recovery_roster_sha256=group.receiving_roster()["roster_sha256"],
         )
 
-        def successor(previous, *, publication=None):
+        def successor(previous, *, publication=None, software=None):
             current = type(controller)(
                 policy=controller._policy,
                 proof_key=controller._proof_key,
@@ -1481,6 +1495,7 @@ class ReceivingCompositionTests(unittest.TestCase):
                     ),
                 ),
                 publication=publication,
+                software=software,
             )
 
         second = successor(first)
@@ -1491,7 +1506,77 @@ class ReceivingCompositionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(NativeEgressError, "reader_process_conflict"):
             select(second.egress, value, "e" * 64)
-        changed = successor(second, publication="9" * 64)
+        # Actual signed common startup, no peer requests or control RPCs:
+        # a qualified package change preserves the same standing reader intent.
+        future = boot(second, software="1")
+        future_boot = {
+            "base": json.loads(future.service.loaded_runtime),
+            "application": json.loads(future.service.loaded_application),
+        }
+        cap = future.service.capabilities[future.service.receiving.capability_id]
+        binding = _reader_boot_binding(
+            future_boot["base"],
+            future_boot["application"],
+            cap.descriptor,
+            group.lane.local_credential_id,
+        )
+        latest = group.records.reader_control_head("tribe")
+        self.assertTrue(_compatible_reader_boot(latest, future_boot, binding))
+
+        def alter(value, path, replacement):
+            result = copy.deepcopy(value)
+            parent = result
+            for key in path[:-1]:
+                parent = parent[key]
+            parent[path[-1]] = replacement
+            return result
+
+        drifts = [
+            (("controller",), {"changed": True}),
+            (("credential_id",), "changed"),
+            (("base", "authority_epoch"), {"changed": True}),
+            (("base", "runtime_bundle_sha256"), "9" * 64),
+            (("base", "stores"), {"changed": True}),
+            (("application", "publication_sha256"), "9" * 64),
+            (("application", "visibility"), {"changed": True}),
+            (
+                ("base", "qualified_startup", "interpreter"),
+                {"implementation": "different"},
+            ),
+            (("base", "qualified_startup", "isolated"), False),
+            (
+                ("base", "qualified_startup", "reader", "contract", "wire_read"),
+                ["unsupported/v1"],
+            ),
+            (
+                ("base", "qualified_startup", "reader", "contract", "store_versions"),
+                {"reader_control": [999]},
+            ),
+        ]
+        for path, replacement in drifts:
+            with self.subTest(drift=path):
+                self.assertFalse(
+                    _compatible_reader_boot(
+                        latest, future_boot, alter(binding, path, replacement)
+                    )
+                )
+        forged = alter(
+            latest, ("boot", "base", "qualified_startup", "code_digest"), "9" * 64
+        )
+        self.assertFalse(_compatible_reader_boot(forged, future_boot, binding))
+        third = successor(second, software="1")
+        start(third)
+        self.assertTrue(third.egress.reader_ready("tribe", reader()))
+        self.assertEqual(
+            third.egress.reader_recovery_status("tribe")["state"], "recovered"
+        )
+        self.assertEqual(group.records.reader_control_head("tribe")["command"], value)
+        # The rebound retains its current binding so the next identical boot
+        # does not depend on an older package's fingerprint.
+        fourth = successor(third, software="1")
+        start(fourth)
+        self.assertTrue(fourth.egress.reader_ready("tribe", reader()))
+        changed = successor(fourth, publication="9" * 64, software="1")
         start(changed)
         self.assertFalse(changed.egress.reader_ready("tribe", reader()))
         self.assertEqual(
@@ -1954,7 +2039,7 @@ class DurableReaderRecoveryTests(unittest.TestCase):
         }
         self.roster = "b" * 64
 
-    def restart(self, *, binding=None, deadline_ns=None):
+    def restart(self, *, binding=None, deadline_ns=None, compatible_binding=None):
         controller = synthetic_visibility(clock=lambda: self.now)
         controller.register_reader_channel("tribe", "0" * 64, controlled=True)
 
@@ -1970,9 +2055,32 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             load=self.records.reader_control_head,
             append=self.records.append_reader_control,
             authorization=authorized,
+            compatible_binding=compatible_binding,
             **({"deadline_ns": deadline_ns} if deadline_ns is not None else {}),
         )
         return controller
+
+    def test_compatible_software_cannot_restore_explicitly_disabled_reader(self):
+        current, _ = self.enabled_v2()
+        select(current, command(current))
+        before = self.records.reader_control_head("tribe")
+        restored = self.restart(
+            binding={**self.binding, "code": "new"}, compatible_binding=lambda _: True
+        )
+        self.assertFalse(restored.reader_ready("tribe", reader_v2()))
+        self.assertEqual(restored.reader_recovery_status("tribe")["state"], "disabled")
+        self.assertEqual(self.records.reader_control_head("tribe"), before)
+
+    def test_compatible_software_never_renews_expired_reader_validity(self):
+        self.enabled()
+        self.now += 100_000
+        restored = self.restart(
+            binding={**self.binding, "code": "new"}, compatible_binding=lambda _: True
+        )
+        self.assertFalse(restored.reader_ready("tribe", reader()))
+        self.assertEqual(
+            self.records.reader_control_head("tribe")["action"], "invalidate"
+        )
 
     def test_custom_verifier_does_not_cache_by_default(self):
         self.enabled_v2()
