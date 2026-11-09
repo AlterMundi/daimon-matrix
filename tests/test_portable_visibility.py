@@ -356,5 +356,233 @@ class PortablePublicationTests(unittest.TestCase):
         self.assertEqual(self.publisher.calls, 1)
 
 
+class NativePublicationRetirementTests(unittest.TestCase):
+    """Real native/echo SQLite transactions and signed publication receipts."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.path = self.root / "native.sqlite"
+        self.now = 1000
+        self.key = Ed25519PrivateKey.from_private_bytes(b"p" * 32)
+        self.publisher = JournalPublisher(self.root / "publication.sqlite", self.key)
+        self.policy = dict(
+            schema="daimon-visibility-policy/v3",
+            generation=1,
+            origin="retirement-fixture",
+            representation="plain-json/v2",
+            acceptance_digest="a" * 64,
+            proof_key_id="fixture-key",
+            publication=dict(
+                kind="conversation-journal/v1",
+                surface_ref="fixture:conversation",
+                audience=["fixture:human"],
+                receipt_key=encoded(self.key.public_key().public_bytes_raw()),
+            ),
+        )
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute(
+                "CREATE TABLE peer_outbox (request_id TEXT PRIMARY KEY, "
+                "plan_sha256 TEXT NOT NULL, request BLOB NOT NULL, "
+                "request_sha256 TEXT NOT NULL)"
+            )
+        self.controller = self.controller_for("synthetic")
+
+    def controller_for(self, mode):
+        from daimon_matrix.native_egress import MandatoryEgressController
+
+        c = MandatoryEgressController(
+            policy=self.policy,
+            proof_key=b"k" * 32,
+            transport=self.publisher,
+            clock=lambda: self.now,
+            catalog_mode=mode,
+        )
+
+        def resolve(locator):
+            with closing(sqlite3.connect(self.path)) as db:
+                return db.execute(
+                    "SELECT request FROM peer_outbox WHERE request_id=?", (locator,)
+                ).fetchone()[0]
+
+        c.register_catalog(
+            catalog_id="native-retirement",
+            path=self.path,
+            resolve=resolve,
+            authorize=lambda _: True,
+        )
+        c.register_path("peer-converse-request", "native-retirement")
+        return c
+
+    def admit(self, name):
+        raw = name.encode()
+        with closing(sqlite3.connect(self.path)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "INSERT INTO peer_outbox VALUES (?,?,?,?)",
+                (name, "a" * 64, raw, hashlib.sha256(raw).hexdigest()),
+            )
+            binding = self.controller.admit_in_transaction(
+                db,
+                catalog_id="native-retirement",
+                path_id="peer-converse-request",
+                operation_id=name,
+                locator=name,
+                native_bytes=raw,
+                projection=projection(),
+                deadline_ms=self.now + 60000,
+                authority_head="fixture-head",
+            )
+            db.commit()
+        return binding
+
+    def records(self):
+        with closing(sqlite3.connect(self.path)) as db:
+            return (
+                db.execute("SELECT count(*) FROM peer_outbox").fetchone()[0],
+                db.execute(
+                    "SELECT count(*) FROM mandatory_egress_operations"
+                ).fetchone()[0],
+                db.execute("SELECT count(*) FROM echo_v2_obligations").fetchone()[0],
+            )
+
+    def test_capacity_reclaimed_without_losing_original_or_reopening_clock(self):
+        from daimon_matrix.native_egress import (
+            PUBLICATION_RETENTION_MS,
+            NativeEgressError,
+        )
+
+        first = self.admit("first")
+        self.assertEqual(self.controller.advance_one(first)["state"], "confirmed")
+        self.now = first.deadline_ms + PUBLICATION_RETENTION_MS
+        calls = self.publisher.calls
+        with (
+            patch("daimon_matrix.mandatory_echo.MAX_RECORDS", 1),
+            patch("daimon_matrix.native_egress.MAX_RECORDS", 1),
+        ):
+            second = self.admit("second")
+        self.assertEqual(self.records(), (2, 2, 1))
+        retired = self.controller.inspect(first)
+        self.assertTrue(retired["cache_retired"])
+        self.assertEqual(
+            self.controller.inspect_retained(first)["completed_releases"], 0
+        )
+        self.assertEqual(self.controller.advance_one(first), retired)
+        self.assertEqual(self.publisher.calls, calls)
+        self.now = 1000  # Retirement is an irreversible exact-operation fence.
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(first, b"first", lambda _: self.fail("old effect"))
+        reopened = self.controller_for("validate")
+        self.assertTrue(reopened.inspect(first)["cache_retired"])
+        self.assertEqual(reopened.inspect(second)["state"], "queued")
+
+    def test_pending_and_ambiguous_stay_pinned_and_batch_is_bounded(self):
+        from daimon_matrix.native_egress import PUBLICATION_RETENTION_MS
+
+        pending = self.admit("pending")
+        ambiguous = self.admit("ambiguous")
+        self.publisher.lose_ack = True
+        self.assertEqual(self.controller.advance_one(ambiguous)["state"], "ambiguous")
+        self.publisher.lose_ack = False
+        confirmed = [self.admit(name) for name in ["confirmed-1", "confirmed-2"]]
+        for item in confirmed:
+            self.controller.advance_one(item)
+        self.now = confirmed[-1].deadline_ms + PUBLICATION_RETENTION_MS - 1
+        self.assertEqual(self.controller.retire_confirmed_publications()["retired"], 0)
+        self.now += 1
+        self.assertEqual(
+            self.controller.retire_confirmed_publications(limit=1)["retired"], 1
+        )
+        self.assertEqual(self.records(), (4, 4, 3))
+        self.assertEqual(
+            self.controller.retire_confirmed_publications(limit=1)["retired"], 1
+        )
+        self.assertEqual(self.records(), (4, 4, 2))
+        self.assertEqual(
+            self.controller.inspect_retained(ambiguous)["echo_state"], "ambiguous"
+        )
+        self.assertEqual(
+            self.controller.inspect_retained(pending)["echo_state"], "queued"
+        )
+
+    def test_retirement_rolls_back_and_tampered_summary_is_rejected(self):
+        from daimon_matrix.native_egress import (
+            PUBLICATION_RETENTION_MS,
+            NativeEgressError,
+        )
+
+        binding = self.admit("atomic")
+        self.controller.advance_one(binding)
+        self.now = binding.deadline_ms + PUBLICATION_RETENTION_MS
+        original = self.controller._retired_status
+
+        def fail_after_update(db, selected):
+            if db.execute(
+                "SELECT retirement_json FROM mandatory_egress_operations"
+            ).fetchone()[0]:
+                raise RuntimeError("fixture commit boundary")
+            return original(db, selected)
+
+        with (
+            patch.object(
+                self.controller, "_retired_status", side_effect=fail_after_update
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            self.controller.retire_confirmed_publications()
+        self.assertEqual(self.records(), (1, 1, 1))
+        self.assertEqual(self.controller.retire_confirmed_publications()["retired"], 1)
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute(
+                "UPDATE mandatory_egress_operations SET "
+                "retirement_json=json_set(retirement_json,'$.status.confirmed_parts',3)"
+            )
+        with self.assertRaisesRegex(NativeEgressError, "egress_retirement_invalid"):
+            self.controller.inspect_retained(binding)
+        with self.assertRaises(NativeEgressError):
+            self.controller_for("validate")
+
+    def test_explicit_v1_migration_preserves_original_journal_bytes(self):
+        from daimon_matrix.native_egress import (
+            LEGACY_OPERATION_TABLE_SQL,
+            VISIBILITY_SCHEMA_VERSION,
+            NativeEgressError,
+        )
+
+        binding = self.admit("legacy")
+        with closing(sqlite3.connect(self.path)) as db, db:
+            before = db.execute("SELECT * FROM echo_v2_obligations").fetchall()
+            columns = [
+                row[1]
+                for row in db.execute("PRAGMA table_info(mandatory_egress_operations)")
+                if row[1] != "retirement_json"
+            ]
+            db.execute("DROP INDEX mandatory_egress_pending")
+            db.execute(
+                "ALTER TABLE mandatory_egress_operations RENAME TO old_operations"
+            )
+            db.execute(LEGACY_OPERATION_TABLE_SQL)
+            fields = ",".join(columns)
+            db.execute(
+                f"INSERT INTO mandatory_egress_operations ({fields}) "
+                f"SELECT {fields} FROM old_operations"
+            )
+            db.execute("DROP TABLE old_operations")
+        with self.assertRaises(NativeEgressError):
+            self.controller_for("validate")
+        migration = self.controller_for("migrate")
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(
+                db.execute("SELECT * FROM echo_v2_obligations").fetchall(), before
+            )
+        self.assertEqual(
+            self.controller_for("validate").inspect(binding)["state"], "queued"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

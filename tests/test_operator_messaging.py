@@ -2169,7 +2169,7 @@ class ProvisioningTests(unittest.TestCase):
                             else []
                         )
                         + (
-                            ["--visibility-schema-version", "1"]
+                            ["--visibility-schema-version", "2"]
                             if command == "migrate-visibility"
                             else []
                         )
@@ -2232,9 +2232,9 @@ class ProvisioningTests(unittest.TestCase):
         result, output, errors = call("migrate-visibility")
         self.assertEqual(result, 0, errors)
         self.assertEqual(json.loads(output)["status"], "visibility-migrated")
-        self.assertEqual(json.loads(output)["visibility_schema_version"], 1)
+        self.assertEqual(json.loads(output)["visibility_schema_version"], 2)
         result, _output, _errors = call(
-            "migrate-visibility", ["--visibility-schema-version", "2"]
+            "migrate-visibility", ["--visibility-schema-version", "3"]
         )
         self.assertEqual(result, 1)
         result, output, errors = call("diagnostics")

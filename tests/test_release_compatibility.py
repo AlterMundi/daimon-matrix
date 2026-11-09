@@ -49,6 +49,14 @@ def digest(value):
 
 
 class ReleaseCompatibilityTests(unittest.TestCase):
+    def test_advertised_visibility_schema_matches_native_reader(self):
+        from daimon_matrix.native_egress import VISIBILITY_SCHEMA_VERSION
+
+        self.assertEqual(
+            describe_reader()["contract"]["store_versions"]["visibility_catalog"],
+            [VISIBILITY_SCHEMA_VERSION],
+        )
+
     def test_credential_bound_selection_requires_its_actual_journal_reader(self):
         release = release_fixture()
         self.assertIn(

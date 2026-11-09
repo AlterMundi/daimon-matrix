@@ -9,6 +9,7 @@ one-call permit, and consumption at the external effect boundary.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 from .canonical import canonical_bytes
 from .identity import validate_validity, validity_contains
 from .mandatory_echo import (
+    MAX_RECORDS,
     ConversationJournalTransport,
     EchoError,
     EchoJournal,
@@ -35,6 +37,9 @@ from .mandatory_echo import (
     MandatoryEcho,
     RetryDecision,
     validate_policy,
+)
+from .mandatory_echo import (
+    _status as _echo_status,
 )
 from .telegram_mirror import PlainTelegramTransport
 
@@ -674,7 +679,7 @@ PEER_EGRESS_PATHS: Final[frozenset[str]] = frozenset(
     }
 )
 
-OPERATION_TABLE_SQL: Final = (
+LEGACY_OPERATION_TABLE_SQL: Final = (
     "CREATE TABLE mandatory_egress_operations ("
     "operation_id TEXT PRIMARY KEY, path_id TEXT NOT NULL, locator TEXT NOT NULL, "
     "native_sha256 TEXT NOT NULL, projection_json BLOB NOT NULL, "
@@ -683,7 +688,14 @@ OPERATION_TABLE_SQL: Final = (
     "authority_head TEXT NOT NULL, created_at_ms INTEGER NOT NULL, "
     "release_count INTEGER NOT NULL DEFAULT 0)"
 )
-VISIBILITY_SCHEMA_VERSION: Final = 1
+OPERATION_TABLE_SQL: Final = LEGACY_OPERATION_TABLE_SQL[:-1] + ", retirement_json TEXT)"
+OPERATION_INDEX_SQL: Final = (
+    "CREATE INDEX mandatory_egress_pending ON mandatory_egress_operations "
+    "(deadline_ms,operation_id) WHERE retirement_json IS NULL"
+)
+VISIBILITY_SCHEMA_VERSION: Final = 2
+PUBLICATION_RETENTION_MS: Final = 24 * 60 * 60 * 1000
+PUBLICATION_RETIREMENT_BATCH: Final = 64
 
 
 @dataclass(frozen=True)
@@ -1724,9 +1736,13 @@ class MandatoryEgressController:
             database: sqlite3.Connection, catalog_id: str
         ) -> EchoJournal | None:
             try:
-                journal = self._validate_visibility_schema(database, catalog_id)
+                journal = self._validate_visibility_schema(
+                    database, catalog_id, allow_legacy=True
+                )
             except NativeEgressError:
-                journal = prior._validate_visibility_schema(database, catalog_id)
+                journal = prior._validate_visibility_schema(
+                    database, catalog_id, allow_legacy=True
+                )
                 self._reconcile_catalog(database, catalog_id, journal)
                 for row in database.execute(
                     "SELECT echo_operation_id,echo_binding_digest "
@@ -1760,6 +1776,7 @@ class MandatoryEgressController:
                     journal = validate(database, catalog_id)
                     if journal is not None:
                         journal.reauthenticate(self._proof_key)
+                    self._upgrade_visibility_schema(database)
                     self._reconcile_catalog(
                         database,
                         catalog_id,
@@ -1977,8 +1994,32 @@ class MandatoryEgressController:
             ).fetchall()
         }
 
+    def _upgrade_visibility_schema(self, database: sqlite3.Connection) -> None:
+        """Only explicit preflighted owner migration may change the catalog."""
+        previous = database.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='mandatory_egress_operations'"
+        ).fetchone()
+        if previous and self._schema_tokens(str(previous[0])) == self._schema_tokens(
+            LEGACY_OPERATION_TABLE_SQL
+        ):
+            database.execute(
+                "ALTER TABLE mandatory_egress_operations "
+                "ADD COLUMN retirement_json TEXT"
+            )
+        if (
+            database.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='mandatory_egress_pending'"
+            ).fetchone()
+            is None
+        ):
+            database.execute(OPERATION_INDEX_SQL)
+
     def _validate_visibility_schema(
-        self, database: sqlite3.Connection, catalog_id: str
+        self,
+        database: sqlite3.Connection,
+        catalog_id: str,
+        *,
+        allow_legacy: bool = False,
     ) -> EchoJournal:
         names = self._table_names(database)
         expected_names = {
@@ -1997,13 +2038,27 @@ class MandatoryEgressController:
             "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?",
             ("mandatory_egress_operations",),
         ).fetchone()
+        schemas = [OPERATION_TABLE_SQL]
+        if allow_legacy:
+            schemas.append(LEGACY_OPERATION_TABLE_SQL)
         if (
             row is None
             or row[0] is None
-            or self._schema_tokens(str(row[0]))
-            != self._schema_tokens(OPERATION_TABLE_SQL)
+            or not any(
+                self._schema_tokens(str(row[0])) == self._schema_tokens(sql)
+                for sql in schemas
+            )
         ):
             raise NativeEgressError("egress_catalog_invalid")
+        if self._schema_tokens(str(row[0])) == self._schema_tokens(OPERATION_TABLE_SQL):
+            index = database.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='index' "
+                "AND name='mandatory_egress_pending'"
+            ).fetchone()
+            if index is None or self._schema_tokens(
+                str(index[0])
+            ) != self._schema_tokens(OPERATION_INDEX_SQL):
+                raise NativeEgressError("egress_catalog_invalid")
         try:
             return EchoJournal(
                 database,
@@ -2236,6 +2291,7 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_historical_obligation_inconsistent")
         allowed_paths = self._authoritative_paths(database)
         echo_ids: set[str] = set()
+        live_echo_ids: set[str] = set()
         for operation_id, history in native.items():
             row = operations[operation_id]
             path_id = str(row["path_id"])
@@ -2271,6 +2327,10 @@ class MandatoryEgressController:
             if echo_id != expected_echo_id or echo_id in echo_ids:
                 raise NativeEgressError("egress_historical_obligation_inconsistent")
             echo_ids.add(echo_id)
+            if "retirement_json" in row.keys() and row["retirement_json"] is not None:  # noqa: SIM118
+                self._retired_status(database, self._binding_from_row(catalog_id, row))
+                continue
+            live_echo_ids.add(echo_id)
             try:
                 journal._load(echo_id, str(row["echo_binding_digest"]))
             except EchoError as exception:
@@ -2283,7 +2343,7 @@ class MandatoryEgressController:
                 "SELECT operation_id FROM echo_v2_obligations"
             ).fetchall()
         }
-        if retained_echo_ids != echo_ids:
+        if retained_echo_ids != live_echo_ids:
             raise NativeEgressError("egress_historical_obligation_inconsistent")
 
     def _preflight_migration(self, path: Path, catalog_id: str) -> None:
@@ -2314,7 +2374,9 @@ class MandatoryEgressController:
                     return
                 if visibility_names != expected:
                     raise NativeEgressError("egress_catalog_invalid")
-                journal = self._validate_visibility_schema(database, catalog_id)
+                journal = self._validate_visibility_schema(
+                    database, catalog_id, allow_legacy=True
+                )
                 self._reconcile_catalog(database, catalog_id, journal)
             finally:
                 database.close()
@@ -2356,6 +2418,7 @@ class MandatoryEgressController:
                     database.execute(OPERATION_TABLE_SQL)
                 elif visibility_names != expected:
                     raise NativeEgressError("egress_catalog_invalid")
+                self._upgrade_visibility_schema(database)
                 journal = self._validate_visibility_schema(database, catalog_id)
                 if reconcile:
                     self._reconcile_catalog(database, catalog_id, journal)
@@ -2475,18 +2538,32 @@ class MandatoryEgressController:
                 parent = projection["reply_to"]
                 if parent is not None and "sender" in parent:
                     presentation["reply_sender"] = resolve(parent["sender"])
-            echo_digest = journal.admit(
-                echo_operation_id,
-                dict(projection),
-                self._policy,
-                telegram_reference=reference,
-                presentation=presentation,
-                publication_not_after_ms=(
-                    deadline_ms
-                    if self._policy["schema"] == "daimon-visibility-policy/v3"
-                    else None
-                ),
-            )
+
+            def admit_echo() -> str:
+                return journal.admit(
+                    echo_operation_id,
+                    dict(projection),
+                    self._policy,
+                    telegram_reference=reference,
+                    presentation=presentation,
+                    publication_not_after_ms=(
+                        deadline_ms
+                        if self._policy["schema"] == "daimon-visibility-policy/v3"
+                        else None
+                    ),
+                )
+
+            try:
+                echo_digest = admit_echo()
+            except EchoError as exception:
+                if str(
+                    exception
+                ) != "echo_capacity" or not self._retire_publications_on(
+                    database, catalog_id, limit=PUBLICATION_RETIREMENT_BATCH
+                ):
+                    raise
+                echo_digest = admit_echo()
+
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None
         candidate = OperationBinding(
@@ -2699,6 +2776,9 @@ class MandatoryEgressController:
         )
 
     def _authorize(self, binding: OperationBinding, catalog: _Catalog) -> bool:
+        with self._database(catalog) as database:
+            if self._retired_status(database, binding) is not None:
+                return False  # A regressed clock never reopens retired authority.
         return (
             self._authorize_retained(binding, catalog)
             and self._clock() < binding.deadline_ms
@@ -2719,12 +2799,169 @@ class MandatoryEgressController:
         except Exception:
             return False
 
+    def _retirement_authentication(self, value: dict[str, Any]) -> str:
+        return hmac.new(
+            self._proof_key,
+            b"dm.native-publication-retirement/v1\0" + canonical_bytes(value),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _retired_status(
+        self, database: sqlite3.Connection, binding: OperationBinding
+    ) -> dict[str, Any] | None:
+        row = database.execute(
+            "SELECT retirement_json FROM mandatory_egress_operations "
+            "WHERE operation_id=?",
+            (binding.operation_id,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        try:
+            raw = row[0]
+            if not isinstance(raw, str) or len(raw.encode()) > 4096:
+                raise ValueError
+            value = json.loads(raw)
+            authentication = value.pop("authentication")
+            if (
+                set(value)
+                != {
+                    "schema",
+                    "binding",
+                    "status",
+                    "proof_sha256",
+                    "confirmed_at_ms",
+                    "retired_at_ms",
+                }
+                or value["schema"] != "dm.native-publication-retirement/v1"
+                or value["binding"] != asdict(binding)
+                or canonical_bytes({**value, "authentication": authentication}).decode()
+                != raw
+                or not hmac.compare_digest(
+                    authentication, self._retirement_authentication(value)
+                )
+                or type(value["confirmed_at_ms"]) is not int
+                or type(value["retired_at_ms"]) is not int
+                or value["retired_at_ms"]
+                - max(binding.deadline_ms, value["confirmed_at_ms"])
+                < PUBLICATION_RETENTION_MS
+                or not isinstance(value["proof_sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", value["proof_sha256"]) is None
+            ):
+                raise ValueError
+            status = value["status"]
+            if (
+                set(status)
+                != {"state", "part_count", "confirmed_parts", "binding_digest"}
+                or status["state"] != "confirmed"
+                or type(status["part_count"]) is not int
+                or not 0 < status["part_count"] <= 128
+                or type(status["confirmed_parts"]) is not int
+                or status["confirmed_parts"] != status["part_count"]
+                or status["binding_digest"] != binding.echo_binding_digest
+            ):
+                raise ValueError
+            return {
+                **status,
+                "cache_retired": True,
+                "retired_at_ms": value["retired_at_ms"],
+                "last_failure": None,
+            }
+        except Exception:
+            raise NativeEgressError("egress_retirement_invalid") from None
+
+    def _retire_publications_on(
+        self, database: sqlite3.Connection, catalog_id: str, *, limit: int
+    ) -> int:
+        """Compact confirmed technical copies inside the existing native writer.
+
+        The exact native operation retains an authenticated proof summary. No
+        parent result, release count, original, uncertain attempt or key changes.
+        """
+        if not database.in_transaction:
+            raise NativeEgressError("egress_transaction_required")
+        now = self._clock()
+        rows = database.execute(
+            "SELECT n.* FROM echo_v2_obligations e JOIN mandatory_egress_operations n "
+            "ON n.echo_operation_id=e.operation_id WHERE n.deadline_ms<=? "
+            "AND n.retirement_json IS NULL ORDER BY n.deadline_ms,n.operation_id",
+            (now - PUBLICATION_RETENTION_MS,),
+        ).fetchall()
+        if len(rows) > MAX_RECORDS:
+            raise NativeEgressError("echo_capacity")
+        journal = EchoJournal(
+            database, catalog_id=catalog_id, authentication_key=self._proof_key
+        )
+        retired = 0
+        for row in rows:
+            if retired >= limit:
+                break
+            binding = self._binding_from_row(catalog_id, row)
+            record = journal._load(
+                binding.echo_operation_id, binding.echo_binding_digest
+            )
+            if (
+                record["binding"]["policy"]["schema"] != "daimon-visibility-policy/v3"
+                or record["binding"].get("publication_not_after_ms")
+                != binding.deadline_ms
+            ):
+                continue
+            status = _echo_status(record)
+            if status["state"] != "confirmed":
+                continue
+            confirmed_at = max(
+                part["attempts"][-1]["response_at_ms"] for part in record["parts"]
+            )
+            if now - confirmed_at < PUBLICATION_RETENTION_MS:
+                continue
+            value = {
+                "schema": "dm.native-publication-retirement/v1",
+                "binding": asdict(binding),
+                "status": status,
+                "proof_sha256": _digest(canonical_bytes(record)),
+                "confirmed_at_ms": confirmed_at,
+                "retired_at_ms": now,
+            }
+            value["authentication"] = self._retirement_authentication(value)
+            database.execute(
+                "UPDATE mandatory_egress_operations SET retirement_json=? "
+                "WHERE operation_id=?",
+                (canonical_bytes(value).decode(), binding.operation_id),
+            )
+            self._retired_status(database, binding)
+            database.execute(
+                "DELETE FROM echo_v2_obligations WHERE operation_id=?",
+                (binding.echo_operation_id,),
+            )
+            retired += 1
+        return retired
+
+    def retire_confirmed_publications(
+        self, *, limit: int = PUBLICATION_RETIREMENT_BATCH
+    ) -> dict[str, int]:
+        """Owner-local bounded maintenance; no transport or new attention."""
+        if type(limit) is not int or not 1 <= limit <= PUBLICATION_RETIREMENT_BATCH:
+            raise NativeEgressError("egress_worker_bounds")
+        retired = 0
+        for catalog_id, catalog in sorted(self._catalogs.items()):
+            if retired >= limit:
+                break
+            with self._database(catalog) as database:
+                database.execute("BEGIN IMMEDIATE")
+                retired += self._retire_publications_on(
+                    database, catalog_id, limit=limit - retired
+                )
+                database.commit()
+        return {"retired": retired}
+
     def inspect(self, binding: OperationBinding) -> dict[str, Any]:
         catalog = self._catalogs.get(binding.catalog_id)
         if catalog is None:
             raise NativeEgressError("egress_catalog_invalid")
         with self._database(catalog) as database:
             try:
+                retired = self._retired_status(database, binding)
+                if retired is not None:
+                    return retired
                 return self._mandatory(binding, database).inspect(
                     binding.echo_operation_id, binding.echo_binding_digest
                 )
@@ -2771,9 +3008,11 @@ class MandatoryEgressController:
         with self._database(catalog) as database:
             database.execute("BEGIN")
             try:
-                state = self._mandatory(binding, database).inspect_retained(
-                    binding.echo_operation_id, binding.echo_binding_digest
-                )
+                state = self._retired_status(database, binding)
+                if state is None:
+                    state = self._mandatory(binding, database).inspect_retained(
+                        binding.echo_operation_id, binding.echo_binding_digest
+                    )
             except EchoError as exception:
                 raise NativeEgressError(str(exception)) from None
             row = database.execute(
@@ -2829,6 +3068,9 @@ class MandatoryEgressController:
         ):
             try:
                 with self.local_storage():
+                    retired = self._retired_status(database, binding)
+                    if retired is not None:
+                        return retired
                     echo = self._mandatory(binding, database)
                 return echo.advance(
                     binding.echo_operation_id, binding.echo_binding_digest
@@ -3085,10 +3327,13 @@ class MandatoryEgressController:
         rows: list[tuple[int, str, str, OperationBinding]] = []
         for catalog_id, catalog in self._catalogs.items():
             with self._database(catalog) as database:
-                query = "SELECT * FROM mandatory_egress_operations"
+                query = (
+                    "SELECT * FROM mandatory_egress_operations "
+                    "WHERE retirement_json IS NULL"
+                )
                 parameters: tuple[int, ...] = ()
                 if unexpired_at_ms is not None:
-                    query += " WHERE deadline_ms > ?"
+                    query += " AND deadline_ms > ?"
                     parameters = (unexpired_at_ms,)
                 query += " ORDER BY created_at_ms, operation_id"
                 for row in database.execute(query, parameters):
