@@ -155,9 +155,11 @@ publication policy, enrollment or participant signatures.
 
 For V3 portable publications only, fully confirmed technical echo records become
 eligible 24 hours after both the original native deadline and the last committed
-publication confirmation. On new admission near the existing 4096-record/64-MiB
+publication confirmation. When new admission reaches the existing 4096-record/64-MiB
 cap, the native writer retires at most 64 eligible records in the same transaction.
-The existing controller also exposes bounded owner-local
+The ordinary path reuses the existing capacity check and only retries the
+local, uncommitted admission after space is freed. The controller also exposes
+bounded owner-local
 `retire_confirmed_publications(limit=64)` maintenance. Neither path contacts a
 transport, calls a model or creates a scheduler. Pending/ambiguous publication
 records and historical Telegram policies remain pinned.

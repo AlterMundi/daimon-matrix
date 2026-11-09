@@ -29,9 +29,7 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 from .canonical import canonical_bytes
 from .identity import validate_validity, validity_contains
 from .mandatory_echo import (
-    MAX_RECORD_BYTES,
     MAX_RECORDS,
-    MAX_TOTAL_BYTES,
     ConversationJournalTransport,
     EchoError,
     EchoJournal,
@@ -2514,14 +2512,6 @@ class MandatoryEgressController:
             ):
                 raise NativeEgressError("egress_operation_conflict")
             return existing
-        count, size = database.execute(
-            "SELECT count(*),coalesce(sum(length(CAST(record AS BLOB))),0) "
-            "FROM echo_v2_obligations"
-        ).fetchone()
-        if count >= MAX_RECORDS - 1 or size >= MAX_TOTAL_BYTES - MAX_RECORD_BYTES:
-            self._retire_publications_on(
-                database, catalog_id, limit=PUBLICATION_RETIREMENT_BATCH
-            )
         journal = EchoJournal(
             database,
             catalog_id=catalog_id,
@@ -2548,18 +2538,32 @@ class MandatoryEgressController:
                 parent = projection["reply_to"]
                 if parent is not None and "sender" in parent:
                     presentation["reply_sender"] = resolve(parent["sender"])
-            echo_digest = journal.admit(
-                echo_operation_id,
-                dict(projection),
-                self._policy,
-                telegram_reference=reference,
-                presentation=presentation,
-                publication_not_after_ms=(
-                    deadline_ms
-                    if self._policy["schema"] == "daimon-visibility-policy/v3"
-                    else None
-                ),
-            )
+
+            def admit_echo() -> str:
+                return journal.admit(
+                    echo_operation_id,
+                    dict(projection),
+                    self._policy,
+                    telegram_reference=reference,
+                    presentation=presentation,
+                    publication_not_after_ms=(
+                        deadline_ms
+                        if self._policy["schema"] == "daimon-visibility-policy/v3"
+                        else None
+                    ),
+                )
+
+            try:
+                echo_digest = admit_echo()
+            except EchoError as exception:
+                if str(
+                    exception
+                ) != "echo_capacity" or not self._retire_publications_on(
+                    database, catalog_id, limit=PUBLICATION_RETIREMENT_BATCH
+                ):
+                    raise
+                echo_digest = admit_echo()
+
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None
         candidate = OperationBinding(
