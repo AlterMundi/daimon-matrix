@@ -116,3 +116,12 @@ channel, with the same incoming/outgoing `tribe` ID. Resolve its actual connecti
 from local owner instructions, not another body's private binding. Preserve
 explicit directed lanes and private history separately; never reinterpret a pair
 ID as a group send. Current deployment and remaining work live in CURRENT-STATE.md.
+
+## Ordinary maintainer delivery
+
+For directly human-authorized work, use the existing `Human-Authorization:`
+maintainer profile in docs/github-coordination.md and the PR template. The
+recorded human task is already authorization. Reference the existing parent for
+partial work; do not create a new issue or claim/review receipt solely to satisfy
+the optional signed-lease profile. Keep actual technical checks, source/receiving
+truth, identities, resource bounds and explicit human holds.

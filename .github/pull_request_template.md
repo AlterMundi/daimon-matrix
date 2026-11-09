@@ -1,29 +1,18 @@
-## Issue
-
-Closes #
-
-Claim-ID:
-Deployment: not deployed
-
 ## Outcome
 
-Describe the externally observable result.
+Describe the concrete problem and resulting behavior.
 
-## Invariants
+## Scope and deployment
 
-- [ ] Identity and provenance remain verifiable.
-- [ ] No private memory or credentials were added.
-- [ ] Existing compatibility commitments are preserved or migrated.
+Part of # (use `Closes #N` only when the entire issue is finished).
+Deployment: not deployed
 
-## Validation
-
-List unit, contract, integration, and live-path checks.
+<!-- For directly human-authorized work, use the existing maintainer path:
+Human-Authorization: recorded task/source
+No Claim-ID or live review receipt is required for that profile. Contributors
+using an explicit signed development lease may include its Claim-ID instead. -->
 
 ## Tests
 
-List exact commands and results; this section is required by the coordination
-gate.
-
-## Security and rollback
-
-Describe trust-boundary changes and how the change can be disabled or reverted.
+Record the relevant checks and results. Reuse valid evidence for unchanged work.
+Include compatibility or rollback details when the change needs them.

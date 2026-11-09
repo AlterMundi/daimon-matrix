@@ -1308,7 +1308,17 @@ class MandatoryEgressController:
                 # The persistence primitive confirms rollback before raising.
                 # This refusal is not an uncertain commit or a new reservation.
                 raise
-            except Exception:
+            except Exception as failure:
+                diagnostic = _recovery_failure("control-persistence", failure)
+                if recovery.get("failure") != diagnostic:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "reader_control_persistence_failure stage=%s code=%s",
+                        diagnostic["stage"],
+                        diagnostic["code"],
+                    )
+                recovery["failure"] = diagnostic
                 # Commit may have succeeded before its result was lost. Reconcile
                 # that exact command, never append a new operation to hide it.
                 retained = None
@@ -1338,6 +1348,7 @@ class MandatoryEgressController:
                         "reader_recovery_persistence_uncertain"
                     ) from None
             recovery["status"] = "selected" if readers else "disabled"
+            recovery.pop("failure", None)
         self._reader_selections[value["channel_id"]] = candidate
         return self._reader_snapshot(value["channel_id"])
 

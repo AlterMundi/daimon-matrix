@@ -540,6 +540,40 @@ class NativeAuthoringHorizonTests(ReceivingOwnerApiFixture):
 
 
 class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
+    def test_native_maintenance_budget_includes_bounded_roster_and_persistence_work(
+        self,
+    ):
+        for elapsed_ns in (3_000_000_000, 11_000_000_000):
+            with self.subTest(elapsed_ns=elapsed_ns):
+                self.assertTrue(
+                    self.service.handle(self.request(command(self.group.egress)))["ok"]
+                )
+                value = command(
+                    self.group.egress,
+                    phase="select",
+                    readers=[self.credential_reader()],
+                    expected_roster_sha256=self.group.receiving_roster()[
+                        "roster_sha256"
+                    ],
+                )
+                native = self.group.egress._select_readers_locked
+                clock = [time.monotonic_ns()]
+
+                def work(*args, clock=clock, elapsed_ns=elapsed_ns, native=native):
+                    clock[0] += elapsed_ns
+                    return native(*args)
+
+                with (
+                    patch("time.monotonic_ns", lambda clock=clock: clock[0]),
+                    patch.object(
+                        self.group.egress, "_select_readers_locked", side_effect=work
+                    ),
+                ):
+                    result = self.service.handle(self.request(value))
+                self.assertEqual(result["ok"], elapsed_ns < 10_000_000_000, result)
+                if not result["ok"]:
+                    self.assertEqual(result["error"]["code"], "egress_attempt_deadline")
+
     def test_status_roster_validation_does_not_consume_reader_fence_wait(self):
         monotonic = time.monotonic_ns
         offset = 0
@@ -551,8 +585,11 @@ class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
             offset += 3_000_000_000
             return result
 
-        with patch.object(self.group, "receiving_roster", slow_roster), patch(
-            "daimon_matrix.service.time.monotonic_ns", lambda: monotonic() + offset
+        with (
+            patch.object(self.group, "receiving_roster", slow_roster),
+            patch(
+                "daimon_matrix.service.time.monotonic_ns", lambda: monotonic() + offset
+            ),
         ):
             response = self.service.handle(
                 self.request({}, method="runtime.status", capability=self.observer)
@@ -2401,10 +2438,16 @@ class DurableReaderRecoveryTests(unittest.TestCase):
             raise OSError("synthetic_io_failure")
 
         state["append"] = failed
-        with self.assertRaisesRegex(
-            NativeEgressError, "reader_recovery_persistence_uncertain"
-        ):
-            select(current, command(current))
+        value = command(current)
+        with self.assertLogs("daimon_matrix.native_egress", level="WARNING") as logged:
+            for _ in range(2):
+                with self.assertRaisesRegex(
+                    NativeEgressError, "reader_recovery_persistence_uncertain"
+                ):
+                    select(current, value)
+        self.assertEqual(len(logged.output), 1)
+        self.assertIn("code=storage_unavailable", logged.output[0])
+        self.assertNotIn("synthetic_io_failure", logged.output[0])
         self.assertFalse(current.reader_ready("tribe", reader()))
         self.assertEqual(
             current.reader_recovery_status("tribe")["state"], "persistence-uncertain"

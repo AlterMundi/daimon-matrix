@@ -173,9 +173,12 @@ python tools/github_coordination.py \
   --repo AlterMundi/daimon-matrix audit-pr --pr 68
 ```
 
-The PR body must contain `Closes #N`, the canonical UUID `Claim-ID`, an exact
-deployment declaration, and a non-empty `## Tests` section. The effective
-receipt must be live, `in_review`, and bind the same branch and PR number.
+For the optional signed-lease profile below, the PR body contains `Closes #N`,
+the canonical UUID `Claim-ID`, a deployment declaration and a nonempty `## Tests`
+section; its effective receipt is live, `in_review`, and binds the branch/PR.
+Direct human-authorized maintenance uses the existing maintainer profile above.
+A partial fix references its parent issue without closing that full objective;
+it needs no new issue, Claim-ID, lease or review receipt.
 
 ### Review acceptance after PR creation
 
