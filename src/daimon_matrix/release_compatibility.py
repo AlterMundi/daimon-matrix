@@ -176,7 +176,7 @@ def describe_reader() -> dict[str, Any]:
             "wire_write": list(_WIRES),
             "store_versions": {
                 "communication": [4],
-                "visibility_catalog": [1],
+                "visibility_catalog": [2],
                 "reader_control": [1, 2],
             },
             "capabilities": list(_FEATURES),
