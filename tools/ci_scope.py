@@ -260,6 +260,7 @@ CONTEXT_DOC_FILES = frozenset(
         "RESUME.md",
         "docs/current-architecture.md",
         "docs/dm081-source-runtime.md",
+        "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
         "docs/runbooks/tribu-human-mentions.md",
         "docs/runbooks/receiver-compatible-authority-updates.md",
@@ -460,6 +461,7 @@ def profile(paths: list[str]) -> str:
     prose_entrypoints = {
         "docs/current-architecture.md",
         "docs/dm081-source-runtime.md",
+        "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
         "docs/runbooks/tribu-human-mentions.md",
     }

@@ -16,9 +16,9 @@ children select Messaging only. The seven-body chat skill and current child
 context now distinguish ordinary peer conversation from private child records
 or instructions to change services.
 
-Native technical-cache retirement remains an explicit scale-readiness gap below;
-this receiving journey does not claim complete foundation or indefinite service
-acceptance. The single current coverage map is the existing #437 checkpoint.
+Native technical-cache retirement is implemented and selected on all four
+children, as described below. This receiving journey does not claim complete
+foundation or indefinite service acceptance. The single current coverage map is the existing #437 checkpoint.
 
 ## Implemented journal primitive
 
@@ -175,8 +175,11 @@ owning retention policy. Normal pending queries exclude retired records.
 
 The source fixture verifies capacity recovery, original preservation, rollback,
 tamper rejection, old-schema migration, pending/ambiguous retention and regressed
-clock refusal. This source change has not yet been selected on living receivers;
-App retirement alone does not establish complete production composition bounds.
+clock refusal. The compatible Matrix511/schema-2 successor is selected on all four children;
+all seven current readers were qualified afterward. No eligible live row existed
+at the receiving inspection, so actual production deletion is not claimed.
+Original-three Telegram records remain pinned. App retirement alone does not
+establish complete production composition bounds.
 
 The compatible SDK/imports, four exact Conversation disclosures and all28
 genuine owner acceptances are retained. All four installations and their full

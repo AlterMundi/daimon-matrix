@@ -567,6 +567,7 @@ class CIScopeTests(unittest.TestCase):
         for entry in (
             "docs/current-architecture.md",
             "docs/dm081-source-runtime.md",
+            "docs/portable-human-visibility.md",
             "docs/runbooks/same-being-delta.md",
             "docs/runbooks/tribu-human-mentions.md",
         ):
