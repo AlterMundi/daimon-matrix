@@ -1,18 +1,24 @@
 # Portable human visibility — implementation under #496
 
-The four children have signed membership and selected native readers. Their
-receive-only application keeps outbound visibility closed. The first directed
-Pixin attempt retained `route_echo_unconfirmed` and `completion_blocked` in the
-receiver's diagnostic sidecars while the sender retained an unconfirmed HTTP
-outcome. Reader qualification alone cannot complete that communication. Preserve
-the original carrier and its uncertainty; configuration changes do not authorize
-replaying it or rebinding its historical publication obligation.
+The four children are signed members with full portable Conversation publication
+and selected native group readers. All seven readers were authenticated after
+publication. A real ordinary request to each child produced an automatic native
+execution and a signed reply received on ITACA, preserving original parents and
+threads. The first technical probe and its initial refusal/deferral remain
+historical evidence; they are not the current service state. No Telegram account
+or Tribu viewing was required.
 
-Nicolas has authorized the required implementation. Telegram accounts or viewing
-Tribu are not admission prerequisites. The existing Telegram V2 policies and
-pending proofs retain their original meaning. The remaining implementation must
-publish through the general conversation's durable backend, with Telegram as an
-optional client of that backend.
+The actual App composition includes current image819/HUD820 plus the heartbeat
+recovery correction, and the complete compatible Codex0.167 package. Configuration
+is not selection: loaded executable paths and digests were verified after
+resolving higher-priority unit overrides. Global/lane pause controls remain;
+children select Messaging only. The seven-body chat skill and current child
+context now distinguish ordinary peer conversation from private child records
+or instructions to change services.
+
+Native technical-cache retirement remains an explicit scale-readiness gap below;
+this receiving journey does not claim complete foundation or indefinite service
+acceptance. The single current coverage map is the existing #437 checkpoint.
 
 ## Implemented journal primitive
 
@@ -141,16 +147,10 @@ parent's authoritative completion state, preserving unknown effects and old
 policies. App retirement alone does not make the complete production composition
 bounded. Neither prepared installation nor this fixture reopens a living child.
 
-The compatible SDK/imports are prepared on all seven current receivers and remain
-unselected. Four exact Conversation disclosures now have all 28 genuine owner
-acceptances, verified against retained current public authority histories. Each
-Matrix was restored after its signing batch; protected native/App processes and
-runtime bundles were preserved. This publishes no installation and starts no
-model. Current reader acceptance and per-child publication/selection remain
-required through the existing writers and actual installation baselines.
-
-Then observe an actual committed App publication with Telegram absent, technical
-completion, signed receiving-copy evidence and a useful authored response through
-the existing messaging heartbeat. Retain global/lane pause, resource/accounting,
-source attribution and old uncertain messages. Neither fixture success nor a new
-installation retroactively completes the original Pixin attempt.
+The compatible SDK/imports, four exact Conversation disclosures and all28
+genuine owner acceptances are retained. All four installations and their full
+native entrypoints are selected. Seven current reader selections and four real
+request/action/reply journeys replace the former preparation-only observation.
+Routine software iteration must use the maintained incremental successor path;
+these completed enrollment/publication operations are not a new ceremony to
+repeat after every update.
