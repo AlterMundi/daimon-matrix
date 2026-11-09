@@ -95,16 +95,65 @@ coordinate with every other member.
 
 ## Incremental delivery and proof
 
+### Current seven-body cutover
+
+Retain four exact Conversation disclosures once, including their approved
+descriptors, local being and membership references, participants, original issue
+time and digest. Each genuine owner derives and compares those same bytes before
+accepting them. Batch the four acceptances under that owner's one runtime lock,
+retain its bindings durably, release the lock and restore its Matrix immediately.
+This produces 28 signatures without model calls or reenrollment. Signature
+collection does not publish or activate the children's outbound messaging.
+
+After all bindings are retained, publish and select each child's visibility
+through its existing owner writer. Inspect the actual predecessor installation;
+the initial-installation path is valid only when no installation exists. An
+existing installation accepts only its supported unchanged-policy participant
+expansion, not arbitrary replacement. Separate short child maintenance windows
+are preferable to keeping all daemons stopped while collecting remote signatures.
+
+The bounded driver retains exact intent, per-owner results, predecessor selectors
+and publication outcomes independently of the interpreting turn. Restore only
+services it actually stopped while their operation-owned state remains unchanged;
+later configuration and pause/Stop decisions win. Resume missing effects from
+retained results rather than re-signing or replaying uncertain work.
+
+Finish with authenticated loaded-reader acceptance, current cohort selection and
+the corresponding monitor projection, then a useful real message/action/reply
+journey. Verify that each paired human can read an actual projected Conversation
+message; health, assets and anonymous denial alone do not prove that visibility.
+Keep original uncertain carriers and unobserved family-device acceptance distinct.
+
+The first #508 implementation deliverable is the maintained resumable owner
+command extracted from this demonstrated operation. Provisioning invokes the
+same profile-convergence path after original identity/admission. Policy decoupling
+and group paging follow as qualified changes, rather than prerequisites for this
+delivery.
+
 1. Finish useful messaging on the existing seven living bodies; retain working
    components rather than making a speculative rewrite the next prerequisite.
 2. Move demonstrated selection/recovery into maintained commands and common
    profiles. Ordinary operations must need no manual SSH/source patches,
    reenrollment, repeated approval or per-body compilation.
 3. Qualify policy decoupling and group paging with a bounded model-free 400-body
-   fixture, explicitly separate from real fleet evidence.
+   fixture, explicitly separate from real fleet evidence. Measure signatures,
+   verification work, bytes, peak memory, elapsed work and partial-failure
+   recovery; preserve one frozen audience across membership changes and resume.
 4. Prove join, ordinary update, partial outage, lost ACK, later local configuration,
-   retained human tasks and compatible rollback on actual receivers. Measure time
-   from qualified release to served state and retain concrete unresolved effects.
+   retained human tasks and compatible rollback on actual receivers. Include
+   mixed compatible releases, operator death during maintenance, authenticated
+   Conversation visibility and retention saturation. Rollback compatibility must
+   be machine-checkable against current schema and signed authority; where
+   promised, qualify the predecessor against successor-written state. Measure
+   time from qualified release to served state and retain unresolved effects.
+
+Membership/authority revision, protocol/data compatibility and current process
+readiness are independent observations. Compatible code replacement updates the
+affected receiver without invalidating unrelated readers. Per-body publication
+consent must not become quadratic work on every admission or software update.
+If pinned uncertain records exhaust a bounded store, expose backpressure and a
+repairable incident; never silently delete them. Account for aggregate fleet
+storage as well as each local limit.
 
 Reuse #496 for independent visibility, #497 for harness adapters, #499 for heartbeat
 and DaimonApp#452 for backend/client extraction. Preserve Cluster's existing
