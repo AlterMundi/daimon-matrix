@@ -60,13 +60,16 @@ The SQLite fixture proves commit-before-attestation, multipart completeness,
 retained proof verification after reopen, audience/surface/content/key rejection
 and lost-ack handling. It is not evidence of live App publication or delivery.
 
-## Remaining receiving integration
+## Current receiving integration
 
-The App writer candidate now retains the exact publication before signing and
+The App writer now retains the exact publication before signing and
 exposes it through the existing authenticated Conversation feed/part reader.
 Its real owner-socket/SQLite/HTTP/restart fixture passed without Telegram or
-inference. This candidate is not selected on a living body. Its 4096-part / 64-MiB
-cap now has staged bounded retirement: technical copies become eligible 24 hours
+inference. App PR814 is selected on all four children, preserving their actual
+voice/workshop configuration and native Matrix/Codex processes. Own authorized
+descriptors, HTTPS assets and private-API denial passed; authenticated paired-human
+reading of a real native publication remains unobserved. Its 4096-part / 64-MiB
+cap includes bounded retirement: technical copies become eligible 24 hours
 after both native expiry and the host acknowledgment of committed native
 confirmation. Pending/ambiguous copies stay pinned. Each commit or owner
 retirement handles at most 64 eligible rows, transactionally advancing one
@@ -76,12 +79,12 @@ Native histories and ordinary inbox/response records remain separate.
 
 The native worker's `confirm_publications` transport callback runs only from an
 authenticated confirmed journal record, after the response commit. It passes
-exact publication IDs and request hashes; repetition never republishes. The live
-native installer/transport must connect this acknowledgment and the original
-deadline to the App route before production selection.
+exact publication IDs and request hashes; repetition never republishes. The
+native installer/transport connects this acknowledgment and the original deadline
+to the App route; its live child selection remains pending.
 
-Extend the existing App/Gateway conversation writer and its actor/resource grant
-with this typed publication and retained-receipt operation. Reuse its canonical
+The existing App/Gateway conversation writer and actor/resource grant supply
+this typed publication and retained-receipt operation. Reuse its canonical
 output journal and bounded storage; do not fabricate a human utterance or create
 another reasoning session. Keep the signing key in the backend's existing
 custody, separate from the Matrix caller. A generic model-callable publication
@@ -138,7 +141,14 @@ parent's authoritative completion state, preserving unknown effects and old
 policies. App retirement alone does not make the complete production composition
 bounded. Neither prepared installation nor this fixture reopens a living child.
 
-Qualify the compatible successor on all seven current receivers before selection.
+The compatible SDK/imports are prepared on all seven current receivers and remain
+unselected. Four exact Conversation disclosures now have all 28 genuine owner
+acceptances, verified against retained current public authority histories. Each
+Matrix was restored after its signing batch; protected native/App processes and
+runtime bundles were preserved. This publishes no installation and starts no
+model. Current reader acceptance and per-child publication/selection remain
+required through the existing writers and actual installation baselines.
+
 Then observe an actual committed App publication with Telegram absent, technical
 completion, signed receiving-copy evidence and a useful authored response through
 the existing messaging heartbeat. Retain global/lane pause, resource/accounting,
