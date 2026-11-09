@@ -260,6 +260,7 @@ CONTEXT_DOC_FILES = frozenset(
         "RESUME.md",
         "docs/current-architecture.md",
         "docs/dm081-source-runtime.md",
+        "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
         "docs/runbooks/tribu-human-mentions.md",
         "docs/runbooks/receiver-compatible-authority-updates.md",
@@ -339,6 +340,25 @@ RECEIVING_CONTROL_FILES = TRIBE_GROUP_FILES | frozenset(
         "tests/test_dm025_client.py",
         "tests/reader_fixtures.py",
         "specs/receiver-compatible-release.md",
+    }
+)
+
+
+# Isolated dispatcher/client metadata changes reuse the existing installed
+# receiving-control job. Other core, dependency and normative changes stay full.
+RECEIVING_SERVICE_FILES = frozenset(
+    {
+        "src/daimon_matrix/service.py",
+        "tests/test_dm024_service.py",
+        "tests/test_dm025_cli_mcp.py",
+        "docs/dm054-scope-resolution.md",
+        "tools/ci_scope.py",
+        "tests/test_ci_scope.py",
+        ".github/workflows/tests.yml",
+        "provenance/hermes-agent-0.19.0.json",
+        "vectors/hermes/v1/index.json",
+        "vectors/hermes/v1/valid/launch-receipt.json",
+        "vectors/hermes/v1/valid/profile-manifest.json",
     }
 )
 
@@ -426,6 +446,8 @@ def profile(paths: list[str]) -> str:
     }
     if migration and changed <= COMMUNICATION_MIGRATION_FILES:
         return "communication-migration"
+    if "src/daimon_matrix/service.py" in changed and changed <= RECEIVING_SERVICE_FILES:
+        return "receiving-control"
     if changed <= RECEIVING_CONTROL_FILES and changed & {
         "src/daimon_matrix/operator_capabilities.py",
         "src/daimon_matrix/operator_runtime_upgrade.py",
@@ -460,6 +482,7 @@ def profile(paths: list[str]) -> str:
     prose_entrypoints = {
         "docs/current-architecture.md",
         "docs/dm081-source-runtime.md",
+        "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
         "docs/runbooks/tribu-human-mentions.md",
     }
