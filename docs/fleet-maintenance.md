@@ -53,6 +53,14 @@ bounded retirement. Do not add model-driven polling, an unbounded queue or anoth
 inventory database. The recorded authorized human task is the operational authority;
 component ownership locates the writer, not another approval ceremony.
 
+The same retained membership/reader-selection operation must update the monitor's
+expected cohort from its qualified result. A stale expected list is monitoring
+configuration drift, not proof that a native reader failed. In the current Itaca
+incident, the monitor expected three readers while the authenticated seven-reader
+selection passed its unchanged validation. Updating only that expected cohort
+resolved the same incident without a Matrix restart or reader reenrollment.
+Do not change a valid native gate to satisfy an obsolete monitoring snapshot.
+
 ## Authority and compatibility independent of a whole-fleet ceremony
 
 Current portable group visibility publication verifies a complete participant
