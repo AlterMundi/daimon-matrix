@@ -52,8 +52,9 @@ body without `signature`; the signature is canonical unpadded base64url. The
 native journal verifies the selected backend key and every binding before
 accepting a part as confirmed. All parts must be confirmed before release.
 Unsigned App results, socket acceptance and Telegram-shaped responses are not
-portable publication proofs. A missing acknowledgment stays ambiguous and does
-not cause another publication attempt.
+portable publication proofs. A missing acknowledgment never causes another
+publication attempt. The portable worker may recover by inspecting that exact
+retained publication, verifying the same signed bindings before using the proof.
 
 The SQLite fixture proves commit-before-attestation, multipart completeness,
 retained proof verification after reopen, audience/surface/content/key rejection
@@ -115,14 +116,21 @@ checks socket ownership/mode and Linux peer credentials, uses fixed typed
 publication/confirmation commands, and bounds request/response bytes and each
 exchange by the earlier native deadline or five seconds. The complete metadata
 acknowledgment batch shares five seconds. It starts no server, executable, model
-or alternate router. An interrupted publication stays unknown; it is never
-automatically retransmitted. Confirmation acknowledges only an already retained
-native proof and can safely repeat that exact metadata acknowledgment.
+or alternate router. After a lost result, it reserves at most one exact retained
+proof inspection durably before reading. That read can also resume after native
+restart; an already consumed inspection budget is not reset. An expired original
+starts no inspection. A valid proof records `response_source: retained-publication`
+and its inspection time in the authenticated journal, without another publication
+call. Failed/invalid reads keep uncertainty. Confirmation acknowledges only an
+already committed native proof and can safely repeat that exact metadata
+acknowledgment. No native SQLite transaction is held during publication,
+inspection or confirmation, including already-confirmed warm operations.
 
 The real App socket fixture now drives the actual native journal and transport:
 native intent, App commit and signed receipt, native response commit, then App
-acknowledgment. It also checks authenticated presentation, restart recovery and
-absence of Telegram/native inference. This uses synthetic identities and a
+acknowledgment. It also checks authenticated presentation, restart recovery,
+lost-result read recovery, failed-read uncertainty and absence of Telegram/native
+inference. This uses synthetic identities and a
 native harness fixture; it does not establish live group delivery or model use.
 
 The native journal's own steady-state retirement still needs the composing

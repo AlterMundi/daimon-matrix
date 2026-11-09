@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -243,6 +244,116 @@ class PortablePublicationTests(unittest.TestCase):
             self.assertEqual(
                 db.execute("SELECT count(*) FROM publications").fetchone()[0], 1
             )
+
+    def test_lost_response_recovers_by_exact_read_without_another_publication(self):
+        digest = self.admit()
+        retained = []
+        send = self.publisher.send
+
+        def lose(request):
+            retained.append(send(request))
+            raise TimeoutError("lost result after committed publication")
+
+        with (
+            patch.object(self.publisher, "send", side_effect=lose),
+            patch.object(
+                self.publisher,
+                "inspect_publication",
+                side_effect=lambda _: retained[0],
+                create=True,
+            ) as reader,
+        ):
+            self.assertEqual(
+                self.worker.advance("portable-operation", digest)["state"], "confirmed"
+            )
+            self.assertEqual(reader.call_count, 1)
+        self.assertEqual(self.publisher.calls, 1)
+        record = self.journal._load("portable-operation", digest)
+        self.assertEqual(
+            record["parts"][0]["attempts"][0]["response_source"], "retained-publication"
+        )
+        self.assertEqual(len(self.publisher.confirmations), 1)
+
+    def test_failed_inspection_is_reserved_once_and_remains_unknown_after_restart(self):
+        digest = self.admit()
+        self.publisher.lose_ack = True
+        with patch.object(
+            self.publisher,
+            "inspect_publication",
+            return_value=b'{"unsigned":true}',
+            create=True,
+        ) as reader:
+            self.assertEqual(
+                self.worker.advance("portable-operation", digest)["state"], "ambiguous"
+            )
+            reopened = echo.MandatoryEcho(
+                self.journal,
+                transport=self.publisher,
+                resolve=lambda _: self.source,
+                authorize=lambda _: True,
+            )
+            self.assertEqual(
+                reopened.advance("portable-operation", digest)["state"], "ambiguous"
+            )
+            self.assertEqual(reader.call_count, 1)
+        self.assertEqual(self.publisher.calls, 1)
+        self.assertEqual(self.publisher.confirmations, [])
+
+    def test_restart_after_lost_response_can_read_retained_proof_without_sending(self):
+        digest = self.admit()
+        retained = []
+        send = self.publisher.send
+
+        def lose(request):
+            retained.append(send(request))
+            raise TimeoutError("lost result")
+
+        with patch.object(self.publisher, "send", side_effect=lose):
+            self.assertEqual(
+                self.worker.advance("portable-operation", digest)["state"], "ambiguous"
+            )
+        reopened = echo.MandatoryEcho(
+            self.journal,
+            transport=self.publisher,
+            resolve=lambda _: self.source,
+            authorize=lambda _: True,
+        )
+        with (
+            patch.object(
+                self.publisher,
+                "send",
+                side_effect=AssertionError("read recovery must not send"),
+            ),
+            patch.object(
+                self.publisher,
+                "inspect_publication",
+                return_value=retained[0],
+                create=True,
+            ),
+        ):
+            self.assertEqual(
+                reopened.advance("portable-operation", digest)["state"], "confirmed"
+            )
+        self.assertEqual(self.publisher.calls, 1)
+
+    def test_expired_original_never_starts_a_new_inspection(self):
+        digest = self.admit()
+        self.publisher.lose_ack = True
+        self.assertEqual(
+            self.worker.advance("portable-operation", digest)["state"], "ambiguous"
+        )
+        self.worker._clock = lambda: 4102444800000
+        with patch.object(
+            self.publisher,
+            "inspect_publication",
+            side_effect=AssertionError("expired read"),
+            create=True,
+        ) as reader:
+            self.assertEqual(
+                self.worker.advance("portable-operation", digest)["state"], "ambiguous"
+            )
+            self.assertEqual(reader.call_count, 0)
+        self.assertEqual(self.publisher.calls, 1)
 
 
 if __name__ == "__main__":
