@@ -85,11 +85,21 @@ Exact retry preserves identity, audience, ciphertext and publication correlation
 Expired carriers return retained results; readable history does not implement
 reliable delivery after a long disconnection.
 
-[Mandatory visibility](mandatory-telegram-visibility.md) requires complete
-confirmed Telegram echo before native inter-daimon delivery. This is a selected
-availability dependency. A healthy VPN cannot bypass an unconfirmed echo.
-[Readable traffic](runbooks/tribu-readable-traffic.md) governs presentation.
-Changing the visibility-before-delivery policy requires a design decision.
+Human visibility follows the body's selected publication policy.
+The original three receivers retain the [Telegram V2 profile](mandatory-telegram-visibility.md)
+until their owning App deployment selects its already implemented portable
+publisher. The four children use [portable Conversation visibility](portable-human-visibility.md):
+actual signed membership, native readers and request/action/reply journeys passed
+without Telegram accounts or access to the Tribu channel. Telegram is not a
+Matrix/Cluster admission prerequisite.
+
+An ambiguous publication remains pending under its original identity. A healthy
+VPN, a new publisher installation or a successful unrelated message cannot supply
+its missing receipt. Use the existing owning publisher's exact-outcome recovery;
+do not reenroll a body, recreate speech or repeat completed participant acceptance.
+Configuration, current reader qualification, native intake and a useful answer
+remain different observations. The current cohort evidence belongs in
+CURRENT-STATE and the single #437 coverage checkpoint.
 
 ## I/O and model admission
 
