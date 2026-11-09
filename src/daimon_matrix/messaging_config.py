@@ -19,7 +19,12 @@ from .authority_epochs import RootHistoryAuthority
 from .canonical import b64url, canonical_bytes, unb64url
 from .identity import verify_embodiment_credential, verify_incarnation_authorization
 from .mandatory_echo import TABLE_SQL as ECHO_TABLE_SQL
-from .native_egress import OPERATION_TABLE_SQL, OperationBinding
+from .native_egress import (
+    LEGACY_OPERATION_TABLE_SQL,
+    OPERATION_INDEX_SQL,
+    OPERATION_TABLE_SQL,
+    OperationBinding,
+)
 from .runtime import HostedRuntime
 from .weave import RootAuthority
 
@@ -1103,7 +1108,9 @@ _STORE_SCHEMA_SQL["envelopes"] = """
         envelope BLOB NOT NULL, envelope_hash TEXT NOT NULL);
 """
 _STORE_SCHEMA_SQL_WITHOUT_VISIBILITY = dict(_STORE_SCHEMA_SQL)
-_EGRESS_SCHEMA_SQL = ";".join((OPERATION_TABLE_SQL, *ECHO_TABLE_SQL.values(), ""))
+_EGRESS_SCHEMA_SQL = ";".join(
+    (OPERATION_TABLE_SQL, OPERATION_INDEX_SQL, *ECHO_TABLE_SQL.values(), "")
+)
 for _egress_store in ("outbox", "opaque", "records"):
     _STORE_SCHEMA_SQL[_egress_store] += _EGRESS_SCHEMA_SQL
 
@@ -1168,6 +1175,10 @@ def _validate_store_schema(
             expected_catalogs = [catalog(expected)]
             if allow_missing_visibility and schema in {"outbox", "opaque", "records"}:
                 legacy.executescript(_STORE_SCHEMA_SQL_WITHOUT_VISIBILITY[schema])
+                expected_catalogs.append(catalog(legacy))
+                legacy.executescript(
+                    ";".join((LEGACY_OPERATION_TABLE_SQL, *ECHO_TABLE_SQL.values(), ""))
+                )
                 expected_catalogs.append(catalog(legacy))
             elif schema == "inbox" and not require_inbox_admission:
                 legacy.executescript(_LEGACY_INBOX_SCHEMA_SQL)

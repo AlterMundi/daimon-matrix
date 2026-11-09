@@ -142,10 +142,39 @@ lost-result read recovery, failed-read uncertainty and absence of Telegram/nativ
 inference. This uses synthetic identities and a
 native harness fixture; it does not establish live group delivery or model use.
 
-The native journal's own steady-state retirement still needs the composing
-parent's authoritative completion state, preserving unknown effects and old
-policies. App retirement alone does not make the complete production composition
-bounded. Neither prepared installation nor this fixture reopens a living child.
+## Native technical-cache retirement
+
+Visibility catalog schema 2 adds a nullable authenticated retirement witness to
+its existing native operation row and a partial pending index. The explicit
+`migrate-visibility --visibility-schema-version 2` owner operation accepts the
+exact schema-1 predecessor, preserves its originals and obligations, and upgrades
+it transactionally. Ordinary loading performs no migration. Qualify every
+required reader before selecting this schema; schema-1 binaries cannot load it
+and are not a compatible rollback after migration. This changes no identity,
+publication policy, enrollment or participant signatures.
+
+For V3 portable publications only, fully confirmed technical echo records become
+eligible 24 hours after both the original native deadline and the last committed
+publication confirmation. On new admission near the existing 4096-record/64-MiB
+cap, the native writer retires at most 64 eligible records in the same transaction.
+The existing controller also exposes bounded owner-local
+`retire_confirmed_publications(limit=64)` maintenance. Neither path contacts a
+transport, calls a model or creates a scheduler. Pending/ambiguous publication
+records and historical Telegram policies remain pinned.
+
+Retirement retains the exact binding, confirmed part counts, proof digest and
+timestamps under the existing journal HMAC key in the original native operation.
+It deletes only the redundant technical echo record. Native messages, release
+counts and uncertain carrier outcomes are untouched: publication confirmation is
+not proof of native delivery. The retained witness permits historical inspection
+and permanently refuses release, including after clock regression. No independent
+unbounded tombstone archive is introduced; original history retains its own
+owning retention policy. Normal pending queries exclude retired records.
+
+The source fixture verifies capacity recovery, original preservation, rollback,
+tamper rejection, old-schema migration, pending/ambiguous retention and regressed
+clock refusal. This source change has not yet been selected on living receivers;
+App retirement alone does not establish complete production composition bounds.
 
 The compatible SDK/imports, four exact Conversation disclosures and all28
 genuine owner acceptances are retained. All four installations and their full

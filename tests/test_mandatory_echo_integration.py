@@ -22,6 +22,7 @@ from daimon_matrix.daemon import _run_egress_worker
 from daimon_matrix.mandatory_echo import ConversationJournalTransport
 from daimon_matrix.messaging_config import BINDING_DOMAIN, verify_public_binding
 from daimon_matrix.native_egress import (
+    VISIBILITY_SCHEMA_VERSION,
     MandatoryEgressController,
     NativeEgressError,
     OperationBinding,
@@ -1169,7 +1170,7 @@ class CatalogMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(
             NativeEgressError, "egress_migration_not_authorized"
         ):
-            migration.migrate_registered_catalogs(version=2)
+            migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION + 1)
         self.assertEqual(self._tables(), before)
 
     def test_explicit_migration_installs_then_normal_reopen_only_validates(
@@ -1178,7 +1179,7 @@ class CatalogMigrationTests(unittest.TestCase):
         migration = self._controller("migrate")
         self._register(migration)
         self.assertNotIn("mandatory_egress_operations", self._tables())
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         installed = {
             "mandatory_egress_operations",
             "echo_v2_catalog",
@@ -1186,7 +1187,7 @@ class CatalogMigrationTests(unittest.TestCase):
         }
         self.assertTrue(installed <= self._tables())
         before = self.path.read_bytes()
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         self.assertEqual(self.path.read_bytes(), before)
         self._register(self._controller("validate"))
 
@@ -1196,7 +1197,7 @@ class CatalogMigrationTests(unittest.TestCase):
         migration = self._controller("migrate")
         self._register(migration)
         migration.register_path("peer-sync-request", "migration-catalog")
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         payload = b"historical-sync-request"
         operation_id = "00000000-0000-4000-8000-000000000139"
         with closing(sqlite3.connect(self.path)) as database:
@@ -1265,13 +1266,13 @@ class CatalogMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(
             NativeEgressError, "egress_historical_obligation_missing"
         ):
-            migration.migrate_registered_catalogs(version=1)
+            migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         self.assertEqual(self._tables(), before_tables)
 
     def test_retry_reconciles_native_history_and_never_repairs_an_orphan(self) -> None:
         migration = self._controller("migrate")
         self._register(migration)
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         payload = b"late-unjournaled-request"
         with closing(sqlite3.connect(self.path)) as database, database:
             database.execute(
@@ -1287,7 +1288,7 @@ class CatalogMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(
             NativeEgressError, "egress_historical_obligation_missing"
         ):
-            migration.migrate_registered_catalogs(version=1)
+            migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         self.assertEqual(self.path.read_bytes(), before)
         with self.assertRaisesRegex(
             NativeEgressError, "egress_historical_obligation_missing"
@@ -1297,7 +1298,7 @@ class CatalogMigrationTests(unittest.TestCase):
     def test_additional_visibility_schema_is_rejected_without_mutation(self) -> None:
         migration = self._controller("migrate")
         self._register(migration)
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         with closing(sqlite3.connect(self.path)) as database:
             database.execute("CREATE TABLE mandatory_egress_shadow (value TEXT)")
         before = self.path.read_bytes()
@@ -1308,7 +1309,7 @@ class CatalogMigrationTests(unittest.TestCase):
     def test_partial_schema_loss_is_rejected_without_repair(self) -> None:
         migration = self._controller("migrate")
         self._register(migration)
-        migration.migrate_registered_catalogs(version=1)
+        migration.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
         with closing(sqlite3.connect(self.path)) as database:
             database.execute("DROP TABLE echo_v2_obligations")
         before = self._tables()
